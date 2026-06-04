@@ -1,0 +1,20 @@
+{
+  "name": "second-brain-agent",
+  "version": "0.1.0",
+  "description": "Agente personal de WhatsApp con memoria, recordatorios y resumen de grupos",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "migrate": "node src/db/migrate.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.27.0",
+    "axios": "^1.7.0",
+    "better-sqlite3": "^11.0.0",
+    "cron": "^3.1.7",
+    "dotenv": "^16.4.0",
+    "express": "^4.19.0"
+  }
+}
