@@ -1,9 +1,11 @@
 // src/bot/index.js
-// Orquestador central — conecta Meta, OpenWA, Claude y la DB
+// Orquestador central — conecta Meta, OpenWA, Claude y la DB.
+// Los tools (recordatorios, memoria, resúmenes, búsqueda) se ejecutan DENTRO de
+// chat(); acá solo queda dedup, autorización y el envío de la respuesta.
 
 import { chat, summarizeGroupMessages } from '../claude/index.js';
 import { sendMessage } from '../meta/index.js';
-import { saveReminder, setMemory, saveGroupContext, markIfNew } from '../db/index.js';
+import { saveSummary, markIfNew } from '../db/index.js';
 import { phonesMatch } from '../common/utils.js';
 
 const BOSS_PHONE = () => process.env.BOSS_PHONE;
@@ -34,18 +36,9 @@ export async function handleBossMessage(msg) {
   console.log(`[Bot] Mensaje del jefe: ${text.slice(0, 60)}...`);
 
   try {
-    const { text: reply, reminder, memory } = await chat(text, from);
-
-    if (reminder?.text && reminder?.due_at) {
-      saveReminder({ text: reminder.text, dueAt: reminder.due_at });
-      console.log(`[Bot] Recordatorio guardado: ${reminder.text} @ ${reminder.due_at}`);
-    }
-
-    if (memory?.key && memory?.value) {
-      setMemory(memory.key, memory.value);
-      console.log(`[Bot] Memoria guardada: ${memory.key} = ${memory.value}`);
-    }
-
+    // chat() ya ejecuta internamente create_reminder / save_memory /
+    // summarize_group / search_knowledge; solo necesitamos su respuesta.
+    const { text: reply } = await chat(text, from);
     await sendMessage(from, reply);
   } catch (err) {
     console.error('[Bot] Error procesando mensaje:', err.message);
@@ -73,7 +66,15 @@ export async function handleGroupMessage(msg) {
 
     if (isMentioned) {
       const summary = await summarizeGroupMessages(groupName, text);
-      saveGroupContext({ groupId: chatId, groupName, summary, rawSnippet: text });
+      const now = new Date().toISOString();
+
+      saveSummary({
+        chatId,
+        chatName: groupName || chatId,
+        summary,
+        periodStart: now,
+        periodEnd: now,
+      });
 
       await sendMessage(
         BOSS_PHONE(),
