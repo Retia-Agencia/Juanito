@@ -114,9 +114,18 @@ El bot decide solo el canal:
 > ventana de 24 h. Los recordatorios a terceros requieren el template en producción.
 
 ### Directorio de contactos
-Para resolver _"Juan"_ → número, cargá contactos en la tabla `contacts`
-(`name`, `phone`). Si el jefe dicta un número directamente, el bot lo usa sin necesidad
-de tenerlo guardado.
+Para resolver _"Juan"_ → número, cargá contactos con el script incluido (sin SQL):
+
+```bash
+# local
+npm run contact -- "Juan" "+57 300 111 2222"
+npm run contact -- --list
+
+# en el VPS (dentro del contenedor)
+docker compose exec agent node scripts/add-contact.js "Juan" "573001112222"
+```
+
+Si el jefe dicta un número directamente, el bot lo usa sin necesidad de tenerlo guardado.
 
 ## Uso
 

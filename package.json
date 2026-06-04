@@ -8,6 +8,7 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "migrate": "node src/db/migrate.js",
+    "contact": "node scripts/add-contact.js",
     "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
