@@ -36,22 +36,32 @@ services:
     container_name: second-brain-agent
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3000:3000"
+      # Puerto del host configurable para NO colisionar con el otro bot del VPS.
+      # Si 3000 ya está en uso, define AGENT_PORT en .env (ej: AGENT_PORT=3100).
+      - "127.0.0.1:${AGENT_PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
       - TZ=${TZ:-America/Bogota}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-20250514}
+      - CLAUDE_MAX_TOKENS=${CLAUDE_MAX_TOKENS:-2048}
       - META_PHONE_NUMBER_ID=${META_PHONE_NUMBER_ID}
       - META_WHATSAPP_TOKEN=${META_WHATSAPP_TOKEN}
       - META_VERIFY_TOKEN=${META_VERIFY_TOKEN}
+      - META_APP_SECRET=${META_APP_SECRET}
+      - META_WABA_ID=${META_WABA_ID}
+      - REMINDER_TEMPLATE_NAME=${REMINDER_TEMPLATE_NAME:-reminder_utility}
+      - REMINDER_TEMPLATE_LANG=${REMINDER_TEMPLATE_LANG:-es}
       - BOSS_PHONE=${BOSS_PHONE}
       - OPENWA_URL=http://openwa-api:2785/api
       - OPENWA_API_KEY=${OPENWA_API_KEY}
       - OPENWA_SESSION_ID=${OPENWA_SESSION_ID}
+      - OPENWA_WEBHOOK_SECRET=${OPENWA_WEBHOOK_SECRET}
       - PUBLIC_URL=${PUBLIC_URL}
       - DB_PATH=/app/data/brain.sqlite
       - BOT_NAME=${BOT_NAME:-Juanito}
+      - MAX_GROUPS_PER_CYCLE=${MAX_GROUPS_PER_CYCLE:-10}
     volumes:
       - agent-data:/app/data
     depends_on:

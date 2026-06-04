@@ -49,6 +49,7 @@ db.exec(`
     created_by  TEXT,                          -- quién lo agendó
     status      TEXT NOT NULL DEFAULT 'pending', -- pending | sent | failed
     sent_at     DATETIME,
+    attempts    INTEGER NOT NULL DEFAULT 0,    -- intentos de envío fallidos
     sent        INTEGER DEFAULT 0,             -- legacy, se mantiene por compatibilidad
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
   );
@@ -94,6 +95,7 @@ addColumnIfMissing('reminders', 'to_phone', 'TEXT');
 addColumnIfMissing('reminders', 'created_by', 'TEXT');
 addColumnIfMissing('reminders', 'status', "TEXT NOT NULL DEFAULT 'pending'");
 addColumnIfMissing('reminders', 'sent_at', 'DATETIME');
+addColumnIfMissing('reminders', 'attempts', 'INTEGER NOT NULL DEFAULT 0');
 
 addColumnIfMissing('group_context', 'period_start', 'DATETIME');
 addColumnIfMissing('group_context', 'period_end', 'DATETIME');

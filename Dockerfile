@@ -11,8 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
-# Usar npm install (no ci) porque no versionamos package-lock.json
-RUN npm install --omit=dev
+# Instalación reproducible desde package-lock.json (usa prebuilds de better-sqlite3
+# cuando existen; las build tools de arriba son fallback de compilación)
+RUN npm ci --omit=dev
 
 # ===== Stage 2: Producción (imagen limpia) =====
 FROM node:22-slim AS production

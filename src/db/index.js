@@ -81,6 +81,12 @@ export function markReminderFailed(id) {
   return db.prepare(`UPDATE reminders SET status = 'failed' WHERE id = ?`).run(id);
 }
 
+// Incrementa el contador de intentos y devuelve el nuevo valor (uso interno del scheduler)
+export function incrementReminderAttempt(id) {
+  db.prepare(`UPDATE reminders SET attempts = attempts + 1 WHERE id = ?`).run(id);
+  return db.prepare(`SELECT attempts FROM reminders WHERE id = ?`).get(id)?.attempts ?? 0;
+}
+
 export function getUpcomingReminders(hours = 24) {
   return db
     .prepare(`
