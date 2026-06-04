@@ -32,6 +32,38 @@ export async function sendMessage(to, text) {
   }
 }
 
+// ─── Enviar template de utilidad ──────────────────────────────────────────────
+// Necesario para escribirle a alguien FUERA de la ventana de servicio de 24 h
+// (p. ej. recordatorios a terceros). El template debe estar aprobado en Meta.
+// `components` sigue el formato de la Cloud API, ej:
+//   [{ type: 'body', parameters: [{ type: 'text', text: 'call con el equipo' }] }]
+
+export async function sendTemplate(to, templateName, languageCode = 'es', components = []) {
+  const template = {
+    name: templateName,
+    language: { code: languageCode },
+  };
+  if (components.length) template.components = components;
+
+  try {
+    const res = await axios.post(
+      `${BASE_URL}/${process.env.META_PHONE_NUMBER_ID}/messages`,
+      { messaging_product: 'whatsapp', to, type: 'template', template },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.META_WHATSAPP_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    console.log(`[Meta] Template "${templateName}" enviado a ${to}`);
+    return res.data;
+  } catch (err) {
+    console.error('[Meta] Error enviando template:', err.response?.data || err.message);
+    throw err;
+  }
+}
+
 // ─── Parsear mensaje entrante del webhook ─────────────────────────────────────
 
 export function parseIncomingMessage(body) {

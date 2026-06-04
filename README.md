@@ -51,6 +51,10 @@ Variables obligatorias:
 | `META_WHATSAPP_TOKEN` | Token de acceso de Meta |
 | `META_VERIFY_TOKEN` | Token que vos elegís para verificar el webhook |
 | `META_APP_SECRET` | App Secret de Meta — valida la firma de los webhooks entrantes |
+| `META_WABA_ID` | WhatsApp Business Account ID (gestión de templates) |
+| `REMINDER_TEMPLATE_NAME` | Nombre del template de utilidad aprobado para recordatorios |
+| `REMINDER_TEMPLATE_LANG` | Idioma del template (ej: `es` / `es_CO`) |
+| `AGENT_PORT` | Puerto del host en el VPS (cámbialo si 3000 está ocupado) |
 | `BOSS_PHONE` | Número del jefe (ej: `573001234567`) |
 | `OPENWA_API_KEY` | API key de tu instancia OpenWA |
 | `OPENWA_SESSION_ID` | ID de la sesión del jefe en OpenWA |
@@ -88,6 +92,32 @@ curl -X POST http://localhost:2785/api/sessions \
 
 Escanear el QR con el WhatsApp del jefe.
 
+## Recordatorios a terceros y templates de Meta
+
+Para recordatorios como _"Recuérdale a Juan mañana a las 9am"_, el bot le escribe a **un
+número que no inició conversación con él**, es decir **fuera de la ventana de servicio de
+24 h**. Meta solo permite eso con un **template de utilidad aprobado**.
+
+El bot decide solo el canal:
+- **Dentro de la ventana 24 h** (el jefe te acaba de escribir) → mensaje de **texto** gratis.
+- **Fuera de la ventana / a un tercero** → **template** (`REMINDER_TEMPLATE_NAME`).
+
+### Crear el template en Meta Business Manager
+1. Meta Business Manager → WhatsApp Manager → **Plantillas de mensajes** → *Crear plantilla*.
+2. Categoría: **Utilidad (Utility)**. Idioma: el de `REMINDER_TEMPLATE_LANG` (ej: `es`).
+3. Nombre: el mismo de `REMINDER_TEMPLATE_NAME` (ej: `reminder_utility`).
+4. Cuerpo con **una variable** `{{1}}`, por ejemplo:
+   `⏰ Recordatorio: {{1}}`
+5. Enviar a aprobación. Cuando quede **APROBADO**, ya funciona.
+
+> En desarrollo, el sandbox de Meta permite probar sin template aprobado dentro de la
+> ventana de 24 h. Los recordatorios a terceros requieren el template en producción.
+
+### Directorio de contactos
+Para resolver _"Juan"_ → número, cargá contactos en la tabla `contacts`
+(`name`, `phone`). Si el jefe dicta un número directamente, el bot lo usa sin necesidad
+de tenerlo guardado.
+
 ## Uso
 
 Una vez configurado, el jefe le escribe al número del bot:
@@ -123,6 +153,31 @@ cp .env.example .env  # completar .env
 npm run migrate       # crear tablas
 npm run dev           # arrancar con hot reload
 ```
+
+## Producción (VPS)
+
+El VPS ya corre otro bot que **no se debe tocar**. Para evitar choques:
+
+1. **Puerto sin colisión.** El compose publica el agente en `127.0.0.1:${AGENT_PORT}` (default
+   3000). Verificá que esté libre y, si no, cambiá `AGENT_PORT` en `.env`:
+   ```bash
+   sudo ss -ltnp | grep -E ':3000|:2785'   # ver qué hay ocupado
+   # si 3000 está en uso: poné AGENT_PORT=3100 en .env
+   ```
+2. **nginx + HTTPS** (Meta exige HTTPS para los webhooks):
+   ```bash
+   sudo cp deploy/nginx.conf /etc/nginx/sites-available/second-brain
+   sudo nano /etc/nginx/sites-available/second-brain   # poner tu dominio (y AGENT_PORT si lo cambiaste)
+   sudo ln -s /etc/nginx/sites-available/second-brain /etc/nginx/sites-enabled/
+   sudo certbot --nginx -d tudominio.com
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+3. **Levantar y migrar:**
+   ```bash
+   docker compose up -d --build
+   docker compose exec agent node src/db/migrate.js   # idempotente
+   curl -s http://127.0.0.1:${AGENT_PORT:-3000}/health
+   ```
 
 ## Logs
 
