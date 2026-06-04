@@ -60,6 +60,22 @@ export async function listGroups() {
   }
 }
 
+// ─── Resolver un grupo por nombre ─────────────────────────────────────────────
+// Busca sobre la lista de grupos del jefe: primero coincidencia exacta, luego
+// parcial (case-insensitive). Alimenta la herramienta summarize_group.
+// `groups` es inyectable para tests; por defecto se piden a OpenWA.
+
+export async function resolveGroupByName(name, groups) {
+  if (!name) return null;
+  const list = groups || (await listGroups());
+  const q = name.trim().toLowerCase();
+  return (
+    list.find((g) => (g.name || '').toLowerCase() === q) ||
+    list.find((g) => (g.name || '').toLowerCase().includes(q)) ||
+    null
+  );
+}
+
 // ─── Parsear mensaje entrante del webhook de OpenWA ───────────────────────────
 
 export function parseOpenWAMessage(body) {
