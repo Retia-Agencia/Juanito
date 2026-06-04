@@ -3,7 +3,10 @@
 
 import axios from 'axios';
 
-const BASE_URL = 'https://graph.facebook.com/v19.0';
+// Versión de Graph API configurable. v19 (2023) está obsoleta; usamos una actual
+// por defecto y dejamos override por env para subirla sin tocar código.
+const GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v22.0';
+const BASE_URL = `https://graph.facebook.com/${GRAPH_VERSION}`;
 
 // ─── Enviar mensaje de texto ──────────────────────────────────────────────────
 
