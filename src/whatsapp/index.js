@@ -15,7 +15,6 @@ import { saveMessage } from '../db/index.js';
 import db from '../db/index.js';
 
 const SESSION_PATH = process.env.WA_SESSION_PATH || './data/wa-session';
-const AGENT_PHONE = () => process.env.AGENT_PHONE; // ej: +573001234567
 
 let sock = null;
 
@@ -24,13 +23,13 @@ let sock = null;
 function toJid(raw) {
   if (!raw) throw new Error('toJid: destinatario vacío');
   if (raw.includes('@')) return raw;
-  const digits = raw.replace(/\D/g, '');
-  return `${digits}@s.whatsapp.net`;
+  return `${raw.replace(/\D/g, '')}@s.whatsapp.net`;
 }
 
 // ─── Conexión principal ───────────────────────────────────────────────────────
-// Retorna una Promise que resuelve cuando la sesión está abierta.
-// Si el número nunca estuvo vinculado, imprime el código de pairing y espera.
+// Reconecta internamente durante el pairing (sin salir del proceso).
+// Una vez conectado, ante cualquier caída sale con exit(1) para que
+// entrypoint.sh aplique el backoff exponencial.
 
 export async function connect({ onMessage }) {
   mkdirSync(SESSION_PATH, { recursive: true });
@@ -38,120 +37,113 @@ export async function connect({ onMessage }) {
   const { state, saveCreds } = await useMultiFileAuthState(SESSION_PATH);
   const { version } = await fetchLatestBaileysVersion();
 
-  sock = makeWASocket({
-    version,
-    auth: {
-      creds: state.creds,
-      keys: makeCacheableSignalKeyStore(state.keys),
-    },
-    browser: Browsers.ubuntu('Chrome'),
-    printQRInTerminal: false,
-    // Silenciar logs internos de Baileys (los nuestros son suficientes)
-    logger: { level: 'silent', child: () => ({ level: 'silent', child: () => {}, trace: () => {}, debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }), trace: () => {}, debug: () => {}, info: () => {}, warn: (msg) => console.warn('[Baileys]', msg), error: (msg) => console.error('[Baileys]', msg) },
-  });
-
-  // Pairing por código (no QR) si es la primera vez
-  if (!sock.authState.creds.registered) {
-    const phone = AGENT_PHONE();
-    if (!phone) {
-      throw new Error(
-        'AGENT_PHONE no configurado — necesario para el primer vinculado.\n' +
-        'Agregá AGENT_PHONE=+57XXXXXXXXXX en .env y reiniciá.'
-      );
-    }
-    const digits = phone.replace(/\D/g, '');
-    const code = await sock.requestPairingCode(digits);
-    console.log('\n' + '─'.repeat(50));
-    console.log('📱 Código de vinculación:', code);
-    console.log('   En el teléfono: WhatsApp → Dispositivos vinculados');
-    console.log('   → Vincular con número de teléfono → ingresá el código');
-    console.log('─'.repeat(50) + '\n');
-  }
-
-  sock.ev.on('creds.update', saveCreds);
-
-  // Estado de conexión
-  sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
-    if (connection === 'open') {
-      console.log('[WhatsApp] Conectado ✅');
-      return;
-    }
-    if (connection === 'close') {
-      const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
-      console.log(`[WhatsApp] Conexión cerrada — razón: ${reason}`);
-
-      if (reason === DisconnectReason.loggedOut) {
-        console.error('[WhatsApp] Sesión cerrada (loggedOut). Borrar ./data/wa-session y re-vincular.');
-        process.exit(2);
-      }
-      // Para cualquier otro cierre: salir → entrypoint.sh con backoff maneja el restart
-      process.exit(1);
-    }
-  });
-
-  // Mensajes entrantes
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
-
-    for (const msg of messages) {
-      if (msg.key.fromMe) continue;
-      if (!msg.message) continue;
-
-      const chatId = msg.key.remoteJid;
-      const isGroup = chatId?.endsWith('@g.us');
-      const messageId = msg.key.id;
-
-      const text =
-        msg.message?.conversation ||
-        msg.message?.extendedTextMessage?.text ||
-        null;
-
-      if (!text) continue;
-
-      const sender = isGroup ? (msg.key.participant || chatId) : chatId;
-
-      // Nombre a mostrar del sender (disponible en pushName cuando el contacto lo tiene)
-      const senderName = msg.pushName || sender;
-
-      // Nombre del grupo
-      let groupName = chatId;
-      if (isGroup) {
-        try {
-          const meta = await sock.groupMetadata(chatId);
-          groupName = meta.subject || chatId;
-        } catch {
-          groupName = chatId;
-        }
-      }
-
-      // Guardar mensaje de grupo en DB (lectura pasiva)
-      // Formato: "[SenderName]: texto" — getRecentMessages lo parsea de vuelta
-      if (isGroup) {
-        try {
-          saveMessage({
-            role: 'user',
-            content: `[${senderName}]: ${text}`,
-            source: 'group',
-            chatId,
-          });
-        } catch (e) {
-          console.error('[WhatsApp] Error guardando mensaje de grupo:', e.message);
-        }
-      }
-
-      await onMessage({ chatId, isGroup, text, sender, groupName, messageId }).catch((e) =>
-        console.error('[WhatsApp] Error en onMessage:', e.message)
-      );
-    }
-  });
-
-  // Esperar hasta que la sesión esté abierta
   return new Promise((resolve) => {
-    sock.ev.on('connection.update', ({ connection }) => {
-      if (connection === 'open') resolve();
-    });
-    // Si ya estaba abierta antes de registrar el handler (caso de reconexión rápida)
-    if (sock.ws?.readyState === 1) resolve();
+    let hasConnected = false;
+
+    function createSocket() {
+      sock = makeWASocket({
+        version,
+        auth: {
+          creds: state.creds,
+          keys: makeCacheableSignalKeyStore(state.keys),
+        },
+        browser: Browsers.ubuntu('Chrome'),
+        // QR en consola — aparece en `docker logs juanito-agent`
+        // Escanearlo con: WhatsApp → Dispositivos vinculados → Vincular un dispositivo
+        printQRInTerminal: true,
+      });
+
+      if (!sock.authState.creds.registered) {
+        console.log(
+          '\n📱 Esperando vinculación — escaneá el QR de arriba con WhatsApp:' +
+          '\n   Ajustes → Dispositivos vinculados → Vincular un dispositivo\n'
+        );
+      }
+
+      sock.ev.on('creds.update', saveCreds);
+
+      sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
+        if (connection === 'open') {
+          console.log('[WhatsApp] Conectado ✅');
+          hasConnected = true;
+          resolve();
+          return;
+        }
+
+        if (connection === 'close') {
+          const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
+          console.log(`[WhatsApp] Conexión cerrada — razón: ${reason}`);
+
+          if (reason === DisconnectReason.loggedOut) {
+            console.error('[WhatsApp] Sesión cerrada (loggedOut). Borrar ./data/wa-session y re-vincular.');
+            process.exit(2);
+          }
+
+          if (hasConnected) {
+            // Ya estábamos conectados — entrypoint.sh maneja el restart con backoff
+            process.exit(1);
+          } else {
+            // Aún en fase de pairing — reconectar internamente en 3 segundos
+            console.log('[WhatsApp] Reconectando para nuevo QR...');
+            setTimeout(createSocket, 3000);
+          }
+        }
+      });
+
+      // Mensajes entrantes
+      sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        if (type !== 'notify') return;
+
+        for (const msg of messages) {
+          if (msg.key.fromMe) continue;
+          if (!msg.message) continue;
+
+          const chatId = msg.key.remoteJid;
+          const isGroup = chatId?.endsWith('@g.us');
+          const messageId = msg.key.id;
+
+          const text =
+            msg.message?.conversation ||
+            msg.message?.extendedTextMessage?.text ||
+            null;
+
+          if (!text) continue;
+
+          const sender = isGroup ? (msg.key.participant || chatId) : chatId;
+          const senderName = msg.pushName || sender;
+
+          let groupName = chatId;
+          if (isGroup) {
+            try {
+              const meta = await sock.groupMetadata(chatId);
+              groupName = meta.subject || chatId;
+            } catch {
+              groupName = chatId;
+            }
+          }
+
+          // Guardar mensaje de grupo en DB (lectura pasiva)
+          if (isGroup) {
+            try {
+              saveMessage({
+                role: 'user',
+                content: `[${senderName}]: ${text}`,
+                source: 'group',
+                chatId,
+              });
+            } catch (e) {
+              console.error('[WhatsApp] Error guardando mensaje:', e.message);
+            }
+          }
+
+          await onMessage({ chatId, isGroup, text, sender, groupName, messageId }).catch((e) =>
+            console.error('[WhatsApp] Error en onMessage:', e.message)
+          );
+        }
+      });
+    }
+
+    createSocket();
   });
 }
 
@@ -178,7 +170,6 @@ export async function listGroups() {
 }
 
 // ─── Mensajes recientes de un grupo (desde SQLite) ────────────────────────────
-// Los mensajes se guardan al llegar (lectura pasiva). No hace llamadas a WA.
 
 export async function getRecentMessages(chatId, limit = 30) {
   const rows = db
@@ -193,14 +184,9 @@ export async function getRecentMessages(chatId, limit = 30) {
     .reverse();
 
   return rows.map((row) => {
-    // Parsear formato "[SenderName]: texto"
     const match = row.content.match(/^\[(.+?)\]: ([\s\S]+)$/);
     if (match) {
-      return {
-        body: match[2],
-        sender: { id: null, pushname: match[1] },
-        timestamp: row.timestamp,
-      };
+      return { body: match[2], sender: { id: null, pushname: match[1] }, timestamp: row.timestamp };
     }
     return { body: row.content, sender: { id: null, pushname: null }, timestamp: row.timestamp };
   });
