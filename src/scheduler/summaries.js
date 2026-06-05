@@ -5,7 +5,7 @@
 
 import { CronJob } from 'cron';
 import { saveSummary } from '../db/index.js';
-import { listGroups, getRecentMessages } from '../openwa/index.js';
+import { listGroups, getRecentMessages } from '../whatsapp/index.js';
 import { summarizeGroupMessages } from '../claude/index.js';
 
 const TZ = () => process.env.TZ || 'America/Bogota';

@@ -10,7 +10,7 @@ const MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
 const MAX_TOKENS = Number(process.env.CLAUDE_MAX_TOKENS || 2048);
 
 // ─── Seam de dependencias (Track A) ───────────────────────────────────────────
-// Consumimos el contrato del Track A (db/index.js, contacts/index.js) + openwa.
+// Consumimos el contrato del Track A (db/index.js, contacts/index.js) + whatsapp.
 // Hasta SYNC 1 esos símbolos pueden no existir todavía, así que los resolvemos
 // de forma perezosa y permitimos inyectarlos en tests (sin tocar package.json).
 
@@ -26,10 +26,10 @@ export function __resetDeps() {
 
 async function resolveDeps() {
   if (_injectedDeps) return _injectedDeps;
-  const [db, contacts, openwa] = await Promise.all([
+  const [db, contacts, whatsapp] = await Promise.all([
     import('../db/index.js'),
     import('../contacts/index.js'),
-    import('../openwa/index.js'),
+    import('../whatsapp/index.js'),
   ]);
   return {
     // db
@@ -46,9 +46,9 @@ async function resolveDeps() {
     searchSummaries: db.searchSummaries,
     // contacts
     resolveContact: contacts.resolveContact,
-    // openwa
-    resolveGroupByName: openwa.resolveGroupByName,
-    getRecentMessages: openwa.getRecentMessages,
+    // whatsapp
+    resolveGroupByName: whatsapp.resolveGroupByName,
+    getRecentMessages: whatsapp.getRecentMessages,
     // claude (mismo módulo)
     summarizeGroupMessages,
   };

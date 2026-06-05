@@ -42,10 +42,3 @@ export function verifyHmacSignature(rawBody, signature, secret) {
     return false;
   }
 }
-
-// ─── Verificar firma de Meta (X-Hub-Signature-256) ────────────────────────────
-
-export function verifyMetaSignature(rawBody, signature, appSecret) {
-  if (!signature || !appSecret) return true; // si no hay secret configurado, no bloqueamos
-  return verifyHmacSignature(rawBody, signature, appSecret);
-}
