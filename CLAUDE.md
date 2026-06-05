@@ -71,7 +71,9 @@ No tocar esta lógica sin entender las implicaciones.
 
 ### Bloqueantes para que funcione
 1. Deploy en VPS: `git clone`, crear `.env`, `docker compose up -d --build`
-2. Vincular WhatsApp: ver código en logs → ingresarlo en el teléfono físico
+2. Vincular WhatsApp: **NO escanear el QR desde el VPS** (WA rechaza el registro
+   desde IP de datacenter → *"no se pueden conectar dispositivos"*). Vincular
+   desde IP residencial local y copiar la sesión. Ver `docs/WHATSAPP-PAIRING.md`.
 3. Agregar el bot a los grupos del jefe (manual, desde teléfono del jefe)
 
 ### Bug conocido
@@ -90,6 +92,8 @@ No tocar esta lógica sin entender las implicaciones.
 ## Reglas de trabajo en este repo
 
 - No tocar `entrypoint.sh` sin entender el contexto del softban
+- **Vincular WhatsApp solo desde IP residencial y copiar la sesión al VPS** —
+  nunca escanear el QR desde el VPS. Ver `docs/WHATSAPP-PAIRING.md`
 - No exponer puertos en docker-compose (Baileys es conexión saliente)
 - No agregar dependencias sin justificación clara
 - `src/db/migrate.js` es idempotente — seguro de correr múltiples veces

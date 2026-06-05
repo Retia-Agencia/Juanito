@@ -12,10 +12,12 @@ import makeWASocket, {
 import { Boom } from '@hapi/boom';
 import { mkdirSync } from 'fs';
 import qrcode from 'qrcode-terminal';
+import QRCode from 'qrcode';
 import { saveMessage } from '../db/index.js';
 import db from '../db/index.js';
 
 const SESSION_PATH = process.env.WA_SESSION_PATH || './data/wa-session';
+const QR_PATH = process.env.WA_QR_PATH || './data/wa-qr.png';
 
 let sock = null;
 
@@ -25,6 +27,37 @@ function toJid(raw) {
   if (!raw) throw new Error('toJid: destinatario vacío');
   if (raw.includes('@')) return raw;
   return `${raw.replace(/\D/g, '')}@s.whatsapp.net`;
+}
+
+// ─── Render del QR ────────────────────────────────────────────────────────────
+// El QR ASCII en terminal SSH se renderiza chico y a veces se corrompe → escaneos
+// fallidos repetidos → WhatsApp responde "no se pueden conectar dispositivos en
+// este momento". Generamos una imagen PNG limpia (recuperable con `docker cp`) y
+// un data URL que se pega directo en el navegador del ordenador.
+
+async function renderQR(qr) {
+  // 1) PNG en disco — recuperar con: docker cp juanito-agent:/app/data/wa-qr.png .
+  try {
+    await QRCode.toFile(QR_PATH, qr, { width: 512, margin: 2 });
+    console.log(`\n📷 QR guardado como imagen: ${QR_PATH}`);
+    console.log('   Bajalo del VPS con:  docker cp juanito-agent:/app/data/wa-qr.png .');
+  } catch (e) {
+    console.error('[WhatsApp] No se pudo escribir el PNG del QR:', e.message);
+  }
+
+  // 2) Data URL — copiá la línea completa y pegala en la barra del navegador.
+  try {
+    const dataUrl = await QRCode.toDataURL(qr, { margin: 2 });
+    console.log('\n🔗 O pegá esta línea COMPLETA en la barra de tu navegador:\n');
+    console.log(dataUrl);
+  } catch (e) {
+    console.error('[WhatsApp] No se pudo generar el data URL del QR:', e.message);
+  }
+
+  // 3) Fallback ASCII (sin `small` para que sea más escaneable).
+  console.log('\n📱 (Fallback) QR en terminal — WhatsApp → Dispositivos vinculados → Vincular un dispositivo:\n');
+  qrcode.generate(qr, { small: false });
+  console.log('\n');
 }
 
 // ─── Conexión principal ───────────────────────────────────────────────────────
@@ -55,9 +88,7 @@ export async function connect({ onMessage }) {
 
       sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
         if (qr) {
-          console.log('\n📱 Escaneá este QR con WhatsApp → Dispositivos vinculados → Vincular un dispositivo:\n');
-          qrcode.generate(qr, { small: true });
-          console.log('\n');
+          renderQR(qr).catch((e) => console.error('[WhatsApp] Error generando QR:', e.message));
         }
         if (connection === 'open') {
           console.log('[WhatsApp] Conectado ✅');
