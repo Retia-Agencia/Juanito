@@ -11,6 +11,7 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import { mkdirSync } from 'fs';
+import qrcode from 'qrcode-terminal';
 import { saveMessage } from '../db/index.js';
 import db from '../db/index.js';
 
@@ -48,21 +49,16 @@ export async function connect({ onMessage }) {
           keys: makeCacheableSignalKeyStore(state.keys),
         },
         browser: Browsers.ubuntu('Chrome'),
-        // QR en consola — aparece en `docker logs juanito-agent`
-        // Escanearlo con: WhatsApp → Dispositivos vinculados → Vincular un dispositivo
-        printQRInTerminal: true,
       });
-
-      if (!sock.authState.creds.registered) {
-        console.log(
-          '\n📱 Esperando vinculación — escaneá el QR de arriba con WhatsApp:' +
-          '\n   Ajustes → Dispositivos vinculados → Vincular un dispositivo\n'
-        );
-      }
 
       sock.ev.on('creds.update', saveCreds);
 
-      sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
+      sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
+        if (qr) {
+          console.log('\n📱 Escaneá este QR con WhatsApp → Dispositivos vinculados → Vincular un dispositivo:\n');
+          qrcode.generate(qr, { small: true });
+          console.log('\n');
+        }
         if (connection === 'open') {
           console.log('[WhatsApp] Conectado ✅');
           hasConnected = true;
