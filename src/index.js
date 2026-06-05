@@ -29,8 +29,8 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId }
 }
 
 async function bootstrap() {
-  startAllJobs();
   await connect({ onMessage });
+  startAllJobs();
   console.log('\n🚀 Juanito corriendo — escuchando WhatsApp\n');
 }
 

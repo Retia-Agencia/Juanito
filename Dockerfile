@@ -19,6 +19,7 @@ WORKDIR /app
 COPY --from=builder /app/node_modules ./node_modules
 COPY package*.json ./
 COPY src/ ./src/
+COPY scripts/ ./scripts/
 COPY entrypoint.sh ./entrypoint.sh
 
 RUN mkdir -p /app/data && chmod +x /app/entrypoint.sh
