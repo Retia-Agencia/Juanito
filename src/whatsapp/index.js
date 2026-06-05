@@ -84,6 +84,9 @@ export async function connect({ onMessage }) {
           keys: makeCacheableSignalKeyStore(state.keys),
         },
         browser: Browsers.ubuntu('Chrome'),
+        // Necesario para que Baileys pueda resolver reintentos de descifrado
+        // cuando el session Signal del remitente cambia (LID key rotation).
+        getMessage: async () => ({ conversation: '' }),
       });
 
       sock.ev.on('creds.update', saveCreds);
@@ -119,12 +122,9 @@ export async function connect({ onMessage }) {
         }
       });
 
-      // Mensajes entrantes
-      sock.ev.process(async (events) => {
-        const keys = Object.keys(events);
-        if (keys.length) console.log(`[Debug] ev.process: ${keys.join(', ')}`);
-        if (!events['messages.upsert']) return;
-        const { messages, type } = events['messages.upsert'];
+      // Mensajes entrantes — ev.on es el API estable; ev.process tiene problemas
+      // de buffering en Baileys v7 RC que hacen que messages.upsert nunca dispare.
+      sock.ev.on('messages.upsert', async ({ messages, type }) => {
         console.log(`[Debug] messages.upsert type=${type} count=${messages.length}`);
         if (type !== 'notify') return;
 
