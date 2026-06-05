@@ -9,7 +9,7 @@ import { phonesMatch } from './common/utils.js';
 
 const BOSS_PHONE = () => process.env.BOSS_PHONE;
 
-async function onMessage({ chatId, isGroup, text, sender, groupName, messageId }) {
+async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, isBotMentioned }) {
   if (!text) return;
 
   if (!isGroup) {
@@ -29,7 +29,7 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId }
   }
 
   // Grupo: el mensaje ya fue guardado pasivamente por whatsapp/index.js
-  await handleGroupMessage({ chatId, groupName, text, sender, isGroup, messageId }).catch((e) =>
+  await handleGroupMessage({ chatId, groupName, text, sender, isGroup, messageId, isBotMentioned }).catch((e) =>
     console.error('[Main] handleGroupMessage:', e.message)
   );
 }

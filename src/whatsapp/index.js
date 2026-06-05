@@ -22,7 +22,8 @@ const SESSION_PATH = process.env.WA_SESSION_PATH || './data/wa-session';
 const QR_PATH = process.env.WA_QR_PATH || './data/wa-qr.png';
 
 let sock = null;
-let botJid = null; // JID propio del bot, se llena al conectar
+let botJid = null;    // "573332761238@s.whatsapp.net"
+let botLidNum = null; // "31302527013028" — LID numérico del bot, WA lo usa en mentionedJid
 
 // ─── Resolución de LID → JID de teléfono ──────────────────────────────────────
 // WhatsApp multi-device usa LIDs (@lid) para el routing Signal interno.
@@ -127,11 +128,15 @@ export async function connect({ onMessage }) {
         }
         if (connection === 'open') {
           markConnected();
-          // Guardar JID propio para detectar @mentions en grupos
+          // Guardar JID y LID propios para detectar @mentions en grupos.
+          // WhatsApp usa el LID (no el teléfono) en mentionedJid para cuentas multi-device.
           botJid = sock.user?.id
             ? sock.user.id.split(':')[0] + '@s.whatsapp.net'
             : null;
-          console.log('[WhatsApp] Conectado ✅', botJid ? `(JID: ${botJid})` : '');
+          botLidNum = sock.user?.lid
+            ? sock.user.lid.split(':')[0]
+            : null;
+          console.log(`[WhatsApp] Conectado ✅ (JID: ${botJid}, LID: ${botLidNum})`);
           hasConnected = true;
           resolve();
           return;
@@ -195,12 +200,15 @@ export async function connect({ onMessage }) {
             : chatId;
           const senderName = msg.pushName || sender;
 
-          // Detectar @mention real de WhatsApp (requiere extendedTextMessage con contextInfo)
+          // Detectar @mention real de WhatsApp.
+          // WA usa el LID del bot (no el teléfono) en mentionedJid en cuentas multi-device.
           const mentionedJids =
             msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
-          const isBotMentioned = botJid
-            ? mentionedJids.some((jid) => phonesMatch(jid, botJid))
-            : false;
+          const isBotMentioned = mentionedJids.some(
+            (jid) =>
+              (botJid && phonesMatch(jid, botJid)) ||
+              (botLidNum && jid?.startsWith(botLidNum))
+          );
 
           let groupName = chatId;
           if (isGroup) {

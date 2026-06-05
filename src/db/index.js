@@ -57,14 +57,22 @@ export function saveReminder({ text, dueAt, toPhone = null, createdBy = null }) 
     .run(text, dueAt, toPhone, createdBy);
 }
 
+// Hora local como string YYYY-MM-DD HH:MM:SS comparable con due_at.
+// SQLite 'localtime' falla en Alpine (sin tzdata), así que usamos JS Date.
+function localNow(offsetHours = 0) {
+  return new Date(Date.now() + offsetHours * 3600000).toLocaleString('sv', {
+    timeZone: process.env.TZ || 'America/Bogota',
+  });
+}
+
 export function getPendingReminders() {
   return db
     .prepare(`
       SELECT * FROM reminders
-      WHERE status = 'pending' AND due_at <= datetime('now', 'localtime')
+      WHERE status = 'pending' AND due_at <= ?
       ORDER BY due_at ASC
     `)
-    .all();
+    .all(localNow());
 }
 
 export function markReminderSent(id) {
@@ -91,11 +99,10 @@ export function getUpcomingReminders(hours = 24) {
   return db
     .prepare(`
       SELECT * FROM reminders
-      WHERE status = 'pending' AND due_at > datetime('now', 'localtime')
-        AND due_at <= datetime('now', 'localtime', '+' || ? || ' hours')
+      WHERE status = 'pending' AND due_at > ? AND due_at <= ?
       ORDER BY due_at ASC
     `)
-    .all(hours);
+    .all(localNow(), localNow(hours));
 }
 
 // ─── Resúmenes de chats/grupos ────────────────────────────────────────────────
