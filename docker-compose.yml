@@ -1,81 +1,29 @@
 # docker-compose.yml
-# Levanta el agente + OpenWA juntos en el VPS
 
 services:
-
-  # ─── OpenWA: gateway del número del jefe ────────────────────────────────────
-  openwa-api:
-    image: ghcr.io/rmyndharis/openwa:latest
-    container_name: openwa-api
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:2785:2785"
-    environment:
-      - NODE_ENV=production
-      - PORT=2785
-      - DATABASE_TYPE=sqlite
-      - DATABASE_NAME=/app/data/openwa.sqlite
-      - ENGINE_TYPE=whatsapp-web.js
-      - SESSION_DATA_PATH=/app/data/sessions
-      - STORAGE_TYPE=local
-      - STORAGE_LOCAL_PATH=/app/data/media
-      - PUPPETEER_HEADLESS=true
-      - PUPPETEER_ARGS=--no-sandbox,--disable-setuid-sandbox,--disable-dev-shm-usage,--disable-gpu
-    volumes:
-      - openwa-data:/app/data
-    healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:2785/api/health', r => process.exit(r.statusCode===200?0:1))"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
-  # ─── Second Brain Agent ───────────────────────────────────────────────────────
   agent:
     build: .
-    container_name: second-brain-agent
+    container_name: juanito-agent
     restart: unless-stopped
-    ports:
-      # Puerto del host configurable para NO colisionar con el otro bot del VPS.
-      # Si 3000 ya está en uso, define AGENT_PORT en .env (ej: AGENT_PORT=3100).
-      - "127.0.0.1:${AGENT_PORT:-3000}:3000"
+    # Sin puertos expuestos: Baileys abre una conexión saliente a WA,
+    # no recibe tráfico entrante.
     environment:
       - NODE_ENV=production
-      - PORT=3000
       - TZ=${TZ:-America/Bogota}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-20250514}
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-6}
       - CLAUDE_MAX_TOKENS=${CLAUDE_MAX_TOKENS:-2048}
-      - META_PHONE_NUMBER_ID=${META_PHONE_NUMBER_ID}
-      - META_WHATSAPP_TOKEN=${META_WHATSAPP_TOKEN}
-      - META_GRAPH_VERSION=${META_GRAPH_VERSION:-v22.0}
-      - META_VERIFY_TOKEN=${META_VERIFY_TOKEN}
-      - META_APP_SECRET=${META_APP_SECRET}
-      - META_WABA_ID=${META_WABA_ID}
-      - REMINDER_TEMPLATE_NAME=${REMINDER_TEMPLATE_NAME:-reminder_utility}
-      - REMINDER_TEMPLATE_LANG=${REMINDER_TEMPLATE_LANG:-es}
       - BOSS_PHONE=${BOSS_PHONE}
-      - OPENWA_URL=http://openwa-api:2785/api
-      - OPENWA_API_KEY=${OPENWA_API_KEY}
-      - OPENWA_SESSION_ID=${OPENWA_SESSION_ID}
-      - OPENWA_WEBHOOK_SECRET=${OPENWA_WEBHOOK_SECRET}
-      - PUBLIC_URL=${PUBLIC_URL}
-      - DB_PATH=/app/data/brain.sqlite
       - BOT_NAME=${BOT_NAME:-Juanito}
+      - AGENT_PHONE=${AGENT_PHONE}
+      - DB_PATH=/app/data/brain.sqlite
+      - WA_SESSION_PATH=/app/data/wa-session
       - MAX_GROUPS_PER_CYCLE=${MAX_GROUPS_PER_CYCLE:-10}
+      - SUMMARY_CRON=${SUMMARY_CRON:-0 */4 * * *}
+      - SUMMARY_CYCLE_HOURS=${SUMMARY_CYCLE_HOURS:-4}
     volumes:
       - agent-data:/app/data
-    depends_on:
-      openwa-api:
-        condition: service_healthy
-        required: false
 
 volumes:
-  openwa-data:
-    driver: local
   agent-data:
     driver: local
-
-networks:
-  default:
-    name: second-brain-network

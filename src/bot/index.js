@@ -4,7 +4,7 @@
 // chat(); acá solo queda dedup, autorización y el envío de la respuesta.
 
 import { chat, summarizeGroupMessages } from '../claude/index.js';
-import { sendMessage } from '../meta/index.js';
+import { sendMessage } from '../whatsapp/index.js';
 import { saveSummary, markIfNew } from '../db/index.js';
 import { phonesMatch } from '../common/utils.js';
 
