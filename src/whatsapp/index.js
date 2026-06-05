@@ -12,6 +12,7 @@ import makeWASocket, {
 import { Boom } from '@hapi/boom';
 import { mkdirSync } from 'fs';
 import qrcode from 'qrcode-terminal';
+import { updateQR, markConnected, startQRServer } from './qr-server.js';
 import { saveMessage } from '../db/index.js';
 import db from '../db/index.js';
 
@@ -34,6 +35,7 @@ function toJid(raw) {
 
 export async function connect({ onMessage }) {
   mkdirSync(SESSION_PATH, { recursive: true });
+  startQRServer(Number(process.env.QR_PORT) || 0);
 
   const { state, saveCreds } = await useMultiFileAuthState(SESSION_PATH);
   const { version } = await fetchLatestBaileysVersion();
@@ -55,11 +57,13 @@ export async function connect({ onMessage }) {
 
       sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
         if (qr) {
+          updateQR(qr);
           console.log('\n📱 Escaneá este QR con WhatsApp → Dispositivos vinculados → Vincular un dispositivo:\n');
           qrcode.generate(qr, { small: true });
           console.log('\n');
         }
         if (connection === 'open') {
+          markConnected();
           console.log('[WhatsApp] Conectado ✅');
           hasConnected = true;
           resolve();
