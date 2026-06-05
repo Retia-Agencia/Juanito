@@ -13,6 +13,7 @@ import { Boom } from '@hapi/boom';
 import { mkdirSync } from 'fs';
 import qrcode from 'qrcode-terminal';
 import QRCode from 'qrcode';
+import { updateQR, markConnected, startQRServer } from './qr-server.js';
 import { saveMessage } from '../db/index.js';
 import db from '../db/index.js';
 
@@ -67,6 +68,7 @@ async function renderQR(qr) {
 
 export async function connect({ onMessage }) {
   mkdirSync(SESSION_PATH, { recursive: true });
+  startQRServer(Number(process.env.QR_PORT) || 0);
 
   const { state, saveCreds } = await useMultiFileAuthState(SESSION_PATH);
   const { version } = await fetchLatestBaileysVersion();
@@ -88,9 +90,13 @@ export async function connect({ onMessage }) {
 
       sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
         if (qr) {
+          // Alimenta el qr-server (inerte si QR_PORT no está seteado) y además
+          // genera el PNG/dataURL + fallback ASCII en logs.
+          updateQR(qr);
           renderQR(qr).catch((e) => console.error('[WhatsApp] Error generando QR:', e.message));
         }
         if (connection === 'open') {
+          markConnected();
           console.log('[WhatsApp] Conectado ✅');
           hasConnected = true;
           resolve();
