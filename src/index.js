@@ -13,8 +13,14 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId }
   if (!text) return;
 
   if (!isGroup) {
-    // DM: solo procesar si es del jefe
-    if (phonesMatch(sender, BOSS_PHONE())) {
+    // DM: procesar si es del jefe (phone JID) o un LID no resuelto.
+    // Los LID (@lid) son JIDs del protocolo multi-device de WA que no siempre
+    // se pueden mapear a número antes de recibir el primer mensaje.
+    const isBoss = phonesMatch(sender, BOSS_PHONE()) || sender?.endsWith('@lid');
+    if (isBoss) {
+      if (sender?.endsWith('@lid')) {
+        console.log(`[Main] DM de LID no resuelto: ${sender} — tratando como jefe`);
+      }
       await handleBossMessage({ from: sender, text, messageId }).catch((e) =>
         console.error('[Main] handleBossMessage:', e.message)
       );

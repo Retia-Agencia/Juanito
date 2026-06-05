@@ -61,7 +61,7 @@ export function getPendingReminders() {
   return db
     .prepare(`
       SELECT * FROM reminders
-      WHERE status = 'pending' AND due_at <= datetime('now')
+      WHERE status = 'pending' AND due_at <= datetime('now', 'localtime')
       ORDER BY due_at ASC
     `)
     .all();
@@ -91,8 +91,8 @@ export function getUpcomingReminders(hours = 24) {
   return db
     .prepare(`
       SELECT * FROM reminders
-      WHERE status = 'pending' AND due_at > datetime('now')
-        AND due_at <= datetime('now', '+' || ? || ' hours')
+      WHERE status = 'pending' AND due_at > datetime('now', 'localtime')
+        AND due_at <= datetime('now', 'localtime', '+' || ? || ' hours')
       ORDER BY due_at ASC
     `)
     .all(hours);
@@ -196,6 +196,29 @@ export function markIfNew(messageId) {
   }
 }
 
+// ─── Rate limiting de grupos ──────────────────────────────────────────────────
+// Devuelve true si el remitente puede enviar (e incrementa el contador),
+// false si ya alcanzó el límite diario.
+
+export function checkAndIncrementGroupUsage(sender, limit) {
+  const today = new Date().toLocaleDateString('en-CA', {
+    timeZone: process.env.TZ || 'America/Bogota',
+  }); // YYYY-MM-DD en hora local
+
+  const row = db
+    .prepare(`SELECT count FROM group_usage WHERE sender = ? AND date = ?`)
+    .get(sender, today);
+
+  if ((row?.count || 0) >= limit) return false;
+
+  db.prepare(`
+    INSERT INTO group_usage (sender, date, count) VALUES (?, ?, 1)
+    ON CONFLICT(sender, date) DO UPDATE SET count = count + 1
+  `).run(sender, today);
+
+  return true;
+}
+
 // ─── Limpieza periódica ───────────────────────────────────────────────────────
 
 export function cleanup() {
@@ -204,6 +227,7 @@ export function cleanup() {
     `DELETE FROM reminders WHERE status = 'sent' AND due_at < datetime('now', '-30 days')`,
     `DELETE FROM group_context WHERE created_at < datetime('now', '-14 days')`,
     `DELETE FROM processed_messages WHERE created_at < datetime('now', '-7 days')`,
+    `DELETE FROM group_usage WHERE date < date('now', 'localtime', '-7 days')`,
   ];
   let total = 0;
   for (const sql of stmts) total += db.prepare(sql).run().changes;

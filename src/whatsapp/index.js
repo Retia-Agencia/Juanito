@@ -16,11 +16,25 @@ import QRCode from 'qrcode';
 import { updateQR, markConnected, startQRServer } from './qr-server.js';
 import { saveMessage } from '../db/index.js';
 import db from '../db/index.js';
+import { phonesMatch } from '../common/utils.js';
 
 const SESSION_PATH = process.env.WA_SESSION_PATH || './data/wa-session';
 const QR_PATH = process.env.WA_QR_PATH || './data/wa-qr.png';
 
 let sock = null;
+let botJid = null; // JID propio del bot, se llena al conectar
+
+// ─── Resolución de LID → JID de teléfono ──────────────────────────────────────
+// WhatsApp multi-device usa LIDs (@lid) para el routing Signal interno.
+// Los mensajes llegan con remoteJid=@lid en vez de @s.whatsapp.net.
+// contacts.upsert proporciona el mapeo LID ↔ phone JID.
+
+const lidMap = new Map();
+
+function resolveJid(jid) {
+  if (!jid || !jid.endsWith('@lid')) return jid;
+  return lidMap.get(jid) || jid;
+}
 
 // ─── Normalización de JID ─────────────────────────────────────────────────────
 
@@ -91,6 +105,21 @@ export async function connect({ onMessage }) {
 
       sock.ev.on('creds.update', saveCreds);
 
+      // Construir mapa LID ↔ phone JID a medida que llegan actualizaciones de contactos
+      sock.ev.on('contacts.upsert', (contacts) => {
+        for (const c of contacts) {
+          if (c.lid && c.id) {
+            lidMap.set(c.lid, c.id);
+            lidMap.set(c.id, c.lid);
+          }
+        }
+      });
+      sock.ev.on('contacts.update', (updates) => {
+        for (const u of updates) {
+          if (u.lid && u.id) lidMap.set(u.lid, u.id);
+        }
+      });
+
       sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
         if (qr) {
           updateQR(qr);
@@ -98,7 +127,11 @@ export async function connect({ onMessage }) {
         }
         if (connection === 'open') {
           markConnected();
-          console.log('[WhatsApp] Conectado ✅');
+          // Guardar JID propio para detectar @mentions en grupos
+          botJid = sock.user?.id
+            ? sock.user.id.split(':')[0] + '@s.whatsapp.net'
+            : null;
+          console.log('[WhatsApp] Conectado ✅', botJid ? `(JID: ${botJid})` : '');
           hasConnected = true;
           resolve();
           return;
@@ -129,11 +162,21 @@ export async function connect({ onMessage }) {
         if (type !== 'notify') return;
 
         for (const msg of messages) {
-          const chatId = msg.key.remoteJid;
-          const isGroup = chatId?.endsWith('@g.us');
+          const rawJid = msg.key.remoteJid;
+          const isGroup = rawJid?.endsWith('@g.us');
+
+          // Resolver LID → phone JID. Si no está en lidMap, buscar en sock.contacts.
+          if (!isGroup && rawJid?.endsWith('@lid') && !lidMap.has(rawJid)) {
+            const entry = Object.entries(sock?.contacts || {}).find(([, c]) => c.lid === rawJid);
+            if (entry) {
+              lidMap.set(rawJid, entry[0]);
+              lidMap.set(entry[0], rawJid);
+            }
+          }
+          const chatId = isGroup ? rawJid : (resolveJid(rawJid) || rawJid);
           const messageId = msg.key.id;
           const msgTypes = Object.keys(msg.message || {}).join(',');
-          console.log(`[Debug] fromMe=${msg.key.fromMe} chatId=${chatId} types=${msgTypes}`);
+          console.log(`[Debug] fromMe=${msg.key.fromMe} rawJid=${rawJid} chatId=${chatId} types=${msgTypes}`);
 
           if (msg.key.fromMe) continue;
           if (!msg.message) continue;
@@ -146,8 +189,18 @@ export async function connect({ onMessage }) {
           console.log(`[Debug] text="${text?.slice(0, 40)}" isGroup=${isGroup}`);
           if (!text) continue;
 
-          const sender = isGroup ? (msg.key.participant || chatId) : chatId;
+          const rawParticipant = msg.key.participant;
+          const sender = isGroup
+            ? (resolveJid(rawParticipant) || rawParticipant || chatId)
+            : chatId;
           const senderName = msg.pushName || sender;
+
+          // Detectar @mention real de WhatsApp (requiere extendedTextMessage con contextInfo)
+          const mentionedJids =
+            msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+          const isBotMentioned = botJid
+            ? mentionedJids.some((jid) => phonesMatch(jid, botJid))
+            : false;
 
           let groupName = chatId;
           if (isGroup) {
@@ -173,7 +226,7 @@ export async function connect({ onMessage }) {
             }
           }
 
-          await onMessage({ chatId, isGroup, text, sender, groupName, messageId }).catch((e) =>
+          await onMessage({ chatId, isGroup, text, sender, groupName, messageId, isBotMentioned }).catch((e) =>
             console.error('[WhatsApp] Error en onMessage:', e.message)
           );
         }

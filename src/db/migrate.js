@@ -87,6 +87,14 @@ db.exec(`
     message_id  TEXT PRIMARY KEY,
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  -- Uso diario por remitente en grupos (rate limiting)
+  CREATE TABLE IF NOT EXISTS group_usage (
+    sender  TEXT NOT NULL,
+    date    TEXT NOT NULL,   -- YYYY-MM-DD en hora local
+    count   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (sender, date)
+  );
 `);
 
 // ─── 2. Migración de bases existentes (esquema viejo) ─────────────────────────
