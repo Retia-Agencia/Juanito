@@ -90,8 +90,6 @@ export async function connect({ onMessage }) {
 
       sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
         if (qr) {
-          // Alimenta el qr-server (inerte si QR_PORT no está seteado) y además
-          // genera el PNG/dataURL + fallback ASCII en logs.
           updateQR(qr);
           renderQR(qr).catch((e) => console.error('[WhatsApp] Error generando QR:', e.message));
         }
@@ -113,10 +111,8 @@ export async function connect({ onMessage }) {
           }
 
           if (hasConnected) {
-            // Ya estábamos conectados — entrypoint.sh maneja el restart con backoff
             process.exit(1);
           } else {
-            // Aún en fase de pairing — reconectar internamente en 3 segundos
             console.log('[WhatsApp] Reconectando para nuevo QR...');
             setTimeout(createSocket, 3000);
           }
@@ -124,22 +120,30 @@ export async function connect({ onMessage }) {
       });
 
       // Mensajes entrantes
-      sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      sock.ev.process(async (events) => {
+        const keys = Object.keys(events);
+        if (keys.length) console.log(`[Debug] ev.process: ${keys.join(', ')}`);
+        if (!events['messages.upsert']) return;
+        const { messages, type } = events['messages.upsert'];
+        console.log(`[Debug] messages.upsert type=${type} count=${messages.length}`);
         if (type !== 'notify') return;
 
         for (const msg of messages) {
-          if (msg.key.fromMe) continue;
-          if (!msg.message) continue;
-
           const chatId = msg.key.remoteJid;
           const isGroup = chatId?.endsWith('@g.us');
           const messageId = msg.key.id;
+          const msgTypes = Object.keys(msg.message || {}).join(',');
+          console.log(`[Debug] fromMe=${msg.key.fromMe} chatId=${chatId} types=${msgTypes}`);
+
+          if (msg.key.fromMe) continue;
+          if (!msg.message) continue;
 
           const text =
             msg.message?.conversation ||
             msg.message?.extendedTextMessage?.text ||
             null;
 
+          console.log(`[Debug] text="${text?.slice(0, 40)}" isGroup=${isGroup}`);
           if (!text) continue;
 
           const sender = isGroup ? (msg.key.participant || chatId) : chatId;
