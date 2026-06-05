@@ -8,14 +8,14 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "migrate": "node src/db/migrate.js",
+    "contact": "node scripts/add-contact.js",
     "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.27.0",
-    "axios": "^1.7.0",
+    "@whiskeysockets/baileys": "^7.0.0-rc13",
     "better-sqlite3": "^11.0.0",
     "cron": "^3.1.7",
-    "dotenv": "^16.4.0",
-    "express": "^4.19.0"
+    "dotenv": "^16.4.0"
   }
 }
