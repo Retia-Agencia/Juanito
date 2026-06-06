@@ -5,6 +5,7 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
+import { normalizePhone } from '../common/utils.js';
 
 const DB_PATH = process.env.DB_PATH || './data/brain.sqlite';
 mkdirSync(dirname(DB_PATH), { recursive: true });
@@ -196,6 +197,93 @@ export function markIfNew(messageId) {
   }
 }
 
+// ─── Calendly: pushes precall (dedup + agenda de Push 3) ──────────────────────
+// Devuelve 'new' | 'rescheduled' | 'unchanged'. Solo actualiza filas todavía
+// 'scheduled' (no resucita las ya 'sent'/'skipped').
+
+export function scheduleCalendlyPush(p) {
+  const existing = db
+    .prepare(`SELECT id, status, call_start FROM calendly_pushes WHERE event_uuid = ? AND push_n = ?`)
+    .get(p.event_uuid, p.push_n);
+
+  if (!existing) {
+    db.prepare(`
+      INSERT INTO calendly_pushes
+        (event_uuid, push_n, closer_email, closer_phone, prospect_name,
+         prospect_phone, call_start, due_at, message)
+      VALUES
+        (@event_uuid, @push_n, @closer_email, @closer_phone, @prospect_name,
+         @prospect_phone, @call_start, @due_at, @message)
+    `).run(p);
+    return 'new';
+  }
+
+  if (existing.status === 'scheduled' && existing.call_start !== p.call_start) {
+    db.prepare(`
+      UPDATE calendly_pushes
+      SET closer_email = @closer_email, closer_phone = @closer_phone,
+          prospect_name = @prospect_name, prospect_phone = @prospect_phone,
+          call_start = @call_start, due_at = @due_at, message = @message
+      WHERE id = @id
+    `).run({ ...p, id: existing.id });
+    return 'rescheduled';
+  }
+
+  return 'unchanged';
+}
+
+export function getDueCalendlyPushes() {
+  return db
+    .prepare(`
+      SELECT * FROM calendly_pushes
+      WHERE status = 'scheduled' AND due_at <= datetime('now')
+      ORDER BY due_at ASC
+    `)
+    .all();
+}
+
+export function markCalendlyPushSent(id) {
+  return db
+    .prepare(`UPDATE calendly_pushes SET status = 'sent', sent_at = datetime('now') WHERE id = ?`)
+    .run(id);
+}
+
+export function markCalendlyPushSkipped(id, reason = '') {
+  return db
+    .prepare(
+      `UPDATE calendly_pushes SET status = 'skipped', message = COALESCE(message,'') || ' | skip: ' || ? WHERE id = ?`
+    )
+    .run(reason, id);
+}
+
+// ─── Calendly: opt-in de closers (anti-baneo) ─────────────────────────────────
+// Solo se envía a un closer si su número ya escribió a Juanito (quedó registrado).
+
+export function registerOptin({ phone, closerEmail = null, name = null }) {
+  const p = normalizePhone(phone);
+  if (!p) return null;
+  return db
+    .prepare(`
+      INSERT INTO calendly_optins (phone, closer_email, name)
+      VALUES (?, ?, ?)
+      ON CONFLICT(phone) DO UPDATE SET
+        closer_email = excluded.closer_email, name = excluded.name
+    `)
+    .run(p, closerEmail, name);
+}
+
+export function isOptedIn(phone) {
+  const p = normalizePhone(phone);
+  if (!p) return false;
+  return !!db.prepare(`SELECT 1 FROM calendly_optins WHERE phone = ?`).get(p);
+}
+
+export function listOptins() {
+  return db
+    .prepare(`SELECT phone, closer_email, name, registered_at FROM calendly_optins ORDER BY registered_at ASC`)
+    .all();
+}
+
 // ─── Limpieza periódica ───────────────────────────────────────────────────────
 
 export function cleanup() {
@@ -204,6 +292,7 @@ export function cleanup() {
     `DELETE FROM reminders WHERE status = 'sent' AND due_at < datetime('now', '-30 days')`,
     `DELETE FROM group_context WHERE created_at < datetime('now', '-14 days')`,
     `DELETE FROM processed_messages WHERE created_at < datetime('now', '-7 days')`,
+    `DELETE FROM calendly_pushes WHERE status != 'scheduled' AND created_at < datetime('now', '-30 days')`,
   ];
   let total = 0;
   for (const sql of stmts) total += db.prepare(sql).run().changes;

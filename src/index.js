@@ -4,6 +4,7 @@
 import 'dotenv/config';
 import { connect } from './whatsapp/index.js';
 import { handleBossMessage, handleGroupMessage } from './bot/index.js';
+import { handleCloserOptin } from './calendly/optin.js';
 import { startAllJobs } from './scheduler/index.js';
 import { phonesMatch } from './common/utils.js';
 
@@ -13,12 +14,17 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId }
   if (!text) return;
 
   if (!isGroup) {
-    // DM: solo procesar si es del jefe
+    // DM del jefe → asistente completo
     if (phonesMatch(sender, BOSS_PHONE())) {
       await handleBossMessage({ from: sender, text, messageId }).catch((e) =>
         console.error('[Main] handleBossMessage:', e.message)
       );
+      return;
     }
+    // DM de un closer → registrar su opt-in (si es un closer conocido)
+    await handleCloserOptin({ from: sender, messageId }).catch((e) =>
+      console.error('[Main] handleCloserOptin:', e.message)
+    );
     return;
   }
 

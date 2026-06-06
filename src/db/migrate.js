@@ -87,6 +87,33 @@ db.exec(`
     message_id  TEXT PRIMARY KEY,
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  -- Pushes precall de Calendly (dedup + agenda de Push 3)
+  CREATE TABLE IF NOT EXISTS calendly_pushes (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_uuid     TEXT NOT NULL,
+    push_n         INTEGER NOT NULL DEFAULT 3,
+    closer_email   TEXT,
+    closer_phone   TEXT,
+    prospect_name  TEXT,
+    prospect_phone TEXT,
+    call_start     TEXT NOT NULL,                   -- 'YYYY-MM-DD HH:MM:SS' UTC
+    due_at         TEXT NOT NULL,                   -- 'YYYY-MM-DD HH:MM:SS' UTC
+    status         TEXT NOT NULL DEFAULT 'scheduled', -- scheduled | sent | skipped
+    message        TEXT,
+    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+    sent_at        DATETIME,
+    UNIQUE(event_uuid, push_n)
+  );
+
+  -- Opt-in de closers: solo se les envía si primero le escribieron a Juanito
+  -- (práctica anti-baneo: el bot nunca escribe a quien no lo contactó antes)
+  CREATE TABLE IF NOT EXISTS calendly_optins (
+    phone         TEXT PRIMARY KEY,        -- número normalizado (solo dígitos)
+    closer_email  TEXT,
+    name          TEXT,
+    registered_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // ─── 2. Migración de bases existentes (esquema viejo) ─────────────────────────
@@ -116,6 +143,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_reminders_pending ON reminders(status, due_at);
   CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name);
   CREATE INDEX IF NOT EXISTS idx_group_context_created ON group_context(created_at);
+  CREATE INDEX IF NOT EXISTS idx_calendly_pushes_due ON calendly_pushes(status, due_at);
 `);
 
 console.log('✅ Base de datos lista en', DB_PATH);

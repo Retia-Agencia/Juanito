@@ -6,6 +6,7 @@
 
 import { CronJob } from 'cron';
 import { startReminderJob } from './reminders.js';
+import { startCalendlyJobs } from './calendly.js';
 import { cleanup } from '../db/index.js';
 
 const TZ = () => process.env.TZ || 'America/Bogota';
@@ -35,6 +36,13 @@ export function startCleanupJob() {
 export async function startAllJobs() {
   startReminderJob();
   startCleanupJob();
+
+  // Recordatorios precall de Calendly (se autodesactiva si falta CALENDLY_TOKEN)
+  try {
+    startCalendlyJobs();
+  } catch (err) {
+    console.warn('[Scheduler] Calendly no disponible:', err.message);
+  }
 
   // El job de resúmenes lo aporta el Track B. Mientras no exista en la rama,
   // se omite sin romper el arranque (se activa solo tras el merge de SYNC 2).
