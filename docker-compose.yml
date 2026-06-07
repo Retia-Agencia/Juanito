@@ -21,6 +21,17 @@ services:
       - MAX_GROUPS_PER_CYCLE=${MAX_GROUPS_PER_CYCLE:-10}
       - SUMMARY_CRON=${SUMMARY_CRON:-0 */4 * * *}
       - SUMMARY_CYCLE_HOURS=${SUMMARY_CYCLE_HOURS:-4}
+      # Calendly precall pushes — sin estas vars el job arranca desactivado.
+      # DRY_RUN y REQUIRE_OPTIN quedan en su default seguro (true) si no se setean.
+      - CALENDLY_TOKEN=${CALENDLY_TOKEN}
+      - CALENDLY_DRY_RUN=${CALENDLY_DRY_RUN:-true}
+      - CALENDLY_REQUIRE_OPTIN=${CALENDLY_REQUIRE_OPTIN:-true}
+      - CALENDLY_EVENT_TYPES=${CALENDLY_EVENT_TYPES:-}
+      - CALENDLY_GROUP_URI=${CALENDLY_GROUP_URI:-}
+      - CALENDLY_PUSH3_LEAD_MIN=${CALENDLY_PUSH3_LEAD_MIN:-25}
+      - CALENDLY_PUSH1_CRON=${CALENDLY_PUSH1_CRON:-0 19 * * *}
+      - CALENDLY_PUSH2_CRON=${CALENDLY_PUSH2_CRON:-30 6 * * *}
+      - CALENDLY_POLL_CRON=${CALENDLY_POLL_CRON:-*/5 * * * *}
       # QR web server — solo durante la vinculación inicial.
       # Descomentar la línea de abajo y agregar QR_PORT=3001 al .env.
       # Volver a comentar una vez vinculado.
