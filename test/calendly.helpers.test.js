@@ -8,6 +8,7 @@ process.env.TZ = 'America/Bogota';
 
 const {
   firstNameFrom,
+  fullNameFrom,
   closerEmailOf,
   prospectPhoneOf,
   buildPush3Message,
@@ -24,6 +25,14 @@ test('firstNameFrom parsea y capitaliza el primer nombre', () => {
   assert.equal(firstNameFrom('Sebastian Castiblanco'), 'Sebastian');
   assert.equal(firstNameFrom(''), 'el prospecto');
   assert.equal(firstNameFrom(null), 'el prospecto');
+});
+
+test('fullNameFrom limpia y capitaliza solo si viene en minúsculas', () => {
+  assert.equal(fullNameFrom('maría del pilar yangana '), 'María Del Pilar Yangana');
+  assert.equal(fullNameFrom('Sebastian Castiblanco'), 'Sebastian Castiblanco'); // respeta lo escrito
+  assert.equal(fullNameFrom('  Juan   Pérez  '), 'Juan Pérez');
+  assert.equal(fullNameFrom(''), 'el prospecto');
+  assert.equal(fullNameFrom(null), 'el prospecto');
 });
 
 test('closerEmailOf saca el host en minúsculas', () => {
@@ -71,28 +80,39 @@ test('dayRangeUtc devuelve fronteras de día en Bogota (UTC-5)', () => {
   assert.equal(manana.maxStartIso, '2026-06-07T05:00:00.000Z');
 });
 
-test('buildPush3Message incluye nombre, teléfono y maneja el caso sin teléfono', () => {
-  const conTel = buildPush3Message({ firstName: 'Juan', phone: '+57 300 111 2222', startIso: '2026-06-10T20:30:00Z' });
+test('buildPush3Message incluye nombre completo, teléfono y maneja el caso sin teléfono', () => {
+  const conTel = buildPush3Message({ name: 'Juan Pérez', phone: '+57 300 111 2222', startIso: '2026-06-10T20:30:00Z' });
   assert.match(conTel, /Push 3/);
-  assert.match(conTel, /Juan/);
+  assert.match(conTel, /Juan Pérez/);
   assert.match(conTel, /\+57 300 111 2222/);
-  const sinTel = buildPush3Message({ firstName: 'Ana', phone: null, startIso: '2026-06-10T20:30:00Z' });
+  const sinTel = buildPush3Message({ name: 'Ana Gómez', phone: null, startIso: '2026-06-10T20:30:00Z' });
   assert.match(sinTel, /sin teléfono/);
 });
 
-test('buildDigestMessage ordena por hora y lista a cada prospecto', () => {
+test('buildDigestMessage ordena por hora, lista nombre completo y muestra el conteo', () => {
   const msg = buildDigestMessage({
-    pushLabel: 'Push 1',
+    pushLabel: 'Push 1 (la noche anterior)',
     whenLabel: 'mañana (vie 6 jun)',
     items: [
-      { firstName: 'Beto', phone: '+57 1', startIso: '2026-06-06T21:00:00Z' },
-      { firstName: 'Ana', phone: null, startIso: '2026-06-06T15:00:00Z' },
+      { name: 'Beto Ramírez', phone: '+57 1', startIso: '2026-06-06T21:00:00Z' },
+      { name: 'Ana Gómez', phone: null, startIso: '2026-06-06T15:00:00Z' },
     ],
   });
   assert.match(msg, /Push 1/);
+  assert.match(msg, /tienes 2 llamadas/);
+  assert.match(msg, /Beto Ramírez/);
   // Ana (más temprano) debe ir antes que Beto
   assert.ok(msg.indexOf('Ana') < msg.indexOf('Beto'));
   assert.match(msg, /sin teléfono/);
+});
+
+test('buildDigestMessage usa singular con una sola llamada', () => {
+  const msg = buildDigestMessage({
+    pushLabel: 'Push 2 (en la mañana)',
+    whenLabel: 'hoy (vie 6 jun)',
+    items: [{ name: 'Ana Gómez', phone: '+57 1', startIso: '2026-06-06T15:00:00Z' }],
+  });
+  assert.match(msg, /tienes 1 llamada\b/);
 });
 
 test('formatCallTime formatea en hora local', () => {

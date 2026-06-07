@@ -117,6 +117,21 @@ export function firstNameFrom(fullName) {
   return first.charAt(0).toUpperCase() + first.slice(1);
 }
 
+// Nombre completo (limpio). Sirve para desambiguar prospectos con el mismo
+// primer nombre. Respeta lo que escribió el prospecto, salvo que venga todo en
+// minúsculas (entonces capitaliza cada palabra).
+export function fullNameFrom(fullName) {
+  const n = String(fullName || '').trim().replace(/\s+/g, ' ');
+  if (!n) return 'el prospecto';
+  if (n === n.toLowerCase()) {
+    return n
+      .split(' ')
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
+  }
+  return n;
+}
+
 export function closerEmailOf(ev) {
   return ev?.event_memberships?.[0]?.user_email?.toLowerCase() || null;
 }
@@ -137,21 +152,24 @@ export function formatCallTime(startIso, tz = TZ()) {
 
 // ─── Mensajes (plantillas fijas, sin LLM) ─────────────────────────────────────
 
-export function buildPush3Message({ firstName, phone, startIso }) {
+export function buildPush3Message({ name, firstName, phone, startIso }) {
+  const who = name || firstName || 'el prospecto';
   const time = formatCallTime(startIso);
   const tel = phone ? `📞 ${phone}` : '📵 sin teléfono en Calendly';
-  return `🔔 *Push 3* para *${firstName}* — ${tel} — llamada hoy a las ${time}`;
+  return `🔔 *Push 3* (antes de la llamada) para *${who}* — ${tel} — llamada hoy a las ${time}`;
 }
 
 export function buildDigestMessage({ pushLabel, whenLabel, items, tz = TZ() }) {
-  const lines = [...items]
-    .sort((a, b) => new Date(a.startIso) - new Date(b.startIso))
-    .map((it) => {
-      const time = formatCallTime(it.startIso, tz);
-      const tel = it.phone ? `📞 ${it.phone}` : '📵 sin teléfono';
-      return `• ${time} — ${it.firstName} — ${tel}`;
-    });
-  return `📋 *${pushLabel}* — mándales el push a tus llamadas de ${whenLabel}:\n${lines.join('\n')}`;
+  const sorted = [...items].sort((a, b) => new Date(a.startIso) - new Date(b.startIso));
+  const lines = sorted.map((it) => {
+    const who = it.name || it.firstName || 'el prospecto';
+    const time = formatCallTime(it.startIso, tz);
+    const tel = it.phone ? `📞 ${it.phone}` : '📵 sin teléfono';
+    return `• ${time} — ${who} — ${tel}`;
+  });
+  const n = sorted.length;
+  const plural = n === 1 ? 'llamada' : 'llamadas';
+  return `📋 *${pushLabel}* — tienes ${n} ${plural} ${whenLabel}. Mándales su push precall:\n${lines.join('\n')}`;
 }
 
 // ─── Tiempo: cálculos UTC / zona horaria sin librerías ────────────────────────

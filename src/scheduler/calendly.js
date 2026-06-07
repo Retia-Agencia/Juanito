@@ -19,6 +19,7 @@ import {
   getEvent,
   getFirstInvitee,
   firstNameFrom,
+  fullNameFrom,
   closerEmailOf,
   prospectPhoneOf,
   buildPush3Message,
@@ -97,8 +98,9 @@ export async function runCalendlyPoll() {
 
       const invitee = await getFirstInvitee(ev.uri);
       const firstName = firstNameFrom(invitee?.name);
+      const name = fullNameFrom(invitee?.name);
       const phone = prospectPhoneOf(invitee);
-      const message = buildPush3Message({ firstName, phone, startIso: ev.start_time });
+      const message = buildPush3Message({ name, phone, startIso: ev.start_time });
 
       const result = scheduleCalendlyPush({
         event_uuid: uuid,
@@ -209,13 +211,14 @@ async function runDigest(pushN, offsetDays) {
     }
     if (!byCloser.has(closer.phone)) byCloser.set(closer.phone, { name: closer.name, items: [] });
     byCloser.get(closer.phone).items.push({
-      firstName: firstNameFrom(invitee?.name),
+      name: fullNameFrom(invitee?.name),
       phone: prospectPhoneOf(invitee),
       startIso: ev.start_time,
     });
   }
 
-  const label = `Push ${pushN}`;
+  const desc = pushN === 1 ? 'la noche anterior' : 'en la mañana';
+  const label = `Push ${pushN} (${desc})`;
   const when = whenLabel(offsetDays);
   for (const [phone, { items }] of byCloser) {
     const msg = buildDigestMessage({ pushLabel: label, whenLabel: when, items });
