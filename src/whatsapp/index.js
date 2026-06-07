@@ -234,7 +234,7 @@ export async function connect({ onMessage }) {
             }
           }
 
-          await onMessage({ chatId, isGroup, text, sender, groupName, messageId, isBotMentioned }).catch((e) =>
+          await onMessage({ chatId, isGroup, text, sender, groupName, messageId, isBotMentioned, pushName: msg.pushName || null }).catch((e) =>
             console.error('[WhatsApp] Error en onMessage:', e.message)
           );
         }

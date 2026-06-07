@@ -18,7 +18,7 @@ const {
   dayRangeUtc,
   formatCallTime,
 } = await import('../src/calendly/index.js');
-const { resolveCloser, resolveCloserByPhone } = await import('../src/calendly/closers.js');
+const { resolveCloser, resolveCloserByPhone, resolveCloserByPushName } = await import('../src/calendly/closers.js');
 
 test('firstNameFrom parsea y capitaliza el primer nombre', () => {
   assert.equal(firstNameFrom('maría del pilar yangana '), 'María');
@@ -62,6 +62,25 @@ test('resolveCloserByPhone identifica al closer por su número entrante', () => 
   assert.equal(resolveCloserByPhone('573003558574').email, 'mateo.leon@30x.com');
   assert.equal(resolveCloserByPhone('573999999999'), null);
   assert.equal(resolveCloserByPhone(''), null);
+});
+
+test('resolveCloserByPushName resuelve por nombre completo e ignora ambigüedades', () => {
+  // Nombres exactos
+  assert.equal(resolveCloserByPushName('Pablo Lozano').email, 'pablo.lozano@30x.com');
+  assert.equal(resolveCloserByPushName('Daniela Camacho').name, 'Daniela Camacho');
+  // Case insensitive y con emojis
+  assert.equal(resolveCloserByPushName('pablo lozano 📞').phone, '+573046131437');
+  // Mateo Leon (dedup con Equipo EstadoX, mismo teléfono)
+  assert.equal(resolveCloserByPushName('Mateo Leon').phone, '+573003558574');
+  // Dos Sebastians — "Sebastian" solo es ambiguo → null
+  assert.equal(resolveCloserByPushName('Sebastian'), null);
+  // Con apellido → resuelve unívocamente
+  assert.equal(resolveCloserByPushName('Sebastian Salazar').email, 'sebastian.salazar@30x.com');
+  assert.equal(resolveCloserByPushName('Sebastian Rodriguez').email, 'sebastian@30x.com');
+  // No reconocido → null
+  assert.equal(resolveCloserByPushName('Juan Desconocido'), null);
+  assert.equal(resolveCloserByPushName(''), null);
+  assert.equal(resolveCloserByPushName(null), null);
 });
 
 test('push3DueUtc resta el lead time y toSqliteUtc formatea UTC', () => {

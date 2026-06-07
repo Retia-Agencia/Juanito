@@ -36,3 +36,25 @@ export function resolveCloserByPhone(phone) {
   }
   return null;
 }
+
+// Resuelve un closer por su nombre de WhatsApp (pushName), fallback cuando el LID
+// no se puede mapear a teléfono. Requiere que el pushName contenga el nombre completo
+// del closer (ej: "Pablo Lozano") para evitar ambigüedades (ej: dos Sebastians).
+// Devuelve { email, name, phone } | null — null si no hay match o hay ambigüedad.
+export function resolveCloserByPushName(pushName) {
+  if (!pushName) return null;
+  // Quitar emojis/puntuación, lowercase, palabras
+  const words = pushName.toLowerCase().replace(/[^\w\s]/g, '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return null;
+
+  const seen = new Map(); // phone → entry, para deduplicar (ej: Mateo Leon / Equipo EstadoX)
+  for (const [email, c] of Object.entries(CLOSERS)) {
+    // Normalizar nombre del closer: quitar "(EstadoX)" y similares
+    const closerWords = c.name.toLowerCase().replace(/\s*\(.*\)/, '').trim().split(/\s+/).filter(Boolean);
+    // Exigir que TODAS las palabras del closer estén en el pushName (evita falsos parciales)
+    if (closerWords.every(w => words.includes(w))) {
+      if (!seen.has(c.phone)) seen.set(c.phone, { email, name: c.name, phone: c.phone });
+    }
+  }
+  return seen.size === 1 ? [...seen.values()][0] : null;
+}

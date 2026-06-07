@@ -5,13 +5,21 @@
 //
 // Esto se dispara desde src/index.js para DMs que NO son del jefe.
 
-import { resolveCloserByPhone } from './closers.js';
+import { resolveCloserByPhone, resolveCloserByPushName } from './closers.js';
 import { registerOptin, isOptedIn, markIfNew } from '../db/index.js';
 import { sendMessage } from '../whatsapp/index.js';
 
 // Devuelve true si manejó el mensaje (era un closer), false si no.
-export async function handleCloserOptin({ from, messageId }) {
-  const closer = resolveCloserByPhone(from);
+// `pushName` es el nombre WA del remitente: fallback para cuando `from` es un @lid
+// no resuelto a teléfono (WA multi-device). La respuesta se envía a `from` (el @lid
+// también es enrutable por Baileys); el opt-in se guarda por el teléfono canónico
+// del closer (no por el @lid) para que delivery funcione correctamente.
+export async function handleCloserOptin({ from, pushName, messageId }) {
+  let closer = resolveCloserByPhone(from);
+  if (!closer && pushName) {
+    closer = resolveCloserByPushName(pushName);
+    if (closer) console.log(`[Calendly] Closer resuelto por pushName "${pushName}" → ${closer.name}`);
+  }
   if (!closer) return false; // no es un closer conocido → ignorar (no responder a desconocidos)
 
   // Dedup del mensaje entrante

@@ -9,26 +9,31 @@ import { startAllJobs } from './scheduler/index.js';
 import { phonesMatch } from './common/utils.js';
 
 const BOSS_PHONE = () => process.env.BOSS_PHONE;
+// LID del jefe: obtenerlo de los logs al arrancar ("[Main] DM de LID no resuelto: <lid>@lid").
+// Si no está configurado, cualquier @lid no resuelto se trata como jefe (comportamiento anterior).
+const BOSS_LID = () => process.env.BOSS_LID;
 
-async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, isBotMentioned }) {
+async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, isBotMentioned, pushName }) {
   if (!text) return;
 
   if (!isGroup) {
-    // DM: procesar si es del jefe (phone JID) o un LID no resuelto.
-    // Los LID (@lid) son JIDs del protocolo multi-device de WA que no siempre
-    // se pueden mapear a número antes de recibir el primer mensaje.
-    const isBoss = phonesMatch(sender, BOSS_PHONE()) || sender?.endsWith('@lid');
+    // Identificar al jefe por su teléfono O su LID específico.
+    // Con BOSS_LID configurado, los demás @lid van al flujo de opt-in (no al jefe).
+    const bossLid = BOSS_LID();
+    const isBoss = phonesMatch(sender, BOSS_PHONE()) ||
+      (sender?.endsWith('@lid') && (!bossLid || sender === bossLid));
     if (isBoss) {
       if (sender?.endsWith('@lid')) {
-        console.log(`[Main] DM de LID no resuelto: ${sender} — tratando como jefe`);
+        console.log(`[Main] DM de LID del jefe: ${sender}`);
       }
       await handleBossMessage({ from: sender, text, messageId }).catch((e) =>
         console.error('[Main] handleBossMessage:', e.message)
       );
       return;
     }
-    // DM de un closer → registrar su opt-in (si es un closer conocido)
-    await handleCloserOptin({ from: sender, messageId }).catch((e) =>
+    // DM de un closer → registrar su opt-in (si es un closer conocido).
+    // Pasa pushName para resolver closers cuando el LID no se mapea a teléfono.
+    await handleCloserOptin({ from: sender, pushName, messageId }).catch((e) =>
       console.error('[Main] handleCloserOptin:', e.message)
     );
     return;
