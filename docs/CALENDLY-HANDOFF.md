@@ -2,6 +2,10 @@
 
 > Documento de traspaso para continuar el trabajo desde otro computador.
 > Rama: `feat/calendly-precall-pushes`. Última sesión: 2026-06-07.
+>
+> **🟡 ESTADO (2026-06-07): DESPLEGADO en el VPS en DRY-RUN (inerte). Envío real validado
+> end-to-end con un closer (Pablo). Hay UN blocker para el rollout real: el opt-in self-service
+> está roto por el manejo de LID. Ver sección [⚠️ BLOCKER: opt-in roto por LID](#-blocker-para-el-rollout-opt-in-de-closers-roto-por-lid).**
 
 ## Qué es esta feature
 
@@ -43,13 +47,67 @@ Archivos núcleo:
    - **Mapeo de closers: completo** — cero hosts "sin mapear" en la muestra real.
    - Se renderizaron los Push 1 reales de Salazar (7 llamadas) y Maca (8 llamadas): formato OK.
 
-## Estado actual
+## Estado actual (2026-06-07, post-deploy)
 
-- ✅ Código de la feature: completo y con tests pasando.
-- ✅ Formato de mensajes: validado con datos reales.
-- ❌ **NO desplegado en el VPS.** El contenedor `juanito-agent` corre una imagen vieja (build 2026-06-05),
-  anterior a Calendly. El host `/root/juanito` tampoco tiene el módulo Calendly ni `CALENDLY_TOKEN`.
-- ❌ Opt-ins de closers: pendientes (ninguno ha escrito a Juanito todavía).
+- ✅ Código de la feature: completo, tests 12/12.
+- ✅ Formato de mensajes: validado con datos reales (4 días, scoping/filtro/mapeo/teléfonos OK).
+- ✅ **Rama reconciliada con `origin/main`.** La rama estaba desactualizada: `origin/main` ya corría en
+  el VPS con commits del otro dev (`abccd71` "fix: mensajes/@mention/rate-limit/timezone" + manejo de
+  LID en `whatsapp/index.js`). Se hizo `git merge origin/main` → 4 conflictos aditivos resueltos
+  ("conservar ambos"): `src/index.js`, `src/db/index.js`, `src/db/migrate.js`, `cleanup()`. Merge commit
+  `6827b52`, + `f1c7eb5` (docker-compose). **Sin esto, un deploy ciego habría regresado los fixes del
+  otro dev y roto el bot.**
+- ✅ **DESPLEGADO en el VPS en DRY-RUN.** `docker compose up -d --build` corrido. Contenedor sano (1er
+  intento, WA reconectó con la sesión existente, sin re-vincular), `migrate` creó las tablas, jobs activos
+  con `DRY-RUN=true`. El poll lee Calendly real y agenda los Push 3.
+- ✅ **Envío real validado end-to-end** con Pablo Lozano (opt-in sembrado en DB): `[Calendly] enviado
+  (push1) → +573046131437`, y los otros 7 closers `OMITIDO ... sin opt-in`. El seguro por-closer funciona.
+- ❌ **Opt-in self-service ROTO por LID** (ver sección dedicada). Ningún closer puede registrarse
+  escribiéndole "Hola" a Juanito todavía → **blocker para invitar a los closers reales.**
+- ℹ️ El contenedor quedó en **DRY-RUN=true** (inerte). En la DB quedó sembrado el opt-in de **Pablo**
+  (`573046131437`); si se apaga el dry-run, Pablo recibiría pushes reales. Quitar con
+  `DELETE FROM calendly_optins WHERE phone='573046131437'` si se quiere DB limpia.
+
+## ⚠️ BLOCKER para el rollout: opt-in de closers roto por LID
+
+**Síntoma:** un closer le escribe "Hola" a Juanito y, en vez del "Quedaste registrado ✅", Juanito le
+responde como **asistente del jefe** (ej. "Ey, que necesitas"). El closer NO queda registrado.
+
+**Evidencia (logs, con Pablo):**
+```
+[Debug] text="Hola" rawJid=254051828641894@lid isGroup=false
+[Main] DM de LID no resuelto: 254051828641894@lid — tratando como jefe
+[Bot] Jefe: Hola
+```
+
+**Causa raíz:** los DMs de WA multi-device llegan con `remoteJid = <num>@lid` (LID del protocolo Signal,
+NO el número). `whatsapp/index.js` intenta resolver LID→teléfono con `lidMap` (alimentado por
+`contacts.upsert`), pero para los closers **no resuelve** (no están como contactos con mapeo conocido).
+Entonces `sender` llega como `@lid` crudo, y en `src/index.js`:
+```js
+const isBoss = phonesMatch(sender, BOSS_PHONE()) || sender?.endsWith('@lid');
+```
+→ **cualquier `@lid` no resuelto se trata como jefe** → va a `handleBossMessage`, nunca a
+`handleCloserOptin`. Además `resolveCloserByPhone` (en `optin.js`) busca por número, así que ni siquiera
+podría mapear un `@lid` a su closer.
+
+**Dos problemas, no uno:**
+1. **Funcional:** el closer no se puede auto-registrar (no llega al opt-in).
+2. **Seguridad:** *cualquier* DM cuyo LID no resuelva (no solo closers) obtiene la persona/acceso de JEFE.
+
+**Direcciones de fix (toca tu capa de WA — coordinar):**
+- **Identificar al jefe por su LID real, no por "es @lid".** Capturar/configurar el/los LID del jefe
+  (en los logs el jefe llegó como `147313234280449@lid`) y que `isBoss` matchee SOLO ese LID. Así los
+  demás `@lid` dejan de ser "jefe" y pueden enrutarse al opt-in.
+- **Resolver LID→número de los closers** para que `handleCloserOptin` pueda identificarlos. Opciones:
+  (a) guardar los 8 closers como contactos en el teléfono del bot → `contacts.upsert` poblaría `lidMap`;
+  (b) lookup activo (`sock.onWhatsApp`/contactos) al recibir el DM; (c) registrar por `msg.pushName` o un
+  código que el closer envíe.
+- Archivos involucrados: `src/whatsapp/index.js` (resolución LID, tu capa), `src/index.js` (enrutamiento
+  jefe vs opt-in), `src/calendly/optin.js` (`handleCloserOptin`/`resolveCloserByPhone`).
+
+**Workaround para probar SIN el fix (lo que se usó):** sembrar el opt-in directo en la DB por número
+(`registerOptin`), que la entrega no depende del LID.
 
 ## Hallazgos importantes (no obvios)
 
@@ -97,22 +155,41 @@ CALENDLY_TOKEN='<token>' node scripts/calendly-day-check.js 2026-06-08
 
 ## Próximos pasos (en orden)
 
-1. **Rotar el `CALENDLY_TOKEN`** (idealmente a una cuenta de servicio/owner) y nunca pegarlo en chats.
-2. **Opt-in de los closers (anti-baneo), ANTES de enviar nada real:**
-   - Pedirles que **guarden el número de Juanito** y le manden un "Hola".
-   - Verificar con `docker compose exec agent node scripts/calendly-optins.js` (en el VPS).
-   - No pasar a envío real hasta que todos aparezcan registrados.
-3. **Deploy al VPS** (DigitalOcean `157.230.152.202`, código en `/root/juanito`, NO es repo git → se copia con `pscp`; SSH solo por contraseña como `root` con `plink -pw`):
-   - Subir `src/` actualizado.
-   - Agregar `CALENDLY_TOKEN` (y opcional `CALENDLY_EVENT_TYPES`, `CALENDLY_GROUP_URI`) al `.env`.
-   - **Nota:** `docker-compose.yml` actual NO pasa las vars `CALENDLY_*` al contenedor → hay que
-     agregarlas al bloque `environment:` además del `.env`.
-   - `docker compose up -d --build` (esto reinicia el contenedor y reconecta WhatsApp; ojo con la
-     historia del softban y `entrypoint.sh` — ver `CLAUDE.md`).
-4. **Prueba en DRY-RUN en el VPS** antes de activar envíos:
-   - `docker compose exec agent node scripts/calendly-dryrun.js` (revisa los logs, no envía WhatsApp).
-5. **Activar envío real** solo cuando opt-ins estén completos: poner `CALENDLY_DRY_RUN=false` en `.env`
-   y reiniciar. Empezar con un subconjunto de closers si se quiere ser conservador.
+1. ✅ ~~Deploy al VPS~~ — HECHO (en dry-run). `docker-compose.yml` ya pasa las vars `CALENDLY_*` y el
+   `Dockerfile` ya copia `scripts/`. El `.env` del VPS ya tiene `CALENDLY_TOKEN` + flags.
+2. **[BLOCKER] Arreglar el opt-in/LID** (ver sección dedicada arriba). Es lo que falta para que los
+   closers puedan registrarse solos. Coordinar porque toca `whatsapp/index.js`.
+3. **Rotar el `CALENDLY_TOKEN`** (es el PAT personal de Sebastian Rodriguez, pasó por chat) a una
+   cuenta de servicio/owner. Cambiarlo en el `.env` del VPS y `docker compose up -d`.
+4. **Opt-in de los closers**, una vez arreglado el LID: que guarden el número de Juanito y manden "Hola";
+   verificar con `docker compose exec agent node scripts/calendly-optins.js`.
+5. **Activar envío real**: `CALENDLY_DRY_RUN=false` en el `.env` del VPS + `docker compose up -d`.
+   Empezar con un subconjunto de closers (el seguro de opt-in lo permite: solo reciben los registrados).
+
+## Operación en el VPS (gotchas importantes)
+
+- **Acceso:** DigitalOcean `157.230.152.202`, código en `/root/juanito` (NO es repo git → se sincroniza
+  con `pscp`). SSH solo por contraseña como `root` (`plink -pw` / `pscp -pw`). **Rotar esa contraseña**
+  (pasó por chat).
+- **Aplicar cambios de código:** `pscp -r src scripts docker-compose.yml Dockerfile root@IP:/root/juanito/`
+  y luego `docker compose up -d --build`. NO copiar `package*.json`/`entrypoint.sh` salvo que cambien
+  (deps no cambiaron; `entrypoint.sh` es sensible por el softban).
+- **Aplicar solo cambios de `.env`:** `docker compose up -d` (sin `--build`) recrea el contenedor con las
+  nuevas vars. Cada recreación = 1 reconexión de WA (controlada, la maneja `entrypoint.sh`; el peligro es
+  el loop rápido, no un restart puntual).
+- **⚠️ `docker compose exec ... node -e` NO puede ENVIAR WhatsApp.** Arranca un proceso SEPARADO que
+  comparte la DB pero NO el socket de WA (que vive solo en el proceso principal `node src/index.js`) →
+  `sendMessage` lanza "WhatsApp no conectado aún". Por eso `calendly-dryrun.js` (solo loguea) sí corre por
+  `exec`, pero un **envío real debe salir del proceso principal vía un cron**.
+- **Receta de prueba real controlada (la que se usó con Pablo):** sembrar el opt-in del sujeto por número
+  en la DB (`registerOptin`), poner `CALENDLY_DRY_RUN=false` + `CALENDLY_PUSH1_CRON=<minuto+5> <hora> * * *`
+  en el `.env` (los crons usan TZ `America/Bogota` vía Intl, aunque `date` del contenedor diga UTC porque
+  Alpine no trae tzdata), `docker compose up -d`, esperar el minuto del cron (runPush1 tarda ~40s por el
+  throttle de invitees), verificar `[Calendly] enviado (push1) → <número>`, y **revertir** (`DRY_RUN=true`,
+  quitar `CALENDLY_PUSH1_CRON`). Solo los opted-in reciben; el resto sale `OMITIDO ... sin opt-in`.
+- **Rollback listo (de este deploy):** código `/root/juanito-backup-20260607-114841.tar.gz`; imagen
+  `juanito-agent:pre-calendly-20260607-114841` (mismo id que la previa). Para volver: restaurar el tar y
+  `docker compose up -d --build`, o `docker tag` la imagen de rollback a `:latest` y `up -d`.
 
 ## Mejoras opcionales (discutidas, no implementadas)
 
