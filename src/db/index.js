@@ -58,14 +58,22 @@ export function saveReminder({ text, dueAt, toPhone = null, createdBy = null }) 
     .run(text, dueAt, toPhone, createdBy);
 }
 
+// Hora local como string YYYY-MM-DD HH:MM:SS comparable con due_at.
+// SQLite 'localtime' falla en Alpine (sin tzdata), así que usamos JS Date.
+function localNow(offsetHours = 0) {
+  return new Date(Date.now() + offsetHours * 3600000).toLocaleString('sv', {
+    timeZone: process.env.TZ || 'America/Bogota',
+  });
+}
+
 export function getPendingReminders() {
   return db
     .prepare(`
       SELECT * FROM reminders
-      WHERE status = 'pending' AND due_at <= datetime('now')
+      WHERE status = 'pending' AND due_at <= ?
       ORDER BY due_at ASC
     `)
-    .all();
+    .all(localNow());
 }
 
 export function markReminderSent(id) {
@@ -92,11 +100,10 @@ export function getUpcomingReminders(hours = 24) {
   return db
     .prepare(`
       SELECT * FROM reminders
-      WHERE status = 'pending' AND due_at > datetime('now')
-        AND due_at <= datetime('now', '+' || ? || ' hours')
+      WHERE status = 'pending' AND due_at > ? AND due_at <= ?
       ORDER BY due_at ASC
     `)
-    .all(hours);
+    .all(localNow(), localNow(hours));
 }
 
 // ─── Resúmenes de chats/grupos ────────────────────────────────────────────────
@@ -284,6 +291,29 @@ export function listOptins() {
     .all();
 }
 
+// ─── Rate limiting de grupos ──────────────────────────────────────────────────
+// Devuelve true si el remitente puede enviar (e incrementa el contador),
+// false si ya alcanzó el límite diario.
+
+export function checkAndIncrementGroupUsage(sender, limit) {
+  const today = new Date().toLocaleDateString('en-CA', {
+    timeZone: process.env.TZ || 'America/Bogota',
+  }); // YYYY-MM-DD en hora local
+
+  const row = db
+    .prepare(`SELECT count FROM group_usage WHERE sender = ? AND date = ?`)
+    .get(sender, today);
+
+  if ((row?.count || 0) >= limit) return false;
+
+  db.prepare(`
+    INSERT INTO group_usage (sender, date, count) VALUES (?, ?, 1)
+    ON CONFLICT(sender, date) DO UPDATE SET count = count + 1
+  `).run(sender, today);
+
+  return true;
+}
+
 // ─── Limpieza periódica ───────────────────────────────────────────────────────
 
 export function cleanup() {
@@ -293,6 +323,7 @@ export function cleanup() {
     `DELETE FROM group_context WHERE created_at < datetime('now', '-14 days')`,
     `DELETE FROM processed_messages WHERE created_at < datetime('now', '-7 days')`,
     `DELETE FROM calendly_pushes WHERE status != 'scheduled' AND created_at < datetime('now', '-30 days')`,
+    `DELETE FROM group_usage WHERE date < date('now', 'localtime', '-7 days')`,
   ];
   let total = 0;
   for (const sql of stmts) total += db.prepare(sql).run().changes;

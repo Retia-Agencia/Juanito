@@ -16,11 +16,26 @@ import QRCode from 'qrcode';
 import { updateQR, markConnected, startQRServer } from './qr-server.js';
 import { saveMessage } from '../db/index.js';
 import db from '../db/index.js';
+import { phonesMatch } from '../common/utils.js';
 
 const SESSION_PATH = process.env.WA_SESSION_PATH || './data/wa-session';
 const QR_PATH = process.env.WA_QR_PATH || './data/wa-qr.png';
 
 let sock = null;
+let botJid = null;    // "573332761238@s.whatsapp.net"
+let botLidNum = null; // "31302527013028" — LID numérico del bot, WA lo usa en mentionedJid
+
+// ─── Resolución de LID → JID de teléfono ──────────────────────────────────────
+// WhatsApp multi-device usa LIDs (@lid) para el routing Signal interno.
+// Los mensajes llegan con remoteJid=@lid en vez de @s.whatsapp.net.
+// contacts.upsert proporciona el mapeo LID ↔ phone JID.
+
+const lidMap = new Map();
+
+function resolveJid(jid) {
+  if (!jid || !jid.endsWith('@lid')) return jid;
+  return lidMap.get(jid) || jid;
+}
 
 // ─── Normalización de JID ─────────────────────────────────────────────────────
 
@@ -84,20 +99,44 @@ export async function connect({ onMessage }) {
           keys: makeCacheableSignalKeyStore(state.keys),
         },
         browser: Browsers.ubuntu('Chrome'),
+        // Necesario para que Baileys pueda resolver reintentos de descifrado
+        // cuando el session Signal del remitente cambia (LID key rotation).
+        getMessage: async () => ({ conversation: '' }),
       });
 
       sock.ev.on('creds.update', saveCreds);
 
+      // Construir mapa LID ↔ phone JID a medida que llegan actualizaciones de contactos
+      sock.ev.on('contacts.upsert', (contacts) => {
+        for (const c of contacts) {
+          if (c.lid && c.id) {
+            lidMap.set(c.lid, c.id);
+            lidMap.set(c.id, c.lid);
+          }
+        }
+      });
+      sock.ev.on('contacts.update', (updates) => {
+        for (const u of updates) {
+          if (u.lid && u.id) lidMap.set(u.lid, u.id);
+        }
+      });
+
       sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
         if (qr) {
-          // Alimenta el qr-server (inerte si QR_PORT no está seteado) y además
-          // genera el PNG/dataURL + fallback ASCII en logs.
           updateQR(qr);
           renderQR(qr).catch((e) => console.error('[WhatsApp] Error generando QR:', e.message));
         }
         if (connection === 'open') {
           markConnected();
-          console.log('[WhatsApp] Conectado ✅');
+          // Guardar JID y LID propios para detectar @mentions en grupos.
+          // WhatsApp usa el LID (no el teléfono) en mentionedJid para cuentas multi-device.
+          botJid = sock.user?.id
+            ? sock.user.id.split(':')[0] + '@s.whatsapp.net'
+            : null;
+          botLidNum = sock.user?.lid
+            ? sock.user.lid.split(':')[0]
+            : null;
+          console.log(`[WhatsApp] Conectado ✅ (JID: ${botJid}, LID: ${botLidNum})`);
           hasConnected = true;
           resolve();
           return;
@@ -113,37 +152,63 @@ export async function connect({ onMessage }) {
           }
 
           if (hasConnected) {
-            // Ya estábamos conectados — entrypoint.sh maneja el restart con backoff
             process.exit(1);
           } else {
-            // Aún en fase de pairing — reconectar internamente en 3 segundos
             console.log('[WhatsApp] Reconectando para nuevo QR...');
             setTimeout(createSocket, 3000);
           }
         }
       });
 
-      // Mensajes entrantes
+      // Mensajes entrantes — ev.on es el API estable; ev.process tiene problemas
+      // de buffering en Baileys v7 RC que hacen que messages.upsert nunca dispare.
       sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        console.log(`[Debug] messages.upsert type=${type} count=${messages.length}`);
         if (type !== 'notify') return;
 
         for (const msg of messages) {
+          const rawJid = msg.key.remoteJid;
+          const isGroup = rawJid?.endsWith('@g.us');
+
+          // Resolver LID → phone JID. Si no está en lidMap, buscar en sock.contacts.
+          if (!isGroup && rawJid?.endsWith('@lid') && !lidMap.has(rawJid)) {
+            const entry = Object.entries(sock?.contacts || {}).find(([, c]) => c.lid === rawJid);
+            if (entry) {
+              lidMap.set(rawJid, entry[0]);
+              lidMap.set(entry[0], rawJid);
+            }
+          }
+          const chatId = isGroup ? rawJid : (resolveJid(rawJid) || rawJid);
+          const messageId = msg.key.id;
+          const msgTypes = Object.keys(msg.message || {}).join(',');
+          console.log(`[Debug] fromMe=${msg.key.fromMe} rawJid=${rawJid} chatId=${chatId} types=${msgTypes}`);
+
           if (msg.key.fromMe) continue;
           if (!msg.message) continue;
-
-          const chatId = msg.key.remoteJid;
-          const isGroup = chatId?.endsWith('@g.us');
-          const messageId = msg.key.id;
 
           const text =
             msg.message?.conversation ||
             msg.message?.extendedTextMessage?.text ||
             null;
 
+          console.log(`[Debug] text="${text?.slice(0, 40)}" isGroup=${isGroup}`);
           if (!text) continue;
 
-          const sender = isGroup ? (msg.key.participant || chatId) : chatId;
+          const rawParticipant = msg.key.participant;
+          const sender = isGroup
+            ? (resolveJid(rawParticipant) || rawParticipant || chatId)
+            : chatId;
           const senderName = msg.pushName || sender;
+
+          // Detectar @mention real de WhatsApp.
+          // WA usa el LID del bot (no el teléfono) en mentionedJid en cuentas multi-device.
+          const mentionedJids =
+            msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+          const isBotMentioned = mentionedJids.some(
+            (jid) =>
+              (botJid && phonesMatch(jid, botJid)) ||
+              (botLidNum && jid?.startsWith(botLidNum))
+          );
 
           let groupName = chatId;
           if (isGroup) {
@@ -169,7 +234,7 @@ export async function connect({ onMessage }) {
             }
           }
 
-          await onMessage({ chatId, isGroup, text, sender, groupName, messageId }).catch((e) =>
+          await onMessage({ chatId, isGroup, text, sender, groupName, messageId, isBotMentioned }).catch((e) =>
             console.error('[WhatsApp] Error en onMessage:', e.message)
           );
         }

@@ -136,7 +136,7 @@ const TOOLS = [
 
 // ─── Prompt de sistema ────────────────────────────────────────────────────────
 
-async function buildSystemPrompt(deps) {
+async function buildSystemPrompt(deps, { isGroup = false } = {}) {
   const now = new Date().toLocaleString('es-CO', {
     timeZone: process.env.TZ || 'America/Bogota',
     dateStyle: 'full',
@@ -163,6 +163,14 @@ async function buildSystemPrompt(deps) {
         .join('\n')}`
     : '';
 
+  const groupMode = isGroup
+    ? `\n\n## Contexto: estás en un grupo
+Alguien te mencionó con @. Normas estrictas para grupos:
+- Responde de forma breve y directa — sin preguntas de seguimiento.
+- NO ofrezcas guardar nada en memoria ni sugieras usar save_memory.
+- NO hagas preguntas como "¿quieres que recuerde algo de esto?".`
+    : '';
+
   return `Eres un asistente personal inteligente que vive en WhatsApp.
 Tu trabajo es ayudar al jefe con su día a día: recordatorios, resúmenes,
 preguntas, tareas y lo que sea que necesite.
@@ -184,11 +192,11 @@ confirma al jefe en una línea natural:
   jefe que aclare el contacto en vez de inventar.
 - summarize_group: lee y resume un grupo por nombre cuando pregunte qué pasó ahí.
 - search_knowledge: busca en historial, memoria y resúmenes lo que ya se habló.
-- save_memory: guarda hechos permanentes.
+- save_memory: guarda hechos permanentes (solo disponible en DMs con el jefe).
 
 Cuando calcules la fecha de un recordatorio, usa la fecha y hora actual de arriba
 como referencia (ej: "mañana a las 9" = el día siguiente a las 09:00:00).
-
+${groupMode}
 ${memoryBlock}
 ${summaryBlock}
 ${remindersBlock}`.trim();
@@ -376,7 +384,7 @@ async function withRetry(fn, { retries = 3, baseDelay = 1000 } = {}) {
 
 // ─── Función principal ────────────────────────────────────────────────────────
 
-export async function chat(userMessage, chatId = null) {
+export async function chat(userMessage, chatId = null, { isGroup = false } = {}) {
   const deps = await resolveDeps();
   const ctx = { createdBy: chatId };
 
@@ -388,14 +396,16 @@ export async function chat(userMessage, chatId = null) {
     messages.push({ role: 'user', content: userMessage });
   }
 
-  const system = await buildSystemPrompt(deps);
+  const system = await buildSystemPrompt(deps, { isGroup });
+  // En grupos no exponemos save_memory para que Claude no la ofrezca ni la use
+  const tools = isGroup ? TOOLS.filter((t) => t.name !== 'save_memory') : TOOLS;
 
   let response = await withRetry(() =>
     client.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS,
       system,
-      tools: TOOLS,
+      tools,
       messages,
     })
   );
@@ -424,7 +434,7 @@ export async function chat(userMessage, chatId = null) {
         model: MODEL,
         max_tokens: MAX_TOKENS,
         system,
-        tools: TOOLS,
+        tools,
         messages,
       })
     );
