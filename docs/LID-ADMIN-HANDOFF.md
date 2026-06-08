@@ -115,10 +115,31 @@ control real. `BOSS_LID`/`ADMIN_LID` ya no son solo ruteo — ahora definen **po
    reemplaza el grepeo de logs) y `/status` (solo admin; WA, uptime, token Calendly, DRY_RUN,
    require opt-in, # opt-ins). En `src/bot/commands.js`, interceptados en `onMessage`.
    Pendientes opcionales: `/dryrun on|off`, `/optins`.
-3. **No mandar a terceros por orden del jefe** (anti-ban + reputación) cuando se agreguen tools de envío.
+3. **No mandar a terceros por orden del jefe** (anti-ban + reputación). DIFERIDO a propósito: se
+   implementa JUNTO con la feature de envío, porque el enfoque depende de esa arquitectura.
 4. **Cola de aprobación**: pedido gateado del jefe → Juanito avisa a un admin → admin aprueba.
 5. **Log de auditoría** de lo que el jefe pide (y qué quedó gateado).
 6. **Caps anti-ban / costo**: tope de mensajes salientes/min y de tokens por conversación.
+
+## ⚠️ Gotcha de deploy: las env vars se pasan EXPLÍCITAS en docker-compose.yml
+
+El `docker-compose.yml` enumera una a una las vars que entran al contenedor (`environment:`).
+**Una var en el `.env` del VPS NO llega al contenedor si no está listada ahí.** Mordió en el
+deploy del 2026-06-08: se agregó `ADMIN_LID` al `.env` pero el rol seguía cayendo a `boss` porque
+el compose no la pasaba (y el `BOSS_LID` del fix previo `ee103b0` tampoco llegaba nunca). Fix:
+commit `cde8a8b`. **Regla: toda env var nueva que el código lea debe agregarse también al
+`environment:` del compose.**
+
+## Estado del deploy (2026-06-08)
+
+- ✅ `main` desplegado en el VPS (`pscp src` + `pscp docker-compose.yml` + `docker compose up -d --build`).
+  WA reconectó con la sesión existente, sin re-vincular. Calendly sigue en `DRY_RUN=true`.
+- ✅ `.env` del VPS: `ADMIN_LID=129446371655733@lid,147313234280449@lid` (Alejandro + compañero);
+  `BOSS_LID` vacío (jefe real = @lid desconocido → boss sandboxed por retrocompat).
+- ✅ Validado en vivo: `/whoami` → `Rol: admin`, `/status` responde. Tiering de capacidades activo.
+- Rollback: `/root/juanito-backup-20260608-022526.tar.gz` + imagen `juanito-agent:pre-roles-20260608`.
+- Pendiente: capturar `BOSS_LID` real del jefe (ya con `/whoami` es trivial) para arreglar el
+  opt-in self-service de closers; rotar `CALENDLY_TOKEN` y la contraseña del VPS.
 
 ## Verificación rápida (tests)
 
