@@ -2,11 +2,13 @@
 // Entry point — conecta Baileys, wira handlers y arranca el scheduler.
 
 import 'dotenv/config';
-import { connect } from './whatsapp/index.js';
+import { connect, sendMessage, isConnected } from './whatsapp/index.js';
 import { handleBossMessage, handleGroupMessage } from './bot/index.js';
+import { handleCommand } from './bot/commands.js';
 import { handleCloserOptin } from './calendly/optin.js';
 import { startAllJobs } from './scheduler/index.js';
 import { roleOf, isPrivileged } from './common/roles.js';
+import { listOptins, markIfNew } from './db/index.js';
 
 async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, isBotMentioned, pushName }) {
   if (!text) return;
@@ -14,6 +16,19 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
   if (!isGroup) {
     // Rol del remitente (admin = equipo, boss = jefe sandboxed, unknown = otro).
     const role = roleOf(sender);
+
+    // Comandos deterministas (sin Claude): /whoami, /status. Se atienden antes del
+    // ruteo para que /whoami funcione incluso para un admin nuevo aún no configurado.
+    const cmdReply = handleCommand({ text, sender, role }, { listOptins, isConnected });
+    if (cmdReply !== null) {
+      if (markIfNew(messageId)) {
+        await sendMessage(sender, cmdReply).catch((e) =>
+          console.error('[Main] comando:', e.message)
+        );
+      }
+      return;
+    }
+
     if (isPrivileged(role)) {
       if (sender?.endsWith('@lid')) {
         console.log(`[Main] DM de LID del ${role}: ${sender}`);

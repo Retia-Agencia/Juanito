@@ -247,6 +247,11 @@ export async function connect({ onMessage }) {
 
 // ─── Envío de mensajes ────────────────────────────────────────────────────────
 
+// ¿Hay socket de WA activo? (para diagnósticos tipo /status)
+export function isConnected() {
+  return !!sock;
+}
+
 export async function sendMessage(to, text) {
   if (!sock) throw new Error('sendMessage: WhatsApp no conectado aún');
   const jid = toJid(to);
