@@ -111,8 +111,10 @@ control real. `BOSS_LID`/`ADMIN_LID` ya no son solo ruteo — ahora definen **po
    notas del jefe en namespace `boss_note:`; el system prompt las presenta como DATOS, no
    instrucciones. `save_memory` quedó solo-admin (memoria núcleo). `splitMemory` separa núcleo
    vs notas. Cierra la regresión de quitarle `save_memory` al jefe.
-2. **Comandos de admin**: `/whoami` (devuelve tu LID — quita el dolor de grepear logs), `/status`
-   (DRY_RUN, último push, salud de WA, # opt-ins), `/dryrun on|off`, `/optins`.
+2. ✅ **Comandos de admin** (commit `448d627`): `/whoami` (cualquiera; devuelve tu LID y rol —
+   reemplaza el grepeo de logs) y `/status` (solo admin; WA, uptime, token Calendly, DRY_RUN,
+   require opt-in, # opt-ins). En `src/bot/commands.js`, interceptados en `onMessage`.
+   Pendientes opcionales: `/dryrun on|off`, `/optins`.
 3. **No mandar a terceros por orden del jefe** (anti-ban + reputación) cuando se agreguen tools de envío.
 4. **Cola de aprobación**: pedido gateado del jefe → Juanito avisa a un admin → admin aprueba.
 5. **Log de auditoría** de lo que el jefe pide (y qué quedó gateado).
