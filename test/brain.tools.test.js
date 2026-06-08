@@ -179,3 +179,28 @@ test('save_memory persiste key/value', async () => {
 
   assert.deepEqual(deps.calls.setMemory[0], ['numero_cuenta', '1234567']);
 });
+
+test('save_memory con rol jefe (no admin) NO persiste (baby-proofing)', async () => {
+  const deps = makeDeps();
+
+  const result = await dispatchTool(
+    { name: 'save_memory', input: { key: 'x', value: 'y' } },
+    deps,
+    { createdBy: BOSS, role: 'boss' }
+  );
+
+  assert.equal(deps.calls.setMemory, undefined); // nunca tocó la memoria
+  assert.match(result, /equipo/i); // deflecta con naturalidad
+});
+
+test('save_memory con rol admin sí persiste', async () => {
+  const deps = makeDeps();
+
+  await dispatchTool(
+    { name: 'save_memory', input: { key: 'k', value: 'v' } },
+    deps,
+    { createdBy: BOSS, role: 'admin' }
+  );
+
+  assert.deepEqual(deps.calls.setMemory[0], ['k', 'v']);
+});

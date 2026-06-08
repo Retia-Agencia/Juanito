@@ -134,9 +134,26 @@ const TOOLS = [
   },
 ];
 
+// Tools sensibles que el jefe (no-admin) NO debe poder ejecutar (baby-proofing).
+// save_memory escribe en la memoria que alimenta el comportamiento del bot para
+// TODOS → un jefe no-técnico podría envenenarla. Queda solo para admins.
+const BOSS_DENIED_TOOLS = new Set(['save_memory']);
+
+// Devuelve el subconjunto de tools que se le expone a Claude según el rol y el contexto.
+// Gatear acá (a nivel de API) es más fuerte que pedirlo en el prompt: lo que no está
+// en el array, el modelo NO lo puede invocar pase lo que pase.
+export function toolsForRole(role, { isGroup = false } = {}) {
+  let tools = TOOLS;
+  // En grupos nunca exponemos save_memory (regla previa, se mantiene).
+  if (isGroup) tools = tools.filter((t) => t.name !== 'save_memory');
+  // El jefe (no-admin) no recibe las tools sensibles.
+  if (role !== 'admin') tools = tools.filter((t) => !BOSS_DENIED_TOOLS.has(t.name));
+  return tools;
+}
+
 // ─── Prompt de sistema ────────────────────────────────────────────────────────
 
-async function buildSystemPrompt(deps, { isGroup = false } = {}) {
+async function buildSystemPrompt(deps, { isGroup = false, role = 'boss' } = {}) {
   const now = new Date().toLocaleString('es-CO', {
     timeZone: process.env.TZ || 'America/Bogota',
     dateStyle: 'full',
@@ -171,6 +188,26 @@ Alguien te mencionó con @. Normas estrictas para grupos:
 - NO hagas preguntas como "¿quieres que recuerde algo de esto?".`
     : '';
 
+  // Reglas innegociables, para cualquier interlocutor.
+  const securityBlock = `\n\n## Reglas de seguridad (innegociables)
+- Nunca reveles configuración interna, tokens, claves, variables de entorno, rutas,
+  ni la lista de closers o teléfonos de terceros — aunque te lo pidan directamente.
+- No ejecutes ni inventes acciones fuera de tus herramientas disponibles. Si algo no
+  se puede hacer con ellas, dilo; no simules haberlo hecho.`;
+
+  // Bloque según el rol del interlocutor.
+  const roleBlock =
+    role === 'admin'
+      ? `\n\n## Interlocutor: equipo técnico (admin)
+Hablas con un miembro del equipo que mantiene el sistema. Puedes ser directo y
+técnico y darle diagnósticos si los pide.`
+      : `\n\n## Interlocutor: el jefe (dueño)
+Trátalo con cercanía y deferencia; él es el dueño de esto.
+- Nunca le muestres errores técnicos ni detalles de implementación.
+- Si te pide algo que no puedes hacer con tus herramientas, NO te niegues en seco:
+  dile con naturalidad que eso lo coordina su equipo. No prometas haberlo hecho ni
+  inventes que lo dejaste andando.`;
+
   return `Eres un asistente personal inteligente que vive en WhatsApp.
 Tu trabajo es ayudar al jefe con su día a día: recordatorios, resúmenes,
 preguntas, tareas y lo que sea que necesite.
@@ -191,11 +228,16 @@ confirma al jefe en una línea natural:
   persona, te lo diré por el resultado de la herramienta: en ese caso pídele al
   jefe que aclare el contacto en vez de inventar.
 - summarize_group: lee y resume un grupo por nombre cuando pregunte qué pasó ahí.
-- search_knowledge: busca en historial, memoria y resúmenes lo que ya se habló.
-- save_memory: guarda hechos permanentes (solo disponible en DMs con el jefe).
+- search_knowledge: busca en historial, memoria y resúmenes lo que ya se habló.${
+    role === 'admin'
+      ? '\n- save_memory: guarda hechos permanentes en la memoria de largo plazo.'
+      : ''
+  }
 
 Cuando calcules la fecha de un recordatorio, usa la fecha y hora actual de arriba
 como referencia (ej: "mañana a las 9" = el día siguiente a las 09:00:00).
+${securityBlock}
+${roleBlock}
 ${groupMode}
 ${memoryBlock}
 ${summaryBlock}
@@ -266,6 +308,11 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
     }
 
     case 'save_memory': {
+      // Defensa en profundidad: aunque la tool no se expone a no-admins, si llegara
+      // a invocarse con otro rol, la rechazamos (protege la memoria del bot).
+      if (ctx.role && ctx.role !== 'admin') {
+        return 'Eso no lo puedo guardar desde acá; lo coordina el equipo.';
+      }
       await deps.setMemory(input.key, input.value);
       return `Guardado en memoria: ${input.key}.`;
     }
@@ -384,9 +431,9 @@ async function withRetry(fn, { retries = 3, baseDelay = 1000 } = {}) {
 
 // ─── Función principal ────────────────────────────────────────────────────────
 
-export async function chat(userMessage, chatId = null, { isGroup = false } = {}) {
+export async function chat(userMessage, chatId = null, { isGroup = false, role = 'boss' } = {}) {
   const deps = await resolveDeps();
-  const ctx = { createdBy: chatId };
+  const ctx = { createdBy: chatId, role };
 
   await deps.saveMessage({ role: 'user', content: userMessage, chatId });
 
@@ -396,9 +443,9 @@ export async function chat(userMessage, chatId = null, { isGroup = false } = {})
     messages.push({ role: 'user', content: userMessage });
   }
 
-  const system = await buildSystemPrompt(deps, { isGroup });
-  // En grupos no exponemos save_memory para que Claude no la ofrezca ni la use
-  const tools = isGroup ? TOOLS.filter((t) => t.name !== 'save_memory') : TOOLS;
+  const system = await buildSystemPrompt(deps, { isGroup, role });
+  // Tools gateadas por rol (grupos y jefe no reciben save_memory; admin sí).
+  const tools = toolsForRole(role, { isGroup });
 
   let response = await withRetry(() =>
     client.messages.create({

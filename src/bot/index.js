@@ -23,7 +23,7 @@ function isUnlimitedSender(sender) {
 // ─── DM del jefe ──────────────────────────────────────────────────────────────
 
 export async function handleBossMessage(msg) {
-  const { from, text, messageId } = msg;
+  const { from, text, messageId, role = 'boss' } = msg;
 
   if (!markIfNew(messageId)) return;
 
@@ -34,10 +34,10 @@ export async function handleBossMessage(msg) {
 
   if (!text) return;
 
-  console.log(`[Bot] Jefe: ${text.slice(0, 60)}`);
+  console.log(`[Bot] ${role === 'admin' ? 'Admin' : 'Jefe'}: ${text.slice(0, 60)}`);
 
   try {
-    const { text: reply } = await chat(text, from);
+    const { text: reply } = await chat(text, from, { role });
     await sendMessage(from, reply);
   } catch (err) {
     console.error('[Bot] Error en DM del jefe:', err.message);
