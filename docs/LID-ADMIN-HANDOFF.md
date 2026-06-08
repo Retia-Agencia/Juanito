@@ -107,8 +107,10 @@ control real. `BOSS_LID`/`ADMIN_LID` ya no son solo ruteo — ahora definen **po
 
 ### Roadmap pendiente (en orden sugerido)
 
-1. **Memoria del jefe sandboxed**: que el jefe pueda hacer que Juanito "recuerde" cosas suyas, pero
-   en un namespace que NO altera el comportamiento del sistema (hoy simplemente no tiene `save_memory`).
+1. ✅ **Memoria del jefe sandboxed** (commit `9757ff5`): tool `remember_note` (boss+admin) guarda
+   notas del jefe en namespace `boss_note:`; el system prompt las presenta como DATOS, no
+   instrucciones. `save_memory` quedó solo-admin (memoria núcleo). `splitMemory` separa núcleo
+   vs notas. Cierra la regresión de quitarle `save_memory` al jefe.
 2. **Comandos de admin**: `/whoami` (devuelve tu LID — quita el dolor de grepear logs), `/status`
    (DRY_RUN, último push, salud de WA, # opt-ins), `/dryrun on|off`, `/optins`.
 3. **No mandar a terceros por orden del jefe** (anti-ban + reputación) cuando se agreguen tools de envío.
