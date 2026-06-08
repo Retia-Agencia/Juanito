@@ -12,19 +12,28 @@ const BOSS_PHONE = () => process.env.BOSS_PHONE;
 // LID del jefe: obtenerlo de los logs al arrancar ("[Main] DM de LID no resuelto: <lid>@lid").
 // Si no está configurado, cualquier @lid no resuelto se trata como jefe (comportamiento anterior).
 const BOSS_LID = () => process.env.BOSS_LID;
+// LIDs adicionales con acceso de jefe (CSV). Pensado para pruebas: que el equipo (yo, mi amigo)
+// pueda escribirle a Juanito desde su celular como "jefe" sin tener que rotar BOSS_LID.
+const ADMIN_LIDS = () =>
+  (process.env.ADMIN_LID || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
 
 async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, isBotMentioned, pushName }) {
   if (!text) return;
 
   if (!isGroup) {
-    // Identificar al jefe por su teléfono O su LID específico.
+    // Identificar al jefe por su teléfono O su LID específico (o un ADMIN_LID de pruebas).
     // Con BOSS_LID configurado, los demás @lid van al flujo de opt-in (no al jefe).
     const bossLid = BOSS_LID();
+    const adminLids = ADMIN_LIDS();
     const isBoss = phonesMatch(sender, BOSS_PHONE()) ||
-      (sender?.endsWith('@lid') && (!bossLid || sender === bossLid));
+      (sender?.endsWith('@lid') && (!bossLid || sender === bossLid || adminLids.includes(sender)));
     if (isBoss) {
       if (sender?.endsWith('@lid')) {
-        console.log(`[Main] DM de LID del jefe: ${sender}`);
+        const who = sender === bossLid ? 'jefe' : adminLids.includes(sender) ? 'admin' : 'jefe';
+        console.log(`[Main] DM de LID del ${who}: ${sender}`);
       }
       await handleBossMessage({ from: sender, text, messageId }).catch((e) =>
         console.error('[Main] handleBossMessage:', e.message)
