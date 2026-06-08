@@ -1,8 +1,27 @@
 # Handoff — BOSS_LID / ADMIN_LID (acceso de jefe por LID)
 
 > Continuación del trabajo sobre el blocker de LID del opt-in de closers.
-> Rama: `feat/admin-lid-testing` (local, sin push). Última sesión: 2026-06-07.
+> Todo MERGEADO a `main`, PUSHEADO y DESPLEGADO. Última sesión: 2026-06-08.
 > Relacionado: `docs/CALENDLY-HANDOFF.md` (sección "⚠️ BLOCKER: opt-in roto por LID").
+
+## ✅ ESTADO ACTUAL (2026-06-08) — leer primero
+
+El **blocker original (opt-in roto por LID) está RESUELTO end-to-end y validado en vivo.**
+
+- **`BOSS_LID` real capturado y desplegado:** `144268136038585@lid` (el jefe le escribió a Juanito;
+  capturado por logs). En el `.env` del VPS y en el `.env` local.
+- **`ADMIN_LID` desplegado:** `129446371655733@lid` (Alejandro) + `147313234280449@lid` (compañero) → rol admin.
+- **Tiering de capacidades activo** (roles + memoria sandboxed + comandos), desplegado y validado:
+  `/whoami` → `Rol: admin`, `/status` responde.
+- **Opt-in self-service validado:** Sebastian Rodriguez (`20671711162446@lid`) le escribió "Hola Juanito",
+  el sistema lo resolvió por `pushName` → "Closer ya registrado". Ya no se trata como jefe. ✅
+- **Setup de pruebas Calendly:** Pablo Lozano eliminado de opt-ins; **solo Sebastian Rodriguez**
+  (`573102212005`) está opted-in. **Fase 1 (datos/formato) validada en dry-run.** Falta **Fase 2
+  (envío real)** → próxima sesión. Calendly sigue en `DRY_RUN=true` (no envía nada).
+
+Pendientes reales: **Fase 2 envío real**; rotar `CALENDLY_TOKEN` y la contraseña del VPS (pasaron por chat).
+
+Lo de abajo es el historial detallado de cómo se llegó acá.
 
 ## Contexto en una frase
 
@@ -28,64 +47,66 @@ pueda probar como "jefe" desde su celular **sin rotar `BOSS_LID`**.
 3. **Captura de LIDs en vivo** vía tail de los logs del VPS (`docker compose logs -f`):
    - Se confirmó el LID de **Alejandro**: `129446371655733@lid` (le escribió a Juanito, apareció en los logs).
 
-## Estado de los LIDs (IMPORTANTE — leer)
+## Estado de los LIDs (todos capturados — 2026-06-08)
 
-| LID | Quién es | Dónde va |
+| LID | Quién es | Rol / dónde |
 |---|---|---|
-| `129446371655733@lid` | **Alejandro** (dev/tester) | `ADMIN_LID` ✅ confirmado en vivo |
-| `147313234280449@lid` | **Compañero** (dev/tester) | `ADMIN_LID` ✅ (también lo pegó el otro dev) |
-| `147313234280449@lid` | — en `BOSS_LID` | **⚠️ PLACEHOLDER, NO es el jefe real** |
-| LID real del **jefe** | quien tiene `BOSS_PHONE=573105643297` | **DESCONOCIDO — pendiente de capturar** |
+| `144268136038585@lid` | **Jefe real** (`BOSS_PHONE=573105643297`) | `BOSS_LID` ✅ capturado en vivo y desplegado |
+| `129446371655733@lid` | **Alejandro** (dev) | `ADMIN_LID` → rol admin ✅ |
+| `147313234280449@lid` | **Compañero** (dev) | `ADMIN_LID` → rol admin ✅ |
+| `20671711162446@lid`  | **Sebastian Rodriguez** (closer, sujeto de prueba) | `unknown` → flujo de opt-in ✅ |
+| `31302527013028@lid`  | El bot (Juanito) mismo | ignorar, no es de nadie |
 
-**El `147313234280449@lid` que quedó en `BOSS_LID` es del compañero, no del jefe.** Era un valor
-de prueba heredado del handoff/`.env.example`. El LID real del jefe nunca se ha capturado.
+> Histórico: el `147...@lid` estuvo un tiempo en `BOSS_LID` como **placeholder** (era del compañero,
+> no del jefe). Ya se reemplazó por el LID real del jefe `144268136038585@lid`.
 
-## ⚠️ Riesgo a no olvidar antes de desplegar
+## Cómo capturar un LID
 
-Si se despliega al VPS con `BOSS_LID` apuntando a un LID que **no** es el del jefe real, los DMs
-del jefe (que llegan como `@lid` desconocido) **dejarían de reconocerse como jefe** → se irían al
-flujo de opt-in y el bot los ignoraría. Es decir, **se rompería el chat del jefe con Juanito**.
-→ **Capturar el LID real del jefe ANTES de cualquier deploy con `BOSS_LID`.**
+**La forma fácil ahora: comando `/whoami`.** Quien escriba `/whoami` a Juanito recibe su propio
+`<lid>@lid` y rol en la respuesta — sin tocar logs. (Funciona para cualquiera, también un admin nuevo.)
 
-## Cómo capturar un LID (receta probada)
-
-El bot solo loguea el LID donde está conectado a WA = el **contenedor del VPS** (local no sirve:
-`better-sqlite3` no compila en Windows y no hay sesión de WA). Pasos:
+Alternativa por logs (útil cuando la persona es no-técnica y solo manda "Hola"). El bot solo loguea
+donde está conectado a WA = el **contenedor del VPS** (local no sirve: `better-sqlite3` no compila en
+Windows y no hay sesión de WA). Pasos:
 
 ```powershell
 # 1. Tail en vivo de los logs del VPS, filtrando la línea de ruteo:
 plink -batch -pw <PASSWORD> root@157.230.152.202 ^
   "cd /root/juanito && docker compose logs -f --since 1s 2>&1 | grep --line-buffered -iE 'DM de LID'"
 # 2. La persona le escribe 'Hola' a Juanito desde su celular.
-# 3. Aparece:  [Main] DM de LID no resuelto: <lid>@lid — tratando como jefe
-#    (en el VPS corre código viejo sin BOSS_LID, por eso dice 'tratando como jefe')
+# 3. Para el jefe/admin aparece:  [Main] DM de LID del boss|admin: <lid>@lid
+#    Para un @lid desconocido (closer) NO hay log (va al opt-in en silencio) → usa /whoami
+#    o filtra por 'Debug.*rawJid' para ver su <lid>@lid crudo.
 # 4. Copiar el <lid>@lid y pegarlo donde corresponda (BOSS_LID o ADMIN_LID).
+# OJO: el primer mensaje de un número NUEVO llega vacío (handshake de cifrado); pedir un 2º.
 ```
 
 - VPS: DigitalOcean `157.230.152.202`, código en `/root/juanito` (NO es repo git; se sincroniza con `pscp`).
 - SSH solo por contraseña como `root`. **Rotar esa contraseña** (pasó por chat). `plink`/`pscp` ya instalados en la máquina de Alejandro (`C:\Program Files\PuTTY\`).
 - El LID propio del bot es `31302527013028@lid` → **ignorarlo**, no es de ninguna persona.
 
-## Próximos pasos (en orden)
+## Próximos pasos (próxima sesión)
 
-1. **Capturar el LID real del jefe** (que el jefe le escriba a Juanito; usar la receta de arriba) y
-   poner ese valor en `BOSS_LID` (reemplazando el placeholder del compañero).
-2. **Confirmar/ajustar `ADMIN_LID`** con los testers reales (hoy: Alejandro + compañero).
-3. **Merge de `feat/admin-lid-testing` a `main`** (y push si se decide).
-4. **Deploy al VPS** con el código nuevo + `.env` del VPS con `BOSS_LID` real y `ADMIN_LID`:
-   - `pscp -r src root@157.230.152.202:/root/juanito/` (o el set de archivos que cambien).
-   - Editar el `.env` del VPS (hoy NO tiene `BOSS_LID`/`ADMIN_LID`).
-   - `docker compose up -d --build`. Cada recreación = 1 reconexión de WA (controlada por `entrypoint.sh`).
-5. **Verificar el opt-in self-service de un closer real** (lo que el blocker original impedía):
-   que un closer le escriba "Hola" y reciba "Quedaste registrado ✅" en vez de la respuesta de jefe.
-   Confirmar con `docker compose exec agent node scripts/calendly-optins.js`.
+1. **[Fase 2] Envío real controlado del push a Sebastian.** Receta probada (ver `docs/CALENDLY-HANDOFF.md`):
+   - Editar `.env` del VPS: `CALENDLY_DRY_RUN=false` + `CALENDLY_PUSH1_CRON=<minuto+5> <hora> * * *`
+     (o `PUSH2_CRON`) a unos minutos en el futuro.
+   - `docker compose up -d` (recrea con la nueva env; 1 reconexión de WA).
+   - Esperar el minuto del cron (runPush1 tarda ~40s por el throttle de invitees), verificar en logs
+     `[Calendly] enviado (push1) → 573102212005` y que Sebastian reciba el mensaje.
+   - **Revertir:** `CALENDLY_DRY_RUN=true`, quitar el cron de prueba, `docker compose up -d`.
+   - Solo Sebastian recibe (único opt-in); el resto sale `OMITIDO ... sin opt-in`.
+   - ⚠️ Un `docker compose exec node -e` NO puede enviar WhatsApp (proceso separado, sin socket WA).
+     El envío real debe salir del proceso principal vía el cron.
+2. **Rotar `CALENDLY_TOKEN`** (es el PAT personal de Sebastian Rodriguez, pasó por chat) y la
+   **contraseña del VPS** (también pasó por chat).
+3. Roadmap de baby-proofing restante (cola de aprobación, auditoría, caps anti-ban) — ver más abajo.
 
-## Estado del repo
+## Estado del repo (2026-06-08)
 
-- Rama actual: `feat/admin-lid-testing` (local, **sin push**).
-- Commit: `9836819` "feat(lid): ADMIN_LID para acceso de jefe en pruebas" — solo `src/index.js`.
-- `main` intacto. VPS sin tocar (sigue con código viejo, sin `BOSS_LID`).
-- `.env` local con los valores de arriba (no commiteado, gitignored).
+- **`main`** tiene todo (la rama `feat/admin-lid-testing` ya se fast-forward-mergeó y se borró el flujo).
+  Commits clave: `dd2e101` tiering, `9757ff5` memoria sandboxed, `448d627` comandos, `cde8a8b` fix compose.
+- **Pusheado** a `origin` (github.com/Agencia-Dani/Juanito) y **desplegado** en el VPS.
+- `.env` local (gitignored): `BOSS_LID=144268136038585@lid`, `ADMIN_LID=129...,147...`.
 
 ## Tiering de capacidades (baby-proofing) — el jefe es no-técnico y rompe cosas
 
@@ -134,12 +155,28 @@ commit `cde8a8b`. **Regla: toda env var nueva que el código lea debe agregarse 
 
 - ✅ `main` desplegado en el VPS (`pscp src` + `pscp docker-compose.yml` + `docker compose up -d --build`).
   WA reconectó con la sesión existente, sin re-vincular. Calendly sigue en `DRY_RUN=true`.
-- ✅ `.env` del VPS: `ADMIN_LID=129446371655733@lid,147313234280449@lid` (Alejandro + compañero);
-  `BOSS_LID` vacío (jefe real = @lid desconocido → boss sandboxed por retrocompat).
-- ✅ Validado en vivo: `/whoami` → `Rol: admin`, `/status` responde. Tiering de capacidades activo.
+- ✅ `.env` del VPS: `BOSS_LID=144268136038585@lid` (jefe real, capturado en vivo) +
+  `ADMIN_LID=129446371655733@lid,147313234280449@lid` (Alejandro + compañero).
+- ✅ Validado en vivo: `/whoami` → `Rol: admin`, `/status` responde; opt-in self-service de Sebastian OK.
 - Rollback: `/root/juanito-backup-20260608-022526.tar.gz` + imagen `juanito-agent:pre-roles-20260608`.
-- Pendiente: capturar `BOSS_LID` real del jefe (ya con `/whoami` es trivial) para arreglar el
-  opt-in self-service de closers; rotar `CALENDLY_TOKEN` y la contraseña del VPS.
+
+## Pruebas de pushes Calendly (sujeto: Sebastian Rodriguez)
+
+- **Opt-ins:** se eliminó a Pablo Lozano; **solo Sebastian Rodriguez** (`573102212005`,
+  `sebastian@30x.com`) está opted-in. (No hay función `deleteOptin`; el borrado se hizo por SQL
+  directo en `/app/data/brain.sqlite` vía `docker compose exec`.)
+- **Fase 1 (datos/formato) — ✅ validada.** `node scripts/calendly-day-check.js 2026-06-08 "sebastian@30x.com"`
+  (corre local con el token del `.env`) → 2 citas el 8-jun, scoping por día OK. Y la pasada
+  `docker compose exec -T agent node scripts/calendly-dryrun.js` (en el VPS, dry-run) renderizó su
+  Push 1 correcto: nombres completos, teléfonos, horas y conteo.
+- **Fase 2 (envío real) — pendiente** (próxima sesión, receta en "Próximos pasos").
+
+## Aprendizaje: primer contacto en Baileys llega VACÍO
+
+El **primer** mensaje de un número nuevo a Juanito llega sin contenido (`types=` vacío, `msg.message`
+nulo) mientras se establece la sesión de cifrado; el bot lo descarta en `if (!text) return`. El
+**segundo** mensaje ya llega con texto. Pasó con Sebastian: 1er "Hola" vacío, 2º "Hola Juanito" OK.
+→ Si un closer dice que escribió y "no pasó nada", pedirle que mande un segundo mensaje.
 
 ## Verificación rápida (tests)
 
