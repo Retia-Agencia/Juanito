@@ -87,6 +87,35 @@ plink -batch -pw <PASSWORD> root@157.230.152.202 ^
 - `main` intacto. VPS sin tocar (sigue con código viejo, sin `BOSS_LID`).
 - `.env` local con los valores de arriba (no commiteado, gitignored).
 
+## Tiering de capacidades (baby-proofing) — el jefe es no-técnico y rompe cosas
+
+El objetivo: el jefe se siente dueño, pero está **sandboxed**; el equipo (admins) tiene el
+control real. `BOSS_LID`/`ADMIN_LID` ya no son solo ruteo — ahora definen **poder**.
+
+### Implementado (commit `dd2e101`)
+
+- **`src/common/roles.js` — `roleOf(sender)` → `admin | boss | unknown`** (fuente única de verdad).
+  `admin` gana sobre `boss` (un LID en `ADMIN_LID` es admin aunque esté también en `BOSS_LID`).
+- **Gateo de tools por rol a nivel de API** (`toolsForRole` en `src/claude/index.js`): el jefe
+  **no** recibe `save_memory` (su vector de envenenamiento de la memoria del bot); el admin sí.
+  Lo que no está en el array de tools, el modelo no lo puede invocar — más fuerte que pedirlo en el prompt.
+- **Defensa en profundidad** en `dispatchTool`: `save_memory` con rol ≠ admin se rechaza.
+- **System prompt endurecido**: nunca revelar config/tokens/closers/teléfonos; al jefe nunca
+  errores técnicos y deflectar con calidez ("eso lo coordina tu equipo") en vez de negarse en seco;
+  al admin, modo técnico.
+- Tests: `test/roles.test.js` + guarda de `save_memory` por rol en `test/brain.tools.test.js`.
+
+### Roadmap pendiente (en orden sugerido)
+
+1. **Memoria del jefe sandboxed**: que el jefe pueda hacer que Juanito "recuerde" cosas suyas, pero
+   en un namespace que NO altera el comportamiento del sistema (hoy simplemente no tiene `save_memory`).
+2. **Comandos de admin**: `/whoami` (devuelve tu LID — quita el dolor de grepear logs), `/status`
+   (DRY_RUN, último push, salud de WA, # opt-ins), `/dryrun on|off`, `/optins`.
+3. **No mandar a terceros por orden del jefe** (anti-ban + reputación) cuando se agreguen tools de envío.
+4. **Cola de aprobación**: pedido gateado del jefe → Juanito avisa a un admin → admin aprueba.
+5. **Log de auditoría** de lo que el jefe pide (y qué quedó gateado).
+6. **Caps anti-ban / costo**: tope de mensajes salientes/min y de tokens por conversación.
+
 ## Verificación rápida (tests)
 
 ```powershell
