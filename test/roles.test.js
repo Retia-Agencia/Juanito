@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || 'test-key';
 
 const { roleOf, isPrivileged } = await import('../src/common/roles.js');
-const { toolsForRole } = await import('../src/claude/index.js');
+const { toolsForRole, splitMemory } = await import('../src/claude/index.js');
 
 // Helper: corre fn con env temporal y restaura al terminar.
 function withEnv(env, fn) {
@@ -91,15 +91,38 @@ test('toolsForRole: admin en DM tiene save_memory', () => {
   assert.ok(names.includes('create_reminder'));
 });
 
-test('toolsForRole: jefe en DM NO tiene save_memory pero sí el resto', () => {
+test('toolsForRole: jefe en DM NO tiene save_memory pero sí remember_note y el resto', () => {
   const names = toolsForRole('boss', { isGroup: false }).map((t) => t.name);
   assert.ok(!names.includes('save_memory'));
+  assert.ok(names.includes('remember_note')); // memoria sandboxed del jefe
   assert.ok(names.includes('create_reminder'));
   assert.ok(names.includes('summarize_group'));
   assert.ok(names.includes('search_knowledge'));
 });
 
-test('toolsForRole: en grupo nunca hay save_memory, ni siquiera para admin', () => {
-  assert.ok(!toolsForRole('admin', { isGroup: true }).map((t) => t.name).includes('save_memory'));
-  assert.ok(!toolsForRole('boss', { isGroup: true }).map((t) => t.name).includes('save_memory'));
+test('toolsForRole: admin en DM tiene save_memory y remember_note', () => {
+  const names = toolsForRole('admin', { isGroup: false }).map((t) => t.name);
+  assert.ok(names.includes('save_memory'));
+  assert.ok(names.includes('remember_note'));
+});
+
+test('toolsForRole: en grupo no hay escrituras de memoria, ni para admin', () => {
+  for (const role of ['admin', 'boss']) {
+    const names = toolsForRole(role, { isGroup: true }).map((t) => t.name);
+    assert.ok(!names.includes('save_memory'));
+    assert.ok(!names.includes('remember_note'));
+  }
+});
+
+test('splitMemory separa notas del jefe (prefijo boss_note:) de la memoria núcleo', () => {
+  const mem = [
+    { key: 'numero_cuenta', value: '123' },
+    { key: 'boss_note:cafe', value: 'le gusta el café sin azúcar' },
+    { key: 'boss_note:1717000000000', value: 'odia las reuniones de los lunes' },
+  ];
+  const { core, notes } = splitMemory(mem);
+  assert.equal(core.length, 1);
+  assert.equal(core[0].key, 'numero_cuenta');
+  assert.equal(notes.length, 2);
+  assert.ok(notes.every((n) => n.key.startsWith('boss_note:')));
 });

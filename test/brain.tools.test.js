@@ -204,3 +204,32 @@ test('save_memory con rol admin sí persiste', async () => {
 
   assert.deepEqual(deps.calls.setMemory[0], ['k', 'v']);
 });
+
+test('remember_note (jefe) guarda en namespace sandboxed boss_note:<label>', async () => {
+  const deps = makeDeps();
+
+  const result = await dispatchTool(
+    { name: 'remember_note', input: { note: 'café sin azúcar', label: 'Café Favorito' } },
+    deps,
+    { createdBy: BOSS, role: 'boss' }
+  );
+
+  const [key, value] = deps.calls.setMemory[0];
+  assert.equal(key, 'boss_note:cafe_favorito'); // slug del label
+  assert.equal(value, 'café sin azúcar');
+  assert.match(result, /anotado/i);
+});
+
+test('remember_note sin label usa una key con prefijo boss_note:', async () => {
+  const deps = makeDeps();
+
+  await dispatchTool(
+    { name: 'remember_note', input: { note: 'odia los lunes' } },
+    deps,
+    { createdBy: BOSS, role: 'boss' }
+  );
+
+  const [key, value] = deps.calls.setMemory[0];
+  assert.ok(key.startsWith('boss_note:'));
+  assert.equal(value, 'odia los lunes');
+});
