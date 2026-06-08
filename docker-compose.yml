@@ -14,6 +14,10 @@ services:
       - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-6}
       - CLAUDE_MAX_TOKENS=${CLAUDE_MAX_TOKENS:-2048}
       - BOSS_PHONE=${BOSS_PHONE}
+      # LID del jefe en WA multi-device (vacío = retrocompat: cualquier @lid no-admin = jefe).
+      - BOSS_LID=${BOSS_LID:-}
+      # LIDs del equipo dev con rol admin (CSV). Sin esto no hay admins.
+      - ADMIN_LID=${ADMIN_LID:-}
       - BOT_NAME=${BOT_NAME:-Juanito}
       - AGENT_PHONE=${AGENT_PHONE}
       - DB_PATH=/app/data/brain.sqlite
