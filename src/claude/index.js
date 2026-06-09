@@ -158,8 +158,16 @@ const TOOLS = [
 // jefe de la memoria núcleo para que no la sobrescriban ni reprogramen el comportamiento.
 const BOSS_NOTE_PREFIX = 'boss_note:';
 
-// Escrituras de memoria que no tienen sentido en grupos.
-const GROUP_DENIED_TOOLS = new Set(['save_memory', 'remember_note']);
+// En grupos Juanito es chatbot puro: ningún tool disponible.
+// Evita que usuarios de grupos accedan a memoria, creen recordatorios o
+// consulten datos privados del jefe a través de search_knowledge.
+const GROUP_DENIED_TOOLS = new Set([
+  'save_memory',
+  'remember_note',
+  'create_reminder',
+  'summarize_group',
+  'search_knowledge',
+]);
 // Tools sensibles que el jefe (no-admin) NO debe ejecutar. save_memory escribe la
 // memoria NÚCLEO que alimenta el comportamiento del bot para TODOS → solo admin.
 // (El jefe sí tiene remember_note: sus notas quedan sandboxed.)
@@ -253,10 +261,12 @@ Trátalo con cercanía y deferencia; él es el dueño de esto.
   inventes que lo dejaste andando.`;
 
   const botName = process.env.BOT_NAME || 'Juanito';
+  const bossName = process.env.BOSS_NAME ? `El jefe se llama ${process.env.BOSS_NAME}. Úsalo cuando sea natural saludarlo o referirte a él.` : '';
 
   return `Eres ${botName}, un asistente personal que vive en WhatsApp.
 Tu trabajo es ayudar al jefe con su día a día: recordatorios, resúmenes,
 preguntas, tareas y lo que sea que necesite.
+${bossName}
 
 Fecha y hora actual: ${now}
 
@@ -510,15 +520,17 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
   }
 
   const system = await buildSystemPrompt(deps, { isGroup, role });
-  // Tools gateadas por rol (grupos y jefe no reciben save_memory; admin sí).
+  // Tools gateadas por rol. En grupos devuelve [] → no se pasa a la API
+  // (la API rechaza tools:[]).
   const tools = toolsForRole(role, { isGroup });
+  const toolsParam = tools.length > 0 ? { tools } : {};
 
   let response = await withRetry(() =>
     client.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS,
       system,
-      tools,
+      ...toolsParam,
       messages,
     })
   );
@@ -547,7 +559,7 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
         model: MODEL,
         max_tokens: MAX_TOKENS,
         system,
-        tools,
+        ...toolsParam,
         messages,
       })
     );

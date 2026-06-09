@@ -17,9 +17,9 @@ export function handleCommand({ text, sender, role }, deps = {}) {
     return `Tu ID: ${sender}\nRol: ${role}`;
   }
 
-  // /status — solo admins. El jefe no ve diagnósticos (devolvemos null → sigue a Claude).
+  // /status — solo admins.
   if (cmd === '/status') {
-    if (role !== 'admin') return null;
+    if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
     return buildStatus(deps);
   }
 
