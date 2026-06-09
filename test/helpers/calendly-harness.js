@@ -94,10 +94,17 @@ export function makeApi(events, opts = {}) {
 }
 
 // ─── Store en memoria de calendly_pushes (mismo contrato que src/db/index.js) ──
+// `optins`: array de strings (teléfono, opt-in verificado sin contact_jid) o de
+// objetos { phone, contactJid?, source? } para modelar el hilo real del closer.
 export function makeStore({ optins = [], nowRef } = {}) {
   const rows = [];
   let nextId = 1;
-  const optedIn = new Set(optins.map((p) => normalizePhone(p)));
+  const optinMap = new Map(); // phone normalizado → { phone, contact_jid, source }
+  for (const o of optins) {
+    const obj = typeof o === 'string' ? { phone: o } : o;
+    const p = normalizePhone(obj.phone);
+    if (p) optinMap.set(p, { phone: p, contact_jid: obj.contactJid || null, source: obj.source || 'self' });
+  }
   const now = () => (nowRef ? nowRef.ms : Date.now());
 
   return {
@@ -161,10 +168,15 @@ export function makeStore({ optins = [], nowRef } = {}) {
     },
     isOptedIn(phone) {
       const p = normalizePhone(phone);
-      return p ? optedIn.has(p) : false;
+      return p ? optinMap.has(p) : false;
     },
-    optIn(phone) {
-      optedIn.add(normalizePhone(phone));
+    getOptin(phone) {
+      const p = normalizePhone(phone);
+      return p ? optinMap.get(p) || null : null;
+    },
+    optIn(phone, contactJid = null) {
+      const p = normalizePhone(phone);
+      if (p) optinMap.set(p, { phone: p, contact_jid: contactJid, source: 'self' });
     },
   };
 }
@@ -200,6 +212,7 @@ export function installHarness(scheduler, { events = [], optins = [], nowMs = Da
     markCalendlyPushSent: store.markCalendlyPushSent,
     markCalendlyPushSkipped: store.markCalendlyPushSkipped,
     isOptedIn: store.isOptedIn,
+    getOptin: store.getOptin,
     sendMessage: wa.sendMessage,
     now: () => clock.ms,
   };

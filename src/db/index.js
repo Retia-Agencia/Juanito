@@ -326,6 +326,22 @@ export function isVerifiedOptedIn(phone) {
   return !!db.prepare(`SELECT 1 FROM calendly_optins WHERE phone = ? AND source = 'self'`).get(p);
 }
 
+// Fila completa del opt-in (incluye `contact_jid` y `source`) o null. La usa la
+// entrega para enrutar al JID que YA estableció hilo con Juanito en vez del número
+// canónico de closers.js — que puede no haber escrito nunca (anti-ban). Ver deliver().
+export function getOptin(phone) {
+  const p = normalizePhone(phone);
+  if (!p) return null;
+  return (
+    db
+      .prepare(
+        `SELECT phone, closer_email, name, source, contact_jid, registered_at
+         FROM calendly_optins WHERE phone = ?`
+      )
+      .get(p) || null
+  );
+}
+
 export function listOptins() {
   return db
     .prepare(`SELECT phone, closer_email, name, source, contact_jid, registered_at FROM calendly_optins ORDER BY registered_at ASC`)

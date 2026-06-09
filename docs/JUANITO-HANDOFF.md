@@ -17,8 +17,9 @@ un cambio relevante.
 - **Blocker histórico (opt-in roto por LID): RESUELTO** y validado en vivo.
 - **Fase 2 (envío real de Calendly): HECHA** — Sebastian Rodriguez recibió su Push 1 real,
   solo él; revertido a dry-run.
-- **Fix anti-ban del opt-in (envío en frío a opt-in fabricado): IMPLEMENTADO** hoy
-  (`source`/`contact_jid` + `isVerifiedOptedIn`). Queda un **residual** documentado abajo.
+- **Fix anti-ban del opt-in (envío en frío a opt-in fabricado): IMPLEMENTADO** hoy en dos capas:
+  (1) `source`/`contact_jid` + `isVerifiedOptedIn` (solo opt-in ganado habilita envío); (2) la
+  entrega enruta al `contact_jid` (hilo real) en vez del número canónico — cierra el residual del LID.
 - **Secretos:** se decidió **NO rotar `CALENDLY_TOKEN`** y **diferir** la rotación de la
   contraseña del VPS (ver §13).
 
@@ -314,10 +315,16 @@ escribió desde otro número) habilitaba un push **en frío** a un número que n
 - Sebas quedó **backfilleado** a `source='self'` (decisión del owner: él creará el hilo real
   escribiendo desde su número de trabajo).
 
-**Residual (no cerrado por la realidad del LID):** si un closer escribe desde su celular
-**personal** (resuelto por `pushName`), su opt-in queda `'self'` pero el número de **trabajo**
-sigue sin hilo → entrega en frío a ese número. Mitigación operativa: pedir que escriban desde su
-número de trabajo. `contact_jid` queda registrado para una futura detección automática de este caso.
+**Residual cerrado (2026-06-09):** antes, si un closer escribía desde su celular **personal**
+(resuelto por `pushName`), su opt-in quedaba `'self'` pero `deliver()` mandaba al número de
+**trabajo** de `closers.js` — que nunca abrió hilo → entrega en frío. **Fix:** la entrega ahora
+enruta al `contact_jid` del opt-in (la identidad que realmente escribió y a la que Juanito ya
+respondió), no al número canónico. El número canónico sigue siendo la **clave** del opt-in y la
+agrupación de digests; solo cambia el **destino** del `sendMessage`. Si no hay `contact_jid` (opt-in
+sembrado/grandfathered, p. ej. Sebas), cae al número canónico (comportamiento previo, riesgo aceptado
+por el owner). Implementado en `src/scheduler/calendly.js → deliver()` + `db.getOptin`. Tests:
+`test/calendly.scenarios.test.js` ("entrega al contact_jid" / "sin contact_jid → canónico") y
+`test/data.db.test.js` (getOptin).
 
 ### 11.3 Fixes de robustez (sesión 2026-06-08, en `a118a71`)
 
@@ -508,7 +515,7 @@ plink -pw <PW> root@157.230.152.202 "cd /root/juanito && docker compose up -d --
 | Revelación de config interna | System prompt prohíbe revelar tokens, env vars, LIDs, teléfonos de terceros |
 | Softban por reconexiones rápidas | Backoff exponencial en `entrypoint.sh`; container no expone puertos |
 | Procesamiento duplicado | Tabla `processed_messages` deduplica por `message_id` |
-| **Push en frío a opt-in fabricado** | **`isVerifiedOptedIn` exige `source='self'` (opt-in ganado)** — ver §11.2 |
+| **Push en frío a opt-in fabricado** | **`isVerifiedOptedIn` exige `source='self'` (opt-in ganado)** + la entrega va al `contact_jid` (hilo real), no al número canónico — ver §11.2 |
 
 ---
 
@@ -560,10 +567,6 @@ plink -pw <PW> root@157.230.152.202 "cd /root/juanito && docker compose up -d --
 
 ### 🔴 Alta prioridad
 
-- **Residual del opt-in anti-ban** (§11.2): un closer que escribe desde su número **personal** queda
-  `'self'` pero su número de **trabajo** sigue sin hilo → entrega en frío a ese número. Mitigación
-  operativa hoy (pedir que escriban desde el número de trabajo); pendiente detección automática usando
-  `contact_jid`.
 - **Memoria específica por grupo:** hoy Juanito responde en grupos sin saber nada del grupo. Permitir que
   un admin asigne contexto. Implementación: tabla `group_memory(group_id PK, context, updated_at)`; tools
   `set_group_context`/`get_group_context` (admin/boss); inyectar en `buildSystemPrompt()` cuando `isGroup`.

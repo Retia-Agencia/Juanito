@@ -139,6 +139,33 @@ test('anti-ban: closer sin opt-in → no se envía, se marca skipped', async () 
   assert.equal(h.store._rows[0].status, 'skipped');
 });
 
+test('anti-ban: la entrega va al contact_jid del opt-in (hilo real), no al número canónico', async () => {
+  // Cierra el residual: el closer escribió desde un @lid (no su número de closers.js);
+  // el push debe ir a ESE hilo, nunca en frío al número de trabajo que jamás escribió.
+  const now = Date.now();
+  const JID = '20671711162446@lid';
+  const events = [makeEvent({ uuid: 'jid', startInMin: 20, closerEmail: SALAZAR, nowMs: now })];
+  const h = installHarness(scheduler, {
+    events,
+    optins: [{ phone: SALAZAR_PHONE, contactJid: JID }],
+    nowMs: now,
+  });
+  await scheduler.runCalendlyPoll();
+  await scheduler.runCalendlyDelivery();
+  assert.equal(h.wa.sent.length, 1);
+  assert.equal(h.wa.sent[0].to, JID, 'entrega al JID que escribió, no al número de closers.js');
+});
+
+test('anti-ban: opt-in sin contact_jid (sembrado/grandfathered) → entrega al número canónico', async () => {
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'noj', startInMin: 20, closerEmail: SALAZAR, nowMs: now })];
+  const h = installHarness(scheduler, { events, optins: [SALAZAR_PHONE], nowMs: now });
+  await scheduler.runCalendlyPoll();
+  await scheduler.runCalendlyDelivery();
+  assert.equal(h.wa.sent.length, 1);
+  assert.equal(h.wa.sent[0].to, SALAZAR_PHONE, 'sin hilo conocido cae al número canónico');
+});
+
 test('dry-run: no envía aunque haya opt-in', async () => {
   process.env.CALENDLY_DRY_RUN = 'true';
   const now = Date.now();

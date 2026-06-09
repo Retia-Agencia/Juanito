@@ -58,6 +58,12 @@ test('opt-in anti-ban: source self vs seeded e isVerifiedOptedIn', () => {
   // No-degradación: un self que recibe otra escritura seeded → sigue verificado
   db.registerOptin({ phone: '+57 300 111 0002' });
   assert.equal(db.isVerifiedOptedIn('573001110002'), true, 'self no se degrada a seeded');
+
+  // getOptin: expone contact_jid para enrutar la entrega al hilo real (anti-ban)
+  const row = db.getOptin('573001110002');
+  assert.equal(row.source, 'self');
+  assert.equal(row.contact_jid, '12345@lid', 'contact_jid del primer self se preserva');
+  assert.equal(db.getOptin('573009990000'), null, 'sin fila → null');
 });
 
 test('recordatorio con destinatario: save -> pending -> sent', () => {

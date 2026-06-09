@@ -87,6 +87,8 @@ async function deps() {
     // Anti-ban: el gate de entrega exige opt-in GANADO (el closer escribió), no solo
     // que la fila exista. Una fila sembrada/sin verificar NO habilita envío en frío.
     isOptedIn: db.isVerifiedOptedIn,
+    // Para enrutar al hilo real del closer (contact_jid) en vez del número canónico.
+    getOptin: db.getOptin,
     sendMessage: whatsapp.sendMessage,
     now: () => Date.now(),
   };
@@ -120,17 +122,25 @@ function isAuthError(msg) {
 
 // Devuelve 'sent' | 'dry-run' | 'skipped-optin'.
 // Anti-baneo: nunca enviamos a un closer que no haya escrito antes a Juanito.
+// `to` es el número canónico del closer (closers.js): sirve de clave del opt-in y
+// para agrupar digests. El ENVÍO, en cambio, va a la identidad que YA estableció hilo
+// con Juanito (`contact_jid` del opt-in) cuando la conocemos — así nunca mandamos en
+// frío a un número de trabajo que jamás escribió (cierra el residual del fix anti-ban).
+// Si no hay `contact_jid` (opt-in sembrado/grandfathered), caemos al número canónico.
 async function deliver(d, to, text, tag) {
   if (REQUIRE_OPTIN() && !d.isOptedIn(to)) {
     console.log(`[Calendly] OMITIDO (${tag}) → ${to}: el closer aún no le ha escrito a Juanito (sin opt-in)`);
     return 'skipped-optin';
   }
+  const optin = d.getOptin ? d.getOptin(to) : null;
+  const target = optin?.contact_jid || to;
+  const via = target !== to ? ` [hilo de opt-in; closer ${to}]` : '';
   if (DRY_RUN()) {
-    console.log(`[Calendly][DRY-RUN] (${tag}) → ${to}\n${text}\n`);
+    console.log(`[Calendly][DRY-RUN] (${tag}) → ${target}${via}\n${text}\n`);
     return 'dry-run';
   }
-  await d.sendMessage(to, text);
-  console.log(`[Calendly] enviado (${tag}) → ${to}`);
+  await d.sendMessage(target, text);
+  console.log(`[Calendly] enviado (${tag}) → ${target}${via}`);
   return 'sent';
 }
 
