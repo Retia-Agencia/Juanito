@@ -21,19 +21,24 @@ un cambio relevante.
   copiado al VPS y `docker compose up -d --build` (contenedor sano, WA reconectó sin QR,
   código nuevo confirmado dentro del contenedor). **Falta SOLO la verificación en vivo del
   Bloque B** (el usuario probó B1 sobre código viejo y falló; re-probar sobre el fix). Ver §17.
-- **Calendly:** blocker de opt-in por LID resuelto. Fase 2 (envío real) probada con Sebastián
-  Rodriguez. **Prueba dummy 2026-06-09: el redirect por `contact_jid` quedó VALIDADO end-to-end**
-  (un celular dummy recibió el digest real de Pablo Lozano; ver §11.7). Revertido a dry-run.
+- **Calendly: 🎉 PILOTO REAL COMPLETADO (2026-06-09, con Sebastián SALAZAR).** Ver §11.8.
+  Opt-in real capturó `contact_jid` automáticamente (el bug 🚨 URGENTE quedó VALIDADO Y CERRADO:
+  Salazar escribió desde su número de trabajo, llegó como LID, se resolvió por pushName y la fila
+  quedó `source='self'` + `contact_jid='39415653117990@lid'`). Push 1 real enviado DOS veces a su
+  hilo (digest de 6 llamadas con links wa.me; la 2ª vez ya con el bloque de materiales). Closer
+  confirmó: digest llegó, links abren el chat del lead con el precall escrito. Entrega estricta
+  verificada en vivo (Rodriguez omitido `sin hilo`; 4 closers omitidos `sin opt-in`). Revertido a
+  dry-run. Histórico: blocker de opt-in por LID resuelto; prueba dummy del redirect en §11.7.
 - **3 decisiones de producto (2026-06-09) → ver §18.A:**
   (1) **entrega estricta** (solo a hilos con `contact_jid`, cero envío en frío) — **✅ IMPLEMENTADO**;
   (2) **comando admin `/calendly on|off [closer]`** (apagar pushes global y por-closer sin redeploy,
   flag en DB) — **✅ IMPLEMENTADO** (admin-only; control HÍBRIDO: DRY_RUN sigue siendo el master
   dev-only del `.env`, `/calendly off` es el botón de pánico instantáneo desde WhatsApp para admins);
   (3) **links wa.me pre-escritos** closer→lead — **✅ IMPLEMENTADO** (templates por producto ×
-  push + link wa.me incrustado en digests y Push 3). Pendiente SOLO los links de brochure/video
-  por producto (`MATERIAL_LINKS` en `src/calendly/index.js`, hoy vacíos → el bloque de materiales
-  se omite solo).
-  Orden: (1)+(2)+(3) ✅ → **piloto real (siguiente paso)**. Tests: ~95 puros + 21 nativos.
+  push + link wa.me incrustado en digests y Push 3). `MATERIAL_LINKS` **ya poblado** (commit
+  `af6a5cb`): brochures HTML en GitHub Pages (`agencia-dani.github.io/juanito-brochures/`) +
+  videos YouTube, por producto. Los 4 links verificados HTTP 200.
+  Orden: (1)+(2)+(3) ✅ → **piloto real ✅ COMPLETADO** (ver §11.8). Tests: ~95 puros + 21 nativos.
 - **Secretos:** `CALENDLY_TOKEN` no se rota (decidido). Contraseña VPS diferida (ver §13).
 
 Pendientes reales abiertos → ver §18 "Tareas pendientes".
@@ -446,6 +451,35 @@ canónico y habría omitido a Sebas.
 automática** de `contact_jid` cuando un closer real escribe (ese sigue siendo el bug abierto de
 §18 / la prueba 🚨 URGENTE). Son cosas distintas con el mismo nombre.
 
+### 11.8 🎉 Piloto real 2026-06-09 — Sebastián SALAZAR (COMPLETADO)
+
+Ejecutado end-to-end siguiendo el checklist de §18.A. Resultados:
+
+1. **Deploy:** el VPS estaba desactualizado (tenía Items 1+2 pero NO el 3). Backup
+   (`/root/juanito-backup-20260609-213328.tar.gz`), `scp src scripts test`, rebuild. Verificado
+   `buildLeadLink` dentro del contenedor. `src/`+`scripts/` quedaron **idénticos** al repo por
+   hash md5 (el `Dockerfile` difiere SOLO por CRLF/LF — inofensivo).
+2. **🚨 Captura de `contact_jid` — VALIDADA (bug urgente CERRADO):** Salazar escribió a Juanito
+   desde su número de trabajo (+573054312905, 2 mensajes). Llegó como **LID nuevo**
+   (`39415653117990@lid`), se resolvió por pushName ("Juan Sebastian Salazar davila" →
+   `resolveCloserByPushName`), y la fila quedó `source='self'` + **`contact_jid` poblado**
+   automáticamente. La hipótesis del handshake/mensaje vacío era correcta: con 2 mensajes funciona.
+3. **Envío real (×2):** `DRY_RUN=false` + cron de prueba → `enviado (push1) → 39415653117990@lid`.
+   Salazar recibió su digest de 6 llamadas del 2026-06-10 con links wa.me y **confirmó que todo
+   sirve** (link abre el chat del lead con el precall escrito). Segundo envío tras poblar
+   `MATERIAL_LINKS` (commit `af6a5cb`): Push 1 ya con bloque de materiales (brochure HTML + video).
+4. **Entrega estricta verificada en vivo:** Rodriguez (`contact_jid=null`) salió
+   `sin hilo establecido — no se entrega` ✅; los otros 4 closers `OMITIDO sin opt-in` ✅.
+5. **Revertido:** `DRY_RUN=true`, cron de prueba eliminado, contenedor recreado, logs confirman
+   `(DRY-RUN: true)`.
+
+**Nota de producto del piloto:** todas las citas de Salazar eran `second_brain`, así que el copy
+de `abogados` NO se ha visto en vivo (sí en tests + preview). Para verlo en vivo: opt-in de
+Natalia González o Daniela Camacho (tienen citas de abogados) y repetir la receta.
+
+**Estado de opt-ins al cierre:** Salazar ✅ verificado con hilo (recibe). Rodriguez `self` pero
+`contact_jid=null` (NO recibe hasta que escriba de nuevo y capture hilo). Resto sin opt-in.
+
 ---
 
 ## 12. Infraestructura VPS y operación
@@ -827,7 +861,8 @@ function isUnlimitedSender(sender) {
   materiales), incrustación del link en `buildPush3Message`/`buildDigestMessage`, y digest mixto (copy
   correcto por línea). Suite puras verde.
 
-**Piloto real — CHECKLIST PASO A PASO (Items 1+2+3 ya listos; falta solo correrlo):**
+**Piloto real — ✅ COMPLETADO 2026-06-09 con Sebastián Salazar (ver §11.8). El checklist queda
+como receta reusable para sumar más closers:**
 
 > Objetivo: que 1-2 closers reales reciban sus pushes precall (con los links wa.me) un día de
 > verdad, sin riesgo de ban. Todo el código está en `origin/main` (commit `35a7b7c`). El VPS NO es
@@ -905,9 +940,11 @@ function isUnlimitedSender(sender) {
   `settings(key, value)` + override de env (`GROUP_REPLIES_ENABLED`), tool `set_config` con
   whitelist de claves (gateado a admin/boss) y comando `/config` para leer. No implementado aún.
 
-- **🚨 URGENTE — Probar captura de `contact_jid` en opt-in real (requiere un closer disponible).**
-  Pendiente porque al anotarlo no había acceso a ningún closer. Es el último hueco abierto antes del
-  piloto real de Calendly (ver §11.2 / el otro item de `contact_jid` abajo). **Receta exacta:**
+- **✅ RESUELTO (2026-06-09) — Captura de `contact_jid` en opt-in real: VALIDADA con Salazar.**
+  Ver §11.8. El opt-in real capturó `contact_jid` automáticamente (clave: mandar 2 mensajes — el
+  1º de una identidad nueva llega vacío por el handshake). Queda solo el caso de Rodriguez
+  (fila vieja con `contact_jid=null`): debe escribirle de nuevo a Juanito para capturar su hilo.
+  Receta original (sirve para los closers restantes):
   1. En el VPS, dejar corriendo el tail filtrado **antes** de que el closer escriba:
      ```bash
      docker logs juanito-agent -f --tail 5 2>&1 | grep -iE "closer|registrad|opt-in|optin|2067171116244|handleCloser"
@@ -928,7 +965,10 @@ function isUnlimitedSender(sender) {
 
 ### 🟡 Media prioridad
 
-- **Investigar: opt-in no auto-rellena `contact_jid` aunque el closer escriba.** Sebas escribió a Juanito
+- **✅ RESUELTO en lo general (2026-06-09, ver §11.8): la captura de `contact_jid` SÍ funciona** —
+  validada con Salazar (2 mensajes, resolución por pushName). Queda solo el caso puntual de
+  **Rodriguez** (fila vieja `contact_jid=null`): pedirle que le escriba de nuevo a Juanito.
+  Contexto histórico del diagnóstico: Sebas escribió a Juanito
   desde su número de trabajo (`573102212005`) — confirmado visualmente en el celular con la SIM de Juanito —
   pero su fila quedó con `source='self'`, **`contact_jid=null`**. Si su DM hubiera pasado por
   `handleCloserOptin`, `registerOptin(... contactJid: from)` lo habría rellenado. Causa probable: el **primer
