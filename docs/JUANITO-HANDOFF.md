@@ -11,19 +11,16 @@ un cambio relevante.
 
 ## 0. TL;DR — estado al 2026-06-09 (leer primero)
 
-- **Repo:** `main` == `origin/main`, working tree limpio. Último commit relevante: `1c5c7d6`.
-- **VPS:** al día con `main` (deploy de `a118a71`..`1c5c7d6` hecho hoy). Contenedor sano,
-  WA reconectado sin QR, **`CALENDLY_DRY_RUN=true`** (no envía nada en automático).
-- **Blocker histórico (opt-in roto por LID): RESUELTO** y validado en vivo.
-- **Fase 2 (envío real de Calendly): HECHA** — Sebastian Rodriguez recibió su Push 1 real,
-  solo él; revertido a dry-run.
-- **Fix anti-ban del opt-in (envío en frío a opt-in fabricado): IMPLEMENTADO** hoy en dos capas:
-  (1) `source`/`contact_jid` + `isVerifiedOptedIn` (solo opt-in ganado habilita envío); (2) la
-  entrega enruta al `contact_jid` (hilo real) en vez del número canónico — cierra el residual del LID.
-- **Secretos:** se decidió **NO rotar `CALENDLY_TOKEN`** y **diferir** la rotación de la
-  contraseña del VPS (ver §13).
+- **Repo:** `main` == `origin/main`, working tree limpio.
+- **VPS:** contenedor sano, WA conectado sin QR, `CALENDLY_DRY_RUN=true`.
+- **Juanito como asistente WA:** funcionalidad central verificada. Quedan 4 pruebas
+  de comportamiento en vivo (E4, E5, G3, G4) — ver §17. El resto pasó o fue verificado por código.
+- **Calendly:** blocker de opt-in por LID resuelto. Fase 2 (envío real) probada con Sebastián
+  Rodriguez (recibió Push 1 real); revertido a dry-run. Pendiente: confirmar captura de
+  `contact_jid` en opt-in real con un closer disponible.
+- **Secretos:** `CALENDLY_TOKEN` no se rota (decidido). Contraseña VPS diferida (ver §13).
 
-Pendientes reales abiertos → ver §14 "Tareas pendientes".
+Pendientes reales abiertos → ver §18 "Tareas pendientes".
 
 ---
 
@@ -552,14 +549,19 @@ plink -pw <PW> root@157.230.152.202 "cd /root/juanito && docker compose up -d --
 
 | # | Prueba | Estado |
 |---|--------|--------|
-| A3 | Juanito saluda al jefe por nombre | Infra lista (`BOSS_NAME` o `remember_note`). Falta que el jefe configure su nombre. |
+| A3 | Juanito saluda al jefe por nombre | Infra lista (`BOSS_NAME` en `.env` o via DM). Acción: el jefe envía por DM *"Juanito, recuerda que me llamo [nombre]"* y Juanito lo guarda. |
 
-### ⏳ Pendientes de ejecutar en vivo (requieren un humano enviando mensajes)
+### ⏳ Pendientes de prueba en vivo — asistente WhatsApp
 
-| # | Prueba | Cómo ejecutarla |
-|---|--------|----------------|
-| E4 | Rate limit se reinicia al día siguiente | Agotar los 5 mensajes; al día siguiente @mencionar → debe responder. |
-| G3/G4 live | Confirmación conductual | Mandar el mismo mensaje 2× (dedup) y un sticker (sin texto) desde un celular real. |
+Las G2/G3/G4/G5 y E5 fueron verificadas **por lectura de código** en la sesión
+2026-06-09. La lógica es correcta, pero falta confirmar el comportamiento con mensajes reales.
+
+| # | Prueba | Cómo hacerla | Por qué no se hizo antes |
+|---|--------|-------------|--------------------------|
+| **E4** | Rate limit se reinicia al día siguiente | Si ayer se agotaron las 5 menciones, @mencionar hoy → debe responder | Necesitaba esperar al día siguiente |
+| **E5** | BOSS ilimitado en grupos | BOSS usa @Juanito 6+ veces en un grupo → debe responder todas | El jefe no estaba disponible |
+| **G3** | Mismo mensaje no se procesa dos veces | Enviar exactamente el mismo texto 2 veces seguidas con @Juanito en grupo → solo responde la primera | Confirmación conductual pendiente |
+| **G4** | Sticker/imagen ignorado silenciosamente | BOSS envía un sticker o foto por DM → Juanito no responde ni falla | Confirmación conductual pendiente |
 
 ---
 
