@@ -545,7 +545,9 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
   // getRecentHistory ya incluye el mensaje recién guardado como último 'user'.
   // Filtramos por chatId para AISLAR contextos: el historial de un grupo no debe
   // mezclarse con los DMs privados del jefe (ni con otros grupos).
-  const messages = sanitizeHistory(await deps.getRecentHistory(20, chatId));
+  // Grupos cargan 30 mensajes (ventana más amplia para respuestas coherentes en conversaciones largas);
+  // DMs cargan 20 (contexto privado, ventana más chica = menos costo).
+  const messages = sanitizeHistory(await deps.getRecentHistory(isGroup ? 30 : 20, chatId));
   if (!messages.length || messages[messages.length - 1].role !== 'user') {
     messages.push({ role: 'user', content: userMessage });
   }
