@@ -13,8 +13,9 @@ un cambio relevante.
 
 - **Repo:** `main` == `origin/main`, working tree limpio.
 - **VPS:** contenedor sano, WA conectado sin QR, `CALENDLY_DRY_RUN=true`.
-- **Juanito como asistente WA:** funcionalidad central verificada. Quedan 4 pruebas
-  de comportamiento en vivo (E4, E5, G3, G4) — ver §17. El resto pasó o fue verificado por código.
+- **Juanito como asistente WA:** pruebas básicas pasadas. **BUG CRÍTICO ABIERTO:**
+  Juanito no adapta su rol por contexto — en grupos inyecta datos privados del jefe
+  en el system prompt y rechaza preguntas generales. Ver §17 y §18 para el plan de fix.
 - **Calendly:** blocker de opt-in por LID resuelto. Fase 2 (envío real) probada con Sebastián
   Rodriguez (recibió Push 1 real); revertido a dry-run. Pendiente: confirmar captura de
   `contact_jid` en opt-in real con un closer disponible.
@@ -518,56 +519,153 @@ plink -pw <PW> root@157.230.152.202 "cd /root/juanito && docker compose up -d --
 
 ## 17. Estado de pruebas
 
-### ✅ Pasaron / Resueltos (sesión 2026-06-08)
+### ✅ Pasaron o resueltos
 
-| # | Prueba | Nota |
-|---|--------|------|
-| A1–A2 | Juanito sabe su nombre | Fix en system prompt |
-| A4–A5 | No revela config interna | Pasa |
-| B1–B4 | DMs por autorización | Pasa |
-| C1–C4 | Roles y comandos | Pasa |
-| C5 | /status para no-admin | "solo para equipo técnico 🙂" |
-| D1–D4 | Memoria por rol | Pasa |
-| D5 | Grupos no guardan datos ajenos | Grupos sin ningún tool — chatbot puro |
-| E1–E3 | @mention en grupos | Pasa |
-| E6 | Memoria no se revela en grupos | `search_knowledge` eliminado de grupos |
-| F1–F3 | Recordatorios | Pasa |
+| # | Prueba | Sesión | Nota |
+|---|--------|--------|------|
+| A1–A2 | Juanito sabe su nombre | 08/06 | Fix en system prompt |
+| A4–A5 | No revela config interna | 08/06 | Pasa |
+| B1–B4 | DMs por autorización | 08/06 | Pasa |
+| C1–C4 | Roles y comandos | 08/06 | Pasa |
+| C5 | /status para no-admin | 08/06 | Fix: responde "solo para equipo técnico 🙂" |
+| D1–D4 | Memoria por rol en DMs | 08/06 | Pasa |
+| D5 | Grupos no guardan datos (tools bloqueados) | 08/06 | Fix: sin tools en grupos |
+| E1–E3 | @mention en grupos dispara respuesta | 08/06 | Pasa |
+| E4 | Rate limit se reinicia al día siguiente | 09/06 | Pasa ✅ |
+| E6 | `search_knowledge` no disponible en grupos | 08/06 | Fix: removido de GROUP_DENIED_TOOLS |
+| F1–F3 | Recordatorios (crear, con fecha, fecha lejana) | 08/06 | Pasa |
+| G1 | Container restart recupera sesión sin QR | 09/06 | Validado en vivo — 3 recreates, reconectó solo |
+| G2 | Mensaje muy largo no crashea | 09/06 | Verificado por código |
+| G3 | Mismo mensaje no se procesa dos veces | 09/06 | Pasa ✅ (en vivo) |
+| G4 | Sticker/imagen ignorados | 09/06 | Pasa ✅ (en vivo) |
+| G5 | Error de API de Claude → fallback amigable | 09/06 | Verificado por código |
 
-### Verificación 2026-06-09 (código + observación)
+### ❌ Falló → Fix aplicado (verificar que el fix resuelve)
 
-| # | Prueba | Estado | Evidencia |
-|---|--------|--------|-----------|
-| G1 | Container restart recupera la sesión | ✅ validado en vivo | 3 recreates hoy (deploy + Fase 2 ×2): cada `docker compose up -d` reconectó con `Reconnection with existing sync data` → `Conectado ✅`, sin QR. |
-| G2 | Mensaje muy largo | ✅ código | Output capado por `max_tokens`; un 400 cae en try/catch → fallback. Sin ruta de crash. |
-| G3 | Deduplicación de mensajes | ✅ código + unit test | `markIfNew(messageId)` gatea el envío; tabla `processed_messages`. |
-| G4 | Mensaje sin texto (sticker/imagen) | ✅ código | `if (!text) return` en `index.js:15` → descarte silencioso. |
-| G5 | Error de API de Claude | ✅ código | try/catch → fallback amigable; `withRetry` (429/5xx); guards globales `uncaughtException`/`unhandledRejection`. |
-| E5 | BOSS ilimitado en grupos | ✅ código | `isUnlimitedSender` incluye `BOSS_PHONE`. |
-| — | Opt-in anti-ban source self vs seeded | ✅ unit test (DB 11/11) | `test/data.db.test.js`; `isVerifiedOptedIn` solo `source='self'`. |
+| # | Prueba | Falla observada | Fix aplicado | Estado |
+|---|--------|----------------|-------------|--------|
+| A3 | Juanito saluda al jefe por nombre | Solo dijo "Ey, ¿Qué necesitás?" | Infra lista: `BOSS_NAME` en `.env` o via `remember_note`. El jefe no ha configurado su nombre aún. | ⚠️ Pendiente de acción del jefe |
+| D5 | Grupos no guardan datos | Cualquier persona del grupo pudo agregar una tarea | Tools eliminadas de grupos | ⚠️ Fix parcial — ver bug central abajo |
+| E6 | Memoria no se revela en grupos | Juanito reveló tasks del jefe cuando un usuario de grupo lo pidió | `search_knowledge` removido | ⚠️ Fix parcial — ver bug central abajo |
 
-### ⚠️ Parcial
+### ⏳ Pendiente de prueba en vivo
 
-| # | Prueba | Estado |
-|---|--------|--------|
-| A3 | Juanito saluda al jefe por nombre | Infra lista (`BOSS_NAME` en `.env` o via DM). Acción: el jefe envía por DM *"Juanito, recuerda que me llamo [nombre]"* y Juanito lo guarda. |
+| # | Prueba | Cómo hacerla |
+|---|--------|-------------|
+| E5 | BOSS ilimitado en grupos | BOSS usa @Juanito 6+ veces en un grupo → debe responder todas. **Advertencia:** puede fallar por WP5 (ver §18) — el BOSS en grupos llega como LID, no como teléfono. |
 
-### ⏳ Pendientes de prueba en vivo — asistente WhatsApp
+---
 
-Las G2/G3/G4/G5 y E5 fueron verificadas **por lectura de código** en la sesión
-2026-06-09. La lógica es correcta, pero falta confirmar el comportamiento con mensajes reales.
+## 🚨 BUG CRÍTICO ABIERTO — Juanito no adapta su rol por contexto
 
-| # | Prueba | Cómo hacerla | Por qué no se hizo antes |
-|---|--------|-------------|--------------------------|
-| **E4** | Rate limit se reinicia al día siguiente | Si ayer se agotaron las 5 menciones, @mencionar hoy → debe responder | Necesitaba esperar al día siguiente |
-| **E5** | BOSS ilimitado en grupos | BOSS usa @Juanito 6+ veces en un grupo → debe responder todas | El jefe no estaba disponible |
-| **G3** | Mismo mensaje no se procesa dos veces | Enviar exactamente el mismo texto 2 veces seguidas con @Juanito en grupo → solo responde la primera | Confirmación conductual pendiente |
-| **G4** | Sticker/imagen ignorado silenciosamente | BOSS envía un sticker o foto por DM → Juanito no responde ni falla | Confirmación conductual pendiente |
+### Qué falla
+
+1. **Datos del jefe visibles en grupos:** aunque los tools están bloqueados, el system
+   prompt de grupos inyecta memoria núcleo, notas del jefe y recordatorios. Cualquier usuario
+   puede preguntar "¿qué recuerdas?" o "¿qué tareas/recordatorios tienes?" y Juanito los revela.
+
+2. **Persona equivocada en grupos:** el prompt abre con *"Tu trabajo es ayudar al jefe con su
+   día a día"*. En grupos, Juanito rechaza preguntas generales diciendo "solo soy un asistente
+   personal" en vez de comportarse como chatbot de uso general.
+
+3. **Historial de DMs del jefe se filtra a grupos:** `getRecentHistory()` no filtra por
+   `chat_id` — carga los últimos 20 mensajes de toda la DB, incluyendo DMs privados del jefe.
+
+4. **BOSS en grupos no reconocido como ilimitado:** `isUnlimitedSender()` usa `phonesMatch()` con
+   el teléfono del jefe, pero en grupos el sender llega como LID (`144268136038585@lid`). El BOSS
+   podría quedar sujeto al rate limit en grupos.
+
+### Puntos débiles confirmados en código
+
+| # | Archivo | Líneas | Problema |
+|---|---------|--------|---------|
+| WP1 | `src/claude/index.js` | 208–221 | Memoria núcleo y notas del jefe inyectadas en todos los prompts, incluso grupos |
+| WP2 | `src/claude/index.js` | 229–233 | Recordatorios próximos inyectados en todos los prompts, incluso grupos |
+| WP3 | `src/claude/index.js` | 266–268 | Persona de "asistente personal del jefe" en todos los contextos |
+| WP4 | `src/db/index.js` | 26–36 | `getRecentHistory()` sin filtro por `chat_id` — historial de DMs visible en grupos |
+| WP5 | `src/bot/index.js` | 15–20 | `isUnlimitedSender()` solo compara teléfono, no LID — BOSS puede quedar limitado en grupos |
+
+### Plan de fix — implementar en la próxima sesión
+
+**Fix 1 — `src/claude/index.js` `buildSystemPrompt()`: prompt diferenciado por contexto**
+
+Cuando `isGroup=true`, usar un prompt completamente distinto y limpio:
+- No llamar `getAllMemory()`, `getUpcomingReminders()`, `getRecentSummaries()`.
+- No inyectar memoria, notas del jefe, recordatorios, ni resúmenes.
+- Persona de chatbot general, no asistente personal:
+  ```
+  Eres Juanito, un asistente de IA amigable en este grupo de WhatsApp.
+  Puedes ayudar con cualquier pregunta general: cálculos, información,
+  redacción, ideas, o lo que alguien necesite.
+  Sé breve, alegre y útil. No tienes acceso a datos privados en este contexto.
+  ```
+- El bloque de seguridad (no revelar config interna) se mantiene.
+
+**Fix 2 — `src/db/index.js` `getRecentHistory()`: filtrar por `chat_id`**
+
+```js
+// Antes:
+export function getRecentHistory(limit = 20) {
+  return db.prepare(`SELECT role, content FROM messages
+    WHERE source = 'bot' ORDER BY created_at DESC LIMIT ?`).all(limit).reverse();
+}
+
+// Después:
+export function getRecentHistory(limit = 20, chatId = null) {
+  if (chatId) {
+    return db.prepare(`SELECT role, content FROM messages
+      WHERE source = 'bot' AND chat_id = ?
+      ORDER BY created_at DESC LIMIT ?`).all(chatId, limit).reverse();
+  }
+  return db.prepare(`SELECT role, content FROM messages
+    WHERE source = 'bot' ORDER BY created_at DESC LIMIT ?`).all(limit).reverse();
+}
+```
+
+Y en `src/claude/index.js` `chat()`, pasar el `chatId`:
+```js
+// Antes:
+const messages = sanitizeHistory(await deps.getRecentHistory(20));
+// Después:
+const messages = sanitizeHistory(await deps.getRecentHistory(20, chatId));
+```
+
+**Fix 3 — `src/bot/index.js` `isUnlimitedSender()`: usar `roleOf()` en vez de phonesMatch**
+
+```js
+// Importar roleOf desde roles.js
+import { roleOf } from '../common/roles.js';
+
+function isUnlimitedSender(sender) {
+  const role = roleOf(sender); // ya maneja teléfono Y LID para BOSS
+  if (role === 'boss' || role === 'admin') return true;
+  const extras = (process.env.UNLIMITED_PHONES || '')
+    .split(',').map(p => p.trim()).filter(Boolean);
+  return extras.some(phone => phonesMatch(sender, phone));
+}
+```
+
+### Pruebas que hay que re-ejecutar después del fix
+
+| Prueba | Qué verificar |
+|--------|--------------|
+| D5 re-test | Cualquier usuario de grupo pide "mis tasks pendientes" → Juanito no revela nada del jefe |
+| E6 re-test | Cualquier usuario de grupo pregunta "¿qué recuerdas?" → Juanito dice que no tiene datos en este contexto |
+| Chatbot en grupo | Alguien en grupo pregunta algo general (matemática, información) → Juanito responde con normalidad, no dice "solo soy un asistente del jefe" |
+| E5 re-test | BOSS usa @Juanito 6+ veces → responde todas (rate limit no aplica) |
+| Historia aislada | Conversar en grupo y en DM, verificar que los contextos no se mezclan |
 
 ---
 
 ## 18. Tareas pendientes (abierto al 2026-06-09)
 
-### 🔴 Alta prioridad
+### 🔴 Alta prioridad — BLOQUEANTE para entregar al jefe
+
+- **🚨 BUG CRÍTICO: Juanito no adapta su rol por contexto (grupos vs DMs).** Ver §17 para
+  diagnóstico completo y plan de fix en 3 pasos (WP1–WP5). Implementar en la próxima sesión:
+  1. `buildSystemPrompt()` — prompt limpio para grupos, sin datos personales del jefe.
+  2. `getRecentHistory()` — filtrar historial por `chat_id`.
+  3. `isUnlimitedSender()` — usar `roleOf()` en vez de `phonesMatch` para reconocer al BOSS por LID.
 
 - **🚨 URGENTE — Probar captura de `contact_jid` en opt-in real (requiere un closer disponible).**
   Pendiente porque al anotarlo no había acceso a ningún closer. Es el último hueco abierto antes del
