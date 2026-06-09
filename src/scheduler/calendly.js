@@ -26,6 +26,8 @@ import {
   prospectPhoneOf,
   buildPush3Message,
   buildDigestMessage,
+  programKeyOf,
+  eventJoinUrl,
   dayRangeUtc,
   toSqliteUtc,
   formatCallTime,
@@ -212,7 +214,15 @@ export async function runCalendlyPoll() {
       const firstName = firstNameFrom(invitee?.name);
       const name = fullNameFrom(invitee?.name);
       const phone = prospectPhoneOf(invitee);
-      const message = buildPush3Message({ name, phone, startIso: ev.start_time });
+      const message = buildPush3Message({
+        name,
+        firstName,
+        phone,
+        startIso: ev.start_time,
+        programKey: programKeyOf(ev.event_type),
+        closer: firstNameFrom(closer.name),
+        linkLlamada: eventJoinUrl(ev),
+      });
 
       const result = d.scheduleCalendlyPush({
         event_uuid: uuid,
@@ -362,16 +372,24 @@ async function runDigest(pushN, offsetDays) {
     if (!byCloser.has(closer.phone)) byCloser.set(closer.phone, { name: closer.name, items: [] });
     byCloser.get(closer.phone).items.push({
       name: fullNameFrom(invitee?.name),
+      firstName: firstNameFrom(invitee?.name),
       phone: prospectPhoneOf(invitee),
       startIso: ev.start_time,
+      programKey: programKeyOf(ev.event_type),
     });
   }
 
   const desc = pushN === 1 ? 'la noche anterior' : 'en la mañana';
   const label = `Push ${pushN} (${desc})`;
   const when = whenLabel(offsetDays, nowMs);
-  for (const [phone, { items }] of byCloser) {
-    const msg = buildDigestMessage({ pushLabel: label, whenLabel: when, items });
+  for (const [phone, { name, items }] of byCloser) {
+    const msg = buildDigestMessage({
+      pushLabel: label,
+      whenLabel: when,
+      items,
+      pushN,
+      closer: firstNameFrom(name),
+    });
     await deliver(d, phone, msg, `push${pushN}`);
   }
 

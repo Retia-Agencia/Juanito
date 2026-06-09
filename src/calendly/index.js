@@ -22,17 +22,45 @@ export const GROUP_URI = () =>
 // event_types de los dos programas (resueltos contra la cuenta real):
 //  - AI Second Brain 30X
 //  - Programa IA para Abogados | EstadoX
+const SECOND_BRAIN_ET = 'https://api.calendly.com/event_types/56efc028-ee2f-46e8-852c-e50d45b15b83';
+const ABOGADOS_ET = 'https://api.calendly.com/event_types/f8d123ac-364b-47f9-a446-1316fdf37b08';
+
 export const PROGRAM_EVENT_TYPES = () => {
   const fromEnv = (process.env.CALENDLY_EVENT_TYPES || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
   if (fromEnv.length) return fromEnv;
-  return [
-    'https://api.calendly.com/event_types/56efc028-ee2f-46e8-852c-e50d45b15b83',
-    'https://api.calendly.com/event_types/f8d123ac-364b-47f9-a446-1316fdf37b08',
-  ];
+  return [SECOND_BRAIN_ET, ABOGADOS_ET];
 };
+
+// ─── Producto (programa) por evento ───────────────────────────────────────────
+// Cada reserva pertenece a uno de los dos productos. El copy del push precall
+// difiere por producto (intro + nombre del programa), así que necesitamos saber
+// cuál es para elegir la plantilla correcta — POR LLAMADA, porque un mismo closer
+// puede tener citas de los dos productos en un mismo digest.
+const PROGRAMS = {
+  [SECOND_BRAIN_ET]: 'second_brain',
+  [ABOGADOS_ET]: 'abogados',
+};
+
+// Acepta el event_type (string) o el evento completo. Devuelve la clave de
+// programa | null (null si el event_type no es de los dos productos conocidos).
+export function programKeyOf(eventTypeOrEvent) {
+  const et =
+    typeof eventTypeOrEvent === 'string' ? eventTypeOrEvent : eventTypeOrEvent?.event_type;
+  return PROGRAMS[et] || null;
+}
+
+// Link de la llamada (Push 3): Calendly guarda el join_url del conferencing en
+// event.location. Puede venir vacío en ubicaciones físicas/custom.
+export function eventJoinUrl(ev) {
+  const loc = ev?.location;
+  if (!loc) return '';
+  if (loc.join_url) return loc.join_url;
+  if (typeof loc.location === 'string') return loc.location;
+  return '';
+}
 
 // ─── HTTP con throttle propio + manejo de 429 (Retry-After) ───────────────────
 // Rate limit de Calendly: 60 req/min (Standard/Teams). Limitamos a ~50/min para
@@ -162,26 +190,141 @@ export function formatCallTime(startIso, tz = TZ()) {
   }).format(new Date(startIso));
 }
 
-// ─── Mensajes (plantillas fijas, sin LLM) ─────────────────────────────────────
+// Hora limpia para los mensajes que el lead recibe ("6:57 pm"): sin cero a la
+// izquierda y sin el "p. m." con punto final del formato es-CO (evita el doble
+// punto cuando la plantilla cierra la frase con punto).
+export function formatLeadTime(startIso, tz = TZ()) {
+  const s = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(new Date(startIso));
+  return s.replace(/\s*AM$/, ' am').replace(/\s*PM$/, ' pm');
+}
 
-export function buildPush3Message({ name, firstName, phone, startIso }) {
+// ─── Copy precall: el texto que el CLOSER le envía al LEAD ─────────────────────
+// IMPORTANTE: este texto NO lo manda Juanito. Va dentro de un link wa.me; el closer
+// lo toca, se le abre el chat del lead con el mensaje ya escrito y solo presiona
+// enviar. El que envía es el closer → cero riesgo de ban para Juanito.
+//
+// Son 2 productos × 3 pushes = 6 variantes. El Push 2 es idéntico entre productos;
+// el Push 1 cambia el intro y el nombre del programa; el Push 3 solo cambia por el
+// link de la llamada (se inyecta por cita).
+
+// ▼▼▼ EDITA AQUÍ: links de materiales por producto (los entrega el owner). ▼▼▼
+// Mientras estén vacíos, el bloque de materiales se OMITE solo (no se manda link roto).
+export const MATERIAL_LINKS = {
+  second_brain: { brochure: '', video: '' },
+  abogados: { brochure: '', video: '' },
+};
+// ▲▲▲ EDITA AQUÍ ▲▲▲
+
+const PROGRAM_PITCH = {
+  second_brain: {
+    from: 'de Andrés Bilbao en 30X',
+    program:
+      'programa de implementación de tecnología AI Second Brain para ti y tus proyectos',
+  },
+  abogados: {
+    from: 'de EstadoX',
+    program: 'programa de IA para Abogados de EstadoX',
+  },
+};
+
+function materialsBlock(programKey) {
+  const links = MATERIAL_LINKS[programKey] || {};
+  const lines = [];
+  if (links.brochure) lines.push(`📄 Brochure: ${links.brochure}`);
+  if (links.video) lines.push(`🎥 Video: ${links.video}`);
+  if (!lines.length) return ''; // sin links → no incluimos el bloque
+  return `\n\nEs MUY IMPORTANTE que puedas ver estos materiales sí o sí antes de nuestra llamada:\n\n${lines.join('\n')}`;
+}
+
+// Construye el texto precall (lo que el closer envía al lead). pushN: 1 | 2 | 3.
+export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora, linkLlamada = '' }) {
+  const lead = primerNombre || 'hola';
+  const pitch = PROGRAM_PITCH[programKey] || PROGRAM_PITCH.second_brain;
+
+  if (pushN === 1) {
+    return (
+      `Hola ${lead}, cómo va todo? Por acá ${closer} ${pitch.from}.\n\n` +
+      `Quería personalmente recordarte tu llamada de mañana a las ${hora}, hora Colombia, para tu postulación al ${pitch.program}.\n\n` +
+      `Muy importante que:\n` +
+      `* Puedas prender la cámara\n` +
+      `* Estés en un espacio dispuesto para conversar\n` +
+      `* Si debes tomar la decisión con alguien más de ingresar al programa, que esa persona esté contigo en la llamada.\n\n` +
+      `Si todo sale bien, ahí mismo formalizaremos tu ingreso al programa.` +
+      materialsBlock(programKey)
+    );
+  }
+
+  if (pushN === 2) {
+    return (
+      `Buenos días ${lead}, feliz mañana!\n\n` +
+      `Recuerda que nos vemos hoy a las ${hora}. Súper importante que antes de nuestra llamada tengas clara la información del material que te dejé anoche.\n\n` +
+      `Si tienes alguna pregunta sobre la info de este material, házmela saber`
+    );
+  }
+
+  // pushN === 3
+  return `Ya casi nos vemos ${lead}, te dejo a la mano el link de la llamada:${linkLlamada ? `\n${linkLlamada}` : ''}`;
+}
+
+// Link wa.me con el mensaje ya escrito. El closer lo toca → chat del lead listo.
+// Normaliza el teléfono a dígitos E.164 sin `+`. Devuelve null si no hay teléfono.
+export function buildLeadLink(phone, text) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (!digits) return null;
+  return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
+}
+
+// ─── Mensajes que recibe el CLOSER (Juanito → closer) ─────────────────────────
+// Cada uno incrusta el link wa.me con el push precall listo para el lead.
+
+export function buildPush3Message({ name, firstName, phone, startIso, programKey, closer, linkLlamada = '' }) {
   const who = name || firstName || 'el prospecto';
   const time = formatCallTime(startIso);
   const tel = phone ? `📞 ${phone}` : '📵 sin teléfono en Calendly';
-  return `🔔 *Push 3* (antes de la llamada) para *${who}* — ${tel} — llamada hoy a las ${time}`;
+  const head = `🔔 *Push 3* (antes de la llamada) para *${who}* — ${tel} — llamada hoy a las ${time}`;
+  if (!phone) return `${head}\n(sin teléfono en Calendly — mándalo manual)`;
+  const text = buildPrecallText({
+    programKey,
+    pushN: 3,
+    primerNombre: firstName || firstNameFrom(name),
+    closer,
+    hora: formatLeadTime(startIso),
+    linkLlamada,
+  });
+  const link = buildLeadLink(phone, text);
+  return link ? `${head}\n👉 Enviar push: ${link}` : head;
 }
 
-export function buildDigestMessage({ pushLabel, whenLabel, items, tz = TZ() }) {
+export function buildDigestMessage({ pushLabel, whenLabel, items, pushN, closer, tz = TZ() }) {
   const sorted = [...items].sort((a, b) => new Date(a.startIso) - new Date(b.startIso));
   const lines = sorted.map((it) => {
     const who = it.name || it.firstName || 'el prospecto';
     const time = formatCallTime(it.startIso, tz);
     const tel = it.phone ? `📞 ${it.phone}` : '📵 sin teléfono';
-    return `• ${time} — ${who} — ${tel}`;
+    const head = `• ${time} — ${who} — ${tel}`;
+    if (!it.phone) return `${head} (mándalo manual)`;
+    const text = buildPrecallText({
+      programKey: it.programKey,
+      pushN,
+      primerNombre: it.firstName || firstNameFrom(it.name),
+      closer,
+      hora: formatLeadTime(it.startIso, tz),
+    });
+    const link = buildLeadLink(it.phone, text);
+    return link ? `${head}\n  👉 ${link}` : `${head} (mándalo manual)`;
   });
   const n = sorted.length;
   const plural = n === 1 ? 'llamada' : 'llamadas';
-  return `📋 *${pushLabel}* — tienes ${n} ${plural} ${whenLabel}. Mándales su push precall:\n${lines.join('\n')}`;
+  return (
+    `📋 *${pushLabel}* — tienes ${n} ${plural} ${whenLabel}.\n` +
+    `Toca el link de cada lead para enviarle su push precall (se abre el chat con el mensaje listo, solo dale enviar):\n\n` +
+    lines.join('\n')
+  );
 }
 
 // ─── Tiempo: cálculos UTC / zona horaria sin librerías ────────────────────────

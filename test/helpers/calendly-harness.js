@@ -29,6 +29,7 @@ export function makeEvent({
   prospectPhone = '+57 300 111 2222',
   status = 'active',
   eventType = 'https://api.calendly.com/event_types/56efc028-ee2f-46e8-852c-e50d45b15b83',
+  joinUrl,
   nowMs = Date.now(),
 }) {
   const id = uuid || `evt-${Math.random().toString(36).slice(2, 10)}`;
@@ -39,6 +40,7 @@ export function makeEvent({
     start_time: start,
     status,
     event_type: eventType,
+    location: joinUrl ? { type: 'zoom', join_url: joinUrl } : undefined,
     event_memberships: [{ user_email: closerEmail }],
     __invitee: prospectName === null ? null : { name: prospectName, text_reminder_number: prospectPhone },
   };

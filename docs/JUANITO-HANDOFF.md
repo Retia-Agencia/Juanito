@@ -29,8 +29,11 @@ un cambio relevante.
   (2) **comando admin `/calendly on|off [closer]`** (apagar pushes global y por-closer sin redeploy,
   flag en DB) — **✅ IMPLEMENTADO** (admin-only; control HÍBRIDO: DRY_RUN sigue siendo el master
   dev-only del `.env`, `/calendly off` es el botón de pánico instantáneo desde WhatsApp para admins);
-  (3) **links wa.me pre-escritos** closer→lead — pendiente (bloqueado por el copy del owner).
-  Orden: (1)+(2) ✅ → **piloto real (siguiente paso)** → (3). Tests: 105 verdes (84 puros + 21 nativos).
+  (3) **links wa.me pre-escritos** closer→lead — **✅ IMPLEMENTADO** (templates por producto ×
+  push + link wa.me incrustado en digests y Push 3). Pendiente SOLO los links de brochure/video
+  por producto (`MATERIAL_LINKS` en `src/calendly/index.js`, hoy vacíos → el bloque de materiales
+  se omite solo).
+  Orden: (1)+(2)+(3) ✅ → **piloto real (siguiente paso)**. Tests: ~95 puros + 21 nativos.
 - **Secretos:** `CALENDLY_TOKEN` no se rota (decidido). Contraseña VPS diferida (ver §13).
 
 Pendientes reales abiertos → ver §18 "Tareas pendientes".
@@ -796,15 +799,33 @@ function isUnlimitedSender(sender) {
   pausa global + pausa por-closer, nativo), `test/calendly.scenarios.test.js` (pausa global re-agendable,
   pausa por-closer aislada). **Suite: 105 verdes (84 puros + 21 nativos en Docker).**
 
-**Item 3 — Links wa.me pre-escritos closer→lead (bajar fricción del closer)**
-- *Bloqueado por el owner:* falta **el texto del mensaje precall** (decisión: "tú me pasas el texto").
-  Sin ese copy no se construye. Será una plantilla con placeholder del nombre del lead.
-- *Mecánica:* por cada lead **con teléfono**, `https://wa.me/<tel-solo-dígitos-sin-+>?text=<encodeURIComponent(texto)>`.
-  El closer toca el link → se abre el chat del lead con el mensaje ya escrito → solo presiona enviar.
-  Leads `sin teléfono` → sin link (se listan igual). **El que envía es el closer, no Juanito → cero riesgo de ban.**
-- *Archivos:* `src/calendly/index.js` — helper `buildLeadLink(phone, text)` (normaliza a dígitos E.164 sin `+`),
-  e incrustar el link en `buildPush3Message` y por línea en `buildDigestMessage`.
-- *Tests:* `test/calendly.helpers.test.js` (encoding del link + caso sin teléfono).
+**Item 3 — Links wa.me pre-escritos closer→lead (bajar fricción del closer) — ✅ IMPLEMENTADO (2026-06-09)**
+- *Copy entregado por el owner:* 3 textos precall POR PRODUCTO (Push 1 largo con materiales, Push 2
+  recordatorio corto, Push 3 con link de la llamada). Son 2 productos × 3 pushes = 6 variantes. El
+  Push 2 es idéntico entre productos; el Push 1 cambia intro ("de Andrés Bilbao en 30X" vs "de
+  EstadoX") + nombre del programa; el Push 3 solo cambia por el link de la llamada.
+- *Detección de producto POR LLAMADA:* `programKeyOf(event_type)` (`src/calendly/index.js`) mapea cada
+  cita a `second_brain` | `abogados`. Necesario por-línea porque un closer puede tener citas de los dos
+  productos en un mismo digest. El `event_type` ya viajaba por todo el pipeline.
+- *Mecánica:* por cada lead **con teléfono**, `buildLeadLink(phone, text)` arma
+  `https://wa.me/<dígitos-E.164-sin-+>?text=<encodeURIComponent(precall)>`. El closer toca el link →
+  se abre el chat del lead con el mensaje ya escrito → solo presiona enviar. Leads **sin teléfono** →
+  sin link, se listan con "(mándalo manual)". **El que envía es el closer, no Juanito → cero ban.**
+- *Plantillas:* `buildPrecallText({programKey, pushN, primerNombre, closer, hora, linkLlamada})` en
+  `src/calendly/index.js`. Hora para el lead vía `formatLeadTime` ("6:57 pm", evita el doble punto del
+  "p. m." de es-CO). Link de la llamada (Push 3) desde `eventJoinUrl(ev)` (= `location.join_url`).
+- *Incrustado en:* `buildPush3Message` (1 link) y `buildDigestMessage` (1 link por línea), con `pushN`
+  y el primer nombre del `closer` propagados desde `src/scheduler/calendly.js` (poll + `runDigest`).
+- *⚠️ PENDIENTE (no bloqueante):* links de **brochure + video** por producto. Hoy `MATERIAL_LINKS`
+  (`src/calendly/index.js`) está vacío → el bloque "Es MUY IMPORTANTE que veas estos materiales…" se
+  OMITE solo (no se manda link roto). Cuando el owner los entregue, editar esa constante.
+- *Preview sin deploy:* `node scripts/calendly-precall-preview.js` imprime los 3 pushes de ambos
+  productos con links wa.me reales. Cambiando `DEMO.leadPhone` por tu número, tocas un link y ves el
+  mensaje precall ya escrito en tu propio WhatsApp.
+- *Tests:* `test/calendly.helpers.test.js` — `programKeyOf`, `eventJoinUrl`, `buildLeadLink` (encoding +
+  normalización), `buildPrecallText` (producto en Push 1, igualdad de Push 2, link en Push 3, omisión de
+  materiales), incrustación del link en `buildPush3Message`/`buildDigestMessage`, y digest mixto (copy
+  correcto por línea). Suite puras verde.
 
 **Piloto real (la "prueba como va a servir", tras Items 1+2):**
 1. 1-2 closers reales hacen opt-in self-service de verdad (escriben desde su número de trabajo →
