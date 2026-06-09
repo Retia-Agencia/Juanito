@@ -214,9 +214,18 @@ export function formatLeadTime(startIso, tz = TZ()) {
 
 // ▼▼▼ EDITA AQUÍ: links de materiales por producto (los entrega el owner). ▼▼▼
 // Mientras estén vacíos, el bloque de materiales se OMITE solo (no se manda link roto).
+// Brochures: decks convertidos a HTML auto-contenido, alojados en GitHub Pages
+// (repo público Agencia-Dani/juanito-brochures). Abren renderizados en celular
+// y compu al dar click. Videos: YouTube.
 export const MATERIAL_LINKS = {
-  second_brain: { brochure: '', video: '' },
-  abogados: { brochure: '', video: '' },
+  second_brain: {
+    brochure: 'https://agencia-dani.github.io/juanito-brochures/second-brain.html',
+    video: 'https://www.youtube.com/watch?v=DSQ5_8OKonU',
+  },
+  abogados: {
+    brochure: 'https://agencia-dani.github.io/juanito-brochures/ia-abogados.html',
+    video: 'https://www.youtube.com/watch?v=88W1z_M9tCg',
+  },
 };
 // ▲▲▲ EDITA AQUÍ ▲▲▲
 

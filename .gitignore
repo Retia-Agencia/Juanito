@@ -5,3 +5,6 @@ data/
 *.log
 .DS_Store
 dist/
+
+# Brochures HTML generados (4MB base64) — viven en repo Agencia-Dani/juanito-brochures, regenerables con scripts/pdf-to-html.py
+docs/html/

@@ -214,10 +214,17 @@ test('buildPrecallText Push 1 distingue producto (intro + nombre del programa)',
   assert.match(ab, /IA para Abogados de EstadoX/);
 });
 
-test('buildPrecallText Push 1 omite el bloque de materiales cuando no hay links', () => {
+test('buildPrecallText Push 1 incrusta el bloque de materiales por producto', () => {
+  // MATERIAL_LINKS está configurado (brochure HTML en GitHub Pages + video YouTube)
+  // → el Push 1 incluye el bloque con el brochure y video del producto correcto.
   const sb = buildPrecallText({ programKey: 'second_brain', pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
-  // MATERIAL_LINKS vacío por defecto → sin bloque de materiales (no manda link roto)
-  assert.doesNotMatch(sb, /Brochure|materiales/);
+  assert.match(sb, /Es MUY IMPORTANTE que puedas ver estos materiales/);
+  assert.match(sb, /juanito-brochures\/second-brain\.html/);
+  assert.match(sb, /youtube\.com\/watch\?v=DSQ5_8OKonU/);
+
+  const ab = buildPrecallText({ programKey: 'abogados', pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
+  assert.match(ab, /juanito-brochures\/ia-abogados\.html/);
+  assert.match(ab, /youtube\.com\/watch\?v=88W1z_M9tCg/);
 });
 
 test('buildPrecallText Push 2 es igual entre productos (recordatorio corto)', () => {
