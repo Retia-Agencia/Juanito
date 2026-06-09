@@ -574,6 +574,17 @@ plink -pw <PW> root@157.230.152.202 "cd /root/juanito && docker compose up -d --
 
 ### 🟡 Media prioridad
 
+- **Investigar: opt-in no auto-rellena `contact_jid` aunque el closer escriba.** Sebas escribió a Juanito
+  desde su número de trabajo (`573102212005`) — confirmado visualmente en el celular con la SIM de Juanito —
+  pero su fila quedó con `source='self'`, **`contact_jid=null`**. Si su DM hubiera pasado por
+  `handleCloserOptin`, `registerOptin(... contactJid: from)` lo habría rellenado. Causa probable: el **primer
+  mensaje de una identidad nueva en Baileys llega vacío** (handshake de cifrado) y se descarta en
+  `if (!text) return` (`src/index.js:15`); o el DM no entró al flujo de opt-in por ruteo/LID. **Por qué
+  importa:** si a un closer real le pasa lo mismo, su opt-in tampoco captura el hilo (aunque la entrega cae
+  al número canónico, que es seguro). **Cómo retomarlo:** dejar un tail en vivo de los logs del VPS filtrando
+  su LID `20671711162446@lid` + 'closer'/'registrado', pedirle un 2º mensaje desde el trabajo, y confirmar si
+  entra a `handleCloserOptin` y si `contact_jid` se rellena. ⚠️ Los logs históricos NO sirven: cada
+  `docker compose up -d --build` recrea el contenedor y borra el stream anterior.
 - **Juanito saluda a los ADMINs por nombre:** implementar `admin_note:<lid>:<key>` análoga a las notas del
   jefe. Archivo: `src/claude/index.js`.
 - **Comando `/admins`:** listar LIDs en `ADMIN_LID` con nombre de contacto. Archivo: `src/bot/commands.js`.
