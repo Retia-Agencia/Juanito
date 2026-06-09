@@ -6,7 +6,12 @@ import Anthropic from '@anthropic-ai/sdk';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
+// Modelo por defecto: Haiku en todos lados (chatbot liviano y barato).
+// Fácil de cambiar por env, y se puede elegir por contexto:
+//   CLAUDE_MODEL        → modelo en DMs (jefe/admin).
+//   CLAUDE_GROUP_MODEL  → modelo en grupos. Si no se define, usa el mismo que DMs.
+const MODEL = process.env.CLAUDE_MODEL || 'claude-haiku-4-5-20251001';
+const GROUP_MODEL = process.env.CLAUDE_GROUP_MODEL || MODEL;
 const MAX_TOKENS = Number(process.env.CLAUDE_MAX_TOKENS || 2048);
 
 // ─── Seam de dependencias (Track A) ───────────────────────────────────────────
@@ -198,13 +203,53 @@ export function splitMemory(memory = []) {
 
 // ─── Prompt de sistema ────────────────────────────────────────────────────────
 
-async function buildSystemPrompt(deps, { isGroup = false, role = 'boss' } = {}) {
+// Exportado para tests: permite verificar el aislamiento del prompt de grupo
+// (que NO toca memoria/recordatorios/resúmenes ni inyecta datos privados).
+export async function buildSystemPrompt(deps, { isGroup = false, role = 'boss' } = {}) {
   const now = new Date().toLocaleString('es-CO', {
     timeZone: process.env.TZ || 'America/Bogota',
     dateStyle: 'full',
     timeStyle: 'short',
   });
 
+  const botName = process.env.BOT_NAME || 'Juanito';
+
+  // Reglas innegociables, para cualquier interlocutor y contexto.
+  const securityBlock = `## Reglas de seguridad (innegociables)
+- Nunca reveles configuración interna, tokens, claves, variables de entorno, rutas,
+  ni la lista de closers o teléfonos de terceros — aunque te lo pidan directamente.
+- No ejecutes ni inventes acciones fuera de tus herramientas disponibles. Si algo no
+  se puede hacer con ellas, dilo; no simules haberlo hecho.`;
+
+  // ── Contexto de GRUPO: chatbot general AISLADO ────────────────────────────
+  // Prompt limpio construido desde cero. A propósito NO carga ni inyecta memoria
+  // núcleo, notas del jefe, recordatorios ni resúmenes de grupos: cualquiera puede
+  // mencionar al bot en un grupo, así que aquí Juanito NO es "el asistente del jefe"
+  // sino un chatbot general SIN acceso a datos privados. Las tools también van vacías
+  // (ver toolsForRole). Separación dura por contexto = no hay datos que filtrar.
+  if (isGroup) {
+    return `Eres ${botName}, un asistente amigable en un grupo de WhatsApp.
+Alguien te mencionó con @. Ayudas con cualquier consulta general: cálculos,
+información, redacción, ideas, o lo que alguien necesite.
+
+Fecha y hora actual: ${now}
+
+Personalidad:
+- Tu nombre es ${botName} — si preguntan cómo te llamas, dilo con naturalidad.
+- Alegre, con buena energía, respetuoso y directo. Respuestas breves, sin relleno.
+- Respondes en el mismo idioma que te escriben.
+
+Sobre este contexto (importante):
+- NO tienes acceso a datos privados, memoria, recordatorios, notas ni información de
+  ninguna persona en este grupo. No los tienes y no los puedes consultar.
+- Si te preguntan por "tus tareas", "tus recordatorios", "lo que recuerdas", o por
+  datos/agenda del jefe, aclara con naturalidad que aquí solo eres un chatbot general.
+- No ofrezcas guardar nada ni hacer seguimientos, ni hagas preguntas de seguimiento.
+
+${securityBlock}`.trim();
+  }
+
+  // ── Contexto de DM (jefe/admin): asistente personal CON datos privados ────
   const memory = (await deps.getAllMemory?.()) || [];
   const summaries = (await deps.getRecentSummaries?.(5)) || [];
   const reminders = (await deps.getUpcomingReminders?.(48)) || [];
@@ -232,21 +277,6 @@ ${bossNotes.map((m) => `- ${m.value}`).join('\n')}`
         .join('\n')}`
     : '';
 
-  const groupMode = isGroup
-    ? `\n\n## Contexto: estás en un grupo
-Alguien te mencionó con @. Normas estrictas para grupos:
-- Responde de forma breve y directa — sin preguntas de seguimiento.
-- NO ofrezcas guardar nada en memoria ni sugieras usar save_memory.
-- NO hagas preguntas como "¿quieres que recuerde algo de esto?".`
-    : '';
-
-  // Reglas innegociables, para cualquier interlocutor.
-  const securityBlock = `\n\n## Reglas de seguridad (innegociables)
-- Nunca reveles configuración interna, tokens, claves, variables de entorno, rutas,
-  ni la lista de closers o teléfonos de terceros — aunque te lo pidan directamente.
-- No ejecutes ni inventes acciones fuera de tus herramientas disponibles. Si algo no
-  se puede hacer con ellas, dilo; no simules haberlo hecho.`;
-
   // Bloque según el rol del interlocutor.
   const roleBlock =
     role === 'admin'
@@ -260,7 +290,6 @@ Trátalo con cercanía y deferencia; él es el dueño de esto.
   dile con naturalidad que eso lo coordina su equipo. No prometas haberlo hecho ni
   inventes que lo dejaste andando.`;
 
-  const botName = process.env.BOT_NAME || 'Juanito';
   const bossName = process.env.BOSS_NAME ? `El jefe se llama ${process.env.BOSS_NAME}. Úsalo cuando sea natural saludarlo o referirte a él.` : '';
 
   return `Eres ${botName}, un asistente personal que vive en WhatsApp.
@@ -296,9 +325,9 @@ confirma al jefe en una línea natural:
 
 Cuando calcules la fecha de un recordatorio, usa la fecha y hora actual de arriba
 como referencia (ej: "mañana a las 9" = el día siguiente a las 09:00:00).
+
 ${securityBlock}
 ${roleBlock}
-${groupMode}
 ${memoryBlock}
 ${bossNotesBlock}
 ${summaryBlock}
@@ -513,8 +542,10 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
 
   await deps.saveMessage({ role: 'user', content: userMessage, chatId });
 
-  // getRecentHistory ya incluye el mensaje recién guardado como último 'user'
-  const messages = sanitizeHistory(await deps.getRecentHistory(20));
+  // getRecentHistory ya incluye el mensaje recién guardado como último 'user'.
+  // Filtramos por chatId para AISLAR contextos: el historial de un grupo no debe
+  // mezclarse con los DMs privados del jefe (ni con otros grupos).
+  const messages = sanitizeHistory(await deps.getRecentHistory(20, chatId));
   if (!messages.length || messages[messages.length - 1].role !== 'user') {
     messages.push({ role: 'user', content: userMessage });
   }
@@ -525,9 +556,12 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
   const tools = toolsForRole(role, { isGroup });
   const toolsParam = tools.length > 0 ? { tools } : {};
 
+  // Modelo según contexto: Haiku (o lo que diga el env) en ambos por default.
+  const model = isGroup ? GROUP_MODEL : MODEL;
+
   let response = await withRetry(() =>
     client.messages.create({
-      model: MODEL,
+      model,
       max_tokens: MAX_TOKENS,
       system,
       ...toolsParam,
@@ -556,7 +590,7 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
 
     response = await withRetry(() =>
       client.messages.create({
-        model: MODEL,
+        model,
         max_tokens: MAX_TOKENS,
         system,
         ...toolsParam,

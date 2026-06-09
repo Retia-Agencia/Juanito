@@ -22,8 +22,22 @@ export function saveMessage({ role, content, source = 'bot', chatId = null }) {
     .run(role, content, source, chatId);
 }
 
-// Últimos N mensajes del jefe como historial para Claude (orden cronológico)
-export function getRecentHistory(limit = 20) {
+// Últimos N mensajes como historial para Claude (orden cronológico).
+// Si se pasa chatId, se filtra a ESE hilo: aísla el historial de cada grupo y de
+// los DMs del jefe entre sí (evita que datos de un DM privado se filtren a un grupo).
+// Sin chatId mantiene el comportamiento anterior (todos los hilos 'bot').
+export function getRecentHistory(limit = 20, chatId = null) {
+  if (chatId) {
+    return db
+      .prepare(`
+        SELECT role, content FROM messages
+        WHERE source = 'bot' AND chat_id = ?
+        ORDER BY created_at DESC
+        LIMIT ?
+      `)
+      .all(chatId, limit)
+      .reverse();
+  }
   return db
     .prepare(`
       SELECT role, content FROM messages

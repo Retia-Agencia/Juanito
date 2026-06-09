@@ -13,9 +13,11 @@ un cambio relevante.
 
 - **Repo:** `main` == `origin/main`, working tree limpio.
 - **VPS:** contenedor sano, WA conectado sin QR, `CALENDLY_DRY_RUN=true`.
-- **Juanito como asistente WA:** pruebas básicas pasadas. **BUG CRÍTICO ABIERTO:**
-  Juanito no adapta su rol por contexto — en grupos inyecta datos privados del jefe
-  en el system prompt y rechaza preguntas generales. Ver §17 y §18 para el plan de fix.
+- **Juanito como asistente WA:** pruebas básicas pasadas. **BUG CRÍTICO DE ROL POR
+  CONTEXTO: FIX IMPLEMENTADO** (pendiente de prueba en vivo). En grupos ahora usa un
+  prompt aislado de chatbot general (sin memoria/notas/recordatorios/resúmenes), historial
+  filtrado por `chat_id`, y reconoce al jefe/admin por LID para el rate limit. Modelo por
+  defecto cambiado a **Haiku** en DM y grupos (configurable). Ver §17 para qué re-probar.
 - **Calendly:** blocker de opt-in por LID resuelto. Fase 2 (envío real) probada con Sebastián
   Rodriguez (recibió Push 1 real); revertido a dry-run. Pendiente: confirmar captura de
   `contact_jid` en opt-in real con un closer disponible.
@@ -140,10 +142,13 @@ SQLite (`messages` con `source='group'`). Solo responde cuando:
    Texto como *"Juanito, ayúdame"* sin @mention **no** dispara respuesta.
 2. El remitente no superó el rate limit del día.
 
-**En grupos Juanito es chatbot puro:** ninguna herramienta disponible. No puede
-leer ni escribir memoria, no crea recordatorios, no resume grupos, no consulta
-historial. Esto es intencional — protege la privacidad del jefe ante cualquier
-usuario de un grupo.
+**En grupos Juanito es chatbot puro y AISLADO** (fix 2026-06-09): ninguna herramienta
+disponible **y** prompt limpio sin datos privados. No puede leer ni escribir memoria,
+no crea recordatorios, no resume grupos, no consulta historial de DMs. El system prompt
+de grupo se construye desde cero (`buildSystemPrompt` hace return temprano si `isGroup`):
+NO inyecta memoria núcleo, notas del jefe, recordatorios ni resúmenes, y la persona es de
+chatbot general (no "asistente del jefe"). El historial va filtrado por `chat_id`, así que
+lo hablado en DMs del jefe nunca aparece en un grupo. Modelo por defecto: Haiku (ver §14).
 
 ### Rate limit en grupos
 
@@ -462,7 +467,8 @@ plink -pw <PW> root@157.230.152.202 "cd /root/juanito && docker compose up -d --
 | `ADMIN_LID` | ✅ prod | — | LIDs del equipo técnico, coma-separados. Obtener con `/whoami`. |
 | `BOT_NAME` | — | `Juanito` | Nombre del bot en el system prompt |
 | `BOSS_NAME` | — | — | Nombre del jefe. Juanito lo usa al saludar. También via `remember_note`. |
-| `CLAUDE_MODEL` | — | `claude-sonnet-4-20250514` | Modelo de Claude |
+| `CLAUDE_MODEL` | — | `claude-haiku-4-5-20251001` | Modelo de Claude en **DMs** (jefe/admin) |
+| `CLAUDE_GROUP_MODEL` | — | = `CLAUDE_MODEL` | Modelo en **grupos**. Vacío = usa el mismo que DMs |
 | `CLAUDE_MAX_TOKENS` | — | `2048` | Máx tokens en respuesta |
 | `DB_PATH` | — | `./data/brain.sqlite` | Ruta de la base de datos |
 | `WA_SESSION_PATH` | — | `./data/wa-session` | Sesión de Baileys |
@@ -545,8 +551,8 @@ plink -pw <PW> root@157.230.152.202 "cd /root/juanito && docker compose up -d --
 | # | Prueba | Falla observada | Fix aplicado | Estado |
 |---|--------|----------------|-------------|--------|
 | A3 | Juanito saluda al jefe por nombre | Solo dijo "Ey, ¿Qué necesitás?" | Infra lista: `BOSS_NAME` en `.env` o via `remember_note`. El jefe no ha configurado su nombre aún. | ⚠️ Pendiente de acción del jefe |
-| D5 | Grupos no guardan datos | Cualquier persona del grupo pudo agregar una tarea | Tools eliminadas de grupos | ⚠️ Fix parcial — ver bug central abajo |
-| E6 | Memoria no se revela en grupos | Juanito reveló tasks del jefe cuando un usuario de grupo lo pidió | `search_knowledge` removido | ⚠️ Fix parcial — ver bug central abajo |
+| D5 | Grupos no guardan datos | Cualquier persona del grupo pudo agregar una tarea | Tools eliminadas de grupos + **prompt de grupo aislado** (2026-06-09) | ✅ Fix completo — re-probar en vivo |
+| E6 | Memoria no se revela en grupos | Juanito reveló tasks del jefe cuando un usuario de grupo lo pidió | `search_knowledge` removido + **memoria/recordatorios/resúmenes ya no se inyectan en grupos** (2026-06-09) | ✅ Fix completo — re-probar en vivo |
 
 ### ⏳ Pendiente de prueba en vivo
 
@@ -556,9 +562,33 @@ plink -pw <PW> root@157.230.152.202 "cd /root/juanito && docker compose up -d --
 
 ---
 
-## 🚨 BUG CRÍTICO ABIERTO — Juanito no adapta su rol por contexto
+## ✅ BUG CRÍTICO RESUELTO — Juanito no adaptaba su rol por contexto
 
-### Qué falla
+> **Estado 2026-06-09 (sesión actual): FIX IMPLEMENTADO en código + tests verdes.**
+> Falta validarlo en vivo (ver la tabla "Pruebas a re-ejecutar" al final de esta sección).
+>
+> **Qué se hizo:**
+> 1. `buildSystemPrompt()` ([src/claude/index.js](../src/claude/index.js)) ahora hace
+>    **return temprano** cuando `isGroup=true` con un prompt limpio de chatbot general:
+>    NO llama `getAllMemory()`/`getRecentSummaries()`/`getUpcomingReminders()` y por
+>    tanto no inyecta memoria núcleo, notas del jefe, recordatorios ni resúmenes.
+>    Persona genérica (no "asistente del jefe"); conserva el bloque de seguridad.
+> 2. `getRecentHistory(limit, chatId)` ([src/db/index.js](../src/db/index.js)) filtra por
+>    `chat_id` cuando se pasa → el historial de un grupo no se mezcla con DMs del jefe ni
+>    con otros grupos. `chat()` pasa el `chatId`.
+> 3. `isUnlimitedSender()` ([src/bot/index.js](../src/bot/index.js)) usa `roleOf()` (maneja
+>    teléfono **y** LID) → el jefe/admins quedan ilimitados en grupos aunque lleguen como `@lid`.
+> 4. `handleGroupMessage()` pasa el **rol real** (`roleOf(sender)`) a `chat()` en vez de dejar
+>    caer el default `'boss'` (antes trataba a cualquiera del grupo como el dueño).
+> 5. **Modelo por defecto = Haiku** (`claude-haiku-4-5-20251001`) vía `CLAUDE_MODEL`. Nuevo
+>    `CLAUDE_GROUP_MODEL` permite un modelo distinto para grupos (vacío = mismo que DM). Ambos
+>    seleccionados por contexto en `chat()`.
+>
+> **Tests:** `test/prompt-context.test.js` (6, nuevo) ancla el aislamiento del prompt de grupo.
+> Suite pura completa verde (76). Los tests de DB (`getRecentHistory` con `chat_id`) corren en
+> Docker/VPS (better-sqlite3 nativo, ver §11.4).
+
+### Qué fallaba (diagnóstico original)
 
 1. **Datos del jefe visibles en grupos:** aunque los tools están bloqueados, el system
    prompt de grupos inyecta memoria núcleo, notas del jefe y recordatorios. Cualquier usuario
@@ -661,11 +691,15 @@ function isUnlimitedSender(sender) {
 
 ### 🔴 Alta prioridad — BLOQUEANTE para entregar al jefe
 
-- **🚨 BUG CRÍTICO: Juanito no adapta su rol por contexto (grupos vs DMs).** Ver §17 para
-  diagnóstico completo y plan de fix en 3 pasos (WP1–WP5). Implementar en la próxima sesión:
-  1. `buildSystemPrompt()` — prompt limpio para grupos, sin datos personales del jefe.
-  2. `getRecentHistory()` — filtrar historial por `chat_id`.
-  3. `isUnlimitedSender()` — usar `roleOf()` en vez de `phonesMatch` para reconocer al BOSS por LID.
+- **✅ BUG CRÍTICO de rol por contexto: FIX IMPLEMENTADO** (sesión 2026-06-09). Ver §17 para
+  el detalle de lo que se hizo. **Queda solo validarlo en vivo** con las pruebas de la tabla
+  "Pruebas a re-ejecutar" de §17 (confidencialidad en grupos, chatbot general, BOSS ilimitado
+  por LID, aislamiento de historial DM↔grupo). Hacerlo antes de entregar al jefe.
+
+- **Pendiente de diseño — configuración en caliente por DM (Prioridad 2 del owner):** poder
+  prender/apagar respuestas en grupos y otros toggles sin redeploy. Propuesta: tabla
+  `settings(key, value)` + override de env (`GROUP_REPLIES_ENABLED`), tool `set_config` con
+  whitelist de claves (gateado a admin/boss) y comando `/config` para leer. No implementado aún.
 
 - **🚨 URGENTE — Probar captura de `contact_jid` en opt-in real (requiere un closer disponible).**
   Pendiente porque al anotarlo no había acceso a ningún closer. Es el último hueco abierto antes del

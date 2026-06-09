@@ -5,19 +5,24 @@ import { chat } from '../claude/index.js';
 import { sendMessage } from '../whatsapp/index.js';
 import { markIfNew, checkAndIncrementGroupUsage } from '../db/index.js';
 import { phonesMatch } from '../common/utils.js';
+import { roleOf } from '../common/roles.js';
 
 const BOSS_PHONE = () => process.env.BOSS_PHONE;
 const BOT_NAME = () => process.env.BOT_NAME || 'Juanito';
 const GROUP_DAILY_LIMIT = () => Number(process.env.GROUP_DAILY_LIMIT || 5);
 
-// Teléfonos sin límite de consultas en grupos (además del jefe).
-// Configurable vía env: UNLIMITED_PHONES=573001234567,573009876543
+// Remitentes sin límite de consultas en grupos.
+// El jefe y los admins se reconocen por rol (roleOf maneja teléfono Y LID — en grupos
+// el jefe llega como @lid, no como teléfono, así que phonesMatch solo no basta).
+// Además se permite una lista extra por env: UNLIMITED_PHONES=573001234567,573009876543
 function isUnlimitedSender(sender) {
+  const role = roleOf(sender);
+  if (role === 'boss' || role === 'admin') return true;
   const extras = (process.env.UNLIMITED_PHONES || '')
     .split(',')
     .map((p) => p.trim())
     .filter(Boolean);
-  return [BOSS_PHONE(), ...extras].some((phone) => phonesMatch(sender, phone));
+  return extras.some((phone) => phonesMatch(sender, phone));
 }
 
 // ─── DM del jefe ──────────────────────────────────────────────────────────────
@@ -69,7 +74,10 @@ export async function handleGroupMessage(msg) {
   console.log(`[Bot] Mencionado en "${groupName}": ${text.slice(0, 60)}`);
 
   try {
-    const { text: reply } = await chat(text, chatId, { isGroup: true });
+    // El prompt de grupo es aislado e ignora el rol para la persona, pero pasamos el
+    // rol real (no el default 'boss') para no tratar a cualquiera como el dueño.
+    const role = roleOf(sender);
+    const { text: reply } = await chat(text, chatId, { isGroup: true, role });
     await sendMessage(chatId, reply);
   } catch (err) {
     console.error('[Bot] Error respondiendo en grupo:', err.message);

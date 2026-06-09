@@ -11,7 +11,9 @@ services:
       - NODE_ENV=production
       - TZ=${TZ:-America/Bogota}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-6}
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-haiku-4-5-20251001}
+      # Modelo en grupos. Vacío = usa CLAUDE_MODEL (mismo modelo en DM y grupos).
+      - CLAUDE_GROUP_MODEL=${CLAUDE_GROUP_MODEL:-}
       - CLAUDE_MAX_TOKENS=${CLAUDE_MAX_TOKENS:-2048}
       - BOSS_PHONE=${BOSS_PHONE}
       # LID del jefe en WA multi-device (vacío = retrocompat: cualquier @lid no-admin = jefe).
