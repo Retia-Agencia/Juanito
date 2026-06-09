@@ -827,12 +827,60 @@ function isUnlimitedSender(sender) {
   materiales), incrustación del link en `buildPush3Message`/`buildDigestMessage`, y digest mixto (copy
   correcto por línea). Suite puras verde.
 
-**Piloto real (la "prueba como va a servir", tras Items 1+2):**
-1. 1-2 closers reales hacen opt-in self-service de verdad (escriben desde su número de trabajo →
-   `source='self'` **con** `contact_jid` poblado). Verificar con `scripts/calendly-optins.js` + query de §15.
-2. `CALENDLY_DRY_RUN=false`, `CALENDLY_REQUIRE_OPTIN=true`. La entrega estricta (Item 1) garantiza que solo
-   hilos establecidos reciben → cero frío.
-3. Correr un día real vigilando logs: solo los opted-in reciben. `/calendly off` listo para cortar al instante.
+**Piloto real — CHECKLIST PASO A PASO (Items 1+2+3 ya listos; falta solo correrlo):**
+
+> Objetivo: que 1-2 closers reales reciban sus pushes precall (con los links wa.me) un día de
+> verdad, sin riesgo de ban. Todo el código está en `origin/main` (commit `35a7b7c`). El VPS NO es
+> repo git → hay que `scp`. Mientras `CALENDLY_DRY_RUN=true`, NADA se envía: el deploy es seguro
+> en cualquier momento; el envío real solo ocurre en el Paso 4.
+
+**Paso 0 — Pre-deploy local (opcional pero recomendado):**
+- [ ] Suite puras verde: `node --test test/calendly.helpers.test.js test/calendly.scenarios.test.js test/calendly.push-logic.test.js test/commands.test.js test/roles.test.js test/brain.tools.test.js`
+- [ ] (Si el owner ya entregó los links) editar `MATERIAL_LINKS` (brochure/video por producto) en
+      `src/calendly/index.js` y volver a commitear/pushear. Si no, el bloque de materiales se omite solo.
+- [ ] Ver el resultado final: `node scripts/calendly-precall-preview.js` (tappa un link en tu cel).
+
+**Paso 1 — Deploy al VPS (seguro, sigue en DRY-RUN):**
+- [ ] Backup antes de tocar: `plink -pw <PW> root@157.230.152.202 "cd /root && tar czf juanito-backup-$(date +%Y%m%d-%H%M%S).tar.gz juanito"`
+- [ ] Copiar código: `& "C:\Program Files\PuTTY\pscp.exe" -pw <PW> -r src scripts test root@157.230.152.202:/root/juanito/`
+- [ ] Rebuild: `plink -pw <PW> root@157.230.152.202 "cd /root/juanito && docker compose up -d --build"`
+- [ ] Sanidad: `docker logs juanito-agent --tail 30` → ver `opened connection to WA` (sin QR), `[Calendly] Jobs activos ✅ (DRY-RUN: true)`, sin errores.
+
+**Paso 2 — 🚨 Verificar captura de `contact_jid` (BLOQUEANTE, ver §18 / §11.7):**
+- [ ] Dejar el tail ABIERTO antes de que el closer escriba (los logs históricos NO sirven — cada
+      rebuild borra el stream):
+      `docker logs juanito-agent -f --tail 5 2>&1 | grep -iE "closer|registrad|opt-in|optin|handleCloser"`
+- [ ] Pedir al closer que le escriba a Juanito **desde su número de trabajo** y mande un **2º mensaje**
+      (el 1º de una identidad nueva llega vacío por el handshake de cifrado y se descarta).
+- [ ] Confirmar en DB que quedó `source='self'` **y** `contact_jid` poblado (NO null):
+      `node scripts/calendly-optins.js`  (o el query de §8/§15 con `node -e` + better-sqlite3).
+- [ ] ⚠️ Si `contact_jid` queda null → la entrega estricta OMITE a ese closer (cero envío). NO seguir
+      al Paso 4 hasta resolverlo (ver §18 media prioridad: ruteo/LID o mensaje vacío del handshake).
+
+**Paso 3 — Confirmar quién recibirá (aún en DRY-RUN):**
+- [ ] `node scripts/calendly-optins.js` → ver qué closers tienen opt-in verificado (con hilo).
+- [ ] (Opcional) `node scripts/calendly-dryrun.js` → una pasada completa contra el Calendly real,
+      muestra a quién se enviaría hoy SIN mandar nada.
+
+**Paso 4 — Envío real controlado (el piloto):**
+- [ ] En el `.env` del VPS: `CALENDLY_DRY_RUN=false`, `CALENDLY_REQUIRE_OPTIN=true`.
+- [ ] (Para forzar la prueba ya, sin esperar al cron de las 7pm) agregar un cron de prueba, ej.
+      `CALENDLY_PUSH1_CRON=<minuto_actual+2> <hora_actual> * * *` (TZ America/Bogota).
+- [ ] Aplicar SOLO env (sin `--build`): `docker compose up -d` (1 reconexión de WA controlada).
+- [ ] Tener `/calendly off` listo como botón de pánico (DM admin a Juanito) por si algo sale mal.
+- [ ] Vigilar: `docker logs juanito-agent -f` → buscar `[Calendly] enviado (push1) → <jid>`. Los
+      closers sin opt-in salen `OMITIDO`; sin `contact_jid` salen `skipped-no-thread`.
+- [ ] Confirmar con el closer que le llegó el digest con los links wa.me, que toca uno y se abre el
+      chat del lead con el mensaje precall ya escrito.
+
+**Paso 5 — Revertir tras el piloto:**
+- [ ] `CALENDLY_DRY_RUN=true`, quitar el `CALENDLY_PUSH1_CRON` de prueba.
+- [ ] `docker compose up -d`. Verificar en logs `DRY-RUN: true`.
+- [ ] Si algo quedó raro: rollback con el backup del Paso 1 (`tar xzf` + `docker compose up -d --build`).
+
+> ⚠️ Recordatorios de operación (ver §12): `docker compose exec ... node -e` NO puede ENVIAR WhatsApp
+> (proceso separado sin el socket de WA) — el envío real sale del proceso principal vía cron. `sqlite3`
+> no está en el contenedor (usar `node -e` + better-sqlite3). NO tocar `entrypoint.sh` (softban).
 
 **División de trabajo sugerida (2 devs):**
 - **Dev A (capa Calendly/DB):** Item 1 (entrega estricta) + Item 2 (settings/paused en DB + deliver). Son
