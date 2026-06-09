@@ -1,13 +1,32 @@
 # JUANITO — Hand-off completo
 
-Documento vivo: todo lo que alguien necesita saber para entender, mantener o
-continuar el desarrollo de Juanito. Actualizar cada vez que haya un cambio relevante.
+Documento vivo y **único**: todo lo que alguien necesita saber para entender, mantener o
+continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres archivos
+(`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
+un cambio relevante.
 
-Última actualización: 2026-06-08
+Última actualización: **2026-06-09**
 
 ---
 
-## Qué es Juanito
+## 0. TL;DR — estado al 2026-06-09 (leer primero)
+
+- **Repo:** `main` == `origin/main`, working tree limpio. Último commit relevante: `1c5c7d6`.
+- **VPS:** al día con `main` (deploy de `a118a71`..`1c5c7d6` hecho hoy). Contenedor sano,
+  WA reconectado sin QR, **`CALENDLY_DRY_RUN=true`** (no envía nada en automático).
+- **Blocker histórico (opt-in roto por LID): RESUELTO** y validado en vivo.
+- **Fase 2 (envío real de Calendly): HECHA** — Sebastian Rodriguez recibió su Push 1 real,
+  solo él; revertido a dry-run.
+- **Fix anti-ban del opt-in (envío en frío a opt-in fabricado): IMPLEMENTADO** hoy
+  (`source`/`contact_jid` + `isVerifiedOptedIn`). Queda un **residual** documentado abajo.
+- **Secretos:** se decidió **NO rotar `CALENDLY_TOKEN`** y **diferir** la rotación de la
+  contraseña del VPS (ver §13).
+
+Pendientes reales abiertos → ver §14 "Tareas pendientes".
+
+---
+
+## 1. Qué es Juanito
 
 Juanito es un agente de IA personal conectado a WhatsApp. Escucha los grupos del
 jefe de forma pasiva, responde cuando lo mencionan con @Juanito, y atiende DMs del
@@ -21,7 +40,7 @@ opt-in (solo si son closers registrados del sistema Calendly).
 
 ---
 
-## Arquitectura en tiempo de ejecución
+## 2. Arquitectura en tiempo de ejecución
 
 ```
 Baileys (WebSocket persistente a WhatsApp)
@@ -39,6 +58,7 @@ src/index.js                ← determina rol del remitente
 src/scheduler/              ← jobs independientes del flujo de mensajes
     ├── reminders.js        → cada 1 minuto: envía recordatorios vencidos
     ├── summaries.js        → cada 4 horas: resume grupos y guarda en DB
+    ├── calendly.js         → poll/deliver/push1/push2 (recordatorios precall, ver §11)
     └── index.js            → arranca todos los jobs
 ```
 
@@ -52,7 +72,7 @@ src/scheduler/              ← jobs independientes del flujo de mensajes
 
 ---
 
-## Sistema de roles
+## 3. Sistema de roles
 
 Definido en `src/common/roles.js`. Cada mensaje entrante es clasificado antes de
 cualquier otra lógica.
@@ -74,9 +94,29 @@ para evitar que closers con LID desconocido accedan como jefe.
 y Juanito responde con su JID. Si es un LID (`@lid`), ese es el valor a agregar
 en `ADMIN_LID` o `BOSS_LID`.
 
+### LIDs conocidos (capturados 2026-06-08)
+
+| LID | Quién es | Rol / dónde |
+|---|---|---|
+| `144268136038585@lid` | **Jefe real** (`BOSS_PHONE=573105643297`) | `BOSS_LID` ✅ desplegado |
+| `129446371655733@lid` | **Alejandro** (dev) | `ADMIN_LID` → admin ✅ |
+| `147313234280449@lid` | **Compañero** (dev) | `ADMIN_LID` → admin ✅ |
+| `20671711162446@lid` | **Sebastian Rodriguez** (closer, sujeto de prueba) | `unknown` → flujo de opt-in ✅ |
+| `31302527013028@lid` | El bot (Juanito) mismo | ignorar, no es de nadie |
+
+> Histórico: el `147...@lid` estuvo un tiempo en `BOSS_LID` como **placeholder** (era del
+> compañero, no del jefe). Ya se reemplazó por el LID real del jefe `144268136038585@lid`.
+
+### Aprendizaje: primer contacto en Baileys llega VACÍO
+
+El **primer** mensaje de un número nuevo a Juanito llega sin contenido (`msg.message`
+nulo) mientras se establece la sesión de cifrado; el bot lo descarta en `if (!text) return`.
+El **segundo** mensaje ya llega con texto. → Si un closer dice que escribió y "no pasó nada",
+pedirle que mande un segundo mensaje.
+
 ---
 
-## Comportamiento en DMs
+## 4. Comportamiento en DMs
 
 ```
 DM entrante
@@ -92,7 +132,7 @@ DM entrante
 
 ---
 
-## Comportamiento en grupos
+## 5. Comportamiento en grupos
 
 Juanito escucha **todos** los mensajes de grupos de forma pasiva y los guarda en
 SQLite (`messages` con `source='group'`). Solo responde cuando:
@@ -119,7 +159,7 @@ automáticamente a las 3am.
 
 ---
 
-## Personalidad de Juanito
+## 6. Personalidad de Juanito
 
 System prompt construido dinámicamente en `src/claude/index.js → buildSystemPrompt()`.
 
@@ -131,20 +171,15 @@ System prompt construido dinámicamente en `src/claude/index.js → buildSystemP
   El jefe también puede configurarlo via DM: *"recuerda que me llamo Juan"* →
   Juanito lo guarda con `remember_note` y lo usa desde ese momento.
 
-El system prompt incluye en cada llamada:
-- Fecha y hora actual (zona `TZ`)
-- Bloque de personalidad y nombre del bot
-- Nombre del jefe (si configurado)
-- Reglas de seguridad innegociables
-- Bloque de rol del interlocutor (admin vs jefe vs grupo)
-- Memoria núcleo (hechos permanentes guardados por admins)
-- Notas personales del jefe (sandboxed)
-- Resúmenes recientes de grupos (últimos 5)
-- Recordatorios próximos (próximas 48 horas)
+El system prompt incluye en cada llamada: fecha/hora actual (`TZ`), bloque de
+personalidad y nombre, nombre del jefe (si configurado), reglas de seguridad
+innegociables, bloque de rol del interlocutor, memoria núcleo, notas personales del
+jefe (sandboxed), resúmenes recientes de grupos (últimos 5) y recordatorios próximos
+(48 h).
 
 ---
 
-## Herramientas de Claude (tool use)
+## 7. Herramientas de Claude (tool use)
 
 Las tools se gatean a nivel de API — lo que no está en el array, Claude no puede
 invocar pase lo que pase.
@@ -161,37 +196,40 @@ invocar pase lo que pase.
 comportamiento del bot para todos. Solo el equipo técnico (admins) debe modificarla.
 El jefe tiene `remember_note` para sus notas personales, que quedan aisladas.
 
+El gateo vive en `toolsForRole` (`src/claude/index.js`), con defensa en profundidad en
+`dispatchTool` (un `save_memory` con rol ≠ admin se rechaza). Tests: `test/roles.test.js`
+y `test/brain.tools.test.js`.
+
 ---
 
-## Memoria
+## 8. Memoria
 
 ### Memoria núcleo (admin)
-- Tabla: `memory(key, value)`
-- Solo admins pueden escribirla (`save_memory`).
-- Se inyecta completa en el system prompt de cada conversación (DM del jefe o admin).
+- Tabla: `memory(key, value)`. Solo admins la escriben (`save_memory`).
+- Se inyecta completa en el system prompt de cada conversación (DM de jefe o admin).
 - Uso típico: hechos del negocio, contexto del jefe, personas clave, proyectos activos.
 
 ### Notas del jefe (sandboxed)
-- Misma tabla `memory`, keys con prefijo `boss_note:`.
-- El jefe escribe con `remember_note`.
-- Se inyectan en el prompt como **datos** con aviso explícito de que no son
-  instrucciones y no cambian las reglas del bot.
-- El jefe no puede tocar la memoria núcleo.
+- Misma tabla `memory`, keys con prefijo `boss_note:`. El jefe escribe con `remember_note`.
+- Se inyectan en el prompt como **datos** con aviso explícito de que no son instrucciones
+  y no cambian las reglas del bot. `splitMemory` separa núcleo vs notas.
 
 ### Cómo consultar la memoria desde el VPS
 ```bash
 # Memoria núcleo (admins)
 docker exec juanito-agent sqlite3 /app/data/brain.sqlite \
   "SELECT key, value FROM memory WHERE key NOT LIKE 'boss_note:%';"
-
 # Notas del jefe
 docker exec juanito-agent sqlite3 /app/data/brain.sqlite \
   "SELECT key, value FROM memory WHERE key LIKE 'boss_note:%';"
 ```
+> ⚠️ **`sqlite3` NO está instalado en el contenedor.** Los comandos `docker exec ... sqlite3`
+> de arriba (heredados de handoffs viejos) fallan. Usar `node -e` con `better-sqlite3`
+> dentro del contenedor en su lugar. Ver §12 (gotchas de operación).
 
 ---
 
-## Recordatorios
+## 9. Recordatorios
 
 El jefe o un admin dicen: *"recuérdame mañana a las 9 llamar a Pedro"*. Juanito
 usa `create_reminder` → guarda en tabla `reminders`. El scheduler corre cada
@@ -203,50 +241,222 @@ minuto y envía los vencidos.
 
 ### Cómo consultar recordatorios desde el VPS
 ```bash
-# Todos los recordatorios
 docker exec juanito-agent sqlite3 /app/data/brain.sqlite \
   "SELECT id, text, due_at, to_phone, status FROM reminders ORDER BY due_at DESC LIMIT 20;"
-
-# Solo pendientes
-docker exec juanito-agent sqlite3 /app/data/brain.sqlite \
-  "SELECT id, text, due_at FROM reminders WHERE status='pending' ORDER BY due_at;"
 ```
+(Mismo aviso de `sqlite3` que en §8 — usar `node -e`.)
 
 ---
 
-## Resúmenes automáticos de grupos
+## 10. Resúmenes automáticos de grupos
 
 - Cada 4 horas (`SUMMARY_CRON`), el scheduler lee los últimos 50 mensajes de cada
-  grupo y le pide a Claude un resumen.
-- Se guarda en `group_context`.
+  grupo y le pide a Claude un resumen → `group_context`.
 - Los últimos 5 resúmenes se inyectan en el system prompt del jefe.
 - Máx `MAX_GROUPS_PER_CYCLE` grupos por ciclo (default: 10).
 
 ---
 
-## Calendly y closers
+## 11. Calendly y closers (recordatorios precall)
 
-Sistema de recordatorios precall para el equipo de ventas.
+Juanito le recuerda a cada **closer** que mande sus "pushes" precall a los prospectos,
+leyendo las citas reales de **Calendly** (API v2):
 
-- **Anti-baneo:** Juanito nunca inicia conversación con un closer. Solo responde
-  si el closer le escribió primero → queda registrado en `calendly_optins`.
-- **Pushes precall:** Push 1 (noche anterior), Push 2 (mañana del día), Push 3
-  (~25 min antes de la llamada).
-- **DRY_RUN=true** por defecto → no envía nada, solo loguea. Poner `false` para
-  activar envío real.
+- **Push 1** — cron 7:00pm → digest de las llamadas de **mañana**, agrupado por closer.
+- **Push 2** — cron 6:30am → digest de las llamadas de **hoy**, agrupado por closer.
+- **Push 3** — ~25 min antes de cada llamada → un mensaje por cita.
+
+El closer = host del evento (`event_memberships[0].user_email`), mapeado a su WhatsApp
+en `src/calendly/closers.js` (8 closers; "Equipo EstadoX" se enruta a Mateo).
+
+**Anti-baneo:** Juanito NUNCA inicia una conversación con un closer. Solo se le envía si
+el closer le escribió primero (opt-in **ganado**, ver §11.2). Además `CALENDLY_DRY_RUN=true`
+por default no envía nada (solo loguea).
+
+### 11.1 Archivos núcleo
+
+- `src/calendly/index.js` — cliente API + helpers PUROS (sin DB, sin deps nativas) + plantillas.
+- `src/calendly/push-logic.js` — **lógica de decisión PURA** (sin DB, sin red):
+  `computePush3Schedule()` (catch-up), `decidePushAction()` (reagenda tras envío),
+  `sqliteUtcToMs()`. Es lo que permite testear los bugs de concurrencia/reagenda en Windows.
+- `src/calendly/health.js` — estado en memoria + dedup de alertas a admin. Puro.
+- `src/calendly/closers.js` — mapa email→WhatsApp.
+- `src/calendly/optin.js` — registro anti-baneo (`handleCloserOptin`: el closer escribe primero).
+- `src/scheduler/calendly.js` — crons (poll, deliver, push1, push2). Refactorizado a un seam de
+  deps (`__setDeps`/`__resetDeps`, igual patrón que `src/claude/index.js`): API de Calendly, DB
+  y `sendMessage` se inyectan en tests. Aquí viven el catch-up, el guard de concurrencia y las alertas.
+- `src/db/index.js` — `scheduleCalendlyPush` delega a `decidePushAction`; `claimCalendlyPush(id)`
+  (claim atómico) y `revertCalendlyPush(id)`.
+- `scripts/calendly-day-check.js` — diagnóstico: citas de UN día (y opcional UN closer) con
+  verificación de scoping por día.
+- `scripts/calendly-dryrun.js` — UNA pasada completa (poll+push1+push2+deliver) en dry-run (pega al
+  Calendly real, muestra lo de hoy).
+- `scripts/calendly-scenarios.js` — **dry-run determinista**: imprime qué haría el sistema en 7
+  escenarios clave sin tocar red/DB/WhatsApp. Corre en Windows sin token ni `better-sqlite3`.
+- `scripts/calendly-optins.js` — quién ya hizo opt-in / quién falta.
+
+### 11.2 Opt-in anti-ban — ganado vs sembrado (fix 2026-06-09)
+
+**Hueco original:** el opt-in se guardaba por el número canónico del closer y `deliver()` solo
+chequeaba que la **fila existiera** (`isOptedIn`). Una fila sembrada a mano (o de un closer que
+escribió desde otro número) habilitaba un push **en frío** a un número que nunca habló con Juanito
+= riesgo de softban. Detectado en Fase 2: Sebastian recibió el push en `573102212005`, número con
+`chat_id` matches = 0 (jamás escribió); su opt-in estaba sembrado en la DB.
+
+**Fix implementado (commits `0d3ca3d` + `1c5c7d6`):**
+- Columnas nuevas en `calendly_optins`: `source` (`'self'` = el closer escribió vía
+  `handleCloserOptin` | `'seeded'`/null = fabricado) y `contact_jid` (JID desde el que escribió;
+  auditoría). Migración idempotente en `src/db/migrate.js`.
+- `registerOptin` default `'seeded'`; `'self'` es **pegajoso** (un upgrade seeded→self no se degrada).
+- Nueva `isVerifiedOptedIn(phone)` → solo `source='self'`. `deliver()` ahora usa
+  `isVerifiedOptedIn` (exige opt-in **ganado**). Un opt-in sin verificar existe pero **NO** habilita
+  envío. Tests en `test/data.db.test.js`.
+- Sebas quedó **backfilleado** a `source='self'` (decisión del owner: él creará el hilo real
+  escribiendo desde su número de trabajo).
+
+**Residual (no cerrado por la realidad del LID):** si un closer escribe desde su celular
+**personal** (resuelto por `pushName`), su opt-in queda `'self'` pero el número de **trabajo**
+sigue sin hilo → entrega en frío a ese número. Mitigación operativa: pedir que escriban desde su
+número de trabajo. `contact_jid` queda registrado para una futura detección automática de este caso.
+
+### 11.3 Fixes de robustez (sesión 2026-06-08, en `a118a71`)
+
+| # | Tema | Antes | Ahora |
+|---|---|---|---|
+| Bug 1 | **Doble envío por concurrencia** | el cron corre cada minuto y no previene solapes; un lote >1 min podía enviar dos veces | guard de reentrada `_delivering` + **claim atómico** (`status 'scheduled'→'sending'`) por fila |
+| Bug 2 | **Reagenda tras envío** | si el Push 3 ya estaba `sent` y reagendaban a más tarde, no se mandaba uno nuevo | `decidePushAction` re-arma el push (`resetFromSent` → vuelve a `scheduled`) si la nueva hora es futura |
+| Bug 3 | **`getFirstInvitee` sin retry** | un fallo transitorio tiraba el push sin nombre/teléfono del prospecto | 1 reintento con backoff de 500ms |
+| Dec 4b | **Catch-up de reservas tardías** | si los 3 triggers ya pasaron, el closer no recibía nada | `computePush3Schedule` agenda **inmediato** si la llamada sigue en el futuro (sin piso). Si ya pasó, no agenda |
+| Dec 5 | **Alertas de fallos silenciosos** | token muerto / closer sin mapear fallaban solo en logs | **DM inmediato a `ADMIN_LID`** (deduplicado 6h) + estado en `/status` |
+
+### 11.4 Harness de escenarios y tests
+
+`test/helpers/calendly-harness.js` reemplaza las 3 fronteras externas por dobles (mock de la API
+de Calendly con fixtures, store en memoria de `calendly_pushes` que usa la MISMA lógica pura que el
+SQL real, spy de WhatsApp, reloj inyectable). Reproduce escenarios deterministas que el dry-run en
+vivo no puede forzar (reserva en 20 min, reagenda tras envío, concurrencia, etc.).
+
+```powershell
+# Puros — corren NATIVO en Windows (sin better-sqlite3):
+node --test test/calendly.helpers.test.js       # 13
+node --test test/calendly.push-logic.test.js    # 11
+node --test test/calendly.scenarios.test.js     # 12
+node --test test/commands.test.js               # 7
+node --test test/roles.test.js                  # 13
+node --test test/brain.tools.test.js            # 12
+
+# Reporte legible (imprime qué haría el sistema en cada escenario):
+node scripts/calendly-scenarios.js
+
+# NO corren en Windows (necesitan better-sqlite3 nativo) → en Docker/VPS:
+#   test/data.calendly-pushes.test.js   (valida el SQL de claim/revert/reschedule, bugs #1 y #2)
+#   test/data.db.test.js                (regresión de la DB + opt-in anti-ban source self vs seeded)
+```
+
+> ⚠️ **`node --test` SIN argumentos FALLA** en Windows (intenta correr también los tests de DB
+> nativos). Correr SIEMPRE por archivo.
+>
+> ⚠️ **El `Dockerfile` NO copia `test/`** → `docker compose exec agent node --test test/...` no
+> encuentra los archivos. Para correr los tests de DB en el contenedor hay que montar el volumen:
+> ```bash
+> docker run --rm -v /root/juanito/test:/app/test -w /app juanito-agent:latest \
+>   node --test test/data.calendly-pushes.test.js test/data.db.test.js
+> ```
+> (o un `node:22-alpine` con `npm rebuild better-sqlite3`). Verde hoy: DB 11/11.
+
+### 11.5 Receta de prueba real controlada (Fase 2)
+
+La que se usó con Sebastian (y antes con Pablo):
+1. Sembrar/confirmar el opt-in del sujeto (hoy, con el fix, debe quedar `source='self'`).
+2. En el `.env` del VPS: `CALENDLY_DRY_RUN=false` + `CALENDLY_PUSH1_CRON=<minuto+5> <hora> * * *`
+   (los crons usan TZ `America/Bogota` vía Intl, aunque `date` del contenedor diga UTC porque
+   Alpine no trae tzdata).
+3. `docker compose up -d` (recrea con la nueva env; 1 reconexión de WA controlada).
+4. Esperar el minuto del cron (runPush1 tarda ~40s por el throttle de invitees), verificar en logs
+   `[Calendly] enviado (push1) → <número>`.
+5. **Revertir:** `CALENDLY_DRY_RUN=true`, quitar el cron de prueba, `docker compose up -d`.
+
+Solo los opted-in **ganados** reciben; el resto sale `OMITIDO ... sin opt-in`.
+
+> ⚠️ **`docker compose exec ... node -e` NO puede ENVIAR WhatsApp.** Arranca un proceso SEPARADO
+> que comparte la DB pero NO el socket de WA (vive solo en el proceso principal `node src/index.js`).
+> El envío real debe salir del proceso principal vía un cron.
+
+### 11.6 Hallazgos no obvios
+
+1. **`CALENDLY_TOKEN` es el PAT personal de Sebastian _Rodriguez_** (`sebastian@30x.com`), no una
+   cuenta de servicio. Tiene visibilidad de toda la org. **Decisión 2026-06-09: NO rotar** (ver §13).
+2. **Hay dos "Sebastian":** Rodriguez (`sebastian@30x.com`) y Salazar (`sebastian.salazar@30x.com`).
+   Closers distintos, números distintos en `closers.js`. No confundirlos.
+3. **El filtro de "programa" importa:** las citas tipo "Entrevista 30X" no son llamadas de venta y
+   el sistema correctamente NO las incluye en los pushes.
 
 ---
 
-## Configuración — Variables de entorno
+## 12. Infraestructura VPS y operación
+
+- **Proveedor:** DigitalOcean SFO2, IP fija `157.230.152.202` (crítica — no migrar sin planearlo)
+- **SSH:** `root@157.230.152.202`, **solo por contraseña**. `plink`/`pscp` en `C:\Program Files\PuTTY\`.
+- **Directorio del proyecto:** `/root/juanito/` — **NO es repo git** → se sincroniza con `pscp`.
+- **Container:** `juanito-agent`. **Datos persistentes:** `/root/juanito/data/` → `/app/data/`.
+  **Sesión WA:** `data/wa-session/`. **DB:** `data/brain.sqlite`.
+
+### Comandos de operación
+
+```bash
+docker ps | grep juanito                       # estado del container
+docker logs juanito-agent -f 2>&1              # logs en tiempo real
+
+# Copiar código actualizado (SOLO src/scripts/test; ver gotchas) y reconstruir:
+#   desde la carpeta del repo local, en PowerShell:
+& "C:\Program Files\PuTTY\pscp.exe" -pw <PW> -r src scripts test root@157.230.152.202:/root/juanito/
+plink -pw <PW> root@157.230.152.202 "cd /root/juanito && docker compose up -d --build"
+```
+
+### Reglas críticas de operación (gotchas)
+
+- **`docker-compose.yml` no monta el código** → cada cambio requiere `docker compose up -d --build`.
+  `docker restart` no aplica cambios de código.
+- **Backoff exponencial en `entrypoint.sh` (30→60→120→240→300s): NO TOCAR.** Un softban previo fue
+  causado por reconexiones rápidas desde IP de datacenter. No exponer puertos (Baileys es saliente).
+- **Vinculación de WhatsApp:** nunca escanear el QR desde el VPS (WA rechaza el registro desde IP de
+  datacenter). Vincular desde IP residencial local → copiar `data/wa-session/` al VPS → arrancar.
+  Ver `docs/WHATSAPP-PAIRING.md`.
+- **`sqlite3` NO está en el contenedor.** Para consultar la DB usar `node -e` con `better-sqlite3`
+  dentro del contenedor, no `docker exec ... sqlite3` (los handoffs viejos lo documentaban mal).
+- **El `Dockerfile` NO copia `test/`** → para correr tests de DB en el contenedor, montar el volumen
+  (ver §11.4).
+- **Las env vars se pasan EXPLÍCITAS en `docker-compose.yml` (`environment:`).** Una var en el `.env`
+  del VPS NO llega al contenedor si no está listada ahí. Mordió con `ADMIN_LID`/`BOSS_LID` (fix
+  `cde8a8b`). **Regla: toda env var nueva que el código lea debe agregarse al `environment:` del compose.**
+- **Aplicar solo cambios de `.env`:** `docker compose up -d` (sin `--build`) recrea el contenedor con
+  las nuevas vars. Cada recreación = 1 reconexión de WA controlada.
+- **NO copiar `docker-compose.yml`/`package*.json`/`entrypoint.sh`** salvo que cambien (deps no
+  cambiaron; `entrypoint.sh` es sensible por el softban).
+- **Rollback:** patrón tar del código + tag de la imagen. Artefactos del deploy de hoy:
+  `/root/juanito-backup-20260609-023600.tar.gz` + imagen `juanito-agent:pre-optinfix-20260609`.
+
+---
+
+## 13. Decisiones de secretos (2026-06-09)
+
+- **`CALENDLY_TOKEN`: NO se rota.** El compañero tiene permiso de verlo/usarlo y el `.env` no está en
+  GitHub (gitignored), así que la exposición se considera aceptable. (Originalmente se sugería rotar
+  por ser el PAT personal de Sebastian Rodriguez.)
+- **Contraseña del VPS: DIFERIDA** (no rotada en esta sesión; pasó por chat en sesiones previas).
+
+---
+
+## 14. Configuración — Variables de entorno
 
 | Variable | Requerida | Default | Descripción |
 |----------|:---------:|---------|-------------|
 | `ANTHROPIC_API_KEY` | ✅ | — | API key de Anthropic |
 | `BOSS_PHONE` | ✅ | — | Teléfono del jefe sin `+` (ej: `573105643297`) |
-| `BOSS_LID` | ✅ prod | — | LID del jefe (ej: `144268136038585@lid`). Obtenerlo de los logs al arrancar o con `/whoami`. |
-| `ADMIN_LID` | ✅ prod | — | LIDs del equipo técnico, coma-separados. Obtenerlos con `/whoami`. |
+| `BOSS_LID` | ✅ prod | — | LID del jefe (ej: `144268136038585@lid`). Obtener con `/whoami`. |
+| `ADMIN_LID` | ✅ prod | — | LIDs del equipo técnico, coma-separados. Obtener con `/whoami`. |
 | `BOT_NAME` | — | `Juanito` | Nombre del bot en el system prompt |
-| `BOSS_NAME` | — | — | Nombre del jefe. Juanito lo usa al saludar. También configurable via DM con `remember_note`. |
+| `BOSS_NAME` | — | — | Nombre del jefe. Juanito lo usa al saludar. También via `remember_note`. |
 | `CLAUDE_MODEL` | — | `claude-sonnet-4-20250514` | Modelo de Claude |
 | `CLAUDE_MAX_TOKENS` | — | `2048` | Máx tokens en respuesta |
 | `DB_PATH` | — | `./data/brain.sqlite` | Ruta de la base de datos |
@@ -257,91 +467,54 @@ Sistema de recordatorios precall para el equipo de ventas.
 | `SUMMARY_CRON` | — | `0 */4 * * *` | Frecuencia de resúmenes de grupos |
 | `SUMMARY_CYCLE_HOURS` | — | `4` | Ventana de mensajes por resumen |
 | `MAX_GROUPS_PER_CYCLE` | — | `10` | Máx grupos resumidos por ciclo |
-| `CALENDLY_TOKEN` | — | — | Personal Access Token de Calendly |
+| `CALENDLY_TOKEN` | — | — | PAT de la API v2. Sin él, los jobs de Calendly se desactivan. |
 | `CALENDLY_DRY_RUN` | — | `true` | `true` = no envía WhatsApp, solo loguea |
 | `CALENDLY_REQUIRE_OPTIN` | — | `true` | `true` = solo envía a closers con opt-in previo |
+| `CALENDLY_EVENT_TYPES` | — | 2 hardcoded | CSV de event_types de programa a vigilar |
+| `CALENDLY_GROUP_URI` | — | hardcoded | Grupo de Calendly a consultar |
+| `CALENDLY_PUSH3_LEAD_MIN` | — | `25` | Minutos antes de la llamada para Push 3 |
+| `CALENDLY_PUSH1_CRON` | — | `0 19 * * *` | Cron Push 1 (7:00pm) |
+| `CALENDLY_PUSH2_CRON` | — | `30 6 * * *` | Cron Push 2 (6:30am) |
+| `CALENDLY_POLL_CRON` | — | `*/5 * * * *` | Cron del poll que agenda Push 3 |
 
 ---
 
-## Infraestructura VPS
-
-- **Proveedor:** DigitalOcean SFO2, IP fija (crítica — no migrar sin planearlo)
-- **SSH:** `root@157.230.152.202`
-- **Directorio del proyecto:** `/root/juanito/`
-- **Container:** `juanito-agent`
-- **Datos persistentes:** `/root/juanito/data/` → montado en `/app/data/`
-- **Sesión WA:** `/root/juanito/data/wa-session/`
-- **DB:** `/root/juanito/data/brain.sqlite`
-
-**Nota:** el VPS no tiene git (`git clone` nunca se hizo). Los cambios de código
-se copian con `scp` y se reconstruye la imagen.
-
-### Comandos de operación
-
-```bash
-# Ver estado del container
-docker ps | grep juanito
-
-# Logs en tiempo real
-docker logs juanito-agent -f 2>&1
-
-# Copiar archivo modificado y reconstruir (SIEMPRE usar --build)
-scp src/bot/index.js root@157.230.152.202:/root/juanito/src/bot/index.js
-ssh root@157.230.152.202 "cd /root/juanito && docker compose up -d --build"
-
-# Consultar la DB directamente
-docker exec juanito-agent sqlite3 /app/data/brain.sqlite "<query SQL>"
-```
-
-### Reglas críticas de operación
-
-**Actualización de código:** el `docker-compose.yml` no tiene volume mount para
-el código. Cada cambio requiere `docker compose up -d --build`. `docker restart`
-no aplica cambios de código.
-
-**Backoff exponencial:** `entrypoint.sh` tiene backoff 30→60→120→240→300s entre
-reinicios. No tocar. Un softban previo fue causado por reconexiones rápidas desde
-IP de datacenter — WhatsApp lo detecta y bloquea el número.
-
-**Vinculación de WhatsApp:** nunca escanear el QR desde el VPS. Ver
-`docs/WHATSAPP-PAIRING.md`. El flujo es: vincular desde IP residencial local →
-copiar `data/wa-session/` al VPS → arrancar el container.
-
----
-
-## Base de datos — Tablas
+## 15. Base de datos — Tablas
 
 | Tabla | Qué guarda |
 |-------|-----------|
 | `messages` | Historial de conversaciones (DMs y grupos). Últimos 20 incluidos en cada llamada a Claude. |
-| `memory` | Memoria clave-valor de largo plazo. Prefijo `boss_note:` = notas personales del jefe (sandboxed). |
+| `memory` | Memoria clave-valor de largo plazo. Prefijo `boss_note:` = notas del jefe (sandboxed). |
 | `reminders` | Recordatorios con fecha, destinatario y estado (`pending/sent/failed`). |
 | `group_context` | Resúmenes periódicos de grupos. Últimos 5 inyectados en el prompt. |
 | `contacts` | Directorio nombre → teléfono. Para resolver destinatarios de recordatorios. |
-| `processed_messages` | IDs procesados (deduplicación — evita procesar el mismo mensaje dos veces). |
-| `calendly_pushes` | Agenda de recordatorios precall para closers. |
-| `calendly_optins` | Closers con opt-in (escribieron a Juanito al menos una vez). |
+| `processed_messages` | IDs procesados (deduplicación). |
+| `calendly_pushes` | Agenda de recordatorios precall (estados `scheduled/sending/sent/skipped`). |
+| `calendly_optins` | Closers con opt-in. Columnas `source` (`self`/`seeded`) y `contact_jid` (ver §11.2). |
 | `group_usage` | Contadores diarios de menciones por usuario en grupos (rate limit). |
+
+`src/db/migrate.js` es **idempotente** — seguro de correr múltiples veces.
 
 ---
 
-## Modelo de seguridad
+## 16. Modelo de seguridad
 
 | Amenaza | Mitigación |
 |---------|-----------|
-| Usuario de grupo accede a datos del jefe | Tools completamente deshabilitadas en grupos — chatbot puro sin acceso a datos |
+| Usuario de grupo accede a datos del jefe | Tools deshabilitadas en grupos — chatbot puro sin acceso a datos |
 | Desconocido accede a Claude via DM | Solo BOSS/ADMIN llegan a Claude; el resto va a opt-in handler o silencio |
-| El jefe modifica comportamiento del bot | `save_memory` bloqueado para boss; `remember_note` va a namespace sandboxed, inyectado como datos no como instrucciones |
-| Prompt injection en grupos | Sin tools, sin historial de conversaciones expuesto en grupos |
-| Revelación de config interna | System prompt prohíbe explícitamente revelar tokens, env vars, LIDs, teléfonos de terceros |
+| El jefe modifica comportamiento del bot | `save_memory` bloqueado para boss; `remember_note` sandboxed, inyectado como datos |
+| Prompt injection en grupos | Sin tools, sin historial expuesto en grupos |
+| Revelación de config interna | System prompt prohíbe revelar tokens, env vars, LIDs, teléfonos de terceros |
 | Softban por reconexiones rápidas | Backoff exponencial en `entrypoint.sh`; container no expone puertos |
 | Procesamiento duplicado | Tabla `processed_messages` deduplica por `message_id` |
+| **Push en frío a opt-in fabricado** | **`isVerifiedOptedIn` exige `source='self'` (opt-in ganado)** — ver §11.2 |
 
 ---
 
-## Estado de pruebas — sesión 2026-06-08
+## 17. Estado de pruebas
 
-### ✅ Pasaron / Resueltos
+### ✅ Pasaron / Resueltos (sesión 2026-06-08)
 
 | # | Prueba | Nota |
 |---|--------|------|
@@ -349,109 +522,76 @@ copiar `data/wa-session/` al VPS → arrancar el container.
 | A4–A5 | No revela config interna | Pasa |
 | B1–B4 | DMs por autorización | Pasa |
 | C1–C4 | Roles y comandos | Pasa |
-| C5 | /status para no-admin | Fix: responde "solo para equipo técnico 🙂" |
+| C5 | /status para no-admin | "solo para equipo técnico 🙂" |
 | D1–D4 | Memoria por rol | Pasa |
-| D5 | Grupos no guardan datos ajenos | **Decisión:** grupos sin ningún tool — chatbot puro. Nadie puede crear recordatorios ni escribir en la DB desde un grupo. |
+| D5 | Grupos no guardan datos ajenos | Grupos sin ningún tool — chatbot puro |
 | E1–E3 | @mention en grupos | Pasa |
-| E6 | Memoria no se revela en grupos | Fix: `search_knowledge` eliminado de grupos |
+| E6 | Memoria no se revela en grupos | `search_knowledge` eliminado de grupos |
 | F1–F3 | Recordatorios | Pasa |
-
-### ⚠️ Parcialmente resuelto
-
-| # | Prueba | Estado |
-|---|--------|--------|
-| A3 | Juanito saluda al jefe por nombre | Infraestructura lista (`BOSS_NAME` en `.env` o via `remember_note`). Falta que el jefe configure su nombre: debe escribirle a Juanito "recuerda que me llamo [nombre]" |
 
 ### Verificación 2026-06-09 (código + observación)
 
-Revisión de los seguros en código tras el deploy de `a118a71`. Marcadas las que quedaron cubiertas:
-
 | # | Prueba | Estado | Evidencia |
 |---|--------|--------|-----------|
-| G1 | Container restart recupera la sesión | ✅ validado en vivo | 3 recreates hoy (deploy + Fase 2 ×2): cada `docker compose up -d` reconectó con `Reconnection with existing sync data` → `Conectado ✅`, sin QR. Más exigente que el `docker restart` pedido. |
-| G3 | Deduplicación de mensajes | ✅ código + unit test | `markIfNew(messageId)` gatea el envío en `index.js:25`, `bot/index.js:28,56`; tabla `processed_messages`. |
-| G4 | Mensaje sin texto (sticker/imagen) | ✅ código | `if (!text) return` en `index.js:15` + redundante en handlers → descarte silencioso. |
-| G5 | Error de API de Claude | ✅ código | `handleBossMessage` (`bot/index.js:39-45`) try/catch → fallback amigable "Perdón, algo falló…"; `withRetry` (429/5xx) en `claude/index.js:488`; guards globales `uncaughtException`/`unhandledRejection` en `index.js:62-63`. |
-| G2 | Mensaje muy largo | ✅ código | Claude maneja input grande; output capado por `max_tokens`; un 400 caería en el mismo try/catch → fallback. Sin ruta de crash. |
-| E5 | BOSS ilimitado en grupos | ✅ código | `isUnlimitedSender` incluye `BOSS_PHONE` → salta `checkAndIncrementGroupUsage`. |
+| G1 | Container restart recupera la sesión | ✅ validado en vivo | 3 recreates hoy (deploy + Fase 2 ×2): cada `docker compose up -d` reconectó con `Reconnection with existing sync data` → `Conectado ✅`, sin QR. |
+| G2 | Mensaje muy largo | ✅ código | Output capado por `max_tokens`; un 400 cae en try/catch → fallback. Sin ruta de crash. |
+| G3 | Deduplicación de mensajes | ✅ código + unit test | `markIfNew(messageId)` gatea el envío; tabla `processed_messages`. |
+| G4 | Mensaje sin texto (sticker/imagen) | ✅ código | `if (!text) return` en `index.js:15` → descarte silencioso. |
+| G5 | Error de API de Claude | ✅ código | try/catch → fallback amigable; `withRetry` (429/5xx); guards globales `uncaughtException`/`unhandledRejection`. |
+| E5 | BOSS ilimitado en grupos | ✅ código | `isUnlimitedSender` incluye `BOSS_PHONE`. |
+| — | Opt-in anti-ban source self vs seeded | ✅ unit test (DB 11/11) | `test/data.db.test.js`; `isVerifiedOptedIn` solo `source='self'`. |
+
+### ⚠️ Parcial
+
+| # | Prueba | Estado |
+|---|--------|--------|
+| A3 | Juanito saluda al jefe por nombre | Infra lista (`BOSS_NAME` o `remember_note`). Falta que el jefe configure su nombre. |
 
 ### ⏳ Pendientes de ejecutar en vivo (requieren un humano enviando mensajes)
 
 | # | Prueba | Cómo ejecutarla |
 |---|--------|----------------|
-| E4 | Rate limit se reinicia al día siguiente | Agotar los 5 mensajes un día; al día siguiente @mencionar → debe responder. (Lógica en `checkAndIncrementGroupUsage`, reset por día; falta confirmar el corte de día en vivo.) |
-| G3/G4 live | Confirmación conductual | Mandar el mismo mensaje 2× (dedup) y un sticker (sin texto) desde un celular real → confirmar comportamiento. El código ya lo cubre; esto es solo la confirmación end-to-end. |
+| E4 | Rate limit se reinicia al día siguiente | Agotar los 5 mensajes; al día siguiente @mencionar → debe responder. |
+| G3/G4 live | Confirmación conductual | Mandar el mismo mensaje 2× (dedup) y un sticker (sin texto) desde un celular real. |
 
 ---
 
-## Features pendientes — por prioridad
+## 18. Tareas pendientes (abierto al 2026-06-09)
 
 ### 🔴 Alta prioridad
 
-**Memoria específica por grupo**
-Hoy Juanito responde en grupos como chatbot genérico sin saber nada del grupo.
-Permitir que un admin asigne contexto a un grupo concreto ("en el grupo Ventas,
-el producto es X, el equipo son Y y Z, el objetivo mensual es W").
-
-Implementación:
-- Nueva tabla: `group_memory(group_id TEXT PRIMARY KEY, context TEXT, updated_at)`
-- Nuevos tools para admin/boss: `set_group_context(group_id, context)`, `get_group_context(group_id)`
-- En `buildSystemPrompt()` (`src/claude/index.js`): si `isGroup=true` y existe
-  entrada para `chatId`, inyectarla como bloque `## Contexto de este grupo`
-- Archivos: `src/db/migrate.js`, `src/db/index.js`, `src/claude/index.js`, `src/bot/index.js`
-
-**Opt-in anti-ban: envío en frío a opt-in fabricado — ✅ FIX 2026-06-09 (parcial)**
-*Hueco original:* el opt-in se guardaba por el número canónico del closer (`closers.js`)
-y `deliver()` solo chequeaba que la **fila existiera** (`isOptedIn`). Una fila sembrada
-a mano (o de un closer que escribió desde otro número) habilitaba un push en frío a un
-número que nunca habló con Juanito = riesgo de softban. Detectado en Fase 2: Sebastian
-recibió el push en `573102212005`, número con `chat_id` matches = 0 (jamás escribió);
-su opt-in estaba sembrado en la DB.
-*Fix implementado:* columnas `source` (`'self'` = el closer escribió, vía `handleCloserOptin`
-| `'seeded'`/null = fabricado) + `contact_jid` en `calendly_optins`. `registerOptin` default
-`'seeded'`; `'self'` es pegajoso (un upgrade seeded→self no se degrada). Nueva `isVerifiedOptedIn`
-y `deliver()` ahora exige opt-in **ganado**. Un opt-in sin verificar existe pero NO habilita
-envío. Tests en `test/data.db.test.js`. Sebas quedó backfilleado a `source='self'` (decisión
-del owner: él creará el hilo real escribiendo desde su número de trabajo).
-*Residual (no cerrado por la realidad del LID):* si un closer escribe desde su celular
-**personal** (resuelto por `pushName`), su opt-in queda `'self'` pero el número de trabajo
-sigue sin hilo → entrega en frío. Mitigación operativa: pedir que escriban desde su número
-de trabajo. `contact_jid` queda registrado para una futura detección de este caso.
-
----
+- **Residual del opt-in anti-ban** (§11.2): un closer que escribe desde su número **personal** queda
+  `'self'` pero su número de **trabajo** sigue sin hilo → entrega en frío a ese número. Mitigación
+  operativa hoy (pedir que escriban desde el número de trabajo); pendiente detección automática usando
+  `contact_jid`.
+- **Memoria específica por grupo:** hoy Juanito responde en grupos sin saber nada del grupo. Permitir que
+  un admin asigne contexto. Implementación: tabla `group_memory(group_id PK, context, updated_at)`; tools
+  `set_group_context`/`get_group_context` (admin/boss); inyectar en `buildSystemPrompt()` cuando `isGroup`.
+  Archivos: `src/db/migrate.js`, `src/db/index.js`, `src/claude/index.js`, `src/bot/index.js`.
 
 ### 🟡 Media prioridad
 
-**Juanito saluda a los ADMINs por nombre**
-El jefe configura su nombre via `remember_note` y Juanito lo usa. Para admins no
-existe esa memoria personal. Implementar `admin_note:<lid>:<key>` análoga a las
-notas del jefe.
-Archivos: `src/claude/index.js`
-
-**Comando `/admins` para listar admins activos**
-Desde un DM de admin, listar LIDs en `ADMIN_LID` con su nombre de contacto si
-está en la tabla `contacts`. Útil para auditar accesos.
-Archivos: `src/bot/commands.js`
-
-**Capturar LID del jefe automáticamente**
-Hoy `BOSS_LID` se configura manualmente. Cuando el jefe manda el primer DM
-reconocido por `BOSS_PHONE`, guardar su LID en DB automáticamente.
-
-**Rate limit configurable por grupo**
-Hoy `GROUP_DAILY_LIMIT` es global. Configurar por grupo.
-
----
+- **Juanito saluda a los ADMINs por nombre:** implementar `admin_note:<lid>:<key>` análoga a las notas del
+  jefe. Archivo: `src/claude/index.js`.
+- **Comando `/admins`:** listar LIDs en `ADMIN_LID` con nombre de contacto. Archivo: `src/bot/commands.js`.
+- **Capturar LID del jefe automáticamente** al primer DM reconocido por `BOSS_PHONE`.
+- **Rate limit configurable por grupo** (hoy `GROUP_DAILY_LIMIT` es global).
+- **Roadmap baby-proofing restante:** (4) no mandar a terceros por orden del jefe (DIFERIDO: se implementa
+  junto con la feature de envío); (5) cola de aprobación admin; (6) log de auditoría de lo que el jefe pide;
+  (7) caps anti-ban/costo (tope de mensajes salientes/min y tokens por conversación).
 
 ### 🟢 Baja prioridad / Nice-to-have
 
-**Comando `/recuerda` en grupos (para admins)**
-`@Juanito /recuerda [texto]` desde un grupo → guarda en memoria núcleo sin
-necesidad de ir a un DM.
+- **Comando `/recuerda` en grupos (admins):** `@Juanito /recuerda [texto]` → memoria núcleo sin ir a DM.
+- **Resumen on-demand explícito:** exponer `summarize_group` en el prompt del jefe.
+- **Personalización del tono por grupo** (formal en clientes, informal en internos), junto con
+  `set_group_context`.
+- **Digests idempotentes / trazados:** hoy Push 1/2 no se registran por-closer; un reinicio a mitad del
+  cron puede dejar a algún closer sin su digest (Push 3 sí es resiliente). No crítico.
+- **Forzar Title Case** en nombres de prospecto (hoy "Juan pineres" se respeta tal cual): una línea en
+  `fullNameFrom`.
 
-**Resumen on-demand explícito**
-El tool `summarize_group` ya existe, pero no se menciona en el prompt del jefe.
-Exponer la opción explícitamente.
+### Secretos (decididos, ver §13)
 
-**Personalización del tono por grupo**
-Tono formal en grupos de clientes, informal en grupos internos.
-Configurable junto con `set_group_context` (feature de alta prioridad).
+- `CALENDLY_TOKEN`: **NO rotar** (decidido).
+- Contraseña del VPS: **rotación DIFERIDA** (pendiente para cuando se quiera cerrar ese riesgo).
