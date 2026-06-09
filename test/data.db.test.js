@@ -33,6 +33,31 @@ test('migración crea las tablas y columnas nuevas', () => {
   for (const t of ['contacts', 'reminders', 'messages', 'memory', 'group_context']) {
     assert.ok(tables.includes(t), `falta tabla ${t}`);
   }
+  const optinCols = def.prepare('PRAGMA table_info(calendly_optins)').all().map((c) => c.name);
+  for (const c of ['source', 'contact_jid']) {
+    assert.ok(optinCols.includes(c), `falta columna ${c} en calendly_optins`);
+  }
+});
+
+test('opt-in anti-ban: source self vs seeded e isVerifiedOptedIn', () => {
+  // Sembrado (default 'seeded'): existe pero NO verificado → no se envía en frío
+  db.registerOptin({ phone: '+57 300 111 0001', closerEmail: 'a@x.com', name: 'A' });
+  assert.equal(db.isOptedIn('573001110001'), true, 'la fila existe');
+  assert.equal(db.isVerifiedOptedIn('573001110001'), false, 'seeded NO está verificado');
+
+  // Ganado ('self'): el closer escribió → verificado → recibe
+  db.registerOptin({
+    phone: '+57 300 111 0002', closerEmail: 'b@x.com', name: 'B', source: 'self', contactJid: '12345@lid',
+  });
+  assert.equal(db.isVerifiedOptedIn('573001110002'), true, 'self queda verificado');
+
+  // Upgrade: una fila seeded que luego escribe → pasa a verificado
+  db.registerOptin({ phone: '+57 300 111 0001', source: 'self', contactJid: '999@lid' });
+  assert.equal(db.isVerifiedOptedIn('573001110001'), true, 'seeded → self (upgrade)');
+
+  // No-degradación: un self que recibe otra escritura seeded → sigue verificado
+  db.registerOptin({ phone: '+57 300 111 0002' });
+  assert.equal(db.isVerifiedOptedIn('573001110002'), true, 'self no se degrada a seeded');
 });
 
 test('recordatorio con destinatario: save -> pending -> sent', () => {

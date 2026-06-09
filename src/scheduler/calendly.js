@@ -84,7 +84,9 @@ async function deps() {
     revertCalendlyPush: db.revertCalendlyPush,
     markCalendlyPushSent: db.markCalendlyPushSent,
     markCalendlyPushSkipped: db.markCalendlyPushSkipped,
-    isOptedIn: db.isOptedIn,
+    // Anti-ban: el gate de entrega exige opt-in GANADO (el closer escribió), no solo
+    // que la fila exista. Una fila sembrada/sin verificar NO habilita envío en frío.
+    isOptedIn: db.isVerifiedOptedIn,
     sendMessage: whatsapp.sendMessage,
     now: () => Date.now(),
   };

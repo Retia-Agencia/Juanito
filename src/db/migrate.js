@@ -135,6 +135,12 @@ addColumnIfMissing('reminders', 'attempts', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('group_context', 'period_start', 'DATETIME');
 addColumnIfMissing('group_context', 'period_end', 'DATETIME');
 
+// Opt-in anti-ban: distinguir opt-ins ganados ('self', el closer escribió) de los
+// sembrados/sin verificar (null → no se envía en frío). `contact_jid` = JID desde el
+// que escribió (auditoría). Filas viejas quedan sin verificar hasta backfill explícito.
+addColumnIfMissing('calendly_optins', 'source', 'TEXT');
+addColumnIfMissing('calendly_optins', 'contact_jid', 'TEXT');
+
 // Migrar el flag legacy `sent` -> `status` (una sola vez, idempotente)
 if (columnExists('reminders', 'sent')) {
   const migrated = db

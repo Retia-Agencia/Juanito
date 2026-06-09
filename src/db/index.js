@@ -288,30 +288,47 @@ export function markCalendlyPushSkipped(id, reason = '') {
 }
 
 // ─── Calendly: opt-in de closers (anti-baneo) ─────────────────────────────────
-// Solo se envía a un closer si su número ya escribió a Juanito (quedó registrado).
-
-export function registerOptin({ phone, closerEmail = null, name = null }) {
+// Solo se envía en frío a un closer cuyo opt-in fue GANADO: el closer le escribió a
+// Juanito (`source='self'`). Las filas sembradas/sin verificar (`source` null/'seeded')
+// existen pero NO habilitan envío — evita mandar un mensaje en frío a un número que
+// nunca habló con Juanito (el patrón que dispara softbans).
+//
+// `source`: 'self' = el closer escribió (vía handleCloserOptin) | 'seeded'/null = fabricado.
+// `contactJid`: el JID desde el que escribió (auditoría; puede ser @lid sin resolver).
+// El 'self' es "pegajoso": un upgrade seeded→self queda verificado y no se degrada.
+export function registerOptin({ phone, closerEmail = null, name = null, source = 'seeded', contactJid = null }) {
   const p = normalizePhone(phone);
   if (!p) return null;
   return db
     .prepare(`
-      INSERT INTO calendly_optins (phone, closer_email, name)
-      VALUES (?, ?, ?)
+      INSERT INTO calendly_optins (phone, closer_email, name, source, contact_jid)
+      VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(phone) DO UPDATE SET
-        closer_email = excluded.closer_email, name = excluded.name
+        closer_email = excluded.closer_email,
+        name = excluded.name,
+        source = CASE WHEN excluded.source = 'self' THEN 'self' ELSE calendly_optins.source END,
+        contact_jid = COALESCE(excluded.contact_jid, calendly_optins.contact_jid)
     `)
-    .run(p, closerEmail, name);
+    .run(p, closerEmail, name, source, contactJid);
 }
 
+// Existe la fila (verificada o no). Útil para el "ya estabas registrado".
 export function isOptedIn(phone) {
   const p = normalizePhone(phone);
   if (!p) return false;
   return !!db.prepare(`SELECT 1 FROM calendly_optins WHERE phone = ?`).get(p);
 }
 
+// Opt-in GANADO: la única condición que habilita envío en frío (anti-ban).
+export function isVerifiedOptedIn(phone) {
+  const p = normalizePhone(phone);
+  if (!p) return false;
+  return !!db.prepare(`SELECT 1 FROM calendly_optins WHERE phone = ? AND source = 'self'`).get(p);
+}
+
 export function listOptins() {
   return db
-    .prepare(`SELECT phone, closer_email, name, registered_at FROM calendly_optins ORDER BY registered_at ASC`)
+    .prepare(`SELECT phone, closer_email, name, source, contact_jid, registered_at FROM calendly_optins ORDER BY registered_at ASC`)
     .all();
 }
 

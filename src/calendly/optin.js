@@ -26,7 +26,9 @@ export async function handleCloserOptin({ from, pushName, messageId }) {
   if (messageId && !markIfNew(messageId)) return true;
 
   const yaEstaba = isOptedIn(closer.phone);
-  registerOptin({ phone: closer.phone, closerEmail: closer.email, name: closer.name });
+  // source:'self' → opt-in GANADO (el closer escribió): habilita el envío. Guardamos
+  // el JID desde el que escribió (auditoría; puede ser un @lid sin resolver).
+  registerOptin({ phone: closer.phone, closerEmail: closer.email, name: closer.name, source: 'self', contactJid: from });
 
   if (!yaEstaba) {
     const nombre = closer.name.split(' ')[0];
