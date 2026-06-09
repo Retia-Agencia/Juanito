@@ -340,16 +340,17 @@ export function isVerifiedOptedIn(phone) {
   return !!db.prepare(`SELECT 1 FROM calendly_optins WHERE phone = ? AND source = 'self'`).get(p);
 }
 
-// Fila completa del opt-in (incluye `contact_jid` y `source`) o null. La usa la
-// entrega para enrutar al JID que YA estableció hilo con Juanito en vez del número
-// canónico de closers.js — que puede no haber escrito nunca (anti-ban). Ver deliver().
+// Fila completa del opt-in (incluye `contact_jid`, `source` y `paused`) o null. La
+// usa la entrega para enrutar al JID que YA estableció hilo con Juanito en vez del
+// número canónico de closers.js — que puede no haber escrito nunca (anti-ban), y
+// para respetar la pausa por-closer (`/calendly off <closer>`). Ver deliver().
 export function getOptin(phone) {
   const p = normalizePhone(phone);
   if (!p) return null;
   return (
     db
       .prepare(
-        `SELECT phone, closer_email, name, source, contact_jid, registered_at
+        `SELECT phone, closer_email, name, source, contact_jid, paused, registered_at
          FROM calendly_optins WHERE phone = ?`
       )
       .get(p) || null
@@ -358,8 +359,45 @@ export function getOptin(phone) {
 
 export function listOptins() {
   return db
-    .prepare(`SELECT phone, closer_email, name, source, contact_jid, registered_at FROM calendly_optins ORDER BY registered_at ASC`)
+    .prepare(`SELECT phone, closer_email, name, source, contact_jid, paused, registered_at FROM calendly_optins ORDER BY registered_at ASC`)
     .all();
+}
+
+// ─── Settings (toggles operativos en caliente, sin redeploy) ──────────────────
+// key/value en la tabla `settings`. Hoy lo usa el botón de pánico de Calendly
+// (`/calendly on|off`, admin). DRY_RUN sigue siendo el master dev-only del .env;
+// esto es el control fino operativo (global + por-closer) que NO requiere redeploy.
+
+export function getSetting(key, def = null) {
+  const row = db.prepare(`SELECT value FROM settings WHERE key = ?`).get(key);
+  return row ? row.value : def;
+}
+
+export function setSetting(key, value) {
+  return db
+    .prepare(`
+      INSERT INTO settings (key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+    `)
+    .run(key, value == null ? null : String(value));
+}
+
+// Pausa GLOBAL de los pushes de Calendly (botón de pánico).
+export function isCalendlyPaused() {
+  return getSetting('calendly_paused', '0') === '1';
+}
+export function setCalendlyPaused(paused) {
+  return setSetting('calendly_paused', paused ? '1' : '0');
+}
+
+// Pausa por-closer: marca la fila del opt-in. Devuelve el # de filas afectadas
+// (0 si el closer no tiene opt-in registrado todavía).
+export function setCloserPaused(phone, paused) {
+  const p = normalizePhone(phone);
+  if (!p) return 0;
+  return db
+    .prepare(`UPDATE calendly_optins SET paused = ? WHERE phone = ?`)
+    .run(paused ? 1 : 0, p).changes;
 }
 
 // ─── Rate limiting de grupos ──────────────────────────────────────────────────

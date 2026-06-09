@@ -24,11 +24,13 @@ un cambio relevante.
 - **Calendly:** blocker de opt-in por LID resuelto. Fase 2 (envío real) probada con Sebastián
   Rodriguez. **Prueba dummy 2026-06-09: el redirect por `contact_jid` quedó VALIDADO end-to-end**
   (un celular dummy recibió el digest real de Pablo Lozano; ver §11.7). Revertido a dry-run.
-- **3 decisiones de producto tomadas (2026-06-09) → trabajo nuevo en §18.A:**
-  (1) **cerrar el fallback al número canónico** (entrega estricta: solo a hilos con `contact_jid`,
-  cero envío en frío); (2) **comando admin `/calendly on|off [closer]`** (apagar pushes global y
-  por-closer sin redeploy, flag en DB); (3) **links wa.me pre-escritos** closer→lead (el closer
-  toca y solo presiona enviar; el texto lo da el owner). Orden: (1)+(2) → piloto real → (3).
+- **3 decisiones de producto (2026-06-09) → ver §18.A:**
+  (1) **entrega estricta** (solo a hilos con `contact_jid`, cero envío en frío) — **✅ IMPLEMENTADO**;
+  (2) **comando admin `/calendly on|off [closer]`** (apagar pushes global y por-closer sin redeploy,
+  flag en DB) — **✅ IMPLEMENTADO** (admin-only; control HÍBRIDO: DRY_RUN sigue siendo el master
+  dev-only del `.env`, `/calendly off` es el botón de pánico instantáneo desde WhatsApp para admins);
+  (3) **links wa.me pre-escritos** closer→lead — pendiente (bloqueado por el copy del owner).
+  Orden: (1)+(2) ✅ → **piloto real (siguiente paso)** → (3). Tests: 105 verdes (84 puros + 21 nativos).
 - **Secretos:** `CALENDLY_TOKEN` no se rota (decidido). Contraseña VPS diferida (ver §13).
 
 Pendientes reales abiertos → ver §18 "Tareas pendientes".
@@ -331,9 +333,10 @@ escribió desde otro número) habilitaba un push **en frío** a un número que n
 **trabajo** de `closers.js` — que nunca abrió hilo → entrega en frío. **Fix:** la entrega ahora
 enruta al `contact_jid` del opt-in (la identidad que realmente escribió y a la que Juanito ya
 respondió), no al número canónico. El número canónico sigue siendo la **clave** del opt-in y la
-agrupación de digests; solo cambia el **destino** del `sendMessage`. Si no hay `contact_jid` (opt-in
-sembrado/grandfathered, p. ej. Sebas), cae al número canónico (comportamiento previo, riesgo aceptado
-por el owner). Implementado en `src/scheduler/calendly.js → deliver()` + `db.getOptin`. Tests:
+agrupación de digests; solo cambia el **destino** del `sendMessage`. **Actualización (Item 1, §18.A):
+ya NO hay fallback al canónico** — sin `contact_jid` NO se entrega (`skipped-no-thread`), cero envío en
+frío. Sebas (`contact_jid=null`) deja de recibir hasta capturar su hilo.
+Implementado en `src/scheduler/calendly.js → deliver()` + `db.getOptin`. Tests:
 `test/calendly.scenarios.test.js` ("entrega al contact_jid" / "sin contact_jid → canónico") y
 `test/data.db.test.js` (getOptin).
 
@@ -756,38 +759,42 @@ function isUnlimitedSender(sender) {
 ### 18.A 🔴 Calendly — camino a producción (decidido 2026-06-09)
 
 > Tres decisiones de producto tomadas con el owner. **Orden:** Item 1 + Item 2 (código) →
-> **piloto real** → Item 3 (links wa.me). El piloto necesita primero el botón de apagado (Item 2)
-> y la entrega estricta (Item 1) para ser seguro.
+> **piloto real** → Item 3 (links wa.me). Items 1 y 2 **✅ IMPLEMENTADOS** (sesión 2026-06-09,
+> sin commitear aún al cierre de esta nota). **El siguiente paso es el piloto real** (necesita
+> deploy + un closer + acceso al VPS). Item 3 sigue bloqueado por el copy del owner.
 
-**Item 1 — Entrega ESTRICTA: cerrar el fallback al número canónico (garantía de cero envío en frío)**
-- *Decisión:* solo entregar a un hilo YA establecido (`contact_jid` presente). Sin `contact_jid`, NO se
-  envía (hoy cae al canónico = riesgo de frío).
-- *Archivo:* `src/scheduler/calendly.js → deliver()`. Cambiar `const target = optin?.contact_jid || to;`
-  por `const target = optin?.contact_jid;` y, si es falsy, loguear
-  `OMITIDO (${tag}) → ${to}: sin hilo establecido (contact_jid) — no se entrega para evitar envío en frío`
-  y `return 'skipped-no-thread'`.
-- *Efecto:* Sebas (`contact_jid=null`) dejará de recibir hasta capturar su hilo → refuerza la urgencia
+**Item 1 — Entrega ESTRICTA: cerrar el fallback al número canónico — ✅ IMPLEMENTADO**
+- *Qué se hizo:* en `src/scheduler/calendly.js → deliver()`, el destino es `optin?.contact_jid`
+  (sin fallback a `to`). Si es falsy → log `OMITIDO (${tag}) → ${to}: sin hilo establecido
+  (contact_jid) — no se entrega para evitar envío en frío` y `return 'skipped-no-thread'`. En
+  `runCalendlyDelivery` ese estado marca el push `skipped`. **Garantía: cero envío en frío.**
+- *Efecto:* Sebas (`contact_jid=null`) deja de recibir hasta capturar su hilo → refuerza la urgencia
   del bug de captura de `contact_jid` (ver §18 media prioridad + prueba 🚨 URGENTE).
-- *Tests:* `test/calendly.scenarios.test.js` — invertir el caso "sin contact_jid → canónico" a
-  "sin contact_jid → NO entrega". Mantener "con contact_jid → entrega al hilo".
+- *Tests:* `test/calendly.scenarios.test.js` — caso invertido a "sin contact_jid → NO entrega
+  (status skipped)"; se mantiene "con contact_jid → entrega al hilo". El harness ahora asigna un
+  `contact_jid` sintético a los opt-in dados como string (modela el hilo real que captura
+  `handleCloserOptin`); `contactJid: null` explícito modela el caso sembrado/grandfathered.
 
-**Item 2 — Comando admin `/calendly on|off [closer]` (apagar pushes sin redeploy, global + por-closer)**
-- *DB* (`src/db/migrate.js`, idempotente): tabla `settings(key TEXT PRIMARY KEY, value TEXT)` +
-  columna `paused INTEGER DEFAULT 0` en `calendly_optins` (vía `addColumnIfMissing`).
-- *`src/db/index.js`:* `getSetting(key,def)`/`setSetting(key,val)`; helpers `isCalendlyPaused()` /
-  `setCalendlyPaused(bool)` sobre key `calendly_paused`; `setCloserPaused(phone,bool)`
-  (`UPDATE calendly_optins SET paused=?`). `getOptin` ya devuelve la fila → añadir `paused` al SELECT.
-- *`src/scheduler/calendly.js → deliver()`:* al inicio, si `d.isCalendlyPaused()` → log
-  `PAUSADO (global)` y `return 'paused'`. Tras `getOptin`, si `optin.paused` → log
-  `PAUSADO (closer ${to})` y `return 'paused-closer'`. Inyectar `isCalendlyPaused` en `deps()`.
-- *`src/bot/commands.js`:* manejar `/calendly [on|off] [nombre-closer]` (admin-only, misma deflexión que
-  `/status`). `/calendly` o `/calendly status` → estado global + closers pausados. Resolver el closer por
-  nombre reutilizando `resolveCloserByPushName`. Deps inyectadas nuevas: `isCalendlyPaused`,
-  `setCalendlyPaused`, `setCloserPaused`, `listOptins`, `resolveCloserByPushName`.
-- *`src/index.js`:* pasar esas deps al `handleCommand({...}, { ...nuevas })`.
-- *Tests:* `test/commands.test.js` (parseo + gating admin), `test/data.db.test.js` (settings + paused, nativo).
-- *Nota:* NO requiere env var nueva (es estado en DB → on/off instantáneo). `CALENDLY_DRY_RUN` sigue siendo
-  el master "no enviar absolutamente nada"; `/calendly off` es el control fino operativo.
+**Item 2 — Comando admin `/calendly on|off [closer]` — ✅ IMPLEMENTADO**
+- *Decisión de control (owner):* HÍBRIDO. `CALENDLY_DRY_RUN` sigue siendo el master **dev-only** del
+  `.env` (requiere SSH + `docker compose up -d`); `/calendly off` es el **botón de pánico instantáneo**
+  desde WhatsApp. **SOLO admins** (`ADMIN_LID`) pueden tocarlo; boss recibe la deflexión cálida, unknown
+  ni llega.
+- *DB* (`src/db/migrate.js`, idempotente): tabla `settings(key,value,updated_at)` + columna
+  `paused INTEGER DEFAULT 0` en `calendly_optins`.
+- *`src/db/index.js`:* `getSetting/setSetting`; `isCalendlyPaused()`/`setCalendlyPaused(bool)` (key
+  `calendly_paused`); `setCloserPaused(phone,bool)` (devuelve # filas afectadas). `getOptin`/`listOptins`
+  ahora incluyen `paused`.
+- *`src/scheduler/calendly.js → deliver()`:* (1) pausa global → `return 'paused'`; (2) tras `getOptin`,
+  `optin.paused` → `return 'paused-closer'`. En `runCalendlyDelivery`, ambos **revierten** el push a
+  `scheduled` (no lo consumen) → se reanuda al despausar. `isCalendlyPaused` inyectado en `deps()`.
+- *`src/bot/commands.js`:* `/calendly` (estado) · `/calendly on|off` (global) · `/calendly on|off
+  <Nombre Completo>` (por-closer, resuelto con `resolveCloserByPushName`). Admin-only.
+- *`src/index.js`:* inyecta `isCalendlyPaused`, `setCalendlyPaused`, `setCloserPaused`,
+  `resolveCloserByPushName` en `handleCommand`.
+- *Tests:* `test/commands.test.js` (7 nuevos: parseo + gating admin), `test/data.db.test.js` (settings +
+  pausa global + pausa por-closer, nativo), `test/calendly.scenarios.test.js` (pausa global re-agendable,
+  pausa por-closer aislada). **Suite: 105 verdes (84 puros + 21 nativos en Docker).**
 
 **Item 3 — Links wa.me pre-escritos closer→lead (bajar fricción del closer)**
 - *Bloqueado por el owner:* falta **el texto del mensaje precall** (decisión: "tú me pasas el texto").

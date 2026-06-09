@@ -94,16 +94,24 @@ export function makeApi(events, opts = {}) {
 }
 
 // ─── Store en memoria de calendly_pushes (mismo contrato que src/db/index.js) ──
-// `optins`: array de strings (teléfono, opt-in verificado sin contact_jid) o de
-// objetos { phone, contactJid?, source? } para modelar el hilo real del closer.
+// `optins`: array de strings (teléfono → opt-in verificado CON hilo, se le asigna un
+// contact_jid sintético, igual que un opt-in real vía handleCloserOptin) o de objetos
+// { phone, contactJid?, source?, paused? }. Pasar `contactJid: null` explícito modela
+// el caso sembrado/grandfathered SIN hilo (entrega estricta lo omite).
 export function makeStore({ optins = [], nowRef } = {}) {
   const rows = [];
   let nextId = 1;
-  const optinMap = new Map(); // phone normalizado → { phone, contact_jid, source }
+  let globalPaused = false;
+  const optinMap = new Map(); // phone normalizado → { phone, contact_jid, source, paused }
   for (const o of optins) {
     const obj = typeof o === 'string' ? { phone: o } : o;
     const p = normalizePhone(obj.phone);
-    if (p) optinMap.set(p, { phone: p, contact_jid: obj.contactJid || null, source: obj.source || 'self' });
+    if (!p) continue;
+    // Un opt-in verificado real SIEMPRE tiene contact_jid (lo captura handleCloserOptin).
+    // Solo cuando se pasa `contactJid` explícito (incl. null) respetamos ese valor.
+    const hasJid = Object.prototype.hasOwnProperty.call(obj, 'contactJid');
+    const contact_jid = hasJid ? obj.contactJid : `${p}@s.whatsapp.net`;
+    optinMap.set(p, { phone: p, contact_jid, source: obj.source || 'self', paused: obj.paused ? 1 : 0 });
   }
   const now = () => (nowRef ? nowRef.ms : Date.now());
 
@@ -176,7 +184,20 @@ export function makeStore({ optins = [], nowRef } = {}) {
     },
     optIn(phone, contactJid = null) {
       const p = normalizePhone(phone);
-      if (p) optinMap.set(p, { phone: p, contact_jid: contactJid, source: 'self' });
+      if (p) optinMap.set(p, { phone: p, contact_jid: contactJid, source: 'self', paused: 0 });
+    },
+    // Botón de pánico (mismo contrato que db.isCalendlyPaused/setCalendlyPaused).
+    isCalendlyPaused() {
+      return globalPaused;
+    },
+    setCalendlyPaused(paused) {
+      globalPaused = !!paused;
+    },
+    setCloserPaused(phone, paused) {
+      const p = normalizePhone(phone);
+      const o = p ? optinMap.get(p) : null;
+      if (o) o.paused = paused ? 1 : 0;
+      return o ? 1 : 0;
     },
   };
 }
@@ -213,6 +234,7 @@ export function installHarness(scheduler, { events = [], optins = [], nowMs = Da
     markCalendlyPushSkipped: store.markCalendlyPushSkipped,
     isOptedIn: store.isOptedIn,
     getOptin: store.getOptin,
+    isCalendlyPaused: store.isCalendlyPaused,
     sendMessage: wa.sendMessage,
     now: () => clock.ms,
   };

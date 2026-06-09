@@ -89,6 +89,8 @@ async function deps() {
     isOptedIn: db.isVerifiedOptedIn,
     // Para enrutar al hilo real del closer (contact_jid) en vez del número canónico.
     getOptin: db.getOptin,
+    // Botón de pánico global (`/calendly off`): apaga TODOS los envíos al instante.
+    isCalendlyPaused: db.isCalendlyPaused,
     sendMessage: whatsapp.sendMessage,
     now: () => Date.now(),
   };
@@ -120,21 +122,42 @@ function isAuthError(msg) {
 
 // ─── Envío (respeta DRY-RUN) ──────────────────────────────────────────────────
 
-// Devuelve 'sent' | 'dry-run' | 'skipped-optin'.
+// Devuelve 'sent' | 'dry-run' | 'skipped-optin' | 'skipped-no-thread'
+//          | 'paused' | 'paused-closer'.
 // Anti-baneo: nunca enviamos a un closer que no haya escrito antes a Juanito.
 // `to` es el número canónico del closer (closers.js): sirve de clave del opt-in y
-// para agrupar digests. El ENVÍO, en cambio, va a la identidad que YA estableció hilo
-// con Juanito (`contact_jid` del opt-in) cuando la conocemos — así nunca mandamos en
-// frío a un número de trabajo que jamás escribió (cierra el residual del fix anti-ban).
-// Si no hay `contact_jid` (opt-in sembrado/grandfathered), caemos al número canónico.
+// para agrupar digests. El ENVÍO, en cambio, va EXCLUSIVAMENTE a la identidad que YA
+// estableció hilo con Juanito (`contact_jid` del opt-in). Entrega ESTRICTA (Item 1):
+// sin `contact_jid` NO se entrega — preferimos perder un push antes que mandar en frío
+// a un número que jamás escribió (el patrón que dispara softbans).
+//
+// Botón de pánico (Item 2, `/calendly on|off`, admin): la pausa GLOBAL corta todo; la
+// pausa por-closer (`optin.paused`) corta solo a ese closer. Es ortogonal a DRY_RUN
+// (master dev-only del .env) y se controla en caliente desde la DB, sin redeploy.
 async function deliver(d, to, text, tag) {
+  // 1) Pausa global: botón de pánico — apaga absolutamente todo.
+  if (d.isCalendlyPaused && d.isCalendlyPaused()) {
+    console.log(`[Calendly] PAUSADO (global) → ${to}: omito (${tag})`);
+    return 'paused';
+  }
+  // 2) Opt-in GANADO requerido (anti-ban).
   if (REQUIRE_OPTIN() && !d.isOptedIn(to)) {
     console.log(`[Calendly] OMITIDO (${tag}) → ${to}: el closer aún no le ha escrito a Juanito (sin opt-in)`);
     return 'skipped-optin';
   }
   const optin = d.getOptin ? d.getOptin(to) : null;
-  const target = optin?.contact_jid || to;
-  const via = target !== to ? ` [hilo de opt-in; closer ${to}]` : '';
+  // 3) Pausa por-closer.
+  if (optin?.paused) {
+    console.log(`[Calendly] PAUSADO (closer ${to}): omito (${tag})`);
+    return 'paused-closer';
+  }
+  // 4) Entrega estricta: solo a un hilo YA establecido (contact_jid). Sin él, no se envía.
+  const target = optin?.contact_jid;
+  if (!target) {
+    console.log(`[Calendly] OMITIDO (${tag}) → ${to}: sin hilo establecido (contact_jid) — no se entrega para evitar envío en frío`);
+    return 'skipped-no-thread';
+  }
+  const via = ` [hilo de opt-in; closer ${to}]`;
   if (DRY_RUN()) {
     console.log(`[Calendly][DRY-RUN] (${tag}) → ${target}${via}\n${text}\n`);
     return 'dry-run';
@@ -266,10 +289,16 @@ export async function runCalendlyDelivery() {
         }
 
         const result = await deliver(d, p.closer_phone, p.message, 'push3');
-        if (result === 'skipped-optin') {
-          d.markCalendlyPushSkipped(p.id, 'closer sin opt-in');
-        } else {
+        if (result === 'sent' || result === 'dry-run') {
           d.markCalendlyPushSent(p.id);
+        } else if (result === 'paused' || result === 'paused-closer') {
+          // Pausa = botón de pánico TEMPORAL: no consumir el push. Revertir a
+          // 'scheduled' para reanudar al despausar (la llamada puede seguir en el futuro).
+          if (d.revertCalendlyPush) d.revertCalendlyPush(p.id);
+        } else if (result === 'skipped-no-thread') {
+          d.markCalendlyPushSkipped(p.id, 'sin hilo establecido (contact_jid)');
+        } else {
+          d.markCalendlyPushSkipped(p.id, 'closer sin opt-in');
         }
         procesados++;
       } catch (e) {

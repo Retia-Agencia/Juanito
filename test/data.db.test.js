@@ -34,9 +34,37 @@ test('migración crea las tablas y columnas nuevas', () => {
     assert.ok(tables.includes(t), `falta tabla ${t}`);
   }
   const optinCols = def.prepare('PRAGMA table_info(calendly_optins)').all().map((c) => c.name);
-  for (const c of ['source', 'contact_jid']) {
+  for (const c of ['source', 'contact_jid', 'paused']) {
     assert.ok(optinCols.includes(c), `falta columna ${c} en calendly_optins`);
   }
+  assert.ok(tables.includes('settings'), 'falta tabla settings');
+});
+
+test('settings: getSetting/setSetting con default y upsert', () => {
+  assert.equal(db.getSetting('no_existe', 'def'), 'def');
+  db.setSetting('foo', 'bar');
+  assert.equal(db.getSetting('foo'), 'bar');
+  db.setSetting('foo', 'baz'); // upsert
+  assert.equal(db.getSetting('foo'), 'baz');
+});
+
+test('botón de pánico global: isCalendlyPaused / setCalendlyPaused', () => {
+  assert.equal(db.isCalendlyPaused(), false, 'por defecto NO pausado');
+  db.setCalendlyPaused(true);
+  assert.equal(db.isCalendlyPaused(), true);
+  db.setCalendlyPaused(false);
+  assert.equal(db.isCalendlyPaused(), false);
+});
+
+test('pausa por-closer: setCloserPaused marca la fila y getOptin lo expone', () => {
+  db.registerOptin({ phone: '+57 300 222 0001', name: 'C', source: 'self', contactJid: 'c@lid' });
+  assert.equal(db.getOptin('573002220001').paused, 0, 'arranca activo');
+  assert.equal(db.setCloserPaused('+57 300 222 0001', true), 1, 'afecta 1 fila');
+  assert.equal(db.getOptin('573002220001').paused, 1, 'queda pausado');
+  db.setCloserPaused('573002220001', false);
+  assert.equal(db.getOptin('573002220001').paused, 0, 'se reactiva');
+  // Closer sin opt-in → 0 filas afectadas
+  assert.equal(db.setCloserPaused('+57 300 999 9999', true), 0, 'sin fila → no afecta nada');
 });
 
 test('opt-in anti-ban: source self vs seeded e isVerifiedOptedIn', () => {

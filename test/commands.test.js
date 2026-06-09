@@ -51,6 +51,64 @@ test('texto que no es comando devuelve null', () => {
   assert.equal(handleCommand({ text: '', sender: 'b@lid', role: 'admin' }), null);
 });
 
+// ─── /calendly (botón de pánico, admin-only) ──────────────────────────────────
+
+function calendlyDeps() {
+  const state = { global: false, closers: {} };
+  return {
+    _state: state,
+    isCalendlyPaused: () => state.global,
+    setCalendlyPaused: (v) => { state.global = !!v; },
+    setCloserPaused: (phone, v) => { state.closers[phone] = !!v; return phone === '+573046131437' ? 1 : 0; },
+    listOptins: () => [
+      { phone: '+573046131437', name: 'Pablo Lozano', paused: state.closers['+573046131437'] ? 1 : 0 },
+    ],
+    resolveCloserByPushName: (n) =>
+      /pablo lozano/i.test(n) ? { email: 'pablo.lozano@30x.com', name: 'Pablo Lozano', phone: '+573046131437' } : null,
+  };
+}
+
+test('/calendly para no-admin → deflexión (no expone estado)', () => {
+  assert.match(handleCommand({ text: '/calendly', sender: 'b@lid', role: 'boss' }, calendlyDeps()), /equipo técnico/);
+  assert.match(handleCommand({ text: '/calendly off', sender: 'u@lid', role: 'unknown' }, calendlyDeps()), /equipo técnico/);
+});
+
+test('/calendly (admin) sin args → muestra estado global y closers pausados', () => {
+  const out = handleCommand({ text: '/calendly', sender: 'a@lid', role: 'admin' }, calendlyDeps());
+  assert.match(out, /Estado global: activo/);
+  assert.match(out, /Closers pausados: ninguno/);
+});
+
+test('/calendly off | on (global) pausa y reactiva, y se refleja en el estado', () => {
+  const deps = calendlyDeps();
+  assert.match(handleCommand({ text: '/calendly off', sender: 'a@lid', role: 'admin' }, deps), /PAUSADOS ⏸️ \(global\)/);
+  assert.equal(deps._state.global, true);
+  assert.match(handleCommand({ text: '/calendly', sender: 'a@lid', role: 'admin' }, deps), /Estado global: PAUSADO/);
+  assert.match(handleCommand({ text: '/calendly on', sender: 'a@lid', role: 'admin' }, deps), /reactivados ▶️ \(global\)/);
+  assert.equal(deps._state.global, false);
+});
+
+test('/calendly off <closer> pausa solo a ese closer (nombre completo)', () => {
+  const deps = calendlyDeps();
+  const out = handleCommand({ text: '/calendly off Pablo Lozano', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /Pablo Lozano: PAUSADOS ⏸️/);
+  assert.equal(deps._state.closers['+573046131437'], true);
+});
+
+test('/calendly off con closer desconocido → mensaje de ayuda, no pausa nada', () => {
+  const deps = calendlyDeps();
+  const out = handleCommand({ text: '/calendly off Fulano', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /No reconozco al closer/);
+  assert.equal(deps._state.global, false);
+});
+
+test('/calendly con acción inválida → uso', () => {
+  assert.match(
+    handleCommand({ text: '/calendly foo', sender: 'a@lid', role: 'admin' }, calendlyDeps()),
+    /Uso: \/calendly/
+  );
+});
+
 test('/status tolera que listOptins falle (db no lista)', () => {
   const out = handleCommand(
     { text: '/status', sender: 'a@lid', role: 'admin' },

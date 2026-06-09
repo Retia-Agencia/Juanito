@@ -122,6 +122,14 @@ db.exec(`
     count   INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (sender, date)
   );
+
+  -- Configuración en caliente (key/value): toggles operativos sin redeploy
+  -- (ej: 'calendly_paused' = '1' apaga TODOS los pushes al instante)
+  CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // ─── 2. Migración de bases existentes (esquema viejo) ─────────────────────────
@@ -140,6 +148,8 @@ addColumnIfMissing('group_context', 'period_end', 'DATETIME');
 // que escribió (auditoría). Filas viejas quedan sin verificar hasta backfill explícito.
 addColumnIfMissing('calendly_optins', 'source', 'TEXT');
 addColumnIfMissing('calendly_optins', 'contact_jid', 'TEXT');
+// Pausa por-closer (botón de pánico fino: `/calendly off <closer>`). 0 = activo.
+addColumnIfMissing('calendly_optins', 'paused', 'INTEGER DEFAULT 0');
 
 // Migrar el flag legacy `sent` -> `status` (una sola vez, idempotente)
 if (columnExists('reminders', 'sent')) {

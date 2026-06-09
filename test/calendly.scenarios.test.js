@@ -156,14 +156,61 @@ test('anti-ban: la entrega va al contact_jid del opt-in (hilo real), no al núme
   assert.equal(h.wa.sent[0].to, JID, 'entrega al JID que escribió, no al número de closers.js');
 });
 
-test('anti-ban: opt-in sin contact_jid (sembrado/grandfathered) → entrega al número canónico', async () => {
+test('entrega estricta: opt-in sin contact_jid (sembrado/grandfathered) → NO entrega (cero envío en frío)', async () => {
+  // Item 1: sin hilo establecido NO se envía — preferimos perder el push antes que
+  // mandar en frío al número canónico que quizá nunca escribió (anti-ban).
   const now = Date.now();
   const events = [makeEvent({ uuid: 'noj', startInMin: 20, closerEmail: SALAZAR, nowMs: now })];
-  const h = installHarness(scheduler, { events, optins: [SALAZAR_PHONE], nowMs: now });
+  const h = installHarness(scheduler, {
+    events,
+    optins: [{ phone: SALAZAR_PHONE, contactJid: null }], // verificado pero SIN hilo
+    nowMs: now,
+  });
   await scheduler.runCalendlyPoll();
   await scheduler.runCalendlyDelivery();
-  assert.equal(h.wa.sent.length, 1);
-  assert.equal(h.wa.sent[0].to, SALAZAR_PHONE, 'sin hilo conocido cae al número canónico');
+  assert.equal(h.wa.sent.length, 0, 'sin contact_jid no se entrega nada');
+  assert.equal(h.store._rows[0].status, 'skipped', 'el push queda omitido, no enviado');
+});
+
+// ─── Item 2: botón de pánico (/calendly on|off) ───────────────────────────────
+
+test('pausa global: con DRY_RUN=false y opt-in válido, pausado NO envía y el push queda re-agendable', async () => {
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'pause', startInMin: 20, closerEmail: SALAZAR, nowMs: now })];
+  const h = installHarness(scheduler, { events, optins: [SALAZAR_PHONE], nowMs: now });
+  h.store.setCalendlyPaused(true);
+
+  await scheduler.runCalendlyPoll();
+  await scheduler.runCalendlyDelivery();
+  assert.equal(h.wa.sent.length, 0, 'pausa global corta el envío');
+  assert.equal(h.store._rows[0].status, 'scheduled', 'NO se consume: vuelve a scheduled para reanudar al despausar');
+
+  // Al despausar, el mismo push (la llamada sigue en el futuro) se entrega.
+  h.store.setCalendlyPaused(false);
+  await scheduler.runCalendlyDelivery();
+  assert.equal(h.wa.sent.length, 1, 'al reactivar se reanuda el push pendiente');
+});
+
+test('pausa por-closer: solo se corta al closer pausado, los demás reciben', async () => {
+  const now = Date.now();
+  const SALAZAR_JID = `573054312905@s.whatsapp.net`;
+  const events = [
+    makeEvent({ uuid: 'A', startInMin: 20, closerEmail: SALAZAR, nowMs: now }),
+    makeEvent({ uuid: 'B', startInMin: 20, closerEmail: 'sebastian@30x.com', nowMs: now }),
+  ];
+  const h = installHarness(scheduler, {
+    events,
+    optins: [SALAZAR_PHONE, '+573102212005'], // Salazar + Rodriguez, ambos con hilo
+    nowMs: now,
+  });
+  h.store.setCloserPaused(SALAZAR_PHONE, true);
+
+  await scheduler.runCalendlyPoll();
+  await scheduler.runCalendlyDelivery();
+  assert.equal(h.wa.sent.length, 1, 'solo el closer no pausado recibe');
+  assert.notEqual(h.wa.sent[0].to, SALAZAR_JID, 'no fue Salazar (pausado)');
+  const salazarRow = h.store._rows.find((r) => r.event_uuid === 'A');
+  assert.equal(salazarRow.status, 'scheduled', 'el push del closer pausado queda re-agendable');
 });
 
 test('dry-run: no envía aunque haya opt-in', async () => {

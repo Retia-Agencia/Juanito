@@ -23,7 +23,71 @@ export function handleCommand({ text, sender, role }, deps = {}) {
     return buildStatus(deps);
   }
 
+  // /calendly [on|off] [closer] — botón de pánico de los pushes. SOLO admins.
+  // El jefe (boss) recibe la misma deflexión cálida que /status; un unknown ni llega.
+  if (cmd === '/calendly' || cmd.startsWith('/calendly ')) {
+    if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
+    return handleCalendly(text, deps);
+  }
+
   return null;
+}
+
+// /calendly                  → estado global + closers pausados
+// /calendly on|off           → reactiva / pausa TODOS los pushes (global)
+// /calendly on|off <closer>  → reactiva / pausa solo a ese closer (nombre completo)
+function handleCalendly(text, deps = {}) {
+  const { isCalendlyPaused, setCalendlyPaused, setCloserPaused, resolveCloserByPushName } = deps;
+  const parts = (text || '').trim().split(/\s+/); // [ '/calendly', action?, ...nombre ]
+  const action = (parts[1] || 'status').toLowerCase();
+  const closerName = parts.slice(2).join(' ').trim();
+
+  if (action === 'status') return buildCalendlyStatus(deps);
+  if (action !== 'on' && action !== 'off') {
+    return 'Uso: /calendly [on|off] [nombre completo del closer]';
+  }
+  const pause = action === 'off';
+
+  // Por-closer.
+  if (closerName) {
+    const closer = resolveCloserByPushName ? resolveCloserByPushName(closerName) : null;
+    if (!closer) {
+      return `No reconozco al closer "${closerName}". Usa el nombre completo (ej: Pablo Lozano).`;
+    }
+    const changes = setCloserPaused ? setCloserPaused(closer.phone, pause) : 0;
+    if (!changes) {
+      return `${closer.name} aún no tiene opt-in registrado, no hay nada que ${pause ? 'pausar' : 'reactivar'}.`;
+    }
+    return `Pushes de ${closer.name}: ${pause ? 'PAUSADOS ⏸️' : 'reactivados ▶️'}`;
+  }
+
+  // Global.
+  if (setCalendlyPaused) setCalendlyPaused(pause);
+  return pause
+    ? 'Pushes de Calendly: PAUSADOS ⏸️ (global) — no se enviará nada hasta `/calendly on`.'
+    : 'Pushes de Calendly: reactivados ▶️ (global).';
+}
+
+function buildCalendlyStatus({ isCalendlyPaused, listOptins } = {}) {
+  let paused = false;
+  try {
+    paused = isCalendlyPaused ? isCalendlyPaused() : false;
+  } catch {
+    /* DB puede no estar lista */
+  }
+  const lines = ['📅 Calendly — pushes precall', `Estado global: ${paused ? 'PAUSADO ⏸️' : 'activo ▶️'}`];
+  try {
+    const optins = listOptins ? listOptins() : [];
+    const pausados = optins.filter((o) => o.paused);
+    lines.push(
+      pausados.length
+        ? `Closers pausados: ${pausados.map((o) => o.name || o.phone).join(', ')}`
+        : 'Closers pausados: ninguno'
+    );
+  } catch {
+    /* opcional */
+  }
+  return lines.join('\n');
 }
 
 function buildStatus({ listOptins, isConnected, getHealth } = {}) {
