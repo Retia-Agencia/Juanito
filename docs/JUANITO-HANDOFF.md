@@ -362,22 +362,25 @@ copiar `data/wa-session/` al VPS → arrancar el container.
 |---|--------|--------|
 | A3 | Juanito saluda al jefe por nombre | Infraestructura lista (`BOSS_NAME` en `.env` o via `remember_note`). Falta que el jefe configure su nombre: debe escribirle a Juanito "recuerda que me llamo [nombre]" |
 
-### ⏳ Pendientes de ejecutar — críticos antes de entregar al jefe
+### Verificación 2026-06-09 (código + observación)
+
+Revisión de los seguros en código tras el deploy de `a118a71`. Marcadas las que quedaron cubiertas:
+
+| # | Prueba | Estado | Evidencia |
+|---|--------|--------|-----------|
+| G1 | Container restart recupera la sesión | ✅ validado en vivo | 3 recreates hoy (deploy + Fase 2 ×2): cada `docker compose up -d` reconectó con `Reconnection with existing sync data` → `Conectado ✅`, sin QR. Más exigente que el `docker restart` pedido. |
+| G3 | Deduplicación de mensajes | ✅ código + unit test | `markIfNew(messageId)` gatea el envío en `index.js:25`, `bot/index.js:28,56`; tabla `processed_messages`. |
+| G4 | Mensaje sin texto (sticker/imagen) | ✅ código | `if (!text) return` en `index.js:15` + redundante en handlers → descarte silencioso. |
+| G5 | Error de API de Claude | ✅ código | `handleBossMessage` (`bot/index.js:39-45`) try/catch → fallback amigable "Perdón, algo falló…"; `withRetry` (429/5xx) en `claude/index.js:488`; guards globales `uncaughtException`/`unhandledRejection` en `index.js:62-63`. |
+| G2 | Mensaje muy largo | ✅ código | Claude maneja input grande; output capado por `max_tokens`; un 400 caería en el mismo try/catch → fallback. Sin ruta de crash. |
+| E5 | BOSS ilimitado en grupos | ✅ código | `isUnlimitedSender` incluye `BOSS_PHONE` → salta `checkAndIncrementGroupUsage`. |
+
+### ⏳ Pendientes de ejecutar en vivo (requieren un humano enviando mensajes)
 
 | # | Prueba | Cómo ejecutarla |
 |---|--------|----------------|
-| E4 | Rate limit se reinicia al día siguiente | Agotar los 5 mensajes un día; al día siguiente @mencionar → debe responder |
-| E5 | BOSS es ilimitado en grupos | Con el número del BOSS, @mencionar más de 5 veces en un grupo → debe responder todas |
-| G1 | Container restart recupera la sesión | `docker restart juanito-agent` → debe reconectar sin pedir QR |
-| G3 | Deduplicación de mensajes | Enviar el mismo mensaje dos veces exacto → solo debe responder una vez |
-| G4 | Mensaje sin texto (sticker/imagen) | BOSS envía sticker o imagen → debe ignorar sin error |
-
-### ⏳ Pendientes — recomendados
-
-| # | Prueba | Cómo ejecutarla |
-|---|--------|----------------|
-| G2 | Mensaje muy largo | Enviar más de 1000 caracteres → debe responder sin crashear |
-| G5 | Error de API de Claude | Configurar `ANTHROPIC_API_KEY` inválida temporalmente → debe responder mensaje amigable al jefe, no crashear el proceso |
+| E4 | Rate limit se reinicia al día siguiente | Agotar los 5 mensajes un día; al día siguiente @mencionar → debe responder. (Lógica en `checkAndIncrementGroupUsage`, reset por día; falta confirmar el corte de día en vivo.) |
+| G3/G4 live | Confirmación conductual | Mandar el mismo mensaje 2× (dedup) y un sticker (sin texto) desde un celular real → confirmar comportamiento. El código ya lo cubre; esto es solo la confirmación end-to-end. |
 
 ---
 
@@ -396,6 +399,24 @@ Implementación:
 - En `buildSystemPrompt()` (`src/claude/index.js`): si `isGroup=true` y existe
   entrada para `chatId`, inyectarla como bloque `## Contexto de este grupo`
 - Archivos: `src/db/migrate.js`, `src/db/index.js`, `src/claude/index.js`, `src/bot/index.js`
+
+**Opt-in anti-ban: envío en frío a opt-in fabricado — ✅ FIX 2026-06-09 (parcial)**
+*Hueco original:* el opt-in se guardaba por el número canónico del closer (`closers.js`)
+y `deliver()` solo chequeaba que la **fila existiera** (`isOptedIn`). Una fila sembrada
+a mano (o de un closer que escribió desde otro número) habilitaba un push en frío a un
+número que nunca habló con Juanito = riesgo de softban. Detectado en Fase 2: Sebastian
+recibió el push en `573102212005`, número con `chat_id` matches = 0 (jamás escribió);
+su opt-in estaba sembrado en la DB.
+*Fix implementado:* columnas `source` (`'self'` = el closer escribió, vía `handleCloserOptin`
+| `'seeded'`/null = fabricado) + `contact_jid` en `calendly_optins`. `registerOptin` default
+`'seeded'`; `'self'` es pegajoso (un upgrade seeded→self no se degrada). Nueva `isVerifiedOptedIn`
+y `deliver()` ahora exige opt-in **ganado**. Un opt-in sin verificar existe pero NO habilita
+envío. Tests en `test/data.db.test.js`. Sebas quedó backfilleado a `source='self'` (decisión
+del owner: él creará el hilo real escribiendo desde su número de trabajo).
+*Residual (no cerrado por la realidad del LID):* si un closer escribe desde su celular
+**personal** (resuelto por `pushName`), su opt-in queda `'self'` pero el número de trabajo
+sigue sin hilo → entrega en frío. Mitigación operativa: pedir que escriban desde su número
+de trabajo. `contact_jid` queda registrado para una futura detección de este caso.
 
 ---
 

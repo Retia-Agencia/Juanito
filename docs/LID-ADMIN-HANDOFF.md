@@ -19,7 +19,16 @@ El **blocker original (opt-in roto por LID) está RESUELTO end-to-end y validado
   (`573102212005`) está opted-in. **Fase 1 (datos/formato) validada en dry-run.** Falta **Fase 2
   (envío real)** → próxima sesión. Calendly sigue en `DRY_RUN=true` (no envía nada).
 
-Pendientes reales: **Fase 2 envío real**; rotar `CALENDLY_TOKEN` y la contraseña del VPS (pasaron por chat).
+Pendientes reales: ~~Fase 2 envío real~~ **✅ HECHO (2026-06-09)** — Sebastian recibió su Push 1 real
+(`[Calendly] enviado (push1) → 573102212005`), solo él (resto `OMITIDO sin opt-in`), revertido a `DRY_RUN=true`.
+
+> **Decisión 2026-06-09 sobre secretos:**
+> - **`CALENDLY_TOKEN`: NO se rota.** El compañero tiene permiso de verlo/usarlo y el `.env` no está en GitHub
+>   (gitignored), así que la exposición se considera aceptable. (Originalmente se sugería rotar por ser el PAT
+>   personal de Sebastian Rodriguez.)
+> - **Contraseña del VPS: DIFERIDA** (no rotada en esta sesión).
+> - **⚠️ Hueco anti-ban detectado en Fase 2** (opt-in no protege el número receptor) → ver
+>   `docs/JUANITO-HANDOFF.md` → Features pendientes 🔴 alta prioridad.
 
 > **Actualización 2026-06-08 (Mani):** sesión posterior añadió fixes de robustez a los pushes
 > (catch-up, reagendas, concurrencia) + **alertas a `ADMIN_LID`** (token muerto / closer sin mapear)
