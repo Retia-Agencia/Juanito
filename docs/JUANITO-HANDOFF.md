@@ -567,6 +567,22 @@ plink -pw <PW> root@157.230.152.202 "cd /root/juanito && docker compose up -d --
 
 ### 🔴 Alta prioridad
 
+- **🚨 URGENTE — Probar captura de `contact_jid` en opt-in real (requiere un closer disponible).**
+  Pendiente porque al anotarlo no había acceso a ningún closer. Es el último hueco abierto antes del
+  piloto real de Calendly (ver §11.2 / el otro item de `contact_jid` abajo). **Receta exacta:**
+  1. En el VPS, dejar corriendo el tail filtrado **antes** de que el closer escriba:
+     ```bash
+     docker logs juanito-agent -f --tail 5 2>&1 | grep -iE "closer|registrad|opt-in|optin|2067171116244|handleCloser"
+     ```
+  2. Pedirle al closer (Sebas, LID `20671711162446@lid`, o cualquier closer de `closers.js`) que le
+     escriba a Juanito **desde su número de trabajo** y que mande un **2º mensaje** (el 1º de una
+     identidad nueva llega vacío por el handshake de cifrado y se descarta en `if (!text) return`).
+  3. Confirmar en el tail si entra a `handleCloserOptin` y si la fila del opt-in queda con
+     `source='self'` **y** `contact_jid` poblado (no null).
+  - ⚠️ Los logs históricos NO sirven: cada `docker compose up -d --build` recrea el contenedor y borra
+    el stream. El tail debe estar abierto en el momento en que el closer escribe.
+  - Verificación posterior en DB: `node scripts/calendly-optins.js` o el query directo de §8/§15.
+
 - **Memoria específica por grupo:** hoy Juanito responde en grupos sin saber nada del grupo. Permitir que
   un admin asigne contexto. Implementación: tabla `group_memory(group_id PK, context, updated_at)`; tools
   `set_group_context`/`get_group_context` (admin/boss); inyectar en `buildSystemPrompt()` cuando `isGroup`.
