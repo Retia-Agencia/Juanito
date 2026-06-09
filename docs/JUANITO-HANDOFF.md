@@ -339,14 +339,45 @@ copiar `data/wa-session/` al VPS → arrancar el container.
 
 ---
 
-## Pruebas pendientes de confirmar
+## Estado de pruebas — sesión 2026-06-08
 
-Quedaron sin ejecutar en la sesión de testing del 2026-06-08.
+### ✅ Pasaron / Resueltos
+
+| # | Prueba | Nota |
+|---|--------|------|
+| A1–A2 | Juanito sabe su nombre | Fix en system prompt |
+| A4–A5 | No revela config interna | Pasa |
+| B1–B4 | DMs por autorización | Pasa |
+| C1–C4 | Roles y comandos | Pasa |
+| C5 | /status para no-admin | Fix: responde "solo para equipo técnico 🙂" |
+| D1–D4 | Memoria por rol | Pasa |
+| D5 | Grupos no guardan datos ajenos | **Decisión:** grupos sin ningún tool — chatbot puro. Nadie puede crear recordatorios ni escribir en la DB desde un grupo. |
+| E1–E3 | @mention en grupos | Pasa |
+| E6 | Memoria no se revela en grupos | Fix: `search_knowledge` eliminado de grupos |
+| F1–F3 | Recordatorios | Pasa |
+
+### ⚠️ Parcialmente resuelto
+
+| # | Prueba | Estado |
+|---|--------|--------|
+| A3 | Juanito saluda al jefe por nombre | Infraestructura lista (`BOSS_NAME` en `.env` o via `remember_note`). Falta que el jefe configure su nombre: debe escribirle a Juanito "recuerda que me llamo [nombre]" |
+
+### ⏳ Pendientes de ejecutar — críticos antes de entregar al jefe
 
 | # | Prueba | Cómo ejecutarla |
 |---|--------|----------------|
 | E4 | Rate limit se reinicia al día siguiente | Agotar los 5 mensajes un día; al día siguiente @mencionar → debe responder |
 | E5 | BOSS es ilimitado en grupos | Con el número del BOSS, @mencionar más de 5 veces en un grupo → debe responder todas |
+| G1 | Container restart recupera la sesión | `docker restart juanito-agent` → debe reconectar sin pedir QR |
+| G3 | Deduplicación de mensajes | Enviar el mismo mensaje dos veces exacto → solo debe responder una vez |
+| G4 | Mensaje sin texto (sticker/imagen) | BOSS envía sticker o imagen → debe ignorar sin error |
+
+### ⏳ Pendientes — recomendados
+
+| # | Prueba | Cómo ejecutarla |
+|---|--------|----------------|
+| G2 | Mensaje muy largo | Enviar más de 1000 caracteres → debe responder sin crashear |
+| G5 | Error de API de Claude | Configurar `ANTHROPIC_API_KEY` inválida temporalmente → debe responder mensaje amigable al jefe, no crashear el proceso |
 
 ---
 
