@@ -21,6 +21,11 @@ El **blocker original (opt-in roto por LID) está RESUELTO end-to-end y validado
 
 Pendientes reales: **Fase 2 envío real**; rotar `CALENDLY_TOKEN` y la contraseña del VPS (pasaron por chat).
 
+> **Actualización 2026-06-08 (Mani):** sesión posterior añadió fixes de robustez a los pushes
+> (catch-up, reagendas, concurrencia) + **alertas a `ADMIN_LID`** (token muerto / closer sin mapear)
+> + **`/status` enriquecido** con salud de los jobs. Detalle completo en `docs/CALENDLY-HANDOFF.md`
+> → sección "🟢 SESIÓN 2026-06-08". Falta desplegar esos fixes (el VPS aún corre el código previo).
+
 Lo de abajo es el historial detallado de cómo se llegó acá.
 
 ## Contexto en una frase
@@ -135,12 +140,16 @@ control real. `BOSS_LID`/`ADMIN_LID` ya no son solo ruteo — ahora definen **po
 2. ✅ **Comandos de admin** (commit `448d627`): `/whoami` (cualquiera; devuelve tu LID y rol —
    reemplaza el grepeo de logs) y `/status` (solo admin; WA, uptime, token Calendly, DRY_RUN,
    require opt-in, # opt-ins). En `src/bot/commands.js`, interceptados en `onMessage`.
-   Pendientes opcionales: `/dryrun on|off`, `/optins`.
-3. **No mandar a terceros por orden del jefe** (anti-ban + reputación). DIFERIDO a propósito: se
+   **(2026-06-08, Mani) `/status` enriquecido** con salud de los jobs de Calendly (último poll,
+   último error, closers sin mapear). Pendientes opcionales: `/dryrun on|off`, `/optins`.
+3. ✅ **Alertas a admin** (2026-06-08, Mani): DM inmediato a `ADMIN_LID` cuando Calendly rechaza
+   el token o aparece un host sin closer mapeado (deduplicado 6h). En `src/scheduler/calendly.js`
+   (`notifyAdmins`) + estado en `src/calendly/health.js`.
+4. **No mandar a terceros por orden del jefe** (anti-ban + reputación). DIFERIDO a propósito: se
    implementa JUNTO con la feature de envío, porque el enfoque depende de esa arquitectura.
-4. **Cola de aprobación**: pedido gateado del jefe → Juanito avisa a un admin → admin aprueba.
-5. **Log de auditoría** de lo que el jefe pide (y qué quedó gateado).
-6. **Caps anti-ban / costo**: tope de mensajes salientes/min y de tokens por conversación.
+5. **Cola de aprobación**: pedido gateado del jefe → Juanito avisa a un admin → admin aprueba.
+6. **Log de auditoría** de lo que el jefe pide (y qué quedó gateado).
+7. **Caps anti-ban / costo**: tope de mensajes salientes/min y de tokens por conversación.
 
 ## ⚠️ Gotcha de deploy: las env vars se pasan EXPLÍCITAS en docker-compose.yml
 

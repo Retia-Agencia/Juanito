@@ -99,7 +99,7 @@ db.exec(`
     prospect_phone TEXT,
     call_start     TEXT NOT NULL,                   -- 'YYYY-MM-DD HH:MM:SS' UTC
     due_at         TEXT NOT NULL,                   -- 'YYYY-MM-DD HH:MM:SS' UTC
-    status         TEXT NOT NULL DEFAULT 'scheduled', -- scheduled | sent | skipped
+    status         TEXT NOT NULL DEFAULT 'scheduled', -- scheduled | sending | sent | skipped
     message        TEXT,
     created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
     sent_at        DATETIME,

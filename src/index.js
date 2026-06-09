@@ -9,6 +9,7 @@ import { handleCloserOptin } from './calendly/optin.js';
 import { startAllJobs } from './scheduler/index.js';
 import { roleOf, isPrivileged } from './common/roles.js';
 import { listOptins, markIfNew } from './db/index.js';
+import { getHealth } from './calendly/health.js';
 
 async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, isBotMentioned, pushName }) {
   if (!text) return;
@@ -19,7 +20,7 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
 
     // Comandos deterministas (sin Claude): /whoami, /status. Se atienden antes del
     // ruteo para que /whoami funcione incluso para un admin nuevo aún no configurado.
-    const cmdReply = handleCommand({ text, sender, role }, { listOptins, isConnected });
+    const cmdReply = handleCommand({ text, sender, role }, { listOptins, isConnected, getHealth });
     if (cmdReply !== null) {
       if (markIfNew(messageId)) {
         await sendMessage(sender, cmdReply).catch((e) =>

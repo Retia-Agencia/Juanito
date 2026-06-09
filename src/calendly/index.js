@@ -103,9 +103,21 @@ export async function getEvent(eventUri) {
   return data.resource;
 }
 
+// Fix #3: un fallo transitorio (red/rate-limit) dejaba el push sin nombre ni
+// teléfono del prospecto — justo el dato que el closer necesita para pushear.
+// Un reintento con backoff corto reduce esas líneas que caían a "el prospecto".
 export async function getFirstInvitee(eventUri) {
-  const data = await request(`${eventUri}/invitees`);
-  return (data.collection || [])[0] || null;
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const data = await request(`${eventUri}/invitees`);
+      return (data.collection || [])[0] || null;
+    } catch (e) {
+      lastErr = e;
+      if (attempt === 0) await sleep(500);
+    }
+  }
+  throw lastErr;
 }
 
 // ─── Helpers puros (sin red, sin DB) ──────────────────────────────────────────

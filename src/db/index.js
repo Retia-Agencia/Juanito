@@ -6,6 +6,7 @@ import Database from 'better-sqlite3';
 import { mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { normalizePhone } from '../common/utils.js';
+import { decidePushAction } from '../calendly/push-logic.js';
 
 const DB_PATH = process.env.DB_PATH || './data/brain.sqlite';
 mkdirSync(dirname(DB_PATH), { recursive: true });
@@ -205,15 +206,19 @@ export function markIfNew(messageId) {
 }
 
 // ─── Calendly: pushes precall (dedup + agenda de Push 3) ──────────────────────
-// Devuelve 'new' | 'rescheduled' | 'unchanged'. Solo actualiza filas todavía
-// 'scheduled' (no resucita las ya 'sent'/'skipped').
+// Devuelve 'new' | 'rescheduled' | 'unchanged'. La DECISIÓN de qué hacer vive en
+// el módulo puro src/calendly/push-logic.js (testeable sin DB); aquí solo se hace
+// el CRUD. `reschedule` con `resetFromSent` re-arma un push ya enviado cuando la
+// cita se reagendó a una hora futura (bug #2).
 
 export function scheduleCalendlyPush(p) {
   const existing = db
     .prepare(`SELECT id, status, call_start FROM calendly_pushes WHERE event_uuid = ? AND push_n = ?`)
     .get(p.event_uuid, p.push_n);
 
-  if (!existing) {
+  const { action, resetFromSent } = decidePushAction({ existing, incoming: p, nowMs: Date.now() });
+
+  if (action === 'insert') {
     db.prepare(`
       INSERT INTO calendly_pushes
         (event_uuid, push_n, closer_email, closer_phone, prospect_name,
@@ -225,12 +230,15 @@ export function scheduleCalendlyPush(p) {
     return 'new';
   }
 
-  if (existing.status === 'scheduled' && existing.call_start !== p.call_start) {
+  if (action === 'reschedule') {
+    // Si la fila ya estaba 'sent', volverla a 'scheduled' y limpiar sent_at para
+    // que el cron la vuelva a entregar a la nueva hora.
+    const statusClause = resetFromSent ? `, status = 'scheduled', sent_at = NULL` : '';
     db.prepare(`
       UPDATE calendly_pushes
       SET closer_email = @closer_email, closer_phone = @closer_phone,
           prospect_name = @prospect_name, prospect_phone = @prospect_phone,
-          call_start = @call_start, due_at = @due_at, message = @message
+          call_start = @call_start, due_at = @due_at, message = @message${statusClause}
       WHERE id = @id
     `).run({ ...p, id: existing.id });
     return 'rescheduled';
@@ -247,6 +255,22 @@ export function getDueCalendlyPushes() {
       ORDER BY due_at ASC
     `)
     .all();
+}
+
+// Claim atómico (bug #1): toma la fila solo si sigue 'scheduled'. Devuelve true
+// si ESTE worker la reclamó (la pasó a 'sending'), false si otro ya la tenía.
+export function claimCalendlyPush(id) {
+  const info = db
+    .prepare(`UPDATE calendly_pushes SET status = 'sending' WHERE id = ? AND status = 'scheduled'`)
+    .run(id);
+  return info.changes === 1;
+}
+
+// Devuelve una fila reclamada ('sending') a 'scheduled' para reintentar (ej. WA caído).
+export function revertCalendlyPush(id) {
+  return db
+    .prepare(`UPDATE calendly_pushes SET status = 'scheduled' WHERE id = ? AND status = 'sending'`)
+    .run(id);
 }
 
 export function markCalendlyPushSent(id) {

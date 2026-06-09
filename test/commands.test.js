@@ -40,8 +40,10 @@ test('/status refleja DRY_RUN OFF cuando la env lo apaga', () => {
   }
 });
 
-test('/status NO está disponible para el jefe (devuelve null → sigue a Claude)', () => {
-  assert.equal(handleCommand({ text: '/status', sender: 'b@lid', role: 'boss' }, deps), null);
+test('/status para el jefe → deflexión cálida (no diagnósticos técnicos)', () => {
+  // El jefe está sandboxed: en vez de null/silencio, recibe un mensaje amable.
+  const out = handleCommand({ text: '/status', sender: 'b@lid', role: 'boss' }, deps);
+  assert.match(out, /equipo técnico/);
 });
 
 test('texto que no es comando devuelve null', () => {

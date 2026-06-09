@@ -26,7 +26,7 @@ export function handleCommand({ text, sender, role }, deps = {}) {
   return null;
 }
 
-function buildStatus({ listOptins, isConnected } = {}) {
+function buildStatus({ listOptins, isConnected, getHealth } = {}) {
   const flag = (v, def) => (v ?? def) !== 'false';
   const dryRun = flag(process.env.CALENDLY_DRY_RUN, 'true');
   const requireOptin = flag(process.env.CALENDLY_REQUIRE_OPTIN, 'true');
@@ -40,7 +40,7 @@ function buildStatus({ listOptins, isConnected } = {}) {
   }
   const wa = isConnected && isConnected() ? 'conectado ✅' : 'desconectado ❌';
 
-  return [
+  const lines = [
     '📊 Estado de Juanito',
     `WhatsApp: ${wa}`,
     `Uptime: ${formatUptime(process.uptime())}`,
@@ -48,7 +48,34 @@ function buildStatus({ listOptins, isConnected } = {}) {
     `DRY_RUN: ${dryRun ? 'ON (no envía)' : 'OFF (envía real ⚠️)'}`,
     `Require opt-in: ${requireOptin ? 'ON' : 'OFF'}`,
     `Opt-ins registrados: ${optins}`,
-  ].join('\n');
+  ];
+
+  // Salud de los jobs de Calendly (decisión 5): último poll, errores, sin mapear.
+  try {
+    const h = getHealth ? getHealth() : null;
+    if (h) {
+      lines.push(
+        `Último poll: ${h.lastPollAt ? `${formatAgo(h.lastPollAt)} (${h.lastPollCount} citas)` : 'aún no corre'}`
+      );
+      if (h.lastError) lines.push(`Último error: ${h.lastError} (${formatAgo(h.lastErrorAt)})`);
+      if (h.unmapped && h.unmapped.length) {
+        lines.push(`⚠️ Closers sin mapear: ${h.unmapped.map((u) => u.email).join(', ')}`);
+      }
+    }
+  } catch {
+    /* health opcional; no romper /status si falla */
+  }
+
+  return lines.join('\n');
+}
+
+function formatAgo(ms) {
+  if (!ms) return '—';
+  const s = Math.floor((Date.now() - ms) / 1000);
+  if (s < 60) return `hace ${s}s`;
+  if (s < 3600) return `hace ${Math.floor(s / 60)}m`;
+  if (s < 86400) return `hace ${Math.floor(s / 3600)}h`;
+  return `hace ${Math.floor(s / 86400)}d`;
 }
 
 function formatUptime(seconds) {
