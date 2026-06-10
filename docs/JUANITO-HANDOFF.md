@@ -1208,6 +1208,11 @@ a las 20:00.
   un `/grupos on` remoto puede ser revocado por `reevaluateGroup` en el próximo barrido/evento si ningún
   boss/admin queda como participante (semántica esperada del anti-secuestro). Pendiente menor: auto-salida
   de grupos viejos no autorizados desde la misma lista.
+  **DESPLEGADO LIVE (2026-06-10):** `pscp src/ test/` + `docker compose up -d --build` (WA reconectó sin
+  QR, los 4 grupos barridos, Calendly sigue DRY-RUN=false, push3 real salió post-deploy). Smoke test del
+  módulo dentro del contenedor OK (admin ve la lista, no-admin recibe deflexión). Rollback:
+  `/root/juanito-backup-20260610-100151-pre-grupos.tar.gz` + imagen `juanito-agent:pre-grupos-20260610-100151`.
+  Verificación final pendiente (no bloqueante): que un admin mande `/grupos` desde su WhatsApp real.
 - **Capturar LID del jefe automáticamente** al primer DM reconocido por `BOSS_PHONE`.
 - **Rate limit configurable por grupo** (hoy `GROUP_DAILY_LIMIT` es global).
 - **Roadmap baby-proofing restante:** (4) no mandar a terceros por orden del jefe (DIFERIDO: se implementa
