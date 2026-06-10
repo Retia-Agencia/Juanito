@@ -1095,9 +1095,26 @@ owner eligió el camino robusto: un **service account de GCP** con el Sheet **co
 - Agregar las env nuevas al `environment:` del `docker-compose.yml` (gotcha §12) — ya documentadas en
   `.env.example`.
 
-**Para retomar:** (1) owner completa el checklist de arriba (SA key + compartir Sheet + agregar al grupo);
-(2) implementar `client.js` + `scheduler/sheets-report.js` + wiring; (3) probar con una ventana corta
-(cron de prueba) antes de dejarlo a las 20:00. El núcleo de cálculo ya está hecho y verificado.
+**✅ DESPLEGADO LIVE (2026-06-10):** feature completa y corriendo en el VPS.
+- `client.js` implementado (JWT RS256 con `crypto`, sin deps) y **verificado en vivo** contra el Sheet
+  real (3803 filas; conteos por día coherentes). `scheduler/sheets-report.js` registrado; al arrancar
+  loguea `[Sheets] Job de reporte diario activo ✅ (cron "0 20 * * *", grupo "Ventas EstadoX")`.
+- **Fix de zona:** `Submitted At` viene en **GMT-2** (3h adelante de Bogotá) → `parseSubmittedAt` resta
+  el desfase (`SHEETS_SRC_AHEAD_HOURS`, default 3). Sin esto la ventana quedaba corrida 3h.
+- **Secreto en el VPS:** la JSON key del service account `juanito-lector-sheets@juanito-sheets.iam…`
+  va como **base64 en `GOOGLE_SA_KEY`** dentro de `/root/juanito/.env` (3187 chars, 1 línea); `client.js`
+  la decodifica. `.env` también tiene `SHEETS_REPORT_GROUP=Ventas EstadoX` y `SHEETS_SRC_AHEAD_HOURS=3`.
+  Las 6 env de Sheets ya están en el `environment:` del `docker-compose.yml`.
+- **GCP:** proyecto `juanito-sheets` (personal del owner, org EstadoX bloqueaba keys con
+  `iam.disableServiceAccountKeyCreation` → se anuló la política para ese proyecto). Sheets API habilitada.
+  Sheet compartido al `client_email` como Lector.
+- **Comando `/reporte`** (admin DM): genera el reporte AHORA y lo devuelve como preview (no publica en el
+  grupo). Sirve para que el equipo lo pida on-demand y para verificar el pipeline en vivo. Tests 22/22.
+- **Rollback:** `juanito-backup-…-pre-sheets.tar.gz` + imagen `juanito-agent:pre-sheets-…`.
+
+**Verificación final pendiente (no bloqueante):** (a) que aparezca "Ventas EstadoX" como ✅ en `/grupos`
+(confirma que Juanito quedó en el grupo y se resolverá por nombre); (b) ver el post real del cron a las
+20:00 (o forzar con un cron de prueba). El preview `/reporte` ya cubre fetch+formato end-to-end.
 
 ### 🔴 Alta prioridad — BLOQUEANTE para entregar al jefe
 
