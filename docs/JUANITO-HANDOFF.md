@@ -18,7 +18,12 @@ un cambio relevante.
   (a diario), todos los demás closers OFF, admins controlan con `/calendly on|off` desde WhatsApp.
   Salazar pausado (`/calendly off`); resto sin opt-in. `contact_jid` de Rodriguez backfilleado a su
   LID real `158025419608301@lid` (su autocaptura por pushName falló — su nombre WA no trae "Rodriguez";
-  ver §11.9). **Primera salida real:** Push 2 natural 6:30am. Botón de pánico: `/calendly off`.
+  ver §11.9). **Primer Push 1 real ENVIADO a su hilo el 2026-06-09 22:24** (`enviado (push1) →
+  158025419608301@lid`; Salazar `PAUSADO`, resto `OMITIDO sin opt-in`) — falta confirmar recepción en
+  su celular. De aquí en adelante recibe Push 1/2/3 a diario. Botón de pánico: `/calendly off`.
+- **🔵 Feature nueva pedida (2026-06-10): reporte diario 8pm de entradas de un Google Sheet al grupo
+  "Ventas EstadoX"** (ventana 8pm→8pm, con porcentajes por categoría). Documentada en §18.B.
+  **Bloqueada:** el Sheet devuelve HTTP 401 anónimo (no es público de verdad) → falta método de acceso.
 - **✅ Autorización de grupos (anti-secuestro) — SHIPPED + VERIFICADO LIVE (2026-06-10):** Juanito
   solo responde/permanece en grupos donde hay (o lo agregó) un boss/admin; si no, se sale. Simétrico:
   si el jefe sale del grupo, revoca y se va. PRs `#4`+`#5` en `main`. Detalle completo en §18 🔴.
@@ -968,6 +973,53 @@ como receta reusable para sumar más closers:**
   teléfono y acceso al VPS). Item 3 queda para B cuando el owner entregue el copy.
 - **Integración:** Dev A expone los helpers (`isCalendlyPaused/setCalendlyPaused/setCloserPaused`) que Dev B
   inyecta en el comando → acordar las firmas antes de arrancar para no chocar.
+
+### 18.B 🔵 Reporte diario de entradas de un Google Sheet a un grupo (NUEVA — 2026-06-10)
+
+**Pedido del owner:** todos los días a las **8:00pm** (`America/Bogota`), Juanito publica en el grupo
+**"Ventas EstadoX"** un reporte de cuántas "entradas" (filas) llegaron al Google Sheet de leads en la
+ventana **8:00pm del día anterior → 8:00pm de hoy**, con un **desglose detallado** y **porcentajes por
+categoría de respuesta**.
+
+**Datos confirmados con el owner:**
+- **Grupo destino:** `Ventas EstadoX`. ⚠️ Juanito **aún no está en el grupo**; el owner (admin) lo va a
+  agregar — al agregarlo un admin queda **autorizado automáticamente** por el guard anti-secuestro
+  (§ group-auth / `onGroupJoin`). Hay que resolver su `group_id` real (`listGroups()` o el log de
+  `group-participants add`) para el job.
+- **Sheet:** ID `1pg3cP9w9ag7Re8QF5ZM8S2ktNwMRZDCihE7UYJmtlV4`, pestaña **"IA para abogados _ EstadoX"**
+  (`gid=239365113`). Cada fila = una entrada. Probable Sheet conectado a Google Forms (columna de marca
+  temporal por confirmar — ver bloqueante de acceso).
+- **Ventana y cadencia:** diaria 20:00; cuenta `[ayer 20:00, hoy 20:00)` por la columna de fecha/hora.
+- **Formato:** total + desglose por categorías con porcentajes (qué columnas son "categorías" se define
+  al inspeccionar los headers — bloqueado por el acceso).
+
+**🚧 BLOQUEANTE DE ACCESO (verificado 2026-06-10):** el owner cree que el Sheet es "público (cualquiera
+con el link)", pero **NO es legible anónimamente**: `GET …/export?format=csv&gid=…` devuelve **HTTP 401**
+y el endpoint `gviz/tq` devuelve la página de login. Está restringido (probablemente solo cuentas
+`@30x.com`). Juanito **no tiene integración con Google todavía**. Opciones para desbloquear:
+1. **Service account (robusto):** crear un service account en GCP, **compartir el Sheet con su email
+   (Viewer)**, Juanito lee vía Sheets API v4 con la key. Funciona aunque siga restringido a la org.
+   Requiere dep nueva (`googleapis`) + secreto (`GOOGLE_SA_KEY`/`GOOGLE_APPLICATION_CREDENTIALS`).
+2. **Hacerlo realmente público:** cambiar el compartir a "Cualquiera con el enlace" **sin** restricción de
+   org → entonces el `export?format=csv` funciona **sin auth ni dep** (solo `fetch` del CSV). Lo más simple.
+→ **Pendiente que el owner elija.** Recomendado: (1) si los datos son sensibles; (2) si no importa exponerlos.
+
+**Diseño propuesto (cuando se desbloquee el acceso):**
+- Nuevo módulo `src/sheets/index.js` (lector + parse PURO, testeable) y `src/scheduler/sheets-report.js`
+  (cron 20:00, arma y envía el reporte). Registrar el job en `src/scheduler/index.js`.
+- Leer el tab: si público → `fetch(export?format=csv&gid=)`; si SA → Sheets API `values.get`.
+- Detectar la **columna de marca temporal** (Google Forms suele ser la col A "Marca temporal"), parsear a
+  `Date` con `TZ`, filtrar a la ventana `[20:00 ayer, 20:00 hoy)`.
+- Contar total + agrupar por las columnas categóricas elegidas → porcentajes. Formatear mensaje WA.
+- Enviar al `group_id` de "Ventas EstadoX" vía `sendMessage(groupId, …)` desde el **proceso principal**
+  (igual que Calendly: un `node -e` aparte NO tiene socket de WA).
+- Env nuevas (agregar al `environment:` del compose, gotcha §12): `SHEETS_REPORT_GROUP` (id o nombre),
+  `SHEETS_LEADS_ID`, `SHEETS_LEADS_GID`, `SHEETS_REPORT_CRON` (`0 20 * * *`), y el secreto del SA si aplica.
+- Tests puros del parse/ventana/porcentajes con un CSV fixture (sin red), patrón de los tests de Calendly.
+
+**Para retomar:** (1) owner elige método de acceso y lo concede; (2) inspeccionar headers reales del tab
+para fijar la columna de marca temporal y las columnas-categoría; (3) implementar módulo + cron + tests;
+(4) owner agrega a Juanito al grupo "Ventas EstadoX" (auto-autoriza); (5) probar con una ventana corta.
 
 ### 🔴 Alta prioridad — BLOQUEANTE para entregar al jefe
 
