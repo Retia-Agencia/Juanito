@@ -2,15 +2,65 @@
 // Entry point — conecta Baileys, wira handlers y arranca el scheduler.
 
 import 'dotenv/config';
-import { connect, sendMessage, isConnected } from './whatsapp/index.js';
+import { connect, sendMessage, isConnected, leaveGroup } from './whatsapp/index.js';
 import { handleBossMessage, handleGroupMessage } from './bot/index.js';
 import { handleCommand } from './bot/commands.js';
 import { handleCloserOptin } from './calendly/optin.js';
 import { startAllJobs } from './scheduler/index.js';
-import { roleOf, isPrivileged } from './common/roles.js';
-import { listOptins, markIfNew, isCalendlyPaused, setCalendlyPaused, setCloserPaused } from './db/index.js';
+import { roleOf, isPrivileged, groupHasPrivilegedMember } from './common/roles.js';
+import {
+  listOptins,
+  markIfNew,
+  isCalendlyPaused,
+  setCalendlyPaused,
+  setCloserPaused,
+  authorizeGroup,
+  deauthorizeGroup,
+  isGroupAuthorized,
+} from './db/index.js';
 import { resolveCloserByPushName } from './calendly/closers.js';
 import { getHealth } from './calendly/health.js';
+
+// ─── Add a un grupo: autorizar (boss/admin) o salir (default-deny) ────────────
+async function onGroupJoin({ groupId, groupName, author, participants }) {
+  const adderRole = roleOf(author);
+  if (isPrivileged(adderRole) || groupHasPrivilegedMember(participants)) {
+    const by = isPrivileged(adderRole) ? author : 'participant';
+    authorizeGroup({ groupId, groupName, authorizedBy: by });
+    console.log(`[Main] Grupo autorizado: "${groupName}" (por ${isPrivileged(adderRole) ? adderRole : 'jefe/admin presente'})`);
+    return;
+  }
+  console.warn(`[Main] Add NO autorizado a "${groupName}" por ${author} — saliendo del grupo.`);
+  await leaveGroup(groupId).catch((e) => console.error('[Main] leaveGroup:', e.message));
+}
+
+// ─── /grupo on|off — control manual de autorización (admin/boss, dentro del grupo) ─
+// Devuelve true si manejó el mensaje como comando (para cortar el flujo normal).
+async function handleGroupCommand({ chatId, groupName, text, sender, messageId }) {
+  const trimmed = (text || '').trim().toLowerCase();
+  if (trimmed !== '/grupo' && !trimmed.startsWith('/grupo ')) return false;
+  if (!markIfNew(messageId)) return true;
+
+  const role = roleOf(sender);
+  if (!isPrivileged(role)) {
+    await sendMessage(chatId, 'Ese comando es solo para el equipo 🙂').catch(() => {});
+    return true;
+  }
+
+  const action = trimmed.split(/\s+/)[1] || 'status';
+  if (action === 'on') {
+    authorizeGroup({ groupId: chatId, groupName, authorizedBy: sender });
+    await sendMessage(chatId, 'Listo, quedé habilitado para responder en este grupo ✅').catch(() => {});
+  } else if (action === 'off') {
+    deauthorizeGroup(chatId);
+    await sendMessage(chatId, 'Entendido, me retiro de este grupo 👋').catch(() => {});
+    await leaveGroup(chatId).catch((e) => console.error('[Main] leaveGroup:', e.message));
+  } else {
+    const on = isGroupAuthorized(chatId);
+    await sendMessage(chatId, `Estado en este grupo: ${on ? 'habilitado ✅' : 'no autorizado ⛔'}`).catch(() => {});
+  }
+  return true;
+}
 
 async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, isBotMentioned, pushName }) {
   if (!text) return;
@@ -59,14 +109,17 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
     return;
   }
 
-  // Grupo: el mensaje ya fue guardado pasivamente por whatsapp/index.js
+  // Grupo: el mensaje ya fue guardado pasivamente por whatsapp/index.js.
+  // Primero el comando admin /grupo (no requiere mención); si lo manejó, cortamos.
+  if (await handleGroupCommand({ chatId, groupName, text, sender, messageId })) return;
+
   await handleGroupMessage({ chatId, groupName, text, sender, isGroup, messageId, isBotMentioned }).catch((e) =>
     console.error('[Main] handleGroupMessage:', e.message)
   );
 }
 
 async function bootstrap() {
-  await connect({ onMessage });
+  await connect({ onMessage, onGroupJoin });
   startAllJobs();
   console.log('\n🚀 Juanito corriendo — escuchando WhatsApp\n');
 }

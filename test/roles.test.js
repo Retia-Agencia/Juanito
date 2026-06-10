@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 // El SDK de Anthropic exige una apiKey al construir el cliente (claude/index.js).
 process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || 'test-key';
 
-const { roleOf, isPrivileged } = await import('../src/common/roles.js');
+const { roleOf, isPrivileged, groupHasPrivilegedMember } = await import('../src/common/roles.js');
 const { toolsForRole, splitMemory } = await import('../src/claude/index.js');
 
 // Helper: corre fn con env temporal y restaura al terminar.
@@ -83,6 +83,18 @@ test('isPrivileged: admin y boss sí, unknown no', () => {
   assert.equal(isPrivileged('admin'), true);
   assert.equal(isPrivileged('boss'), true);
   assert.equal(isPrivileged('unknown'), false);
+});
+
+test('groupHasPrivilegedMember: detecta admin/boss entre participantes (strings y objetos)', () => {
+  withEnv({ BOSS_PHONE, BOSS_LID, ADMIN_LID }, () => {
+    const outsiders = ['111111111111111@lid', '222222222222222@lid'];
+    assert.equal(groupHasPrivilegedMember(outsiders), false, 'solo desconocidos → false');
+    assert.equal(groupHasPrivilegedMember([...outsiders, ADMIN_LID]), true, 'con admin → true');
+    assert.equal(groupHasPrivilegedMember([{ id: ADMIN_LID }]), true, 'objeto con id admin');
+    assert.equal(groupHasPrivilegedMember([{ id: '333@lid', lid: BOSS_LID }]), true, 'objeto con lid boss');
+    assert.equal(groupHasPrivilegedMember([`${BOSS_PHONE}@s.whatsapp.net`]), true, 'boss por teléfono');
+    assert.equal(groupHasPrivilegedMember([]), false, 'vacío → false');
+  });
 });
 
 test('toolsForRole: admin en DM tiene save_memory', () => {

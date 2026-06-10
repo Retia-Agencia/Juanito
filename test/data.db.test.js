@@ -38,6 +38,20 @@ test('migración crea las tablas y columnas nuevas', () => {
     assert.ok(optinCols.includes(c), `falta columna ${c} en calendly_optins`);
   }
   assert.ok(tables.includes('settings'), 'falta tabla settings');
+  assert.ok(tables.includes('authorized_groups'), 'falta tabla authorized_groups');
+});
+
+test('grupos autorizados: authorize/isAuthorized/deauthorize + upsert', () => {
+  const gid = '123456@g.us';
+  assert.equal(db.isGroupAuthorized(gid), false, 'arranca no autorizado');
+  assert.equal(db.isGroupAuthorized(null), false, 'null nunca autorizado');
+  db.authorizeGroup({ groupId: gid, groupName: 'Equipo', authorizedBy: 'boss@lid' });
+  assert.equal(db.isGroupAuthorized(gid), true, 'queda autorizado');
+  // upsert no duplica ni rompe
+  db.authorizeGroup({ groupId: gid, groupName: 'Equipo (rename)', authorizedBy: 'participant' });
+  assert.equal(db.listAuthorizedGroups().filter((g) => g.group_id === gid).length, 1, 'sigue siendo una fila');
+  assert.equal(db.deauthorizeGroup(gid), 1, 'borra 1 fila');
+  assert.equal(db.isGroupAuthorized(gid), false, 'tras deauth, no autorizado');
 });
 
 test('settings: getSetting/setSetting con default y upsert', () => {

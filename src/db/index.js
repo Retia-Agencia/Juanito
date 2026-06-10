@@ -400,6 +400,36 @@ export function setCloserPaused(phone, paused) {
     .run(paused ? 1 : 0, p).changes;
 }
 
+// ─── Grupos autorizados (default-deny anti-secuestro) ─────────────────────────
+// Juanito solo responde en grupos listados aquí. Se autorizan automáticamente
+// cuando un boss/admin lo agrega o es participante, o a mano con `/grupo on`.
+
+export function isGroupAuthorized(groupId) {
+  if (!groupId) return false;
+  return !!db.prepare(`SELECT 1 FROM authorized_groups WHERE group_id = ?`).get(groupId);
+}
+
+export function authorizeGroup({ groupId, groupName = null, authorizedBy = null }) {
+  if (!groupId) return;
+  db.prepare(`
+    INSERT INTO authorized_groups (group_id, group_name, authorized_by) VALUES (?, ?, ?)
+    ON CONFLICT(group_id) DO UPDATE SET
+      group_name = COALESCE(excluded.group_name, group_name),
+      authorized_by = excluded.authorized_by,
+      authorized_at = CURRENT_TIMESTAMP
+  `).run(groupId, groupName, authorizedBy);
+}
+
+export function deauthorizeGroup(groupId) {
+  return db.prepare(`DELETE FROM authorized_groups WHERE group_id = ?`).run(groupId).changes;
+}
+
+export function listAuthorizedGroups() {
+  return db
+    .prepare(`SELECT group_id, group_name, authorized_by, authorized_at FROM authorized_groups ORDER BY authorized_at ASC`)
+    .all();
+}
+
 // ─── Rate limiting de grupos ──────────────────────────────────────────────────
 // Devuelve true si el remitente puede enviar (e incrementa el contador),
 // false si ya alcanzó el límite diario.
