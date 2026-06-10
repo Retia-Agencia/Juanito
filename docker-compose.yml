@@ -40,6 +40,13 @@ services:
       - CALENDLY_PUSH1_CRON=${CALENDLY_PUSH1_CRON:-0 19 * * *}
       - CALENDLY_PUSH2_CRON=${CALENDLY_PUSH2_CRON:-30 6 * * *}
       - CALENDLY_POLL_CRON=${CALENDLY_POLL_CRON:-*/5 * * * *}
+      # Reporte diario de leads del Sheet (§18.B) — sin GOOGLE_SA_KEY o grupo el job se autodesactiva.
+      - GOOGLE_SA_KEY=${GOOGLE_SA_KEY:-}
+      - SHEETS_REPORT_GROUP=${SHEETS_REPORT_GROUP:-}
+      - SHEETS_LEADS_ID=${SHEETS_LEADS_ID:-}
+      - SHEETS_LEADS_TAB=${SHEETS_LEADS_TAB:-}
+      - SHEETS_REPORT_CRON=${SHEETS_REPORT_CRON:-0 20 * * *}
+      - SHEETS_SRC_AHEAD_HOURS=${SHEETS_SRC_AHEAD_HOURS:-3}
       # QR web server — solo durante la vinculación inicial.
       # Descomentar la línea de abajo y agregar QR_PORT=3001 al .env.
       # Volver a comentar una vez vinculado.
