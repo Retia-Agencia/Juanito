@@ -14,6 +14,7 @@ process.env.TZ = 'America/Bogota';
 
 import * as scheduler from '../src/scheduler/calendly.js';
 import { __resetHealth, getHealth } from '../src/calendly/health.js';
+import { toSqliteUtc } from '../src/calendly/index.js';
 import { installHarness, makeEvent } from './helpers/calendly-harness.js';
 
 const MIN = 60000;
@@ -45,6 +46,39 @@ test('catch-up: llamada en 20 min (todos los triggers pasaron) → Push 3 inmedi
   await scheduler.runCalendlyDelivery();
   assert.equal(wa.sent.length, 1, 'el Push 3 inmediato debe entregarse');
   assert.match(wa.sent[0].text, /Push 3/);
+  assert.equal(store._rows[0].status, 'sent');
+});
+
+test('regresión: Push 3 con mensaje viejo congelado se entrega con el link reconstruido al vencer', async () => {
+  const now = Date.now();
+  const joinUrl = 'https://calendly.com/events/abc/google_meet';
+  const ev = makeEvent({ uuid: 'stale', startInMin: 20, closerEmail: SALAZAR, joinUrl, prospectPhone: '+57 300 111 2222', nowMs: now });
+  const { store, wa } = installHarness(scheduler, { events: [ev], optins: [SALAZAR_PHONE], nowMs: now });
+
+  // Fila agendada por el código VIEJO (antes de los links wa.me): el mensaje
+  // guardado es solo el head, sin el link de la llamada. `decidePushAction` lo
+  // dejaría 'unchanged' para siempre; el fix lo reconstruye al entregar.
+  const STALE = '🔔 *Push 3* (antes de la llamada) para *Juan Pérez* — 📞 +57 300 111 2222 — llamada hoy a las 08:15 a. m.';
+  store._rows.push({
+    id: 99,
+    status: 'scheduled',
+    sent_at: null,
+    event_uuid: 'stale',
+    push_n: 3,
+    closer_email: SALAZAR,
+    closer_phone: SALAZAR_PHONE,
+    prospect_name: 'Juan Pérez',
+    prospect_phone: '+57 300 111 2222',
+    call_start: toSqliteUtc(new Date(ev.start_time)),
+    due_at: toSqliteUtc(new Date(now - 60000)),
+    message: STALE,
+  });
+
+  await scheduler.runCalendlyDelivery();
+  assert.equal(wa.sent.length, 1, 'debe entregarse');
+  assert.notEqual(wa.sent[0].text, STALE, 'no debe enviar el mensaje viejo congelado');
+  assert.match(wa.sent[0].text, /Enviar push: https:\/\/wa\.me\//, 'debe traer el link wa.me reconstruido');
+  assert.match(wa.sent[0].text, /google_meet/, 'el link de la llamada debe ir incrustado en el precall');
   assert.equal(store._rows[0].status, 'sent');
 });
 

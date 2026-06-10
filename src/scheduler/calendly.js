@@ -298,7 +298,29 @@ export async function runCalendlyDelivery() {
           }
         }
 
-        const result = await deliver(d, p.closer_phone, p.message, 'push3');
+        // El mensaje se reconstruye AQUÍ (no se usa el `p.message` guardado en el
+        // poll) por dos razones: (1) el `join_url` de la llamada puede no haber
+        // estado listo al agendar (google_conference pasa por 'processing' antes de
+        // 'pushed') y al entregar ya lo está; (2) un cambio de template tras un
+        // deploy NO se propaga a filas ya agendadas — `decidePushAction` devuelve
+        // 'unchanged' mientras la hora no cambie, así que el mensaje quedaba congelado
+        // al texto del código viejo. Reconstruir con el `ev` fresco arregla ambos y
+        // sana solo las filas viejas. Sin `ev` (getEvent falló) caemos al guardado.
+        let message = p.message;
+        if (ev) {
+          const closer = resolveCloser(p.closer_email);
+          message = buildPush3Message({
+            name: fullNameFrom(p.prospect_name),
+            firstName: firstNameFrom(p.prospect_name),
+            phone: p.prospect_phone,
+            startIso: ev.start_time,
+            programKey: programKeyOf(ev.event_type),
+            closer: closer ? firstNameFrom(closer.name) : '',
+            linkLlamada: eventJoinUrl(ev),
+          });
+        }
+
+        const result = await deliver(d, p.closer_phone, message, 'push3');
         if (result === 'sent' || result === 'dry-run') {
           d.markCalendlyPushSent(p.id);
         } else if (result === 'paused' || result === 'paused-closer') {

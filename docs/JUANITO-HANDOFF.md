@@ -21,6 +21,13 @@ un cambio relevante.
   ver §11.9). **Primer Push 1 real ENVIADO a su hilo el 2026-06-09 22:24** (`enviado (push1) →
   158025419608301@lid`; Salazar `PAUSADO`, resto `OMITIDO sin opt-in`) — falta confirmar recepción en
   su celular. De aquí en adelante recibe Push 1/2/3 a diario. Botón de pánico: `/calendly off`.
+- **🟢 BUG Push 3 sin link — FIX DESPLEGADO LIVE (2026-06-10):** Rodriguez recibió un Push 3 con
+  SOLO el encabezado, sin el link de la llamada. Causa: el Push 3 **congelaba su mensaje en la DB al
+  agendarse** (poll, hasta 48h antes); esa fila se creó **antes** del deploy de los links wa.me y
+  `decidePushAction` la dejaba `unchanged` para siempre → nunca se regeneraba. Fix: el Push 3 ahora
+  **reconstruye el mensaje al ENTREGAR** (con el evento que ya se re-consulta), igual que los digests
+  → auto-sana filas viejas + usa el `join_url` más fresco. Detalle en §11.10. Copiado al VPS +
+  `docker compose up -d --build` (contenedor sano, WA sin QR, código confirmado dentro). 50/50 tests.
 - **🔵 Feature nueva pedida (2026-06-10): reporte diario 8pm de entradas de un Google Sheet al grupo
   "Ventas EstadoX"** (ventana 8pm→8pm, porcentajes por categoría). Documentada en §18.B con la estructura
   real del Sheet ya inspeccionada (timestamp en col "Submitted At" `D/M/YYYY`; categóricas M/F/G).
@@ -529,6 +536,45 @@ un LID a un closer. Ver §18 media prioridad.
 **Verificación pendiente (mañana ~6:35am):** confirmar con Rodriguez que llegó el digest del Push 2
 con los links wa.me y que un link abre el chat del lead con el precall ya escrito. Si el LID cambió
 y no llega, re-capturar (tail de `[Debug] rawJid=` mientras escribe) y re-backfillear.
+
+### 11.10 🟢 BUG: Push 3 llegaba sin link de la llamada — FIX (2026-06-10)
+
+**Síntoma:** Rodriguez recibió un Push 3 con SOLO el encabezado, sin la línea `👉 Enviar push:`:
+```
+🔔 *Push 3* (antes de la llamada) para *Sebastián* — 📞 +1 631-683-1755 — llamada hoy a las 08:15 a. m.
+```
+Push 1 y 2 funcionaban perfecto (validado con Salazar), por eso el contraste: Push 3 es el ÚNICO
+que lleva el `join_url` de la llamada incrustado en el texto precall del wa.me.
+
+**Diagnóstico (descartando lo obvio):** `eventJoinUrl()` NO estaba roto — verificado contra Calendly
+en vivo, los eventos son `google_conference` con `join_url` presente, y el código actual SIEMPRE
+genera la línea del wa.me con ese teléfono. El mensaje recibido era, **byte por byte, el output del
+`buildPush3Message` VIEJO** (commit `a118a71`, anterior a los templates wa.me de `35a7b7c`/`af6a5cb`).
+
+**Causa raíz:** el Push 3 es el único push cuyo mensaje **se construye en el poll y se GUARDA** en
+`calendly_pushes.message` (hasta 48h antes de la llamada). La fila de la llamada de las 08:15 se
+agendó ~48h antes → **antes del deploy del 2026-06-09** que metió los links → quedó guardado el texto
+viejo. Y `decidePushAction` devuelve `unchanged` mientras `call_start` no cambie, así que
+`scheduleCalendlyPush` **no reescribe el `message`** en polls posteriores → el texto viejo quedó
+congelado y se entregó tal cual. Push 1/2 no sufren esto porque arman el mensaje fresco al enviar.
+
+**Fix (`src/scheduler/calendly.js → runCalendlyDelivery`):** el Push 3 ahora **reconstruye el mensaje
+en el momento de ENTREGAR**, usando el `ev` que ya se re-consulta (`getEvent`) para revalidar
+estado/hora. Reusa los campos guardados (`prospect_name/phone`, `closer_email`) + datos frescos del
+evento (`programKeyOf(ev.event_type)`, `eventJoinUrl(ev)`). Beneficios:
+1. **Auto-sanador:** las filas viejas ya agendadas (como la de hoy) se reparan solas al entregarse —
+   sin tocar la DB ni re-agendar.
+2. **`join_url` más fresco:** si al agendar el `google_conference` aún estaba `processing` (sin link),
+   al entregar (25 min antes) ya está `pushed` con link.
+Si `getEvent` falla (`ev=null`) cae al `p.message` guardado (fallback, no se pierde el push).
+
+**Tests:** regresión nueva en `test/calendly.scenarios.test.js` ("Push 3 con mensaje viejo congelado
+se entrega con el link reconstruido al vencer") — siembra una fila con el head pelado y verifica que
+la entrega manda el wa.me reconstruido con el `join_url` incrustado. Suite Calendly: **50/50 verde**.
+
+**Deploy:** `pscp` de `src/`+`test/` + `docker compose up -d --build`. Verificado dentro del
+contenedor (`grep 'El mensaje se reconstruye AQUÍ' src/scheduler/calendly.js` → 1), WA reconectó sin
+QR, `[Calendly] Jobs activos ✅ (DRY-RUN: false)`. Los Push 3 pendientes ya saldrán con el link.
 
 ---
 
