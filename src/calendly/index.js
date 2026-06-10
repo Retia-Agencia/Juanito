@@ -309,6 +309,20 @@ export function buildPush3Message({ name, firstName, phone, startIso, programKey
   return link ? `${head}\n👉 Enviar push: ${link}` : head;
 }
 
+// Push 0 (aviso de nueva call HOY): mensaje INFORMATIVO al closer — "te reservaron
+// un espacio". No lleva link wa.me; el push accionable con el link llega ~25 min
+// antes (Push 3). Concíso a propósito: es un heads-up, no el recordatorio precall.
+export function buildPush0Message({ name, firstName, phone, startIso, tz = TZ() }) {
+  const who = name || firstName || 'el prospecto';
+  const time = formatCallTime(startIso, tz);
+  const tel = phone ? `📞 ${phone}` : '📵 sin teléfono en Calendly';
+  return (
+    `📅 *Nueva call HOY* — te acaban de reservar un espacio en tu agenda.\n` +
+    `*${who}* — ${tel} — hoy a las ${time}\n` +
+    `Te llegará el push con el link ~25 min antes de la llamada.`
+  );
+}
+
 export function buildDigestMessage({ pushLabel, whenLabel, items, pushN, closer, tz = TZ() }) {
   const sorted = [...items].sort((a, b) => new Date(a.startIso) - new Date(b.startIso));
   const lines = sorted.map((it) => {
@@ -391,4 +405,39 @@ export function dayRangeUtc(tz, offsetDays = 0, base = new Date()) {
   const start = wallTimeToUtc(tz, y, mo, d + offsetDays, 0, 0);
   const end = wallTimeToUtc(tz, y, mo, d + offsetDays + 1, 0, 0);
   return { minStartIso: start.toISOString(), maxStartIso: end.toISOString() };
+}
+
+// ─── Soporte Push 0 (§18.C): "¿es hoy?" y "¿ya corrió el Push 2?" ─────────────
+
+// ¿El instante `iso` cae el MISMO día que `base`, en la zona `tz`? (Comparación
+// por componentes de pared y/mo/d, no por UTC — un evento de las 11pm Bogotá es
+// "hoy" aunque en UTC ya sea mañana.)
+export function isSameDayInTz(iso, tz = TZ(), base = new Date()) {
+  const a = dateParts(tz, new Date(iso));
+  const b = dateParts(tz, base);
+  return a.y === b.y && a.mo === b.mo && a.d === b.d;
+}
+
+// Extrae {hour, minute} de un cron diario simple ("M H * * *"). Devuelve null si
+// no es un cron diario de hora fija (no intentamos parsear expresiones complejas).
+export function parseDailyCronHM(cron) {
+  const parts = String(cron || '').trim().split(/\s+/);
+  if (parts.length < 5) return null;
+  const [m, h, dom, mon, dow] = parts;
+  if (dom !== '*' || mon !== '*' || dow !== '*') return null;
+  const minute = Number(m);
+  const hour = Number(h);
+  if (!Number.isInteger(minute) || !Number.isInteger(hour)) return null;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return { hour, minute };
+}
+
+// ¿Ya pasó la hora del Push 2 de HOY (en tz), según su cron? Si el cron no es un
+// diario simple, devolvemos true (no bloqueamos el Push 0 por un cron exótico).
+export function push2HasRunToday(cron, tz = TZ(), base = new Date()) {
+  const hm = parseDailyCronHM(cron);
+  if (!hm) return true;
+  const { y, mo, d } = dateParts(tz, base);
+  const push2Utc = wallTimeToUtc(tz, y, mo, d, hm.hour, hm.minute);
+  return base.getTime() >= push2Utc.getTime();
 }

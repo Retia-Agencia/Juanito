@@ -37,6 +37,42 @@ export function computePush3Schedule({ startIso, leadMin = 25, nowMs = Date.now(
   return { shouldSchedule: true, dueMs, immediate: false, reason: 'normal' };
 }
 
+// ─── Push 0: aviso inmediato de "te reservaron un espacio HOY" ────────────────
+// Tapa-huecos del booking tardío (idea Sebas, §18.C). Caso canónico: a un closer
+// le cancelan una cita y ese MISMO día alguien reserva el slot liberado DESPUÉS de
+// que ya corrieron los digests → sin esto, el closer se entera solo 25 min antes
+// (Push 3). El Push 0 le avisa apenas el poll detecta la reserva.
+//
+// Es PURO (recibe booleanos/ms ya computados; el cálculo de zona horaria vive en
+// src/calendly/index.js). Devuelve { notify, reason }. Condiciones (TODAS):
+//  - isToday        → la call cae HOY (en tz). Las de días futuros las cubre el
+//                     Push 1 de esa noche / Push 2 de su mañana, sin hueco.
+//  - call futura    → start > now (no avisar de algo que ya empezó).
+//  - createdAt reciente → el booking se hizo dentro de `recentMs` (≈ ventana del
+//                     poll). Distingue una reserva NUEVA de una vieja que recién
+//                     entró a la ventana / del primer poll tras un deploy.
+//  - push2HasRun    → el digest del Push 2 de hoy YA pasó. Si aún no, ese digest
+//                     avisará → omitimos el Push 0 para no duplicar (coincide con
+//                     "si la hora del Push 1 y 2 ya pasó, solo queda el Push 3").
+export function decidePush0({
+  startMs,
+  createdAtMs,
+  nowMs = Date.now(),
+  isToday,
+  push2HasRun,
+  recentMs = 10 * 60000,
+}) {
+  if (!isToday) return { notify: false, reason: 'not-today' };
+  if (!Number.isFinite(startMs) || startMs <= nowMs) {
+    return { notify: false, reason: 'call-passed' };
+  }
+  if (!Number.isFinite(createdAtMs)) return { notify: false, reason: 'no-created-at' };
+  if (createdAtMs > nowMs + 60000) return { notify: false, reason: 'created-in-future' };
+  if (nowMs - createdAtMs > recentMs) return { notify: false, reason: 'not-recent' };
+  if (!push2HasRun) return { notify: false, reason: 'push2-pending' };
+  return { notify: true, reason: 'new-booking-today' };
+}
+
 // ─── Bug #2: ¿qué hacer ante una cita ya conocida? ────────────────────────────
 // `existing` = fila actual de calendly_pushes (o null), `incoming` = datos del
 // poll (incluye call_start y due_at en formato SQLite UTC).

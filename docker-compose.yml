@@ -40,6 +40,8 @@ services:
       - CALENDLY_PUSH1_CRON=${CALENDLY_PUSH1_CRON:-0 19 * * *}
       - CALENDLY_PUSH2_CRON=${CALENDLY_PUSH2_CRON:-30 6 * * *}
       - CALENDLY_POLL_CRON=${CALENDLY_POLL_CRON:-*/5 * * * *}
+      - CALENDLY_PUSH0_ENABLED=${CALENDLY_PUSH0_ENABLED:-true}
+      - CALENDLY_PUSH0_RECENT_MIN=${CALENDLY_PUSH0_RECENT_MIN:-10}
       # Reporte diario de leads del Sheet (§18.B) — sin GOOGLE_SA_KEY o grupo el job se autodesactiva.
       - GOOGLE_SA_KEY=${GOOGLE_SA_KEY:-}
       - SHEETS_REPORT_GROUP=${SHEETS_REPORT_GROUP:-}

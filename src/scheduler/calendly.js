@@ -1,6 +1,9 @@
 // src/scheduler/calendly.js
 // Recordatorios precall a closers desde Calendly.
 //
+//  Push 0 (inmediato)     → aviso de "nueva call HOY": cuando el poll descubre una
+//                           reserva nueva para una call de hoy y los digests ya
+//                           pasaron (§18.C). Se agenda como push_n=0 con due=ahora.
 //  Push 1 (7:00pm cron)   → digest de las llamadas de MAÑANA, por closer.
 //  Push 2 (6:30am cron)   → digest de las llamadas de HOY, por closer.
 //  Push 3 (25min antes)   → uno por llamada. Se agenda en `calendly_pushes` al
@@ -31,8 +34,11 @@ import {
   dayRangeUtc,
   toSqliteUtc,
   formatCallTime,
+  buildPush0Message,
+  isSameDayInTz,
+  push2HasRunToday,
 } from '../calendly/index.js';
-import { computePush3Schedule } from '../calendly/push-logic.js';
+import { computePush3Schedule, decidePush0 } from '../calendly/push-logic.js';
 import { resolveCloser } from '../calendly/closers.js';
 import {
   recordPollOk,
@@ -45,6 +51,12 @@ const TZ = () => process.env.TZ || 'America/Bogota';
 const DRY_RUN = () => process.env.CALENDLY_DRY_RUN !== 'false'; // default true
 const REQUIRE_OPTIN = () => process.env.CALENDLY_REQUIRE_OPTIN !== 'false'; // default true
 const LEAD_MIN = () => Number(process.env.CALENDLY_PUSH3_LEAD_MIN || 25);
+
+// Push 0 (§18.C): aviso de "nueva call HOY". Activo por default (gateado igual que
+// todo por opt-in/contact_jid/pausa/DRY_RUN). `RECENT_MIN` = qué tan reciente debe
+// ser el booking para contar como nuevo (≥ el intervalo del poll, con margen).
+const PUSH0_ENABLED = () => process.env.CALENDLY_PUSH0_ENABLED !== 'false'; // default true
+const PUSH0_RECENT_MIN = () => Number(process.env.CALENDLY_PUSH0_RECENT_MIN || 10);
 
 const POLL_CRON = () => process.env.CALENDLY_POLL_CRON || '*/5 * * * *';
 const DELIVER_CRON = () => process.env.CALENDLY_DELIVER_CRON || '* * * * *';
@@ -243,6 +255,40 @@ export async function runCalendlyPoll() {
           `[Calendly] Push 3 ${result}${tag} → ${closer.name} | ${firstName} | ${formatCallTime(ev.start_time)} (due ${toSqliteUtc(due)} UTC)`
         );
       }
+
+      // ─── Push 0: aviso de "nueva call HOY" (§18.C) ───────────────────────────
+      // Solo para reservas genuinamente nuevas de calls de hoy, una vez ya pasaron
+      // los digests. Reusa la misma fila/dedup que los demás pushes (push_n=0,
+      // due=ahora) → lo entrega `runCalendlyDelivery` con todos los gates anti-ban.
+      if (PUSH0_ENABLED()) {
+        const d0 = decidePush0({
+          startMs: new Date(ev.start_time).getTime(),
+          createdAtMs: ev.created_at ? new Date(ev.created_at).getTime() : NaN,
+          nowMs,
+          isToday: isSameDayInTz(ev.start_time, TZ(), now),
+          push2HasRun: push2HasRunToday(PUSH2_CRON(), TZ(), now),
+          recentMs: PUSH0_RECENT_MIN() * 60000,
+        });
+        if (d0.notify) {
+          const msg0 = buildPush0Message({ name, firstName, phone, startIso: ev.start_time });
+          const r0 = d.scheduleCalendlyPush({
+            event_uuid: uuid,
+            push_n: 0,
+            closer_email: email,
+            closer_phone: closer.phone,
+            prospect_name: invitee?.name || null,
+            prospect_phone: phone,
+            call_start: toSqliteUtc(new Date(ev.start_time)),
+            due_at: toSqliteUtc(new Date(nowMs)),
+            message: msg0,
+          });
+          if (r0 === 'new') {
+            console.log(
+              `[Calendly] Push 0 (nueva call HOY) → ${closer.name} | ${firstName} | ${formatCallTime(ev.start_time)}`
+            );
+          }
+        }
+      }
     } catch (e) {
       console.error(`[Calendly] poll: error en evento ${ev.uri}:`, e.message);
     }
@@ -309,18 +355,26 @@ export async function runCalendlyDelivery() {
         let message = p.message;
         if (ev) {
           const closer = resolveCloser(p.closer_email);
-          message = buildPush3Message({
-            name: fullNameFrom(p.prospect_name),
-            firstName: firstNameFrom(p.prospect_name),
-            phone: p.prospect_phone,
-            startIso: ev.start_time,
-            programKey: programKeyOf(ev.event_type),
-            closer: closer ? firstNameFrom(closer.name) : '',
-            linkLlamada: eventJoinUrl(ev),
-          });
+          message =
+            p.push_n === 0
+              ? buildPush0Message({
+                  name: fullNameFrom(p.prospect_name),
+                  firstName: firstNameFrom(p.prospect_name),
+                  phone: p.prospect_phone,
+                  startIso: ev.start_time,
+                })
+              : buildPush3Message({
+                  name: fullNameFrom(p.prospect_name),
+                  firstName: firstNameFrom(p.prospect_name),
+                  phone: p.prospect_phone,
+                  startIso: ev.start_time,
+                  programKey: programKeyOf(ev.event_type),
+                  closer: closer ? firstNameFrom(closer.name) : '',
+                  linkLlamada: eventJoinUrl(ev),
+                });
         }
 
-        const result = await deliver(d, p.closer_phone, message, 'push3');
+        const result = await deliver(d, p.closer_phone, message, `push${p.push_n}`);
         if (result === 'sent' || result === 'dry-run') {
           d.markCalendlyPushSent(p.id);
         } else if (result === 'paused' || result === 'paused-closer') {

@@ -20,6 +20,9 @@ const API_BASE = 'https://api.calendly.com';
 
 // ─── Fixtures: construir un evento de Calendly relativo a `nowMs` ──────────────
 // startInMin: minutos desde "ahora" hasta el inicio de la llamada (negativo = pasada).
+// `createdInMin`: minutos desde "ahora" hasta cuando se RESERVÓ la cita (negativo =
+// pasado). Para el Push 0 (§18.C) importa: una reserva "reciente" dispara el aviso.
+// Default OLD (−2 días) para que los escenarios que no prueban Push 0 no lo gatillen.
 export function makeEvent({
   uuid,
   startInMin,
@@ -30,14 +33,18 @@ export function makeEvent({
   status = 'active',
   eventType = 'https://api.calendly.com/event_types/56efc028-ee2f-46e8-852c-e50d45b15b83',
   joinUrl,
+  createdInMin = -2 * 24 * 60,
+  createdAtIso,
   nowMs = Date.now(),
 }) {
   const id = uuid || `evt-${Math.random().toString(36).slice(2, 10)}`;
   const start = startIso || new Date(nowMs + startInMin * 60000).toISOString();
+  const created = createdAtIso || new Date(nowMs + createdInMin * 60000).toISOString();
   return {
     uuid: id,
     uri: `${API_BASE}/scheduled_events/${id}`,
     start_time: start,
+    created_at: created,
     status,
     event_type: eventType,
     location: joinUrl ? { type: 'zoom', join_url: joinUrl } : undefined,

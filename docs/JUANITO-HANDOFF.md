@@ -309,6 +309,7 @@ docker exec juanito-agent sqlite3 /app/data/brain.sqlite \
 Juanito le recuerda a cada **closer** que mande sus "pushes" precall a los prospectos,
 leyendo las citas reales de **Calendly** (API v2):
 
+- **Push 0** — inmediato → aviso de "nueva call HOY" cuando reservan un slot ya pasados los digests (§18.C).
 - **Push 1** — cron 7:00pm → digest de las llamadas de **mañana**, agrupado por closer.
 - **Push 2** — cron 6:30am → digest de las llamadas de **hoy**, agrupado por closer.
 - **Push 3** — ~25 min antes de cada llamada → un mensaje por cita.
@@ -1119,6 +1120,120 @@ el reporte de una ventana completa (8/6 8pm → 9/6 8pm = 13 entradas) generánd
 grupo (se decidió dejarlo salir natural, sin cron de prueba, para no mandar un mensaje fuera de horario
 al grupo de ventas).
 
+### 18.C 🔵 Aviso de "nueva call agendada" a los closers (idea Sebas — 2026-06-10)
+
+**Pedido de Sebas (textual):** *"Si nosotros borramos y generamos espacio en agenda, siguiendo el
+protocolo de Push for Calls de Juanito, si la gente se agenda, Juanito no va a mandar ese recordatorio.
+Toca ver cómo hacemos que Juanito esté más pendiente de los calendarios para que si hay una nueva call,
+se le notifique a la persona: 'tienes una nueva call'."*
+
+**El hueco real (confirmado leyendo `src/scheduler/calendly.js`).** Hoy un closer se entera de una cita
+por sólo tres vías, todas **programadas, no reactivas**:
+- **Push 1** (7:00pm) — digest de **mañana**. Una call agendada *después* de las 7pm para mañana NO sale
+  hasta el Push 2.
+- **Push 2** (6:30am) — digest de **hoy**. Una call agendada *después* de las 6:30am para hoy NO sale
+  hasta el Push 3.
+- **Push 3** (~25 min antes) — red de seguridad final, pero da sólo **25 min** de aviso.
+
+El protocolo "Push for Calls" (borrar slots y **liberar agenda** para que la gente se reagende durante el
+día) cae justo en el peor caso: las calls nuevas aterrizan en horas en que ningún digest las va a tomar,
+y el closer queda **ciego hasta 25 min antes** de una call que nunca vio venir. Falta un aviso **en el
+momento en que la cita aterriza**: *"📅 te acaban de agendar una call"*.
+
+**Lo que YA tenemos a favor.** El `runCalendlyPoll` corre cada 5 min (`CALENDLY_POLL_CRON`), lista eventos
+y llama `scheduleCalendlyPush`, que devuelve `'new' | 'rescheduled' | 'unchanged'`. O sea, **ya detectamos
+eventos nuevos**; sólo no actuamos sobre ese "nuevo" con un aviso inmediato.
+
+**Ejemplo canónico (Sebas, 2026-06-10).** A Sebas le **cancelan** una cita de las 9:00am. A las **7:30am**
+de ese mismo día alguien **reserva ese espacio liberado** (call nueva para las 9:00am). Como el Push 2
+(6:30am) ya corrió, sin esta feature Sebas se enteraría **sólo 25 min antes** (Push 3, 8:35am). Con el
+Push 0, apenas el poll detecta la reserva (~7:30am) le llega: *"📅 te reservaron el espacio de las 9:00am"*.
+Eso es exactamente el Push 0: **el aviso de que te ocuparon un slot hoy**, típicamente uno que se liberó por
+una cancelación y se re-agendó dentro del día (el flujo "Push for Calls" de liberar agenda).
+
+**⚠️ Alcance acotado por el owner (Sebas, 2026-06-10):** el Push 0 avisa **sólo de calls del MISMO día**
+(la cita aterriza hoy, para hoy). Las calls agendadas para días futuros **NO** disparan Push 0 — ya las
+cubre sin hueco el Push 1 de esta noche / el Push 2 de su mañana. El Push 0 es **exclusivamente el
+tapa-huecos** del booking de hoy que llega tarde. Esto **simplifica** el diseño: no hace falta ampliar la
+ventana del poll (los `+48h` actuales ya contienen "hoy"), sólo filtrar `start_time` = hoy en `TZ`.
+
+**Cómo encaja con Push 1/2/3 (debe coincidir con sus protocolos).** Una call nueva de hoy **igual entra al
+flujo normal**; lo único que cambia es que sus digests ya pueden haber pasado:
+- **Push 1** (7pm del día anterior) — para una call de HOY ya pasó siempre → **no aplica**.
+- **Push 2** (6:30am de hoy) — aplica **sólo si la call entró antes de las 6:30am**; si entró después, ya pasó.
+- **Push 3** (~25 min antes) — **siempre** aplica (lo agenda el poll, ya funciona).
+- **Push 0** (inmediato) — es el sustituto del digest perdido. Para evitar triple-aviso, **dispararlo sólo
+  cuando el digest aplicable ya pasó** (es decir, el caso *"la hora del Push 1 y 2 ya pasó → sólo queda el
+  Push 3"*). Si la call entró tan temprano que el Push 2 todavía la va a tomar, el Push 0 se omite (el
+  digest ya cumple el aviso). Resultado neto del caso típico: **Push 0 ahora + Push 3 antes.**
+
+**Diseño propuesto (poll-based, reutiliza toda la infra — recomendado).**
+1. **Nuevo "Push 0" = aviso de nueva call de HOY.** Tratarlo como un push más: al descubrir una cita
+   genuinamente nueva **cuyo `start_time` cae hoy**, agendar una fila `push_n=0` en `calendly_pushes` con
+   `due_at = now` y que la **entrega existente (`runCalendlyDelivery`) la mande**. Beneficio doble: (a) reusa
+   `deliver()` → respeta TODOS los gates anti-ban (pausa global `/calendly off`, opt-in **ganado**,
+   `contact_jid` de hilo establecido, pausa por-closer, `DRY_RUN`); (b) el dedup por `(event_uuid, push_n)`
+   que ya existe en `scheduleCalendlyPush` garantiza **un solo aviso por cita** aunque el poll la re-vea.
+2. **Gate de redundancia con el Push 2.** Antes de agendar el Push 0, comprobar si el **Push 2 de hoy aún
+   no ha corrido** (la call entró antes de las 6:30am): en ese caso **omitir** el Push 0 — el digest ya lo
+   avisará. Sólo se agenda cuando el digest aplicable ya pasó. (Implementación simple: comparar `now` contra
+   el cron del Push 2 del día; o marcar el Push 0 como `skipped` con motivo `cubierto-por-push2`.)
+3. **Distinguir "cita nueva de verdad" de "cita que recién entró a mi ventana".** ⚠️ Punto fino. No basta
+   `scheduleCalendlyPush === 'new'`: una cita es "nueva en la DB" también en el **primer poll tras un deploy
+   / DB reseteada** → dispararía avisos falsos. Fix robusto: usar el **`created_at`** que Calendly trae en
+   el evento/invitee y avisar **sólo si `created_at` es reciente** (dentro de la última ventana de poll,
+   ~5–10 min). Complemento: en el **primer poll tras arrancar**, sembrar las filas `push_n=0` como
+   `skipped`/`sent` sin entregar, para no soltar una ráfaga al reiniciar.
+
+**Plantilla sugerida (1 mensaje por booking, sin PII de más):**
+`📅 Te acaba de entrar una call HOY: *{prospecto}* — {programa} — a las {hora}.` + link de la llamada si ya está
+listo (`eventJoinUrl(ev)`; recordar que `google_conference` pasa por `processing`, igual que en el fix del
+Push 3, §11.10). Volumen/anti-ban: va sólo a closers con opt-in en hilo establecido — misma superficie que
+los otros pushes, **no abre frente de baneo nuevo**.
+
+**Alternativa arquitectónica — webhooks de Calendly (más "correcto", pero choca con una regla dura).**
+Calendly ofrece suscripción a `invitee.created` / `invitee.canceled`: aviso **instantáneo**, sin lag de
+poll ni gimnasia de `created_at`. **Pero** exige exponer un endpoint HTTP público, lo que viola la regla
+del proyecto *"No exponer puertos en docker-compose (Baileys es conexión saliente)"* y la sensibilidad de
+la IP de datacenter. Requeriría un ingress aparte (reverse proxy / túnel) — cambio de infra real.
+**Recomendación:** ir con el poll-based (reutiliza todo, respeta los gates), dejar el webhook documentado
+como evolución futura si el lag de ≤5 min llega a molestar.
+
+**Adyacente (no pedido, pero simétrico y casi gratis una vez tengamos `created_at`/estado):** avisar al
+closer cuando una call agendada se **cancela** (`invitee.canceled` / `status != 'active'`). El reschedule
+ya está cubierto por `decidePushAction` (§11.3, Bug 2). Vale la pena mencionarlo a Sebas como combo.
+
+**✅ IMPLEMENTADO (2026-06-10) — poll-based, falta SOLO el deploy al VPS.** Código + tests en `main` local.
+- **Lógica pura** `src/calendly/push-logic.js → decidePush0({startMs, createdAtMs, nowMs, isToday, push2HasRun,
+  recentMs})`: gatea por mismo-día + futura + `created_at` reciente + `push2HasRun` (los 4). Testeable sin tz/DB.
+- **Helpers de zona** en `src/calendly/index.js`: `isSameDayInTz` (compara día de pared, no UTC),
+  `push2HasRunToday` (deriva la hora del `CALENDLY_PUSH2_CRON`; cron exótico → fallback true),
+  `parseDailyCronHM`, y la plantilla `buildPush0Message` (heads-up informativo, **sin** link wa.me).
+- **Scheduler** `src/scheduler/calendly.js`: en `runCalendlyPoll`, tras agendar el Push 3, evalúa `decidePush0`
+  y agenda `push_n=0` con `due=ahora` (reusa `scheduleCalendlyPush` → dedup por `(event_uuid, 0)` = un solo
+  aviso). `runCalendlyDelivery` ahora es **push_n-aware**: reconstruye el mensaje como Push 0 o Push 3 según
+  `p.push_n` y usa el tag `push${p.push_n}`. Sigue pasando por `deliver()` → **todos los gates anti-ban**.
+- **Detección de booking nuevo:** se usa `ev.created_at` de Calendly (ya viene en `scheduled_events`). El gate
+  de recencia subsume el problema del "primer poll tras deploy" (bookings viejos → `created_at` viejo → no
+  avisan), así que **no hizo falta lógica de seeding** aparte. No se amplió la ventana del poll (los `+48h` ya
+  contienen "hoy"). El esquema de `calendly_pushes` ya era genérico (`push_n` con `UNIQUE(event_uuid, push_n)`)
+  → **sin migración**.
+- **Config:** `CALENDLY_PUSH0_ENABLED` (default `true`) y `CALENDLY_PUSH0_RECENT_MIN` (default `10`), ya en
+  `.env.example` y en el `environment:` del `docker-compose.yml` (gotcha §12).
+- **Tests:** `test/calendly.push0.test.js` (13 casos: helpers de tz, `decidePush0`, plantilla, y escenarios
+  end-to-end — happy path, pre-Push 2, reserva vieja, mañana, dedup, anti-ban opt-in, flag off). **Suite
+  Calendly Tier 1: 63/63 verde** (sin regresión). Corren nativo en Windows.
+- **Nuance conocida:** un *reschedule* en Calendly crea un evento nuevo (nuevo `created_at`) → puede disparar
+  un Push 0 "nueva call HOY" si la nueva hora cae hoy. Es aceptable/útil (avisa que la call se movió a hoy);
+  no se filtró por `old_invitee` para no agregar otra llamada a la API. Documentado por si molesta luego.
+
+**⏳ PENDIENTE: deploy al VPS** (`pscp src/ test/`, `docker compose up -d --build`, backup pre-deploy) y
+**verificación en vivo** del primer Push 0 real. Como Calendly corre con `DRY_RUN=false`, al desplegar queda
+activo de inmediato (gateado por opt-in/contact_jid/pausa). Para apagarlo sin redeploy: `CALENDLY_PUSH0_ENABLED=false`.
+
+**Webhooks (descartado por ahora):** la vía instantánea (`invitee.created`) exige exponer un puerto HTTP →
+choca con *"no exponer puertos"*. Queda como evolución futura si el lag de ≤5 min del poll llega a molestar.
+
 ### 🔴 Alta prioridad — BLOQUEANTE para entregar al jefe
 
 - **✅ SHIPPED + VERIFICADO LIVE (2026-06-10) — Autorización de grupos default-deny con simetría
@@ -1251,6 +1366,11 @@ al grupo de ventas).
   `/root/juanito-backup-20260610-100151-pre-grupos.tar.gz` + imagen `juanito-agent:pre-grupos-20260610-100151`.
   **✅ VERIFICADO EN VIVO (2026-06-10):** el owner probó `/grupos` desde su WhatsApp real y funciona
   perfecto. Feature cerrada de punta a punta.
+- **✅ IMPLEMENTADO (2026-06-10) — Aviso de "nueva call HOY" a los closers ("Push 0", idea Sebas, ver §18.C):**
+  acotado a calls del **mismo día**; cierra el hueco en que un closer queda ciego hasta 25 min antes de una
+  call que entró después de los digests (protocolo "Push for Calls" de liberar agenda). Coincide con Push 1/2/3:
+  sólo se dispara cuando el Push 2 del día ya pasó (→ sólo queda el Push 3). Poll-based, reusa `deliver()` +
+  dedup, gateado por `created_at` reciente. Tests 63/63. **Pendiente: deploy al VPS + verificación en vivo.**
 - **Capturar LID del jefe automáticamente** al primer DM reconocido por `BOSS_PHONE`.
 - **Rate limit configurable por grupo** (hoy `GROUP_DAILY_LIMIT` es global).
 - **Roadmap baby-proofing restante:** (4) no mandar a terceros por orden del jefe (DIFERIDO: se implementa
