@@ -4,7 +4,7 @@
 // Persiste con saveSummary({chatId,chatName,summary,periodStart,periodEnd}).
 
 import { CronJob } from 'cron';
-import { saveSummary } from '../db/index.js';
+import { saveSummary, isGroupAuthorized } from '../db/index.js';
 import { listGroups, getRecentMessages } from '../whatsapp/index.js';
 import { summarizeGroupMessages } from '../claude/index.js';
 
@@ -28,7 +28,9 @@ export async function runGroupSummaryCycle() {
 
   let summarized = 0;
   try {
-    const groups = await listGroups();
+    // Solo resumir grupos autorizados (default-deny anti-secuestro): no procesar
+    // ni almacenar resúmenes de grupos a los que nos metieron sin permiso.
+    const groups = (await listGroups()).filter((g) => isGroupAuthorized(g.id));
 
     for (const group of groups.slice(0, MAX_GROUPS())) {
       try {

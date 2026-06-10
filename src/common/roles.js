@@ -43,3 +43,14 @@ export function roleOf(sender) {
 export function isPrivileged(role) {
   return role === 'admin' || role === 'boss';
 }
+
+// ¿Hay un jefe o admin entre los participantes de un grupo?
+// Heurística restart-safe para autorizar grupos: si el dueño o el equipo está
+// dentro, el grupo es legítimo aunque no hayamos capturado el evento de "add".
+// `participants` admite strings (JIDs/LIDs) u objetos { id, lid, jid }.
+export function groupHasPrivilegedMember(participants = []) {
+  return participants.some((p) => {
+    const ids = typeof p === 'string' ? [p] : [p?.id, p?.lid, p?.jid];
+    return ids.filter(Boolean).some((id) => isPrivileged(roleOf(id)));
+  });
+}

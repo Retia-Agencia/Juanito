@@ -81,7 +81,7 @@ async function renderQR(qr) {
 // Una vez conectado, ante cualquier caída sale con exit(1) para que
 // entrypoint.sh aplique el backoff exponencial.
 
-export async function connect({ onMessage }) {
+export async function connect({ onMessage, onGroupJoin }) {
   mkdirSync(SESSION_PATH, { recursive: true });
   startQRServer(Number(process.env.QR_PORT) || 0);
 
@@ -157,6 +157,40 @@ export async function connect({ onMessage }) {
             console.log('[WhatsApp] Reconectando para nuevo QR...');
             setTimeout(createSocket, 3000);
           }
+        }
+      });
+
+      // Cambios de participantes — detecta cuándo AGREGAN a Juanito a un grupo.
+      // Lo usamos para autorizar (si lo agregó boss/admin) o salir (default-deny).
+      sock.ev.on('group-participants.update', async (update) => {
+        try {
+          const { id: groupId, participants = [], action, author } = update;
+          if (action !== 'add' || !onGroupJoin) return;
+
+          const meAdded = participants.some(
+            (p) =>
+              (botJid && phonesMatch(p, botJid)) ||
+              (botLidNum && p?.startsWith(botLidNum))
+          );
+          if (!meAdded) return;
+
+          let groupName = groupId;
+          let allParticipants = [];
+          try {
+            const meta = await sock.groupMetadata(groupId);
+            groupName = meta.subject || groupId;
+            allParticipants = (meta.participants || [])
+              .map((x) => x.id || x.jid || x.lid)
+              .filter(Boolean);
+          } catch (e) {
+            console.error('[WhatsApp] No se pudo leer metadata del grupo nuevo:', e.message);
+          }
+
+          // OJO: pasamos `author` SIN resolver — roleOf reconoce a los admins por su
+          // @lid (resolverlo a teléfono rompería el match de ADMIN_LID).
+          await onGroupJoin({ groupId, groupName, author, participants: allParticipants });
+        } catch (e) {
+          console.error('[WhatsApp] Error en group-participants.update:', e.message);
         }
       });
 
@@ -257,6 +291,27 @@ export async function sendMessage(to, text) {
   const jid = toJid(to);
   await sock.sendMessage(jid, { text });
   console.log(`[WhatsApp] → ${to}`);
+}
+
+// ─── Salir de un grupo (add no autorizado) ────────────────────────────────────
+
+export async function leaveGroup(groupId) {
+  if (!sock) throw new Error('leaveGroup: WhatsApp no conectado aún');
+  await sock.groupLeave(groupId);
+  console.log(`[WhatsApp] Salí del grupo ${groupId}`);
+}
+
+// ─── Participantes de un grupo (para la heurística de autorización) ────────────
+
+export async function getGroupParticipants(groupId) {
+  if (!sock) return [];
+  try {
+    const meta = await sock.groupMetadata(groupId);
+    return (meta.participants || []).map((p) => p.id || p.jid || p.lid).filter(Boolean);
+  } catch (e) {
+    console.error('[WhatsApp] Error obteniendo participantes:', e.message);
+    return [];
+  }
 }
 
 // ─── Listar grupos ────────────────────────────────────────────────────────────

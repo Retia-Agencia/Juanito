@@ -130,6 +130,16 @@ db.exec(`
     value      TEXT,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  -- Grupos autorizados (default-deny anti-secuestro): Juanito SOLO responde en
+  -- grupos donde lo agregó un BOSS/ADMIN, donde un BOSS/ADMIN es participante, o
+  -- que un admin habilitó con /grupo on. Un grupo NO listado aquí = no responde.
+  CREATE TABLE IF NOT EXISTS authorized_groups (
+    group_id      TEXT PRIMARY KEY,
+    group_name    TEXT,
+    authorized_by TEXT,            -- JID/LID de quien autorizó, o 'participant'/'command'
+    authorized_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // ─── 2. Migración de bases existentes (esquema viejo) ─────────────────────────

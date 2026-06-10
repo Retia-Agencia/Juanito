@@ -928,6 +928,21 @@ como receta reusable para sumar más closers:**
 
 ### 🔴 Alta prioridad — BLOQUEANTE para entregar al jefe
 
+- **✅ SHIPPED (2026-06-10) — Default-deny anti-secuestro de grupos.** Juanito ya NO responde si lo
+  agregan a un grupo no autorizado. Antes, cualquiera lo agregaba y con solo @mencionarlo obtenía
+  respuestas de Claude (única barrera: el rate limit). Ahora: listener `group-participants.update`
+  capta quién agrega al bot → si lo agrega boss/admin (por JID/LID vía `roleOf`) o hay un boss/admin
+  en el grupo, se autoriza; si no, Juanito **se sale** del grupo (≈1-3s). Gate independiente en
+  `handleGroupMessage` (ignora menciones de grupos no autorizados; autoriza al vuelo si hay boss/admin
+  presente — restart-safe). Comando admin `/grupo on|off|status`. El cron de resúmenes ya no procesa
+  grupos no autorizados. Nueva tabla `authorized_groups` (migración idempotente). Rama
+  `feat/group-authorization` (commit `dea2939`), copiada al VPS + `docker compose up -d --build`
+  (tabla creada, helpers cargados, WA reconectó sin QR, contenedor sano, 0 restarts). Tests: 116/116.
+  Backup pre-deploy: `juanito-backup-20260610-003201-pre-groupauth.tar.gz`. Defensa en profundidad
+  manual sugerida: privacidad de la cuenta WA → Grupos → "Mis contactos". **Falta:** prueba en vivo
+  (que un no-admin lo agregue a un grupo nuevo y confirmar que se sale). Follow-up: comando `/grupos`
+  (ver 🟡 Media). PR opcional para fusionar la rama a `main`.
+
 - **✅ BUG CRÍTICO de rol por contexto: FIX DESPLEGADO LIVE EN EL VPS** (sesión 2026-06-09,
   commit `bc05728`). Ver §17 para detalle + registro del deploy y artefactos de rollback.
   **Queda SOLO la verificación en vivo del Bloque B** (tabla "Pruebas a re-ejecutar" de §17):
@@ -982,6 +997,14 @@ como receta reusable para sumar más closers:**
 - **Juanito saluda a los ADMINs por nombre:** implementar `admin_note:<lid>:<key>` análoga a las notas del
   jefe. Archivo: `src/claude/index.js`.
 - **Comando `/admins`:** listar LIDs en `ADMIN_LID` con nombre de contacto. Archivo: `src/bot/commands.js`.
+- **Comando admin `/grupos` — visibilidad y control de los grupos de Juanito (idea Mani, 2026-06-10):**
+  listar TODOS los grupos donde Juanito está (vía `listGroups()`) cruzado con su estado de autorización
+  (vía `listAuthorizedGroups()`), para que admins/devs vean de un vistazo en cuáles responde y en cuáles no,
+  y puedan controlarlos remotamente. Salida tipo: `✅ Equipo 30X (autorizado por boss)` / `⛔ Grupo X (no
+  autorizado)`. Extensión natural del default-deny anti-secuestro ya shipeado (§ group-auth): el helper
+  `listAuthorizedGroups()` ya existe en `src/db/index.js`; falta el comando en `src/bot/commands.js` +
+  wiring para grupos en `src/index.js` (ya hay routing de `/grupo` ahí) y/o por DM admin. Acciones futuras
+  sobre la lista: `/grupo off` remoto por id, o auto-salida de grupos viejos no autorizados.
 - **Capturar LID del jefe automáticamente** al primer DM reconocido por `BOSS_PHONE`.
 - **Rate limit configurable por grupo** (hoy `GROUP_DAILY_LIMIT` es global).
 - **Roadmap baby-proofing restante:** (4) no mandar a terceros por orden del jefe (DIFERIDO: se implementa
