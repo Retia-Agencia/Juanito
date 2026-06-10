@@ -8,7 +8,7 @@
 // Intenta manejar `text` como comando.
 // Devuelve un string de respuesta si lo manejó, o null si no aplica (para que
 // el flujo siga su curso normal hacia Claude / opt-in).
-export function handleCommand({ text, sender, role }, deps = {}) {
+export async function handleCommand({ text, sender, role }, deps = {}) {
   const cmd = (text || '').trim().toLowerCase();
 
   // /whoami — disponible para cualquiera: devuelve tu ID y rol. Sirve para que
@@ -30,7 +30,94 @@ export function handleCommand({ text, sender, role }, deps = {}) {
     return handleCalendly(text, deps);
   }
 
+  // /grupos [on|off] [n|nombre] — visibilidad y control remoto de los grupos de
+  // Juanito (cruza listGroups() con la tabla authorized_groups). SOLO admins.
+  if (cmd === '/grupos' || cmd.startsWith('/grupos ')) {
+    if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
+    return handleGrupos({ text, sender }, deps);
+  }
+
   return null;
+}
+
+// /grupos                  → lista numerada de TODOS los grupos + su estado de autorización
+// /grupos off <n|nombre>   → revoca autorización y Juanito SE SALE de ese grupo
+// /grupos on  <n|nombre>   → habilita a Juanito para responder en ese grupo
+async function handleGrupos({ text, sender }, deps = {}) {
+  const { listGroups, listAuthorizedGroups, authorizeGroup, deauthorizeGroup, leaveGroup } = deps;
+  const parts = (text || '').trim().split(/\s+/); // [ '/grupos', action?, ...arg ]
+  const action = (parts[1] || 'status').toLowerCase();
+  const arg = parts.slice(2).join(' ').trim();
+
+  let groups;
+  try {
+    groups = listGroups ? await listGroups() : [];
+  } catch {
+    return 'No pude listar los grupos ahora (¿WhatsApp conectado?).';
+  }
+  groups = [...groups].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'es'));
+
+  const authMap = new Map();
+  try {
+    for (const a of listAuthorizedGroups ? listAuthorizedGroups() : []) authMap.set(a.group_id, a);
+  } catch {
+    /* la DB puede no estar lista; seguimos sin estado de autorización */
+  }
+
+  if (action === 'status' || action === 'list') return buildGruposList(groups, authMap);
+
+  if (action !== 'on' && action !== 'off') {
+    return 'Uso: /grupos · /grupos off <n|nombre> · /grupos on <n|nombre>';
+  }
+  if (!arg) return `Uso: /grupos ${action} <número o nombre del grupo>`;
+
+  const target = resolveGroupTarget(arg, groups);
+  if (!target) return `No encontré "${arg}". Usa /grupos para ver la lista y el número.`;
+  const name = target.name || '(sin nombre)';
+
+  if (action === 'on') {
+    if (authorizeGroup) authorizeGroup({ groupId: target.id, groupName: target.name, authorizedBy: sender });
+    return `"${name}" habilitado ✅ — Juanito ya responde ahí.`;
+  }
+  // off → revoca + sale
+  if (deauthorizeGroup) deauthorizeGroup(target.id);
+  if (leaveGroup) await leaveGroup(target.id).catch(() => {});
+  return `"${name}" deshabilitado ⛔ — Juanito se salió del grupo.`;
+}
+
+// Resuelve el target de /grupos on|off: número (1-based de la lista ordenada) o
+// substring del nombre / group_id. Devuelve el grupo o null si es ambiguo/no existe.
+function resolveGroupTarget(arg, groups) {
+  if (/^\d+$/.test(arg)) {
+    const idx = Number(arg) - 1;
+    return groups[idx] || null;
+  }
+  const q = arg.toLowerCase();
+  const byName = groups.filter((g) => (g.name || '').toLowerCase().includes(q));
+  if (byName.length === 1) return byName[0];
+  if (byName.length > 1) return null; // ambiguo: que use el número
+  return groups.find((g) => (g.id || '').toLowerCase().includes(q)) || null;
+}
+
+function buildGruposList(groups, authMap) {
+  if (!groups.length) return '👥 Juanito no está en ningún grupo ahora mismo.';
+  const lines = [`👥 Grupos de Juanito (${groups.length})`, ''];
+  groups.forEach((g, i) => {
+    const a = authMap.get(g.id);
+    const mark = a ? '✅' : '⛔';
+    const status = a
+      ? `autorizado${a.authorized_by ? ` · por ${shortId(a.authorized_by)}` : ''}`
+      : 'no autorizado'; // Juanito NO responde aquí
+    lines.push(`${i + 1}. ${mark} ${g.name || '(sin nombre)'}`);
+    lines.push(`    ${status}`);
+  });
+  lines.push('', 'Acciones: /grupos off <n> (salir) · /grupos on <n> (habilitar)');
+  return lines.join('\n');
+}
+
+// Acorta un JID/LID para mostrarlo: 573102212005@lid → 573102212005
+function shortId(id) {
+  return String(id).split('@')[0];
 }
 
 // /calendly                  → estado global + closers pausados

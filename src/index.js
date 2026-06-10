@@ -2,7 +2,7 @@
 // Entry point — conecta Baileys, wira handlers y arranca el scheduler.
 
 import 'dotenv/config';
-import { connect, sendMessage, isConnected, leaveGroup } from './whatsapp/index.js';
+import { connect, sendMessage, isConnected, leaveGroup, listGroups } from './whatsapp/index.js';
 import { handleBossMessage, handleGroupMessage } from './bot/index.js';
 import { handleCommand } from './bot/commands.js';
 import { handleCloserOptin } from './calendly/optin.js';
@@ -17,6 +17,7 @@ import {
   authorizeGroup,
   deauthorizeGroup,
   isGroupAuthorized,
+  listAuthorizedGroups,
 } from './db/index.js';
 import { resolveCloserByPushName } from './calendly/closers.js';
 import { getHealth } from './calendly/health.js';
@@ -86,7 +87,7 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
 
     // Comandos deterministas (sin Claude): /whoami, /status. Se atienden antes del
     // ruteo para que /whoami funcione incluso para un admin nuevo aún no configurado.
-    const cmdReply = handleCommand(
+    const cmdReply = await handleCommand(
       { text, sender, role },
       {
         listOptins,
@@ -96,6 +97,12 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
         setCalendlyPaused,
         setCloserPaused,
         resolveCloserByPushName,
+        // /grupos — visibilidad y control remoto de los grupos de Juanito
+        listGroups,
+        listAuthorizedGroups,
+        authorizeGroup,
+        deauthorizeGroup,
+        leaveGroup,
       }
     );
     if (cmdReply !== null) {

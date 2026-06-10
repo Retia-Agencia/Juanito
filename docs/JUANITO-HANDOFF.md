@@ -1193,14 +1193,21 @@ a las 20:00.
 - **Juanito saluda a los ADMINs por nombre:** implementar `admin_note:<lid>:<key>` análoga a las notas del
   jefe. Archivo: `src/claude/index.js`.
 - **Comando `/admins`:** listar LIDs en `ADMIN_LID` con nombre de contacto. Archivo: `src/bot/commands.js`.
-- **Comando admin `/grupos` — visibilidad y control de los grupos de Juanito (idea Mani, 2026-06-10):**
-  listar TODOS los grupos donde Juanito está (vía `listGroups()`) cruzado con su estado de autorización
-  (vía `listAuthorizedGroups()`), para que admins/devs vean de un vistazo en cuáles responde y en cuáles no,
-  y puedan controlarlos remotamente. Salida tipo: `✅ Equipo 30X (autorizado por boss)` / `⛔ Grupo X (no
-  autorizado)`. Extensión natural del default-deny anti-secuestro ya shipeado (§ group-auth): el helper
-  `listAuthorizedGroups()` ya existe en `src/db/index.js`; falta el comando en `src/bot/commands.js` +
-  wiring para grupos en `src/index.js` (ya hay routing de `/grupo` ahí) y/o por DM admin. Acciones futuras
-  sobre la lista: `/grupo off` remoto por id, o auto-salida de grupos viejos no autorizados.
+- **✅ SHIPPED (2026-06-10) — Comando admin `/grupos` (idea Mani):** DM admin-only que cruza
+  `listGroups()` con `listAuthorizedGroups()` y devuelve la lista numerada de TODOS los grupos de Juanito
+  con su estado (`✅ autorizado · por <quien>` / `⛔ no autorizado`). Incluye **control remoto**:
+  `/grupos off <n|nombre>` revoca la autorización y Juanito **se sale** del grupo (vía `leaveGroup`);
+  `/grupos on <n|nombre>` lo habilita. El target se resuelve por número (1-based de la lista ordenada
+  alfabéticamente) o por substring del nombre (ambiguo → pide usar el número). Extensión del default-deny
+  anti-secuestro (§ group-auth). **Implementación:** `handleGrupos`/`resolveGroupTarget`/`buildGruposList`
+  en `src/bot/commands.js`; `handleCommand` ahora es **async** (porque `listGroups()` toca el socket WA) →
+  el caller en `src/index.js` hace `await handleCommand(...)` y se le inyectan las nuevas deps
+  (`listGroups, listAuthorizedGroups, authorizeGroup, deauthorizeGroup, leaveGroup`). Tests: 6 casos nuevos
+  en `test/commands.test.js` (lista ordenada, off por número, on por substring, target inexistente,
+  deflexión a no-admin, tolerancia a WA desconectado) — suite de comandos 19/19. ⚠️ Igual que `/grupo on`,
+  un `/grupos on` remoto puede ser revocado por `reevaluateGroup` en el próximo barrido/evento si ningún
+  boss/admin queda como participante (semántica esperada del anti-secuestro). Pendiente menor: auto-salida
+  de grupos viejos no autorizados desde la misma lista.
 - **Capturar LID del jefe automáticamente** al primer DM reconocido por `BOSS_PHONE`.
 - **Rate limit configurable por grupo** (hoy `GROUP_DAILY_LIMIT` es global).
 - **Roadmap baby-proofing restante:** (4) no mandar a terceros por orden del jefe (DIFERIDO: se implementa

@@ -11,28 +11,28 @@ const deps = {
   isConnected: () => true,
 };
 
-test('/whoami devuelve ID y rol', () => {
-  const out = handleCommand({ text: '/whoami', sender: '129@lid', role: 'admin' });
+test('/whoami devuelve ID y rol', async () => {
+  const out = await handleCommand({ text: '/whoami', sender: '129@lid', role: 'admin' });
   assert.match(out, /129@lid/);
   assert.match(out, /admin/);
 });
 
-test('/whoami tolera mayúsculas y espacios, y tiene alias /id', () => {
-  assert.match(handleCommand({ text: '  /WhoAmI ', sender: 'x@lid', role: 'boss' }), /x@lid/);
-  assert.match(handleCommand({ text: '/id', sender: 'y@lid', role: 'boss' }), /y@lid/);
+test('/whoami tolera mayúsculas y espacios, y tiene alias /id', async () => {
+  assert.match(await handleCommand({ text: '  /WhoAmI ', sender: 'x@lid', role: 'boss' }), /x@lid/);
+  assert.match(await handleCommand({ text: '/id', sender: 'y@lid', role: 'boss' }), /y@lid/);
 });
 
-test('/status (admin) reporta estado con las deps inyectadas', () => {
-  const out = handleCommand({ text: '/status', sender: 'a@lid', role: 'admin' }, deps);
+test('/status (admin) reporta estado con las deps inyectadas', async () => {
+  const out = await handleCommand({ text: '/status', sender: 'a@lid', role: 'admin' }, deps);
   assert.match(out, /WhatsApp: conectado/);
   assert.match(out, /Opt-ins registrados: 3/);
 });
 
-test('/status refleja DRY_RUN OFF cuando la env lo apaga', () => {
+test('/status refleja DRY_RUN OFF cuando la env lo apaga', async () => {
   const saved = process.env.CALENDLY_DRY_RUN;
   process.env.CALENDLY_DRY_RUN = 'false';
   try {
-    const out = handleCommand({ text: '/status', sender: 'a@lid', role: 'admin' }, deps);
+    const out = await handleCommand({ text: '/status', sender: 'a@lid', role: 'admin' }, deps);
     assert.match(out, /DRY_RUN: OFF/);
   } finally {
     if (saved === undefined) delete process.env.CALENDLY_DRY_RUN;
@@ -40,15 +40,15 @@ test('/status refleja DRY_RUN OFF cuando la env lo apaga', () => {
   }
 });
 
-test('/status para el jefe → deflexión cálida (no diagnósticos técnicos)', () => {
+test('/status para el jefe → deflexión cálida (no diagnósticos técnicos)', async () => {
   // El jefe está sandboxed: en vez de null/silencio, recibe un mensaje amable.
-  const out = handleCommand({ text: '/status', sender: 'b@lid', role: 'boss' }, deps);
+  const out = await handleCommand({ text: '/status', sender: 'b@lid', role: 'boss' }, deps);
   assert.match(out, /equipo técnico/);
 });
 
-test('texto que no es comando devuelve null', () => {
-  assert.equal(handleCommand({ text: 'hola juanito', sender: 'b@lid', role: 'boss' }), null);
-  assert.equal(handleCommand({ text: '', sender: 'b@lid', role: 'admin' }), null);
+test('texto que no es comando devuelve null', async () => {
+  assert.equal(await handleCommand({ text: 'hola juanito', sender: 'b@lid', role: 'boss' }), null);
+  assert.equal(await handleCommand({ text: '', sender: 'b@lid', role: 'admin' }), null);
 });
 
 // ─── /calendly (botón de pánico, admin-only) ──────────────────────────────────
@@ -68,49 +68,49 @@ function calendlyDeps() {
   };
 }
 
-test('/calendly para no-admin → deflexión (no expone estado)', () => {
-  assert.match(handleCommand({ text: '/calendly', sender: 'b@lid', role: 'boss' }, calendlyDeps()), /equipo técnico/);
-  assert.match(handleCommand({ text: '/calendly off', sender: 'u@lid', role: 'unknown' }, calendlyDeps()), /equipo técnico/);
+test('/calendly para no-admin → deflexión (no expone estado)', async () => {
+  assert.match(await handleCommand({ text: '/calendly', sender: 'b@lid', role: 'boss' }, calendlyDeps()), /equipo técnico/);
+  assert.match(await handleCommand({ text: '/calendly off', sender: 'u@lid', role: 'unknown' }, calendlyDeps()), /equipo técnico/);
 });
 
-test('/calendly (admin) sin args → muestra estado global y closers pausados', () => {
-  const out = handleCommand({ text: '/calendly', sender: 'a@lid', role: 'admin' }, calendlyDeps());
+test('/calendly (admin) sin args → muestra estado global y closers pausados', async () => {
+  const out = await handleCommand({ text: '/calendly', sender: 'a@lid', role: 'admin' }, calendlyDeps());
   assert.match(out, /Estado global: activo/);
   assert.match(out, /Closers pausados: ninguno/);
 });
 
-test('/calendly off | on (global) pausa y reactiva, y se refleja en el estado', () => {
+test('/calendly off | on (global) pausa y reactiva, y se refleja en el estado', async () => {
   const deps = calendlyDeps();
-  assert.match(handleCommand({ text: '/calendly off', sender: 'a@lid', role: 'admin' }, deps), /PAUSADOS ⏸️ \(global\)/);
+  assert.match(await handleCommand({ text: '/calendly off', sender: 'a@lid', role: 'admin' }, deps), /PAUSADOS ⏸️ \(global\)/);
   assert.equal(deps._state.global, true);
-  assert.match(handleCommand({ text: '/calendly', sender: 'a@lid', role: 'admin' }, deps), /Estado global: PAUSADO/);
-  assert.match(handleCommand({ text: '/calendly on', sender: 'a@lid', role: 'admin' }, deps), /reactivados ▶️ \(global\)/);
+  assert.match(await handleCommand({ text: '/calendly', sender: 'a@lid', role: 'admin' }, deps), /Estado global: PAUSADO/);
+  assert.match(await handleCommand({ text: '/calendly on', sender: 'a@lid', role: 'admin' }, deps), /reactivados ▶️ \(global\)/);
   assert.equal(deps._state.global, false);
 });
 
-test('/calendly off <closer> pausa solo a ese closer (nombre completo)', () => {
+test('/calendly off <closer> pausa solo a ese closer (nombre completo)', async () => {
   const deps = calendlyDeps();
-  const out = handleCommand({ text: '/calendly off Pablo Lozano', sender: 'a@lid', role: 'admin' }, deps);
+  const out = await handleCommand({ text: '/calendly off Pablo Lozano', sender: 'a@lid', role: 'admin' }, deps);
   assert.match(out, /Pablo Lozano: PAUSADOS ⏸️/);
   assert.equal(deps._state.closers['+573046131437'], true);
 });
 
-test('/calendly off con closer desconocido → mensaje de ayuda, no pausa nada', () => {
+test('/calendly off con closer desconocido → mensaje de ayuda, no pausa nada', async () => {
   const deps = calendlyDeps();
-  const out = handleCommand({ text: '/calendly off Fulano', sender: 'a@lid', role: 'admin' }, deps);
+  const out = await handleCommand({ text: '/calendly off Fulano', sender: 'a@lid', role: 'admin' }, deps);
   assert.match(out, /No reconozco al closer/);
   assert.equal(deps._state.global, false);
 });
 
-test('/calendly con acción inválida → uso', () => {
+test('/calendly con acción inválida → uso', async () => {
   assert.match(
-    handleCommand({ text: '/calendly foo', sender: 'a@lid', role: 'admin' }, calendlyDeps()),
+    await handleCommand({ text: '/calendly foo', sender: 'a@lid', role: 'admin' }, calendlyDeps()),
     /Uso: \/calendly/
   );
 });
 
-test('/status tolera que listOptins falle (db no lista)', () => {
-  const out = handleCommand(
+test('/status tolera que listOptins falle (db no lista)', async () => {
+  const out = await handleCommand(
     { text: '/status', sender: 'a@lid', role: 'admin' },
     {
       listOptins: () => {
@@ -121,4 +121,76 @@ test('/status tolera que listOptins falle (db no lista)', () => {
   );
   assert.match(out, /Opt-ins registrados: 0/);
   assert.match(out, /WhatsApp: desconectado/);
+});
+
+// ─── /grupos (visibilidad + control remoto de grupos, admin-only) ─────────────
+
+function gruposDeps() {
+  const state = {
+    groups: [
+      { id: 'b@g.us', name: 'Beta interno' },
+      { id: 'a@g.us', name: 'Alfa clientes' },
+      { id: 'c@g.us', name: 'Charlie random' },
+    ],
+    authorized: [{ group_id: 'a@g.us', group_name: 'Alfa clientes', authorized_by: '573102212005@lid' }],
+    left: [],
+  };
+  return {
+    _state: state,
+    listGroups: async () => state.groups,
+    listAuthorizedGroups: () => state.authorized,
+    authorizeGroup: ({ groupId, groupName, authorizedBy }) =>
+      state.authorized.push({ group_id: groupId, group_name: groupName, authorized_by: authorizedBy }),
+    deauthorizeGroup: (id) => {
+      const n = state.authorized.length;
+      state.authorized = state.authorized.filter((a) => a.group_id !== id);
+      return n - state.authorized.length;
+    },
+    leaveGroup: async (id) => state.left.push(id),
+  };
+}
+
+test('/grupos para no-admin → deflexión (no expone los grupos)', async () => {
+  assert.match(await handleCommand({ text: '/grupos', sender: 'b@lid', role: 'boss' }, gruposDeps()), /equipo técnico/);
+  assert.match(await handleCommand({ text: '/grupos', sender: 'u@lid', role: 'unknown' }, gruposDeps()), /equipo técnico/);
+});
+
+test('/grupos (admin) lista ordenada con estado de autorización', async () => {
+  const out = await handleCommand({ text: '/grupos', sender: 'a@lid', role: 'admin' }, gruposDeps());
+  assert.match(out, /Grupos de Juanito \(3\)/);
+  // Orden alfabético: Alfa(1) ✅, Beta(2) ⛔, Charlie(3) ⛔
+  assert.match(out, /1\. ✅ Alfa clientes/);
+  assert.match(out, /por 573102212005/); // shortId, sin @lid
+  assert.match(out, /2\. ⛔ Beta interno/);
+  assert.match(out, /3\. ⛔ Charlie random/);
+});
+
+test('/grupos off <n> revoca y sale del grupo correcto', async () => {
+  const deps = gruposDeps();
+  const out = await handleCommand({ text: '/grupos off 1', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /"Alfa clientes" deshabilitado ⛔/);
+  assert.deepEqual(deps._state.left, ['a@g.us']);
+  assert.equal(deps._state.authorized.length, 0);
+});
+
+test('/grupos on <nombre> autoriza por substring', async () => {
+  const deps = gruposDeps();
+  const out = await handleCommand({ text: '/grupos on beta', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /"Beta interno" habilitado ✅/);
+  assert.ok(deps._state.authorized.some((a) => a.group_id === 'b@g.us'));
+});
+
+test('/grupos off con target inexistente → no sale de ningún grupo', async () => {
+  const deps = gruposDeps();
+  const out = await handleCommand({ text: '/grupos off 99', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /No encontré/);
+  assert.equal(deps._state.left.length, 0);
+});
+
+test('/grupos tolera que WhatsApp no esté conectado', async () => {
+  const out = await handleCommand(
+    { text: '/grupos', sender: 'a@lid', role: 'admin' },
+    { listGroups: async () => { throw new Error('sin socket'); } }
+  );
+  assert.match(out, /No pude listar los grupos/);
 });
