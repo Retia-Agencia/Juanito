@@ -7,7 +7,7 @@ import { handleBossMessage, handleGroupMessage } from './bot/index.js';
 import { handleCommand } from './bot/commands.js';
 import { handleCloserOptin } from './calendly/optin.js';
 import { startAllJobs } from './scheduler/index.js';
-import { roleOf, isPrivileged, groupHasPrivilegedMember } from './common/roles.js';
+import { roleOf, isPrivileged } from './common/roles.js';
 import {
   listOptins,
   markIfNew,
@@ -20,18 +20,33 @@ import {
 } from './db/index.js';
 import { resolveCloserByPushName } from './calendly/closers.js';
 import { getHealth } from './calendly/health.js';
+import { enforceGroup, reevaluateGroup, onSelfRemoved, sweepGroups } from './bot/group-guard.js';
 
 // ─── Add a un grupo: autorizar (boss/admin) o salir (default-deny) ────────────
+// Si lo agrega directamente un boss/admin, autoriza sin más. En cualquier otro
+// caso delega en enforceGroup (revisa participantes + respeta GROUP_AUTOLEAVE).
 async function onGroupJoin({ groupId, groupName, author, participants }) {
+  console.log(`[Main] group-participants add → "${groupName}" (${groupId}) por ${author}`);
   const adderRole = roleOf(author);
-  if (isPrivileged(adderRole) || groupHasPrivilegedMember(participants)) {
-    const by = isPrivileged(adderRole) ? author : 'participant';
-    authorizeGroup({ groupId, groupName, authorizedBy: by });
-    console.log(`[Main] Grupo autorizado: "${groupName}" (por ${isPrivileged(adderRole) ? adderRole : 'jefe/admin presente'})`);
+  if (isPrivileged(adderRole)) {
+    authorizeGroup({ groupId, groupName, authorizedBy: author });
+    console.log(`[Main] Grupo autorizado: "${groupName}" (agregado por ${adderRole})`);
     return;
   }
-  console.warn(`[Main] Add NO autorizado a "${groupName}" por ${author} — saliendo del grupo.`);
-  await leaveGroup(groupId).catch((e) => console.error('[Main] leaveGroup:', e.message));
+  await enforceGroup(groupId, groupName);
+}
+
+// ─── Sale un participante del grupo (autorización simétrica) ───────────────────
+// Si me sacaron a mí → limpiar la DB. Si se fue otro → re-evaluar: si ya no queda
+// ningún jefe/admin, se revoca la autorización y (en modo on) Juanito se sale.
+async function onGroupChange({ groupId, meRemoved }) {
+  if (meRemoved) {
+    onSelfRemoved(groupId);
+    return;
+  }
+  await reevaluateGroup(groupId, groupId).catch((e) =>
+    console.error('[Main] reevaluateGroup:', e.message)
+  );
 }
 
 // ─── /grupo on|off — control manual de autorización (admin/boss, dentro del grupo) ─
@@ -113,13 +128,19 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
   // Primero el comando admin /grupo (no requiere mención); si lo manejó, cortamos.
   if (await handleGroupCommand({ chatId, groupName, text, sender, messageId })) return;
 
+  // Anti-secuestro robusto: evalúa autorización en CADA mensaje de grupo (cubre los
+  // adds que el evento `group-participants.update` no capturó, p.ej. si agregaron al
+  // bot mientras reiniciaba). Si aplica auto-leave, salimos sin procesar.
+  if ((await enforceGroup(chatId, groupName)) === 'left') return;
+
   await handleGroupMessage({ chatId, groupName, text, sender, isGroup, messageId, isBotMentioned }).catch((e) =>
     console.error('[Main] handleGroupMessage:', e.message)
   );
 }
 
 async function bootstrap() {
-  await connect({ onMessage, onGroupJoin });
+  await connect({ onMessage, onGroupJoin, onGroupChange });
+  await sweepGroups(); // anti-secuestro: clasifica/limpia los grupos actuales al arrancar
   startAllJobs();
   console.log('\n🚀 Juanito corriendo — escuchando WhatsApp\n');
 }
