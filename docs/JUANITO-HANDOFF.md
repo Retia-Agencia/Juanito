@@ -1212,7 +1212,8 @@ a las 20:00.
   QR, los 4 grupos barridos, Calendly sigue DRY-RUN=false, push3 real salió post-deploy). Smoke test del
   módulo dentro del contenedor OK (admin ve la lista, no-admin recibe deflexión). Rollback:
   `/root/juanito-backup-20260610-100151-pre-grupos.tar.gz` + imagen `juanito-agent:pre-grupos-20260610-100151`.
-  Verificación final pendiente (no bloqueante): que un admin mande `/grupos` desde su WhatsApp real.
+  **✅ VERIFICADO EN VIVO (2026-06-10):** el owner probó `/grupos` desde su WhatsApp real y funciona
+  perfecto. Feature cerrada de punta a punta.
 - **Capturar LID del jefe automáticamente** al primer DM reconocido por `BOSS_PHONE`.
 - **Rate limit configurable por grupo** (hoy `GROUP_DAILY_LIMIT` es global).
 - **Roadmap baby-proofing restante:** (4) no mandar a terceros por orden del jefe (DIFERIDO: se implementa
