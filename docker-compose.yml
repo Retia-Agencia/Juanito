@@ -21,6 +21,8 @@ services:
       # LIDs del equipo dev con rol admin (CSV). Sin esto no hay admins.
       - ADMIN_LID=${ADMIN_LID:-}
       - BOT_NAME=${BOT_NAME:-Juanito}
+      # Anti-secuestro de grupos: 'log' (default, solo registra) | 'on' (auto-leave real).
+      - GROUP_AUTOLEAVE=${GROUP_AUTOLEAVE:-log}
       - AGENT_PHONE=${AGENT_PHONE}
       - DB_PATH=/app/data/brain.sqlite
       - WA_SESSION_PATH=/app/data/wa-session

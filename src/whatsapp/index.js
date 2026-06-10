@@ -81,7 +81,7 @@ async function renderQR(qr) {
 // Una vez conectado, ante cualquier caída sale con exit(1) para que
 // entrypoint.sh aplique el backoff exponencial.
 
-export async function connect({ onMessage, onGroupJoin }) {
+export async function connect({ onMessage, onGroupJoin, onGroupChange }) {
   mkdirSync(SESSION_PATH, { recursive: true });
   startQRServer(Number(process.env.QR_PORT) || 0);
 
@@ -160,35 +160,43 @@ export async function connect({ onMessage, onGroupJoin }) {
         }
       });
 
-      // Cambios de participantes — detecta cuándo AGREGAN a Juanito a un grupo.
-      // Lo usamos para autorizar (si lo agregó boss/admin) o salir (default-deny).
+      // Cambios de participantes — base de la autorización simétrica de grupos:
+      //   - AGREGAN al bot       → autorizar (si lo agregó/hay boss/admin) o salir.
+      //   - sale un participante → re-evaluar (si se fue el jefe/admin → revocar+salir).
+      //   - SACAN al bot         → limpiar la autorización en DB.
       sock.ev.on('group-participants.update', async (update) => {
         try {
           const { id: groupId, participants = [], action, author } = update;
-          if (action !== 'add' || !onGroupJoin) return;
+          // Los participantes pueden venir como strings (JID/LID) o como objetos
+          // ({ id, jid, lid }). Normalizamos a string antes de comparar.
+          const pid = (p) => (typeof p === 'string' ? p : p?.id || p?.jid || p?.lid || '');
+          const meInvolved = participants.some((raw) => {
+            const p = pid(raw);
+            return (botJid && phonesMatch(p, botJid)) || (botLidNum && p.startsWith(botLidNum));
+          });
 
-          const meAdded = participants.some(
-            (p) =>
-              (botJid && phonesMatch(p, botJid)) ||
-              (botLidNum && p?.startsWith(botLidNum))
-          );
-          if (!meAdded) return;
-
-          let groupName = groupId;
-          let allParticipants = [];
-          try {
-            const meta = await sock.groupMetadata(groupId);
-            groupName = meta.subject || groupId;
-            allParticipants = (meta.participants || [])
-              .map((x) => x.id || x.jid || x.lid)
-              .filter(Boolean);
-          } catch (e) {
-            console.error('[WhatsApp] No se pudo leer metadata del grupo nuevo:', e.message);
+          if (action === 'add' && meInvolved) {
+            let groupName = groupId;
+            let allParticipants = [];
+            try {
+              const meta = await sock.groupMetadata(groupId);
+              groupName = meta.subject || groupId;
+              allParticipants = (meta.participants || [])
+                .map((x) => x.id || x.jid || x.lid)
+                .filter(Boolean);
+            } catch (e) {
+              console.error('[WhatsApp] No se pudo leer metadata del grupo nuevo:', e.message);
+            }
+            // OJO: pasamos `author` SIN resolver — roleOf reconoce a los admins por su
+            // @lid (resolverlo a teléfono rompería el match de ADMIN_LID).
+            if (onGroupJoin) await onGroupJoin({ groupId, groupName, author, participants: allParticipants });
+            return;
           }
 
-          // OJO: pasamos `author` SIN resolver — roleOf reconoce a los admins por su
-          // @lid (resolverlo a teléfono rompería el match de ADMIN_LID).
-          await onGroupJoin({ groupId, groupName, author, participants: allParticipants });
+          if ((action === 'remove' || action === 'leave') && onGroupChange) {
+            // Si me sacaron a mí → solo limpiar; si se fue otro → re-evaluar.
+            await onGroupChange({ groupId, meRemoved: meInvolved });
+          }
         } catch (e) {
           console.error('[WhatsApp] Error en group-participants.update:', e.message);
         }

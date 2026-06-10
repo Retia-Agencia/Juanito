@@ -2,15 +2,10 @@
 // Orquestador central — dedup, autorización y despacho a Claude.
 
 import { chat } from '../claude/index.js';
-import { sendMessage, getGroupParticipants } from '../whatsapp/index.js';
-import {
-  markIfNew,
-  checkAndIncrementGroupUsage,
-  isGroupAuthorized,
-  authorizeGroup,
-} from '../db/index.js';
+import { sendMessage } from '../whatsapp/index.js';
+import { markIfNew, checkAndIncrementGroupUsage, isGroupAuthorized } from '../db/index.js';
 import { phonesMatch } from '../common/utils.js';
-import { roleOf, groupHasPrivilegedMember } from '../common/roles.js';
+import { roleOf } from '../common/roles.js';
 
 const BOSS_PHONE = () => process.env.BOSS_PHONE;
 const BOT_NAME = () => process.env.BOT_NAME || 'Juanito';
@@ -55,26 +50,6 @@ export async function handleBossMessage(msg) {
   }
 }
 
-// ─── Autorización de grupos (default-deny anti-secuestro) ─────────────────────
-// Juanito solo responde en grupos autorizados. Un grupo está autorizado si está
-// en authorized_groups (lo agregó boss/admin, o se habilitó con /grupo on) o si
-// un boss/admin es participante actual (fallback restart-safe para grupos legítimos
-// preexistentes — los autoriza al vuelo y queda persistido).
-async function isGroupAllowed(chatId, groupName) {
-  if (isGroupAuthorized(chatId)) return true;
-  try {
-    const participants = await getGroupParticipants(chatId);
-    if (groupHasPrivilegedMember(participants)) {
-      authorizeGroup({ groupId: chatId, groupName, authorizedBy: 'participant' });
-      console.log(`[Bot] Grupo autorizado al vuelo (jefe/admin presente): "${groupName}"`);
-      return true;
-    }
-  } catch (e) {
-    console.error('[Bot] No se pudo verificar participantes de grupo:', e.message);
-  }
-  return false;
-}
-
 // ─── Mención en grupo ─────────────────────────────────────────────────────────
 // Solo responde a @mention real (función nativa de WhatsApp).
 // Aplica rate limit a remitentes no registrados como ilimitados.
@@ -87,8 +62,9 @@ export async function handleGroupMessage(msg) {
 
   if (!isBotMentioned) return;
 
-  // Anti-secuestro: si el grupo no está autorizado, ignorar aunque mencionen al bot.
-  if (!(await isGroupAllowed(chatId, groupName))) {
+  // Anti-secuestro: solo responde en grupos autorizados. La autorización al vuelo
+  // (jefe/admin presente) y el auto-leave los maneja group-guard antes de llegar aquí.
+  if (!isGroupAuthorized(chatId)) {
     console.log(`[Bot] Grupo no autorizado "${groupName}" — ignorando mención de ${sender}`);
     return;
   }
