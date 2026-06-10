@@ -1112,9 +1112,12 @@ owner eligió el camino robusto: un **service account de GCP** con el Sheet **co
   grupo). Sirve para que el equipo lo pida on-demand y para verificar el pipeline en vivo. Tests 22/22.
 - **Rollback:** `juanito-backup-…-pre-sheets.tar.gz` + imagen `juanito-agent:pre-sheets-…`.
 
-**Verificación final pendiente (no bloqueante):** (a) que aparezca "Ventas EstadoX" como ✅ en `/grupos`
-(confirma que Juanito quedó en el grupo y se resolverá por nombre); (b) ver el post real del cron a las
-20:00 (o forzar con un cron de prueba). El preview `/reporte` ya cubre fetch+formato end-to-end.
+**✅ VERIFICADO EN VIVO (2026-06-10):** `/grupos` muestra "Ventas EstadoX" como ✅ (Juanito está en el
+grupo → el cron lo resolverá por nombre) y `/reporte` devuelve el reporte real por DM. Se validó además
+el reporte de una ventana completa (8/6 8pm → 9/6 8pm = 13 entradas) generándolo contra el Sheet real.
+**Único pendiente (no bloqueante):** ver el **primer post automático del cron hoy a las 20:00** en el
+grupo (se decidió dejarlo salir natural, sin cron de prueba, para no mandar un mensaje fuera de horario
+al grupo de ventas).
 
 ### 🔴 Alta prioridad — BLOQUEANTE para entregar al jefe
 
