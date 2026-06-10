@@ -1227,9 +1227,17 @@ ya está cubierto por `decidePushAction` (§11.3, Bug 2). Vale la pena mencionar
   un Push 0 "nueva call HOY" si la nueva hora cae hoy. Es aceptable/útil (avisa que la call se movió a hoy);
   no se filtró por `old_invitee` para no agregar otra llamada a la API. Documentado por si molesta luego.
 
-**⏳ PENDIENTE: deploy al VPS** (`pscp src/ test/`, `docker compose up -d --build`, backup pre-deploy) y
-**verificación en vivo** del primer Push 0 real. Como Calendly corre con `DRY_RUN=false`, al desplegar queda
-activo de inmediato (gateado por opt-in/contact_jid/pausa). Para apagarlo sin redeploy: `CALENDLY_PUSH0_ENABLED=false`.
+**✅ DESPLEGADO LIVE (2026-06-10 ~21:01 UTC / 16:01 Bogotá).** `pscp src test docker-compose.yml` +
+`docker compose up -d --build`. WA reconectó **sin QR** (`opened connection to WA`, `Conectado ✅`),
+`[Calendly] Jobs activos ✅ (DRY-RUN: false)` y `[Sheets] Job activo ✅` (sin disrupción al reporte de las
+20:00). Verificado dentro del contenedor: env `CALENDLY_PUSH0_ENABLED=true` / `_RECENT_MIN=10` presentes y
+los exports `decidePush0`/`buildPush0Message`/`push2HasRunToday` resuelven (módulo carga limpio). Como Calendly
+corre con `DRY_RUN=false`, el Push 0 quedó **activo de inmediato** (gateado por opt-in/contact_jid/pausa). El
+poll corre cada 5 min; el próximo booking de hoy que entre pasadas las 6:30am dispara el aviso.
+- **Apagar sin redeploy:** `CALENDLY_PUSH0_ENABLED=false` en el `.env` del VPS + `docker compose up -d`.
+- **Rollback:** `/root/juanito-backup-20260610-205918-pre-push0.tar.gz` + imagen `juanito-agent:pre-push0-20260610-205918`.
+- **Pendiente (no bloqueante):** ver el **primer Push 0 real** en vivo cuando ocurra una reserva de último
+  minuto (caso Sebas), y confirmar con el closer que llegó el aviso.
 
 **Webhooks (descartado por ahora):** la vía instantánea (`invitee.created`) exige exponer un puerto HTTP →
 choca con *"no exponer puertos"*. Queda como evolución futura si el lag de ≤5 min del poll llega a molestar.
@@ -1366,11 +1374,12 @@ choca con *"no exponer puertos"*. Queda como evolución futura si el lag de ≤5
   `/root/juanito-backup-20260610-100151-pre-grupos.tar.gz` + imagen `juanito-agent:pre-grupos-20260610-100151`.
   **✅ VERIFICADO EN VIVO (2026-06-10):** el owner probó `/grupos` desde su WhatsApp real y funciona
   perfecto. Feature cerrada de punta a punta.
-- **✅ IMPLEMENTADO (2026-06-10) — Aviso de "nueva call HOY" a los closers ("Push 0", idea Sebas, ver §18.C):**
+- **✅ DESPLEGADO LIVE (2026-06-10) — Aviso de "nueva call HOY" a los closers ("Push 0", idea Sebas, ver §18.C):**
   acotado a calls del **mismo día**; cierra el hueco en que un closer queda ciego hasta 25 min antes de una
   call que entró después de los digests (protocolo "Push for Calls" de liberar agenda). Coincide con Push 1/2/3:
   sólo se dispara cuando el Push 2 del día ya pasó (→ sólo queda el Push 3). Poll-based, reusa `deliver()` +
-  dedup, gateado por `created_at` reciente. Tests 63/63. **Pendiente: deploy al VPS + verificación en vivo.**
+  dedup, gateado por `created_at` reciente. Tests 63/63. Corriendo en el VPS (`DRY_RUN=false`). **Pendiente
+  (no bloqueante): ver el primer Push 0 real en vivo.**
 - **Capturar LID del jefe automáticamente** al primer DM reconocido por `BOSS_PHONE`.
 - **Rate limit configurable por grupo** (hoy `GROUP_DAILY_LIMIT` es global).
 - **Roadmap baby-proofing restante:** (4) no mandar a terceros por orden del jefe (DIFERIDO: se implementa
