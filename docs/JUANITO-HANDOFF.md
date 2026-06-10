@@ -5,14 +5,17 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-06-09**
+Última actualización: **2026-06-10**
 
 ---
 
 ## 0. TL;DR — estado al 2026-06-09 (leer primero)
 
 - **Repo:** `main` == `origin/main`, working tree limpio.
-- **VPS:** contenedor sano, WA conectado sin QR, `CALENDLY_DRY_RUN=true`.
+- **VPS:** contenedor sano, WA conectado sin QR, `CALENDLY_DRY_RUN=true`, `GROUP_AUTOLEAVE=on`.
+- **✅ Autorización de grupos (anti-secuestro) — SHIPPED + VERIFICADO LIVE (2026-06-10):** Juanito
+  solo responde/permanece en grupos donde hay (o lo agregó) un boss/admin; si no, se sale. Simétrico:
+  si el jefe sale del grupo, revoca y se va. PRs `#4`+`#5` en `main`. Detalle completo en §18 🔴.
 - **Juanito como asistente WA:** pruebas básicas pasadas. **BUG CRÍTICO DE ROL POR
   CONTEXTO: FIX DESPLEGADO LIVE EN EL VPS (2026-06-09).** En grupos ahora usa un
   prompt aislado de chatbot general (sin memoria/notas/recordatorios/resúmenes), historial
@@ -928,20 +931,58 @@ como receta reusable para sumar más closers:**
 
 ### 🔴 Alta prioridad — BLOQUEANTE para entregar al jefe
 
-- **✅ SHIPPED (2026-06-10) — Default-deny anti-secuestro de grupos.** Juanito ya NO responde si lo
-  agregan a un grupo no autorizado. Antes, cualquiera lo agregaba y con solo @mencionarlo obtenía
-  respuestas de Claude (única barrera: el rate limit). Ahora: listener `group-participants.update`
-  capta quién agrega al bot → si lo agrega boss/admin (por JID/LID vía `roleOf`) o hay un boss/admin
-  en el grupo, se autoriza; si no, Juanito **se sale** del grupo (≈1-3s). Gate independiente en
-  `handleGroupMessage` (ignora menciones de grupos no autorizados; autoriza al vuelo si hay boss/admin
-  presente — restart-safe). Comando admin `/grupo on|off|status`. El cron de resúmenes ya no procesa
-  grupos no autorizados. Nueva tabla `authorized_groups` (migración idempotente). Rama
-  `feat/group-authorization` (commit `dea2939`), copiada al VPS + `docker compose up -d --build`
-  (tabla creada, helpers cargados, WA reconectó sin QR, contenedor sano, 0 restarts). Tests: 116/116.
-  Backup pre-deploy: `juanito-backup-20260610-003201-pre-groupauth.tar.gz`. Defensa en profundidad
-  manual sugerida: privacidad de la cuenta WA → Grupos → "Mis contactos". **Falta:** prueba en vivo
-  (que un no-admin lo agregue a un grupo nuevo y confirmar que se sale). Follow-up: comando `/grupos`
-  (ver 🟡 Media). PR opcional para fusionar la rama a `main`.
+- **✅ SHIPPED + VERIFICADO LIVE (2026-06-10) — Autorización de grupos default-deny con simetría
+  (anti-secuestro).** Juanito ya NO responde ni permanece en grupos no autorizados. Antes, cualquiera
+  lo agregaba a un grupo y con solo @mencionarlo obtenía respuestas de Claude (única barrera: el rate
+  limit). PRs `#4` (base, commit `dea2939`) y `#5` (guard robusto + simetría, commit `0753db2`),
+  ambos fusionados a `main`. **Repo = lo que corre live en el VPS.**
+
+  **Modelo de autorización (tabla `authorized_groups`, migración idempotente):** un grupo está
+  autorizado si lo agregó un boss/admin, si un boss/admin es participante, o si un admin hizo
+  `/grupo on`. La detección de boss/admin es por JID/LID vía `roleOf` (mismo criterio que en DMs;
+  depende de `BOSS_LID`/`ADMIN_LID` bien seteados en `.env` — verificado que los 4 grupos del jefe
+  se detectan correctamente).
+
+  **Comportamiento simétrico (verificado en vivo con el grupo de prueba "La ganga"):**
+  | Situación | Acción |
+  |---|---|
+  | Add por desconocido (sin boss/admin en el grupo) | REVOKE implícito + **LEFT** (se sale) |
+  | Add por boss/admin, o boss/admin presente | KEEP (autoriza) |
+  | El boss/admin **se sale** y no queda ninguno | **REVOKE + LEFT** |
+  | Sacan al bot del grupo | limpia su fila en `authorized_groups` |
+  | `/grupo on\|off\|status` (admin/boss, dentro del grupo) | control manual |
+
+  **Arquitectura (`src/bot/group-guard.js`) — NO depender solo del evento, que es frágil:**
+  - `enforceGroup()` (respeta cache de la tabla) → flujo por-mensaje y add-event.
+  - `reevaluateGroup()` (re-chequea SIEMPRE, autoriza o revoca+sale) → barrido y evento de salida.
+  - `sweepGroups()` al arrancar → **auto-sanador**: re-valida TODOS los grupos en cada arranque, cubre
+    cambios ocurridos mientras el bot estaba caído (Baileys NO re-emite `group-participants.update` al
+    reconectar — por eso el evento solo no basta).
+  - Listener `group-participants.update` extendido a `add`/`remove`/`leave`, con callbacks `onGroupJoin`
+    y `onGroupChange` en `src/index.js`.
+  - El cron de resúmenes (`summaries.js`) ya no procesa grupos no autorizados.
+
+  **Flag de seguridad `GROUP_AUTOLEAVE` (`log` | `on`):** `log` (default) SOLO registra qué haría
+  (`WOULD-LEAVE`/`REVOKE`) sin salirse de nada — sirve para verificar la detección de boss/admin antes
+  de activar el auto-leave real. En el VPS está en **`on`**. ⚠️ Tuvo que agregarse al bloque
+  `environment:` del `docker-compose.yml` (antes no llegaba al contenedor) + documentado en `.env.example`.
+
+  **Bug corregido en el camino:** el listener tiraba `p?.startsWith is not a function` porque los
+  participantes a veces vienen como objetos `{id,jid,lid}` y no strings → se normaliza con un helper
+  `pid()`. Sin esto, el evento en vivo fallaba y solo el barrido al reiniciar salvaba la revocación.
+
+  **Operación / requisitos para que funcione el auto-leave:**
+  - `.env` del VPS: `GROUP_AUTOLEAVE=on` (ya seteado). Para desactivar el auto-leave temporalmente:
+    `GROUP_AUTOLEAVE=log` + `docker compose up -d --force-recreate` (recordar: como el env va en
+    `environment:` y no en `env_file`, a veces `up -d` no recrea solo → usar `--force-recreate`).
+  - **Para que RESPONDA** sigue haciendo falta una **@mención real** de WhatsApp (no basta texto
+    "juanito"); los no-admin tienen tope `GROUP_DAILY_LIMIT` (default 5/día).
+  - Defensa en profundidad manual sugerida: privacidad de la cuenta WA → Grupos → "Mis contactos".
+  - Backups pre-deploy en el VPS: `juanito-backup-20260610-003201-pre-groupauth.tar.gz` (+ otros).
+  - Tests: **116/116** (cobertura de `authorized_groups` y `groupHasPrivilegedMember`). El guard en sí
+    no tiene test unitario (depende del socket WA); se validó en vivo en el VPS.
+
+  **Follow-up:** comando admin `/grupos` (ver 🟡 Media) para listar/controlar los grupos de Juanito.
 
 - **✅ BUG CRÍTICO de rol por contexto: FIX DESPLEGADO LIVE EN EL VPS** (sesión 2026-06-09,
   commit `bc05728`). Ver §17 para detalle + registro del deploy y artefactos de rollback.
