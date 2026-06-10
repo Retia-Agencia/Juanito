@@ -14,15 +14,19 @@ import { COL } from '../src/sheets/columns.js';
 
 // ─── parseSubmittedAt ─────────────────────────────────────────────────────────
 
-test('parseSubmittedAt entiende D/M/YYYY H:MM:SS (día primero)', () => {
-  // 9 de junio, no 6 de septiembre.
+test('parseSubmittedAt entiende D/M/YYYY H:MM:SS (día primero) y ajusta GMT-2 → Bogotá', () => {
+  // 9 de junio (no 6 de septiembre), y 17:03 GMT-2 = 14:03 Bogotá (−3h).
   const ms = parseSubmittedAt('9/6/2026 17:03:04');
-  assert.equal(ms, Date.UTC(2026, 5, 9, 17, 3, 4));
+  assert.equal(ms, Date.UTC(2026, 5, 9, 14, 3, 4));
 });
 
-test('parseSubmittedAt tolera medianoche y segundos opcionales', () => {
-  assert.equal(parseSubmittedAt('10/6/2026 0:34:09'), Date.UTC(2026, 5, 10, 0, 34, 9));
-  assert.equal(parseSubmittedAt('1/1/2026 8:05'), Date.UTC(2026, 0, 1, 8, 5, 0));
+test('parseSubmittedAt tolera medianoche y segundos opcionales (con ajuste −3h)', () => {
+  assert.equal(parseSubmittedAt('10/6/2026 0:34:09'), Date.UTC(2026, 5, 9, 21, 34, 9));
+  assert.equal(parseSubmittedAt('1/1/2026 8:05'), Date.UTC(2026, 0, 1, 5, 5, 0));
+});
+
+test('parseSubmittedAt: el desfase de zona es configurable (aheadHours=0 = sin ajuste)', () => {
+  assert.equal(parseSubmittedAt('9/6/2026 17:03:04', 0), Date.UTC(2026, 5, 9, 17, 3, 4));
 });
 
 test('parseSubmittedAt devuelve null para encabezado o basura', () => {
@@ -68,13 +72,14 @@ const WIN = {
   endMs: Date.UTC(2026, 5, 10, 20, 0, 0),
 };
 
-test('summarize cuenta sólo las filas dentro de la ventana (bordes incluidos)', () => {
+test('summarize cuenta sólo las filas dentro de la ventana (bordes incluidos, hora origen GMT-2)', () => {
+  // Las marcas vienen en GMT-2; tras −3h se comparan contra la ventana de Bogotá.
   const rows = [
     ['Submitted At'], // encabezado → fuera
-    row({ submittedAt: '9/6/2026 19:59:59' }), // justo antes del inicio → fuera
-    row({ submittedAt: '9/6/2026 20:00:00' }), // inicio inclusivo → dentro
-    row({ submittedAt: '10/6/2026 0:34:09' }), // dentro
-    row({ submittedAt: '10/6/2026 20:00:00' }), // fin exclusivo → fuera
+    row({ submittedAt: '9/6/2026 22:59:59' }), // → 19:59:59 Bogotá → antes del inicio → fuera
+    row({ submittedAt: '9/6/2026 23:00:00' }), // → 20:00:00 Bogotá → inicio inclusivo → dentro
+    row({ submittedAt: '10/6/2026 3:34:09' }), // → 0:34:09 Bogotá → dentro
+    row({ submittedAt: '10/6/2026 23:00:00' }), // → 20:00:00 Bogotá → fin exclusivo → fuera
   ];
   const s = summarize(rows, WIN);
   assert.equal(s.total, 2);
