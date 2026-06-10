@@ -9,10 +9,16 @@ un cambio relevante.
 
 ---
 
-## 0. TL;DR — estado al 2026-06-09 (leer primero)
+## 0. TL;DR — estado al 2026-06-10 (leer primero)
 
 - **Repo:** `main` == `origin/main`, working tree limpio.
-- **VPS:** contenedor sano, WA conectado sin QR, `CALENDLY_DRY_RUN=true`, `GROUP_AUTOLEAVE=on`.
+- **VPS:** contenedor sano, WA conectado sin QR, **`CALENDLY_DRY_RUN=false` (piloto Rodriguez LIVE
+  ongoing, ver §11.9)**, `GROUP_AUTOLEAVE=on`.
+- **🟢 Calendly EN PRODUCCIÓN para Sebastian RODRIGUEZ (2026-06-10):** envío real activado ongoing
+  (a diario), todos los demás closers OFF, admins controlan con `/calendly on|off` desde WhatsApp.
+  Salazar pausado (`/calendly off`); resto sin opt-in. `contact_jid` de Rodriguez backfilleado a su
+  LID real `158025419608301@lid` (su autocaptura por pushName falló — su nombre WA no trae "Rodriguez";
+  ver §11.9). **Primera salida real:** Push 2 natural 6:30am. Botón de pánico: `/calendly off`.
 - **✅ Autorización de grupos (anti-secuestro) — SHIPPED + VERIFICADO LIVE (2026-06-10):** Juanito
   solo responde/permanece en grupos donde hay (o lo agregó) un boss/admin; si no, se sale. Simétrico:
   si el jefe sale del grupo, revoca y se va. PRs `#4`+`#5` en `main`. Detalle completo en §18 🔴.
@@ -480,8 +486,42 @@ Ejecutado end-to-end siguiendo el checklist de §18.A. Resultados:
 de `abogados` NO se ha visto en vivo (sí en tests + preview). Para verlo en vivo: opt-in de
 Natalia González o Daniela Camacho (tienen citas de abogados) y repetir la receta.
 
-**Estado de opt-ins al cierre:** Salazar ✅ verificado con hilo (recibe). Rodriguez `self` pero
-`contact_jid=null` (NO recibe hasta que escriba de nuevo y capture hilo). Resto sin opt-in.
+**Estado de opt-ins al cierre del piloto Salazar:** Salazar ✅ verificado con hilo (recibe).
+Rodriguez `self` pero `contact_jid=null` (NO recibía hasta capturar hilo). Resto sin opt-in.
+→ **Actualizado por el piloto Rodriguez, ver §11.9.**
+
+### 11.9 🟢 Producción para Sebastian RODRIGUEZ (2026-06-10) — envío real ongoing
+
+Objetivo del owner: dejar a **Rodriguez** recibiendo sus pushes precall reales **a diario**
+(ongoing), con **todos los demás closers OFF** y control desde WhatsApp con `/calendly on|off`.
+
+**Cómo quedó (en el VPS):**
+1. **Salazar pausado** (`/calendly off` → `calendly_optins.paused=1`, phone `573054312905`). Era el
+   único otro closer con opt-in verificado, así que sin pausarlo habría recibido. Resto: sin opt-in.
+2. **Rodriguez: `contact_jid` backfilleado a mano** a `158025419608301@lid` (su `source='self'` ya
+   estaba). Quedó `RECIBE`.
+3. **`CALENDLY_DRY_RUN=false`** en `/root/juanito/.env` (backup `.env.bak-*`). Recreado con
+   `docker compose up -d`; WA reconectó sin QR; `[Calendly] Jobs activos (DRY-RUN: false)`. Crons en
+   default (sin cron de prueba). **Primera salida real:** Push 2 natural **6:30am**.
+
+**🔎 Por qué hubo que backfillear (la autocaptura por pushName es FRÁGIL):** Rodriguez escribió
+"Hola" (21:56) desde un **LID NUEVO `158025419608301@lid`** — distinto al `20671711162446@lid`
+documentado el 2026-06-08 (los LID pueden cambiar por sesión/dispositivo). Ese LID no resolvió a
+teléfono y `resolveCloserByPushName` lo rechazó: su pushName de WhatsApp **no contiene "Rodriguez"**
+y al haber dos "Sebastian" el match es ambiguo → `handleCloserOptin` devolvió `false` en silencio
+(sin log), por eso `contact_jid` quedó null. El JID real se obtuvo del log de cada DM entrante
+(`[Debug] fromMe=false rawJid=... ` en `src/whatsapp/index.js:226`; el pushName NO se loguea) y el
+owner confirmó que el "Hola" era Sebas antes de backfillear (evita filtrar datos de prospectos a un
+tercero). Contraste con Salazar, cuyo pushName "Juan Sebastian Salazar davila" SÍ resolvió solo.
+
+**Deuda técnica (no bloqueante):** la autocaptura de `contact_jid` falla para closers cuyo nombre WA
+no incluye el apellido completo de `closers.js`. Si el LID de Rodriguez vuelve a cambiar hay que
+re-backfillear. Robustecer: mapear LID(s) conocidos en `closers.js`, o un comando admin para asociar
+un LID a un closer. Ver §18 media prioridad.
+
+**Verificación pendiente (mañana ~6:35am):** confirmar con Rodriguez que llegó el digest del Push 2
+con los links wa.me y que un link abre el chat del lead con el precall ya escrito. Si el LID cambió
+y no llega, re-capturar (tail de `[Debug] rawJid=` mientras escribe) y re-backfillear.
 
 ---
 
@@ -996,11 +1036,11 @@ como receta reusable para sumar más closers:**
   `settings(key, value)` + override de env (`GROUP_REPLIES_ENABLED`), tool `set_config` con
   whitelist de claves (gateado a admin/boss) y comando `/config` para leer. No implementado aún.
 
-- **✅ RESUELTO (2026-06-09) — Captura de `contact_jid` en opt-in real: VALIDADA con Salazar.**
-  Ver §11.8. El opt-in real capturó `contact_jid` automáticamente (clave: mandar 2 mensajes — el
-  1º de una identidad nueva llega vacío por el handshake). Queda solo el caso de Rodriguez
-  (fila vieja con `contact_jid=null`): debe escribirle de nuevo a Juanito para capturar su hilo.
-  Receta original (sirve para los closers restantes):
+- **✅ RESUELTO (2026-06-10) — Rodriguez en producción.** Su `contact_jid` quedó poblado por
+  **backfill manual** a `158025419608301@lid` (la autocaptura por pushName falló, ver §11.9), no por
+  reescribir. Ya RECIBE (ongoing, DRY_RUN=false). El caso Salazar (§11.8) sí autocapturó.
+  Receta de captura automática (sirve para los closers restantes, **cuando su pushName SÍ trae el
+  apellido**):
   1. En el VPS, dejar corriendo el tail filtrado **antes** de que el closer escriba:
      ```bash
      docker logs juanito-agent -f --tail 5 2>&1 | grep -iE "closer|registrad|opt-in|optin|2067171116244|handleCloser"
@@ -1021,9 +1061,11 @@ como receta reusable para sumar más closers:**
 
 ### 🟡 Media prioridad
 
-- **✅ RESUELTO en lo general (2026-06-09, ver §11.8): la captura de `contact_jid` SÍ funciona** —
-  validada con Salazar (2 mensajes, resolución por pushName). Queda solo el caso puntual de
-  **Rodriguez** (fila vieja `contact_jid=null`): pedirle que le escriba de nuevo a Juanito.
+- **⚠️ DEUDA: autocaptura de `contact_jid` frágil cuando el pushName no trae el apellido.**
+  Validada con Salazar (autocapturó). FALLÓ con **Rodriguez** (2026-06-10): su pushName WA no contiene
+  "Rodriguez" y al haber dos "Sebastian" `resolveCloserByPushName` quedó ambiguo → se resolvió por
+  **backfill manual** a su LID `158025419608301@lid` (ver §11.9). Robustecer: mapear LID(s) en
+  `closers.js` o comando admin para asociar LID→closer.
   Contexto histórico del diagnóstico: Sebas escribió a Juanito
   desde su número de trabajo (`573102212005`) — confirmado visualmente en el celular con la SIM de Juanito —
   pero su fila quedó con `source='self'`, **`contact_jid=null`**. Si su DM hubiera pasado por
