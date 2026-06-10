@@ -194,3 +194,21 @@ test('/grupos tolera que WhatsApp no esté conectado', async () => {
   );
   assert.match(out, /No pude listar los grupos/);
 });
+
+// ─── /reporte (preview on-demand del reporte de leads, admin-only) ────────────
+
+test('/reporte (admin) devuelve el mensaje del reporte', async () => {
+  const deps = { buildSheetsReport: async () => ({ message: '📊 Reporte de leads — total 7' }) };
+  const out = await handleCommand({ text: '/reporte', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /Reporte de leads — total 7/);
+});
+
+test('/reporte para no-admin → deflexión', async () => {
+  assert.match(await handleCommand({ text: '/reporte', sender: 'b@lid', role: 'boss' }, {}), /equipo técnico/);
+});
+
+test('/reporte informa si la generación falla', async () => {
+  const deps = { buildSheetsReport: async () => { throw new Error('403 sin acceso'); } };
+  const out = await handleCommand({ text: '/reporte', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /No pude generar el reporte ahora: 403 sin acceso/);
+});

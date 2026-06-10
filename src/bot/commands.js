@@ -37,7 +37,26 @@ export async function handleCommand({ text, sender, role }, deps = {}) {
     return handleGrupos({ text, sender }, deps);
   }
 
+  // /reporte — genera el reporte diario de leads del Sheet AHORA y lo devuelve como
+  // preview por DM (no lo publica en el grupo; eso lo hace el cron de las 20:00). SOLO admins.
+  if (cmd === '/reporte' || cmd === '/reportes') {
+    if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
+    return handleReporte(deps);
+  }
+
   return null;
+}
+
+async function handleReporte({ buildSheetsReport } = {}) {
+  if (!buildSheetsReport) {
+    return 'El reporte de leads no está configurado (falta el service account o el grupo).';
+  }
+  try {
+    const { message } = await buildSheetsReport();
+    return message;
+  } catch (e) {
+    return `No pude generar el reporte ahora: ${e.message}`;
+  }
 }
 
 // /grupos                  → lista numerada de TODOS los grupos + su estado de autorización
