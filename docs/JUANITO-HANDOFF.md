@@ -1064,23 +1064,40 @@ owner eligió el camino robusto: un **service account de GCP** con el Sheet **co
 - [ ] **Compartir el Sheet** (`…JmtlV4`) con el email del SA, permiso **Viewer**.
 - [ ] Agregar a Juanito al grupo **"Ventas EstadoX"** (al agregarlo un admin queda auto-autorizado).
 
-**Diseño propuesto (listo para construir en cuanto llegue la key):**
-- Nuevo módulo `src/sheets/index.js` (lector + parse PURO, testeable) y `src/scheduler/sheets-report.js`
-  (cron 20:00, arma y envía el reporte). Registrar el job en `src/scheduler/index.js`.
-- Lectura vía Sheets API v4 (`googleapis` o REST con JWT del SA). Leer el tab "IA para abogados _ EstadoX".
-- Parsear `Submitted At` (col T) como **`D/M/YYYY H:MM:SS`** con `TZ=America/Bogota`; filtrar a
-  `[20:00 ayer, 20:00 hoy)`. Contar total + agrupar por `M`/`F`/`G` (ignorando vacíos) → porcentajes.
-- Formatear mensaje WA (sin PII) y enviar al `group_id` de "Ventas EstadoX" vía `sendMessage(groupId, …)`
-  **desde el proceso principal** (igual que Calendly: un `node -e` aparte NO tiene socket de WA). Resolver
-  el `group_id` con `listGroups()` o el log de `group-participants add`.
-- Env nuevas (agregar al `environment:` del compose, gotcha §12): `SHEETS_REPORT_GROUP`,
-  `SHEETS_LEADS_ID=1pg3…JmtlV4`, `SHEETS_LEADS_TAB="IA para abogados _ EstadoX"`,
-  `SHEETS_REPORT_CRON=0 20 * * *`, `GOOGLE_SA_KEY` (path al JSON montado o el JSON en base64).
-- Tests puros del parse/ventana/porcentajes con un fixture de filas (sin red), patrón de Calendly.
+**✅ CÓDIGO PURO CONSTRUIDO (2026-06-10) — módulo `src/sheets/` por carpeta, un archivo por concern:**
+- `src/sheets/columns.js` — índices 0-based de las 4 columnas que importan (`submittedAt=T=19`,
+  `iaPrev=F=5`, `inversion=G=6`, `momento=M=12`) + `CATEGORIES` (define el desglose y su orden; `iaPrev`
+  normaliza TRUE/FALSE → Sí/No).
+- `src/sheets/parse.js` — `parseSubmittedAt('D/M/YYYY H:MM:SS')` → epoch **naive** (Date.UTC sobre los
+  componentes de pared de Bogotá, sin re-aplicar zona). Segundos opcionales, día-primero, rechaza el
+  encabezado y formatos ISO.
+- `src/sheets/window.js` — `computeWindow(now)` → `{startMs, endMs}` = `[ayer 20:00, hoy 20:00)` en
+  America/Bogota (mismo criterio naive que parse → comparación directa). `zonedParts` saca los
+  componentes locales vía `Intl.DateTimeFormat`.
+- `src/sheets/aggregate.js` — `summarize(rows, window)` → `{ total, breakdown[] }`. Filtra por ventana
+  (bordes: inicio inclusivo, fin exclusivo), agrupa cada categoría y saca **% sobre los NO vacíos**
+  (`answered`). Tolera que se cuele el encabezado.
+- `src/sheets/report.js` — `formatReport(summary, window)` → mensaje WhatsApp **sin PII** (total +
+  periodo `D/M 8:00pm → D/M 8:00pm` + desglose con `valor: n (x%)`). Caso vacío explícito.
+- `src/sheets/index.js` — barrel con la API pública. **Tests: `test/sheets.test.js` 9/9 verde** (parse,
+  ventana, agregación con %, formato sin PII), sin red ni DB → corre en Windows.
+
+**⏳ PENDIENTE (necesita entregables del owner / wiring de runtime):**
+- `src/sheets/client.js` — seam IMPURO ya creado pero `fetchLeadRows()` **lanza "no implementado"**:
+  requiere el **service account** (env `GOOGLE_SA_KEY`). Plan dejado en comentarios: firmar JWT RS256 con
+  `crypto` nativo (sin deps nuevas), token en `oauth2.googleapis.com/token`, `GET …/v4/spreadsheets/{id}/
+  values/{tab}` → `data.values`. Defaults `SHEETS_LEADS_ID`/`SHEETS_LEADS_TAB` ya puestos.
+- `src/scheduler/sheets-report.js` — cron 20:00: `fetchLeadRows()` → `summarize` → `formatReport` →
+  `sendMessage(SHEETS_REPORT_GROUP, …)` **desde el proceso principal** (un `node -e` aparte NO tiene
+  socket de WA). Registrar en `src/scheduler/index.js` (autodesactivar si falta `GOOGLE_SA_KEY`/grupo).
+- Resolver el `group_id` real de **"Ventas EstadoX"** (`listGroups()` o el log de `group-participants add`)
+  → `SHEETS_REPORT_GROUP`.
+- Agregar las env nuevas al `environment:` del `docker-compose.yml` (gotcha §12) — ya documentadas en
+  `.env.example`.
 
 **Para retomar:** (1) owner completa el checklist de arriba (SA key + compartir Sheet + agregar al grupo);
-(2) implementar módulo + cron + tests; (3) probar con una ventana corta (cron de prueba) antes de dejarlo
-a las 20:00.
+(2) implementar `client.js` + `scheduler/sheets-report.js` + wiring; (3) probar con una ventana corta
+(cron de prueba) antes de dejarlo a las 20:00. El núcleo de cálculo ya está hecho y verificado.
 
 ### 🔴 Alta prioridad — BLOQUEANTE para entregar al jefe
 
