@@ -1,34 +1,98 @@
 // src/sheets/client.js
 // IMPURO. Lector del Google Sheet de leads vía Sheets API v4. Es el ÚNICO archivo
-// del módulo que toca la red; el resto (parse/window/aggregate/report) es puro y
-// testeable sin credenciales.
+// del módulo que toca la red; el resto (parse/window/aggregate/report) es puro.
 //
-// ── PENDIENTE: requiere que el owner entregue el service account ──────────────────
-// Checklist (ver §18.B del handoff):
-//   1. Crear un service account en GCP + habilitar "Google Sheets API".
-//   2. Generar su JSON key → llega al VPS como secreto (env GOOGLE_SA_KEY), NO al repo.
-//   3. Compartir el Sheet (…JmtlV4) con el email del SA, permiso Viewer.
+// Autenticación: service account con JWT RS256 firmado con `crypto` nativo (SIN
+// dependencias nuevas — no usamos `googleapis`). Flujo OAuth 2.0 server-to-server:
+//   1. firmamos un JWT con la private_key del SA,
+//   2. lo canjeamos por un access_token en oauth2.googleapis.com/token,
+//   3. llamamos GET …/v4/spreadsheets/{id}/values/{tab} con ese token.
 //
-// Env que consumirá:
-//   GOOGLE_SA_KEY     JSON del service account (o path a un archivo montado).
-//   SHEETS_LEADS_ID   ID del Sheet (default abajo).
-//   SHEETS_LEADS_TAB  Nombre de la pestaña a leer.
-//
-// Plan de implementación (sin dependencias nuevas): firmar un JWT RS256 con la
-// private_key del SA usando el `crypto` nativo, intercambiarlo por un access token
-// en https://oauth2.googleapis.com/token, y llamar
-//   GET https://sheets.googleapis.com/v4/spreadsheets/{id}/values/{tab}
-// devolviendo `data.values` (arreglo de filas). Eso alimenta a summarize().
+// Credenciales por env GOOGLE_SA_KEY, que acepta (en este orden):
+//   - el JSON del service account como texto (empieza con '{'),
+//   - una ruta a un archivo .json (lo lee del disco),
+//   - el JSON codificado en base64.
+
+import crypto from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+
+const TOKEN_URI = 'https://oauth2.googleapis.com/token';
+const SCOPE = 'https://www.googleapis.com/auth/spreadsheets.readonly';
 
 export const LEADS_ID = () =>
   process.env.SHEETS_LEADS_ID || '1pg3cP9w9ag7Re8QF5ZM8S2ktNwMRZDCihE7UYJmtlV4';
 
 export const LEADS_TAB = () => process.env.SHEETS_LEADS_TAB || 'IA para abogados _ EstadoX';
 
+// Resuelve GOOGLE_SA_KEY a las credenciales del service account.
+export function loadCredentials(raw = process.env.GOOGLE_SA_KEY) {
+  if (!raw || !String(raw).trim()) {
+    throw new Error('[sheets] falta GOOGLE_SA_KEY (JSON, ruta al .json, o base64). Ver §18.B.');
+  }
+  let text = String(raw).trim();
+  if (!text.startsWith('{')) {
+    if (existsSync(text)) {
+      text = readFileSync(text, 'utf8');
+    } else {
+      // último intento: base64 → JSON
+      try {
+        text = Buffer.from(text, 'base64').toString('utf8');
+      } catch {
+        /* cae al parse de abajo, que lanzará un error claro */
+      }
+    }
+  }
+  const creds = JSON.parse(text);
+  if (!creds.client_email || !creds.private_key) {
+    throw new Error('[sheets] GOOGLE_SA_KEY sin client_email/private_key — ¿es la key JSON correcta?');
+  }
+  return creds;
+}
+
+const b64url = (input) => Buffer.from(input).toString('base64url');
+
+// Firma un JWT y lo canjea por un access_token de Google.
+async function getAccessToken(creds) {
+  const now = Math.floor(Date.now() / 1000);
+  const header = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  const claim = b64url(
+    JSON.stringify({
+      iss: creds.client_email,
+      scope: SCOPE,
+      aud: creds.token_uri || TOKEN_URI,
+      iat: now,
+      exp: now + 3600,
+    })
+  );
+  const signingInput = `${header}.${claim}`;
+  const signature = crypto.createSign('RSA-SHA256').update(signingInput).sign(creds.private_key);
+  const jwt = `${signingInput}.${b64url(signature)}`;
+
+  const res = await fetch(creds.token_uri || TOKEN_URI, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: jwt,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`[sheets] token ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  }
+  return (await res.json()).access_token;
+}
+
 // Devuelve las filas crudas del tab (arreglo de arreglos de celdas), encabezado
 // incluido. summarize() tolera el encabezado (no parsea como fecha → fuera de ventana).
-export async function fetchLeadRows() {
-  throw new Error(
-    '[sheets] fetchLeadRows aún no implementado: falta el service account (GOOGLE_SA_KEY). Ver §18.B.'
-  );
+export async function fetchLeadRows({ id = LEADS_ID(), tab = LEADS_TAB() } = {}) {
+  const creds = loadCredentials();
+  const token = await getAccessToken(creds);
+  // Rango = título de la pestaña entre comillas simples (tiene espacios) → todo el tab.
+  const range = encodeURIComponent(`'${tab}'`);
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${range}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    throw new Error(`[sheets] valores ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  }
+  return (await res.json()).values || [];
 }

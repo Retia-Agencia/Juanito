@@ -7,6 +7,7 @@
 import { CronJob } from 'cron';
 import { startReminderJob } from './reminders.js';
 import { startCalendlyJobs } from './calendly.js';
+import { startSheetsReportJob } from './sheets-report.js';
 import { cleanup } from '../db/index.js';
 
 const TZ = () => process.env.TZ || 'America/Bogota';
@@ -42,6 +43,13 @@ export async function startAllJobs() {
     startCalendlyJobs();
   } catch (err) {
     console.warn('[Scheduler] Calendly no disponible:', err.message);
+  }
+
+  // Reporte diario de leads del Sheet (se autodesactiva si falta GOOGLE_SA_KEY o grupo)
+  try {
+    startSheetsReportJob();
+  } catch (err) {
+    console.warn('[Scheduler] Reporte de Sheets no disponible:', err.message);
   }
 
   // El job de resúmenes lo aporta el Track B. Mientras no exista en la rama,

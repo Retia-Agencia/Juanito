@@ -37,5 +37,14 @@ export const CATEGORIES = [
     key: 'inversion',
     col: COL.inversion,
     label: 'Dispuesto a invertir (hasta $1200 USD)',
+    // El Form guarda frases largas ("No. Es imposible para mi invertir ese monto.")
+    // → las condensamos a 3 categorías legibles para el reporte.
+    normalize: (v) => {
+      const s = v.trim().toLowerCase();
+      if (s.includes('financ')) return 'Sí (financiado)';
+      if (s.startsWith('no')) return 'No';
+      if (s.startsWith('sí') || s.startsWith('si')) return 'Sí';
+      return v.trim();
+    },
   },
 ];
