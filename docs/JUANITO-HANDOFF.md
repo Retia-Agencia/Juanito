@@ -1129,10 +1129,14 @@ muestra el reporte (no la cadencia ni la ventana). Cambios:
 - **📅 Bookearon Calendly:** conteo de la **col I** ("Agenda aquí tu entrevista final…" → URL de invitee
   de Calendly) **no vacía** dentro de la ventana, en el tab de leads (`summarize().calendlyBooked`).
 - **💳 Llegaron al self-checkout:** **fuente distinta** (indicada por el owner) → tab **"📞 Setteo
-  Pendiente"** (`SHEETS_SETTEO_TAB`, mismo spreadsheet). Cuenta filas cuya **col A "Fecha detección"**
-  (`DD/MM/YYYY H:MM`) cae en la ventana **y** **col G "Estado pago" = `💳 Self-checkout`** (los
-  `No hizo self-checkout` no cuentan). Función pura `countSelfCheckout(rows, window)` + lector
-  `fetchSetteoRows()`. ⚠️ La "Fecha detección" se asume en hora **Bogotá sin desfase**
+  Pendiente"** (`SHEETS_SETTEO_TAB`, mismo spreadsheet). Filtra por **col A "Fecha detección"**
+  (`DD/MM/YYYY H:MM`) dentro de la ventana y devuelve **dos números** (pedido del owner 2026-06-10):
+  **`reached`** = todos los del pipeline en la ventana (col G "Estado pago" no vacía — *llegaron*,
+  hayan pagado o no) y **`paid`** = los que marcaron `💳 Self-checkout` (los `No hizo self-checkout`
+  llegaron pero NO pagaron). Se imprime como `Llegaron al self-checkout: {reached} (pagaron: {paid})`.
+  Función pura `countSelfCheckout(rows, window) → {reached, paid}` + lector `fetchSetteoRows()`.
+  El `paid` casa con el "✅ N pagaron" del propio Sheet. ⚠️ La "Fecha detección" se asume en hora
+  **Bogotá sin desfase**
   (`SHEETS_SETTEO_AHEAD_HOURS`, default **0**) — la genera la automatización interna, no el Form GMT-2;
   ajustable si hiciera falta.
 - El cron lee **ambos tabs en paralelo** (`buildSheetsReport`); `/reporte` hereda los cambios. **Tests

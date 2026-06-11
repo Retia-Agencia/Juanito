@@ -53,15 +53,21 @@ export function summarize(rows, { startMs, endMs }, categories = CATEGORIES) {
 
 // Cuenta los self-checkout del tab "📞 Setteo Pendiente" dentro de la ventana.
 // `rows` = filas crudas de ese tab (encabezado incluido; no parsea como fecha → fuera).
-// Filtra por col A ("Fecha detección", DD/MM/YYYY H:MM) y cuenta los que marcaron
-// "💳 Self-checkout" en col G (los "No hizo self-checkout" no cuentan).
+// Filtra por col A ("Fecha detección", DD/MM/YYYY H:MM) y devuelve:
+//   - `reached`: cuántos LLEGARON al self-checkout (toda fila del pipeline en la
+//     ventana, con o sin pago — col G no vacía).
+//   - `paid`: de esos, cuántos SÍ pagaron (col G = "💳 Self-checkout"; los
+//     "No hizo self-checkout" llegaron pero no pagaron).
 export function countSelfCheckout(rows, { startMs, endMs }, aheadHours = SETTEO_AHEAD_HOURS()) {
-  let count = 0;
+  let reached = 0;
+  let paid = 0;
   for (const row of rows || []) {
     const ts = parseSubmittedAt(row?.[SETTEO.fecha], aheadHours);
     if (ts == null || ts < startMs || ts >= endMs) continue;
-    const estado = String(row?.[SETTEO.estadoPago] ?? '');
-    if (/self-?checkout/i.test(estado) && !/no\s+hizo/i.test(estado)) count += 1;
+    const estado = String(row?.[SETTEO.estadoPago] ?? '').trim();
+    if (estado === '') continue; // fila sin estado de pago → no es una entrada del pipeline
+    reached += 1;
+    if (/self-?checkout/i.test(estado) && !/no\s+hizo/i.test(estado)) paid += 1;
   }
-  return count;
+  return { reached, paid };
 }

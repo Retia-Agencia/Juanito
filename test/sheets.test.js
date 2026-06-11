@@ -165,16 +165,17 @@ test('summarize cuenta los bookings de Calendly (col I no vacía en la ventana)'
 
 // ─── countSelfCheckout ────────────────────────────────────────────────────────
 
-test('countSelfCheckout cuenta sólo "Self-checkout" dentro de la ventana (Fecha detección sin desfase)', () => {
+test('countSelfCheckout: reached = todos los del pipeline en ventana; paid = sólo los "Self-checkout"', () => {
   const rows = [
-    ['Fecha detección'], // encabezado → fuera
-    setteoRow({ fecha: '10/06/2026 8:15', estadoPago: '💳 Self-checkout' }), // dentro → cuenta
-    setteoRow({ fecha: '10/06/2026 9:10', estadoPago: 'No hizo self-checkout' }), // dentro pero no cuenta
-    setteoRow({ fecha: '10/06/2026 12:09', estadoPago: '💳 Self-checkout' }), // dentro → cuenta
-    setteoRow({ fecha: '9/6/2026 8:15', estadoPago: '💳 Self-checkout' }), // 9-jun 8:15am < inicio (9-jun 8pm) → fuera
+    ['Fecha detección'], // encabezado → fuera (no parsea fecha)
+    setteoRow({ fecha: '10/06/2026 8:15', estadoPago: '💳 Self-checkout' }), // dentro → reached + paid
+    setteoRow({ fecha: '10/06/2026 9:10', estadoPago: 'No hizo self-checkout' }), // dentro → reached (no pagó)
+    setteoRow({ fecha: '10/06/2026 12:09', estadoPago: '💳 Self-checkout' }), // dentro → reached + paid
+    setteoRow({ fecha: '9/6/2026 8:15', estadoPago: '💳 Self-checkout' }), // 9-jun 8:15am < inicio → fuera
     setteoRow({ fecha: '10/06/2026 20:00', estadoPago: '💳 Self-checkout' }), // fin exclusivo → fuera
+    setteoRow({ fecha: '10/06/2026 10:00', estadoPago: '' }), // sin estado → no es entrada del pipeline
   ];
-  assert.equal(countSelfCheckout(rows, WIN), 2);
+  assert.deepEqual(countSelfCheckout(rows, WIN), { reached: 3, paid: 2 });
 });
 
 // ─── formatReport ─────────────────────────────────────────────────────────────
@@ -183,14 +184,14 @@ test('formatReport arma el mensaje con total, funnel e inversión (sin momento/I
   const rows = [
     row({ submittedAt: '10/6/2026 9:00:00', inversion: 'Sí.', calendly: 'https://calendly.com/x/invitees/1' }),
   ];
-  const summary = { ...summarize(rows, WIN), selfCheckout: 3 };
+  const summary = { ...summarize(rows, WIN), selfCheckout: { reached: 7, paid: 3 } };
   const msg = formatReport(summary, WIN);
   assert.match(msg, /Reporte de leads/);
   assert.match(msg, /9\/6 8:00pm → 10\/6 8:00pm/);
   assert.match(msg, /Total de entradas: 1/);
-  // Funnel: Calendly + self-checkout.
+  // Funnel: Calendly + self-checkout (llegaron + pagaron).
   assert.match(msg, /Bookearon Calendly: 1/);
-  assert.match(msg, /Llegaron al self-checkout: 3/);
+  assert.match(msg, /Llegaron al self-checkout: 7 \(pagaron: 3\)/);
   // Inversión con el rótulo $1000 (la columna sigue siendo la de $1200).
   assert.match(msg, /Dispuesto a invertir \(\$1000 USD\)/);
   assert.match(msg, /Sí: 1 \(100%\)/);

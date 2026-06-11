@@ -29,7 +29,8 @@ export function formatReport(summary, { startMs, endMs } = {}) {
     lines.push(`📅 Bookearon Calendly: ${summary.calendlyBooked}`);
   }
   if (summary.selfCheckout != null) {
-    lines.push(`💳 Llegaron al self-checkout: ${summary.selfCheckout}`);
+    const { reached, paid } = summary.selfCheckout;
+    lines.push(`💳 Llegaron al self-checkout: ${reached} (pagaron: ${paid})`);
   }
 
   for (const cat of summary.breakdown) {
