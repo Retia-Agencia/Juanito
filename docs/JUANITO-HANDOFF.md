@@ -1142,6 +1142,16 @@ muestra el reporte (no la cadencia ni la ventana). Cambios:
 - El cron lee **ambos tabs en paralelo** (`buildSheetsReport`); `/reporte` hereda los cambios. **Tests
   `test/sheets.test.js` 13/13 verde** (cubre Calendly, self-checkout y el nuevo formato).
 
+**✅ PROMEDIO 7 DÍAS — añadido (2026-06-10, pedido del owner):** las tres métricas de arriba (Total de
+entradas, Calendly, self-checkout) muestran al lado el **promedio de los 7 días PREVIOS** (excluye hoy,
+para comparar el dato del día contra su línea base), con **1 decimal**. Formato:
+`Total de entradas: 26  ·  prom. 7d: 22.4` / `…self-checkout: 7 (pagaron: 0)  ·  prom. 7d: 6.1 (pagaron: 1.3)`.
+Función pura `averagePriorDays(rows, setteoRows, now, days=7)` en `aggregate.js`: corre `computeWindow(now − k
+días)` para k=1..7 y promedia `summarize` + `countSelfCheckout` por ventana (Bogotá = UTC-5 fijo → el shift
+de 24h da ventanas diarias limpias; cero llamadas de red extra, reusa las filas ya leídas). `buildSheetsReport`
+adjunta `summary.avg7`; `formatReport` lo imprime sólo si está presente (los tests sin `avg7` siguen pasando).
+**Tests 15/15.**
+
 ### 18.C 🔵 Aviso de "nueva call agendada" a los closers (idea Sebas — 2026-06-10)
 
 **Pedido de Sebas (textual):** *"Si nosotros borramos y generamos espacio en agenda, siguiendo el

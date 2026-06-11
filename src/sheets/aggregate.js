@@ -9,6 +9,9 @@
 
 import { CATEGORIES, COL, SETTEO } from './columns.js';
 import { parseSubmittedAt, SETTEO_AHEAD_HOURS } from './parse.js';
+import { computeWindow } from './window.js';
+
+const DAY_MS = 24 * 3600 * 1000;
 
 const isFilled = (v) => v != null && String(v).trim() !== '';
 
@@ -70,4 +73,32 @@ export function countSelfCheckout(rows, { startMs, endMs }, aheadHours = SETTEO_
     if (/self-?checkout/i.test(estado) && !/no\s+hizo/i.test(estado)) paid += 1;
   }
   return { reached, paid };
+}
+
+// Promedio diario de las tres métricas de funnel sobre los `days` días PREVIOS a
+// `now` (EXCLUYE el día de `now`) → línea base para comparar el dato de hoy. Reusa
+// `summarize` + `countSelfCheckout` por cada ventana diaria. Devuelve promedios sin
+// redondear (el formateo decide los decimales). Sin costo de red: opera sobre las
+// mismas filas ya leídas.
+export function averagePriorDays(rows, setteoRows, now, days = 7) {
+  let total = 0;
+  let calendly = 0;
+  let reached = 0;
+  let paid = 0;
+  for (let k = 1; k <= days; k++) {
+    const win = computeWindow(new Date(now.getTime() - k * DAY_MS));
+    const s = summarize(rows, win);
+    const sc = countSelfCheckout(setteoRows, win);
+    total += s.total;
+    calendly += s.calendlyBooked;
+    reached += sc.reached;
+    paid += sc.paid;
+  }
+  return {
+    days,
+    total: total / days,
+    calendly: calendly / days,
+    reached: reached / days,
+    paid: paid / days,
+  };
 }

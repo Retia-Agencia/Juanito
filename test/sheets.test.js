@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 
 import { parseSubmittedAt } from '../src/sheets/parse.js';
 import { computeWindow, zonedParts } from '../src/sheets/window.js';
-import { summarize, countSelfCheckout } from '../src/sheets/aggregate.js';
+import { summarize, countSelfCheckout, averagePriorDays } from '../src/sheets/aggregate.js';
 import { formatReport } from '../src/sheets/report.js';
 import { COL, SETTEO } from '../src/sheets/columns.js';
 
@@ -178,6 +178,35 @@ test('countSelfCheckout: reached = todos los del pipeline en ventana; paid = só
   assert.deepEqual(countSelfCheckout(rows, WIN), { reached: 3, paid: 2 });
 });
 
+// ─── averagePriorDays ─────────────────────────────────────────────────────────
+
+test('averagePriorDays promedia los 7 días previos y EXCLUYE el día de hoy', () => {
+  const now = new Date('2026-06-10T20:00:00-05:00'); // corte de hoy 10-jun 8pm Bogotá
+  const rows = [
+    // HOY (ventana 9/6 8pm → 10/6 8pm) → NO debe entrar al promedio previo.
+    row({ submittedAt: '10/6/2026 13:00:00', calendly: 'https://calendly.com/x/invitees/hoy' }),
+    row({ submittedAt: '10/6/2026 13:30:00' }),
+    row({ submittedAt: '10/6/2026 14:00:00' }),
+    // Día -1 (ventana cierra 9/6 8pm): 1 entrada, con Calendly.
+    row({ submittedAt: '9/6/2026 13:00:00', calendly: 'https://calendly.com/x/invitees/d1' }),
+    // Día -2 (ventana cierra 8/6 8pm): 2 entradas.
+    row({ submittedAt: '8/6/2026 13:00:00' }),
+    row({ submittedAt: '8/6/2026 14:00:00' }),
+  ];
+  const setteoRows = [
+    setteoRow({ fecha: '10/06/2026 10:00', estadoPago: '💳 Self-checkout' }), // hoy → excluido
+    setteoRow({ fecha: '8/06/2026 10:00', estadoPago: '💳 Self-checkout' }), // día -2 → cuenta
+  ];
+
+  const avg = averagePriorDays(rows, setteoRows, now, 7);
+  assert.equal(avg.days, 7);
+  // prev total = 1 (d-1) + 2 (d-2) = 3 sobre 7 → 0.4 (si colara hoy, sería 1.1)
+  assert.equal(avg.total.toFixed(1), '0.4');
+  assert.equal(avg.calendly.toFixed(1), '0.1'); // 1 booking previo / 7
+  assert.equal(avg.reached.toFixed(1), '0.1'); // 1 self-checkout previo / 7
+  assert.equal(avg.paid.toFixed(1), '0.1');
+});
+
 // ─── formatReport ─────────────────────────────────────────────────────────────
 
 test('formatReport arma el mensaje con total, funnel e inversión (sin momento/IA, sin PII)', () => {
@@ -200,6 +229,20 @@ test('formatReport arma el mensaje con total, funnel e inversión (sin momento/I
   assert.doesNotMatch(msg, /Experiencia previa con IA/);
   // Sin PII: no debe haber correos ni teléfonos.
   assert.doesNotMatch(msg, /@|\+?\d{7,}/);
+});
+
+test('formatReport muestra el promedio de 7 días (1 decimal) junto a cada métrica', () => {
+  const summary = {
+    total: 26,
+    calendlyBooked: 4,
+    selfCheckout: { reached: 7, paid: 0 },
+    breakdown: [],
+    avg7: { days: 7, total: 22.4, calendly: 4.9, reached: 6.0, paid: 1.3 },
+  };
+  const msg = formatReport(summary, WIN);
+  assert.match(msg, /Total de entradas: 26 {2}· {2}prom\. 7d: 22\.4/);
+  assert.match(msg, /Bookearon Calendly: 4 {2}· {2}prom\. 7d: 4\.9/);
+  assert.match(msg, /Llegaron al self-checkout: 7 \(pagaron: 0\) {2}· {2}prom\. 7d: 6\.0 \(pagaron: 1\.3\)/);
 });
 
 test('formatReport con ventana vacía dice que no llegaron postulaciones', () => {
