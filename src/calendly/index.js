@@ -220,7 +220,7 @@ export function formatLeadTime(startIso, tz = TZ()) {
 export const MATERIAL_LINKS = {
   second_brain: {
     brochure: 'https://agencia-dani.github.io/juanito-brochures/second-brain.html',
-    video: 'https://www.youtube.com/watch?v=DSQ5_8OKonU',
+    video: 'https://www.youtube.com/watch?v=6zkrceZQU4Q',
   },
   abogados: {
     brochure: 'https://agencia-dani.github.io/juanito-brochures/ia-abogados.html',
