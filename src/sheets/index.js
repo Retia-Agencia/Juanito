@@ -11,9 +11,9 @@
 //
 // El cron que orquesta todo esto vive en src/scheduler/sheets-report.js (pendiente).
 
-export { COL, CATEGORIES } from './columns.js';
+export { COL, CATEGORIES, SETTEO } from './columns.js';
 export { parseSubmittedAt } from './parse.js';
 export { zonedParts, computeWindow } from './window.js';
-export { summarize } from './aggregate.js';
+export { summarize, countSelfCheckout } from './aggregate.js';
 export { formatReport } from './report.js';
-export { fetchLeadRows, LEADS_ID, LEADS_TAB } from './client.js';
+export { fetchLeadRows, fetchSetteoRows, LEADS_ID, LEADS_TAB, SETTEO_TAB } from './client.js';

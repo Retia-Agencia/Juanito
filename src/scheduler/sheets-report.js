@@ -9,9 +9,9 @@
 
 import { CronJob } from 'cron';
 import { sendMessage, resolveGroupByName } from '../whatsapp/index.js';
-import { fetchLeadRows } from '../sheets/index.js';
+import { fetchLeadRows, fetchSetteoRows } from '../sheets/index.js';
 import { computeWindow } from '../sheets/window.js';
-import { summarize } from '../sheets/aggregate.js';
+import { summarize, countSelfCheckout } from '../sheets/aggregate.js';
 import { formatReport } from '../sheets/report.js';
 
 const TZ = () => process.env.TZ || 'America/Bogota';
@@ -31,9 +31,10 @@ async function resolveTarget() {
 // Núcleo orquestador (sin cron): lee → cuenta → formatea. Devuelve el mensaje y el
 // resumen para que el caller (o una prueba) decida qué hacer.
 export async function buildSheetsReport({ now = new Date() } = {}) {
-  const rows = await fetchLeadRows();
   const win = computeWindow(now);
-  const summary = summarize(rows, win);
+  // El total/Calendly salen del tab de leads; el self-checkout del tab "Setteo Pendiente".
+  const [rows, setteoRows] = await Promise.all([fetchLeadRows(), fetchSetteoRows()]);
+  const summary = { ...summarize(rows, win), selfCheckout: countSelfCheckout(setteoRows, win) };
   return { message: formatReport(summary, win), summary, win };
 }
 

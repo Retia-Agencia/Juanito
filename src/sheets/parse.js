@@ -16,6 +16,11 @@ const RE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/;
 // Cuántas horas ADELANTE de Bogotá viene "Submitted At" (GMT-2 vs GMT-5 = 3h).
 export const SRC_AHEAD_HOURS = () => Number(process.env.SHEETS_SRC_AHEAD_HOURS ?? 3);
 
+// Desfase de la "Fecha detección" del tab "Setteo Pendiente". A diferencia del Form
+// (GMT-2), ese sello lo genera la automatización interna en el reloj del Sheet, que
+// asumimos ya en Bogotá → 0h. Configurable por si hiciera falta ajustarlo.
+export const SETTEO_AHEAD_HOURS = () => Number(process.env.SHEETS_SETTEO_AHEAD_HOURS ?? 0);
+
 // Devuelve el epoch (en el reloj de pared de Bogotá) en ms, o null si el valor no es
 // una marca temporal válida (p.ej. el encabezado "Submitted At" → null → fuera de ventana).
 export function parseSubmittedAt(value, aheadHours = SRC_AHEAD_HOURS()) {

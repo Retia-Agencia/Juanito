@@ -7,14 +7,22 @@
 // valores NO vacíos de esa categoría (las columnas-pregunta están vacías en filas
 // viejas porque el Form evolucionó).
 
-import { CATEGORIES, COL } from './columns.js';
-import { parseSubmittedAt } from './parse.js';
+import { CATEGORIES, COL, SETTEO } from './columns.js';
+import { parseSubmittedAt, SETTEO_AHEAD_HOURS } from './parse.js';
+
+const isFilled = (v) => v != null && String(v).trim() !== '';
 
 export function summarize(rows, { startMs, endMs }, categories = CATEGORIES) {
   const inWindow = (rows || []).filter((row) => {
     const ts = parseSubmittedAt(row?.[COL.submittedAt]);
     return ts != null && ts >= startMs && ts < endMs;
   });
+
+  // Bookings de Calendly: col I (URL de invitee) no vacía dentro de la ventana.
+  const calendlyBooked = inWindow.reduce(
+    (n, row) => n + (isFilled(row?.[COL.calendly]) ? 1 : 0),
+    0
+  );
 
   const breakdown = categories.map((cat) => {
     const counts = new Map();
@@ -40,5 +48,20 @@ export function summarize(rows, { startMs, endMs }, categories = CATEGORIES) {
     return { key: cat.key, label: cat.label, answered, items };
   });
 
-  return { total: inWindow.length, breakdown };
+  return { total: inWindow.length, breakdown, calendlyBooked };
+}
+
+// Cuenta los self-checkout del tab "📞 Setteo Pendiente" dentro de la ventana.
+// `rows` = filas crudas de ese tab (encabezado incluido; no parsea como fecha → fuera).
+// Filtra por col A ("Fecha detección", DD/MM/YYYY H:MM) y cuenta los que marcaron
+// "💳 Self-checkout" en col G (los "No hizo self-checkout" no cuentan).
+export function countSelfCheckout(rows, { startMs, endMs }, aheadHours = SETTEO_AHEAD_HOURS()) {
+  let count = 0;
+  for (const row of rows || []) {
+    const ts = parseSubmittedAt(row?.[SETTEO.fecha], aheadHours);
+    if (ts == null || ts < startMs || ts >= endMs) continue;
+    const estado = String(row?.[SETTEO.estadoPago] ?? '');
+    if (/self-?checkout/i.test(estado) && !/no\s+hizo/i.test(estado)) count += 1;
+  }
+  return count;
 }

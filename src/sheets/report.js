@@ -24,6 +24,14 @@ export function formatReport(summary, { startMs, endMs } = {}) {
     return lines.join('\n');
   }
 
+  // Métricas del funnel (conteos simples sobre la ventana).
+  if (summary.calendlyBooked != null) {
+    lines.push(`📅 Bookearon Calendly: ${summary.calendlyBooked}`);
+  }
+  if (summary.selfCheckout != null) {
+    lines.push(`💳 Llegaron al self-checkout: ${summary.selfCheckout}`);
+  }
+
   for (const cat of summary.breakdown) {
     lines.push('', `*${cat.label}* (${cat.answered} respondieron)`);
     if (!cat.items.length) {

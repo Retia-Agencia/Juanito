@@ -1116,9 +1116,27 @@ owner eligió el camino robusto: un **service account de GCP** con el Sheet **co
 **✅ VERIFICADO EN VIVO (2026-06-10):** `/grupos` muestra "Ventas EstadoX" como ✅ (Juanito está en el
 grupo → el cron lo resolverá por nombre) y `/reporte` devuelve el reporte real por DM. Se validó además
 el reporte de una ventana completa (8/6 8pm → 9/6 8pm = 13 entradas) generándolo contra el Sheet real.
-**Único pendiente (no bloqueante):** ver el **primer post automático del cron hoy a las 20:00** en el
-grupo (se decidió dejarlo salir natural, sin cron de prueba, para no mandar un mensaje fuera de horario
-al grupo de ventas).
+El **primer post automático del cron** salió bien a las 20:00 en el grupo.
+
+**✅ ACTUALIZACIÓN DE CONTENIDO — DESPLEGADO LIVE (2026-06-10), pedido del owner/equipo:** se ajustó QUÉ
+muestra el reporte (no la cadencia ni la ventana). Cambios:
+- **Precio de inversión:** el mensaje ahora dice **"Dispuesto a invertir ($1000 USD)"**. La **columna G
+  del Form sigue preguntando por $1200** (no se tocó el Sheet) — sólo cambió el **rótulo** en `columns.js`;
+  los datos se siguen leyendo de la misma columna G.
+- **Se quitaron del desglose** "Momento profesional" (col M) y "Experiencia previa con IA" (col F). El
+  reporte automático queda con **inversión + dos métricas nuevas de funnel** (las cols M/F siguen
+  definidas en `COL` por si se reactivan).
+- **📅 Bookearon Calendly:** conteo de la **col I** ("Agenda aquí tu entrevista final…" → URL de invitee
+  de Calendly) **no vacía** dentro de la ventana, en el tab de leads (`summarize().calendlyBooked`).
+- **💳 Llegaron al self-checkout:** **fuente distinta** (indicada por el owner) → tab **"📞 Setteo
+  Pendiente"** (`SHEETS_SETTEO_TAB`, mismo spreadsheet). Cuenta filas cuya **col A "Fecha detección"**
+  (`DD/MM/YYYY H:MM`) cae en la ventana **y** **col G "Estado pago" = `💳 Self-checkout`** (los
+  `No hizo self-checkout` no cuentan). Función pura `countSelfCheckout(rows, window)` + lector
+  `fetchSetteoRows()`. ⚠️ La "Fecha detección" se asume en hora **Bogotá sin desfase**
+  (`SHEETS_SETTEO_AHEAD_HOURS`, default **0**) — la genera la automatización interna, no el Form GMT-2;
+  ajustable si hiciera falta.
+- El cron lee **ambos tabs en paralelo** (`buildSheetsReport`); `/reporte` hereda los cambios. **Tests
+  `test/sheets.test.js` 13/13 verde** (cubre Calendly, self-checkout y el nuevo formato).
 
 ### 18.C 🔵 Aviso de "nueva call agendada" a los closers (idea Sebas — 2026-06-10)
 

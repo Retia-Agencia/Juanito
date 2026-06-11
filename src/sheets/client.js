@@ -24,6 +24,8 @@ export const LEADS_ID = () =>
 
 export const LEADS_TAB = () => process.env.SHEETS_LEADS_TAB || 'IA para abogados _ EstadoX';
 
+export const SETTEO_TAB = () => process.env.SHEETS_SETTEO_TAB || '📞 Setteo Pendiente';
+
 // Resuelve GOOGLE_SA_KEY a las credenciales del service account.
 export function loadCredentials(raw = process.env.GOOGLE_SA_KEY) {
   if (!raw || !String(raw).trim()) {
@@ -82,9 +84,10 @@ async function getAccessToken(creds) {
   return (await res.json()).access_token;
 }
 
-// Devuelve las filas crudas del tab (arreglo de arreglos de celdas), encabezado
-// incluido. summarize() tolera el encabezado (no parsea como fecha → fuera de ventana).
-export async function fetchLeadRows({ id = LEADS_ID(), tab = LEADS_TAB() } = {}) {
+// Lee TODO un tab y devuelve sus filas crudas (arreglo de arreglos de celdas),
+// encabezado incluido. Los agregadores toleran el encabezado (no parsea como fecha →
+// fuera de ventana). Cada llamada canjea su propio token (el reporte corre 1×/día).
+async function fetchTab(tab, id) {
   const creds = loadCredentials();
   const token = await getAccessToken(creds);
   // Rango = título de la pestaña entre comillas simples (tiene espacios) → todo el tab.
@@ -95,4 +98,14 @@ export async function fetchLeadRows({ id = LEADS_ID(), tab = LEADS_TAB() } = {})
     throw new Error(`[sheets] valores ${res.status}: ${(await res.text()).slice(0, 300)}`);
   }
   return (await res.json()).values || [];
+}
+
+// Filas del tab de leads (postulaciones del Form).
+export async function fetchLeadRows({ id = LEADS_ID(), tab = LEADS_TAB() } = {}) {
+  return fetchTab(tab, id);
+}
+
+// Filas del tab "📞 Setteo Pendiente" (fuente del conteo de self-checkout).
+export async function fetchSetteoRows({ id = LEADS_ID(), tab = SETTEO_TAB() } = {}) {
+  return fetchTab(tab, id);
 }

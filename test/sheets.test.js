@@ -8,9 +8,9 @@ import assert from 'node:assert/strict';
 
 import { parseSubmittedAt } from '../src/sheets/parse.js';
 import { computeWindow, zonedParts } from '../src/sheets/window.js';
-import { summarize } from '../src/sheets/aggregate.js';
+import { summarize, countSelfCheckout } from '../src/sheets/aggregate.js';
 import { formatReport } from '../src/sheets/report.js';
-import { COL } from '../src/sheets/columns.js';
+import { COL, SETTEO } from '../src/sheets/columns.js';
 
 // ─── parseSubmittedAt ─────────────────────────────────────────────────────────
 
@@ -57,15 +57,36 @@ test('zonedParts ve la fecha local de Bogotá, no UTC', () => {
 
 // ─── summarize ────────────────────────────────────────────────────────────────
 
-// Construye una fila del Sheet con sólo las columnas que importan.
-function row({ submittedAt, momento = '', iaPrev = '', inversion = '' }) {
+// Construye una fila del tab de leads con sólo las columnas que importan.
+function row({ submittedAt, momento = '', iaPrev = '', inversion = '', calendly = '' }) {
   const r = [];
   r[COL.submittedAt] = submittedAt;
   r[COL.momento] = momento;
   r[COL.iaPrev] = iaPrev;
   r[COL.inversion] = inversion;
+  r[COL.calendly] = calendly;
   return r;
 }
+
+// Construye una fila del tab "Setteo Pendiente".
+function setteoRow({ fecha, estadoPago = '' }) {
+  const r = [];
+  r[SETTEO.fecha] = fecha;
+  r[SETTEO.estadoPago] = estadoPago;
+  return r;
+}
+
+// Categorías auxiliares para probar la lógica de agrupación/% con independencia de
+// la config de producción (que ya sólo lleva "inversión").
+const GROUP_CATS = [
+  { key: 'momento', col: COL.momento, label: 'Momento' },
+  {
+    key: 'iaPrev',
+    col: COL.iaPrev,
+    label: 'IA',
+    normalize: (v) => (String(v).trim().toLowerCase() === 'true' ? 'Sí' : 'No'),
+  },
+];
 
 const WIN = {
   startMs: Date.UTC(2026, 5, 9, 20, 0, 0),
@@ -87,11 +108,11 @@ test('summarize cuenta sólo las filas dentro de la ventana (bordes incluidos, h
 
 test('summarize agrupa por categoría y saca % sobre los NO vacíos', () => {
   const rows = [
-    row({ submittedAt: '10/6/2026 9:00:00', momento: 'Abogado Jr.', iaPrev: 'TRUE', inversion: 'Sí' }),
-    row({ submittedAt: '10/6/2026 10:00:00', momento: 'Abogado Jr.', iaPrev: 'FALSE', inversion: 'No' }),
-    row({ submittedAt: '10/6/2026 11:00:00', momento: 'Litigante', iaPrev: '', inversion: 'Sí' }),
+    row({ submittedAt: '10/6/2026 9:00:00', momento: 'Abogado Jr.', iaPrev: 'TRUE' }),
+    row({ submittedAt: '10/6/2026 10:00:00', momento: 'Abogado Jr.', iaPrev: 'FALSE' }),
+    row({ submittedAt: '10/6/2026 11:00:00', momento: 'Litigante', iaPrev: '' }),
   ];
-  const s = summarize(rows, WIN);
+  const s = summarize(rows, WIN, GROUP_CATS);
   assert.equal(s.total, 3);
 
   const momento = s.breakdown.find((b) => b.key === 'momento');
@@ -110,18 +131,72 @@ test('summarize agrupa por categoría y saca % sobre los NO vacíos', () => {
   );
 });
 
+test('summarize: el desglose por defecto es SÓLO la inversión, con rótulo $1000', () => {
+  const rows = [
+    row({ submittedAt: '10/6/2026 9:00:00', inversion: 'Sí.' }),
+    row({ submittedAt: '10/6/2026 10:00:00', inversion: 'No. Es imposible para mi invertir ese monto.' }),
+    row({ submittedAt: '10/6/2026 11:00:00', inversion: 'Sí pero financiado.' }),
+  ];
+  const s = summarize(rows, WIN);
+  assert.deepEqual(
+    s.breakdown.map((b) => b.key),
+    ['inversion']
+  );
+  const inv = s.breakdown[0];
+  assert.match(inv.label, /\$1000 USD/);
+  assert.equal(inv.answered, 3);
+  assert.deepEqual(
+    inv.items.map((i) => i.value).sort(),
+    ['No', 'Sí', 'Sí (financiado)']
+  );
+});
+
+test('summarize cuenta los bookings de Calendly (col I no vacía en la ventana)', () => {
+  const rows = [
+    row({ submittedAt: '10/6/2026 9:00:00', calendly: 'https://calendly.com/d/abc/invitees/1' }),
+    row({ submittedAt: '10/6/2026 10:00:00', calendly: '' }),
+    row({ submittedAt: '10/6/2026 11:00:00', calendly: 'https://calendly.com/d/abc/invitees/2' }),
+    // Fuera de la ventana (fin exclusivo) → no cuenta aunque tenga Calendly.
+    row({ submittedAt: '10/6/2026 23:00:00', calendly: 'https://calendly.com/d/abc/invitees/3' }),
+  ];
+  const s = summarize(rows, WIN);
+  assert.equal(s.calendlyBooked, 2);
+});
+
+// ─── countSelfCheckout ────────────────────────────────────────────────────────
+
+test('countSelfCheckout cuenta sólo "Self-checkout" dentro de la ventana (Fecha detección sin desfase)', () => {
+  const rows = [
+    ['Fecha detección'], // encabezado → fuera
+    setteoRow({ fecha: '10/06/2026 8:15', estadoPago: '💳 Self-checkout' }), // dentro → cuenta
+    setteoRow({ fecha: '10/06/2026 9:10', estadoPago: 'No hizo self-checkout' }), // dentro pero no cuenta
+    setteoRow({ fecha: '10/06/2026 12:09', estadoPago: '💳 Self-checkout' }), // dentro → cuenta
+    setteoRow({ fecha: '9/6/2026 8:15', estadoPago: '💳 Self-checkout' }), // 9-jun 8:15am < inicio (9-jun 8pm) → fuera
+    setteoRow({ fecha: '10/06/2026 20:00', estadoPago: '💳 Self-checkout' }), // fin exclusivo → fuera
+  ];
+  assert.equal(countSelfCheckout(rows, WIN), 2);
+});
+
 // ─── formatReport ─────────────────────────────────────────────────────────────
 
-test('formatReport arma el mensaje con total, periodo y desglose (sin PII)', () => {
+test('formatReport arma el mensaje con total, funnel e inversión (sin momento/IA, sin PII)', () => {
   const rows = [
-    row({ submittedAt: '10/6/2026 9:00:00', momento: 'Litigante', iaPrev: 'TRUE', inversion: 'Sí' }),
+    row({ submittedAt: '10/6/2026 9:00:00', inversion: 'Sí.', calendly: 'https://calendly.com/x/invitees/1' }),
   ];
-  const msg = formatReport(summarize(rows, WIN), WIN);
+  const summary = { ...summarize(rows, WIN), selfCheckout: 3 };
+  const msg = formatReport(summary, WIN);
   assert.match(msg, /Reporte de leads/);
   assert.match(msg, /9\/6 8:00pm → 10\/6 8:00pm/);
   assert.match(msg, /Total de entradas: 1/);
-  assert.match(msg, /Momento profesional/);
-  assert.match(msg, /Litigante: 1 \(100%\)/);
+  // Funnel: Calendly + self-checkout.
+  assert.match(msg, /Bookearon Calendly: 1/);
+  assert.match(msg, /Llegaron al self-checkout: 3/);
+  // Inversión con el rótulo $1000 (la columna sigue siendo la de $1200).
+  assert.match(msg, /Dispuesto a invertir \(\$1000 USD\)/);
+  assert.match(msg, /Sí: 1 \(100%\)/);
+  // Momento profesional y experiencia con IA NO entran al reporte automático.
+  assert.doesNotMatch(msg, /Momento profesional/);
+  assert.doesNotMatch(msg, /Experiencia previa con IA/);
   // Sin PII: no debe haber correos ni teléfonos.
   assert.doesNotMatch(msg, /@|\+?\d{7,}/);
 });
