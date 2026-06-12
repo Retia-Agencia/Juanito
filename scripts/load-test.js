@@ -207,6 +207,18 @@ async function main() {
   // Tope teórico de llamadas/día por rate-limit (lo que protege el costo).
   const dailyCallCeiling = SENDERS * GROUP_DAILY_LIMIT;
 
+  // Tokens de entrada PROMEDIO por llamada — dominados por el historial (hasta 30 turnos)
+  // que se RE-ENVÍA sin caché en cada mención. Este es el verdadero driver de costo.
+  const avgInputPerCall = claudeBound ? inputTokensTotal / claudeBound : systemTokens + OUTPUT_TOKENS;
+  // Techo de costo/día CORRECTO: usa el costo real por llamada (incluye historial).
+  const ceilingCostPerDay =
+    (dailyCallCeiling * avgInputPerCall) / 1e6 * PRICE_IN_PER_MTOK +
+    (dailyCallCeiling * OUTPUT_TOKENS) / 1e6 * PRICE_OUT_PER_MTOK;
+  // Costo/día REAL = el menor entre la extrapolación lineal y el techo del rate-limit.
+  // (La extrapolación lineal IGNORA que el límite por-remitente satura en horas pico:
+  //  una vez que ~todos topan sus 5/día, el resto del día casi no genera llamadas.)
+  const realCostPerDay = Math.min(costPerDay, ceilingCostPerDay);
+
   // Bug de ventana de resumen.
   const summaryMsgsPerWindow = 50;
   const groupMinutesCovered = summaryMsgsPerWindow / RATE_MSGS_PER_MIN;
@@ -245,12 +257,13 @@ EMBUDO DE MENCIONES (gating real)
 
 COSTO (proyección, tokens estimados con heurística chars/4 — ver nota)
   Tokens de entrada (total) ..... ${f(inputTokensTotal, 0)}
+  Tokens de entrada / llamada ... ${f(avgInputPerCall, 0)}  (${f(systemTokens, 0)} system + historial re-enviado SIN caché)
   Tokens de salida (total) ...... ${f(outputTokensTotal, 0)}
-  Costo de esta corrida ......... $${f(costRun, 4)}
-  Costo proyectado / hora ....... $${f(costPerHour, 2)}
-  Costo proyectado / día ........ $${f(costPerDay, 2)}
+  Costo de esta corrida ......... $${f(costRun, 4)}  (${f((costRun / (claudeBound || 1)) * 1000, 3)} ¢/llamada×10)
+  Costo / día (extrapolación lineal, IGNORA rate-limit) $${f(costPerDay, 2)}
   Tope de llamadas/día (rate-limit) ${f(dailyCallCeiling, 0)}  (${f(SENDERS, 0)} × ${f(GROUP_DAILY_LIMIT, 0)})
-  Techo de costo/día (si todos topan) $${f((dailyCallCeiling * (systemTokens + OUTPUT_TOKENS) * 1) / 1e6 * PRICE_IN_PER_MTOK + (dailyCallCeiling * OUTPUT_TOKENS) / 1e6 * PRICE_OUT_PER_MTOK, 2)}  (aprox., 1 llamada/mención)
+  Techo de costo/día (si todos topan) $${f(ceilingCostPerDay, 2)}  (incluye historial; 1 llamada/mención)
+  → Costo / día REAL (acotado por rate-limit) $${f(realCostPerDay, 2)}
 
 BUG DE VENTANA DE RESUMEN  (src/scheduler/summaries.js + summarize_group)
   getRecentMessages lee .......... ${summaryMsgsPerWindow} de ${f(ingested, 0)} mensajes ingeridos
@@ -260,6 +273,9 @@ BUG DE VENTANA DE RESUMEN  (src/scheduler/summaries.js + summarize_group)
 
 NOTAS
   • Tokens estimados (chars/4). Para cifras exactas: endpoint count_tokens del SDK.
+  • DRIVER DE COSTO: cada mención re-envía hasta 30 turnos de historial (getRecentHistory)
+    SIN prompt caching → el grueso de los tokens de entrada se paga a precio full en cada
+    llamada. Prompt caching del system + ventana de grupo más chica recortarían esto ~90%.
   • groupMetadata() se llama por-mensaje en whatsapp/index.js (no medible offline):
     candidato #1 de optimización — el nombre del grupo es constante, no hace falta pedirlo
     en cada mensaje.
