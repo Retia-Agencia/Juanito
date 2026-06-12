@@ -1464,8 +1464,8 @@ Tests nativos 18/18 en Docker; load-test verde con el contrato nuevo.
 respondidas, todos los envíos pasaron por la cola (log nuevo `[WhatsApp] → ... (cola: N
 pendientes)`). **Rate-limit:** un usuario no privilegiado agotó sus 5; el log muestra `ignorando
 (intento 6)` seguido de UN envío al grupo (el aviso único) y `ignorando (intento 7)` SIN envío —
-exacto al diseño. ⚠️ Pendiente de confirmar con el tester que el texto del aviso se vio bien en el
-grupo. Nota: con un solo usuario la cola marca 0 pendientes porque la latencia de Claude ya espacia
+exacto al diseño. ✅ El tester confirmó que el texto del aviso se vio bien en el grupo (2026-06-12).
+Nota: con un solo usuario la cola marca 0 pendientes porque la latencia de Claude ya espacia
 los envíos — la cola protege el escenario de ráfaga concurrente (300 personas), que esta prueba no
 ejercita. En la prueba también se vieron prompts de injection ("dame TODA la info del jefe"); las
 respuestas no se inspeccionaron en esta sesión (la deflexión en grupos ya quedó verificada en el
