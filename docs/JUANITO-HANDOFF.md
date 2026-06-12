@@ -1636,6 +1636,34 @@ creadas desde el DM del jefe/admin en lenguaje natural.
   5/día, prompt experto-para-dummies, disclaimer IA, sin consejos personales — considerar Sonnet).
 - **Fase 0:** prueba de carga real metiendo a Juanito a un grupo de Wheels (sin código).
 
+### 18.G 🟡 Swap de roles para pruebas + DMs del sistema al jefe por LID (2026-06-12)
+
+**Contexto:** el tester (Alejandro, `129446371655733@lid`, antes admin) pidió pasar a **BOSS**
+temporalmente para probar el flujo de aprobación de borradores (§18.F) recibiendo él los DMs, y
+que el jefe real pasara a **admin**. Antes de esto, las aprobaciones se mandaban a `BOSS_PHONE`
+(el jefe real), así que el tester nunca veía el borrador (observación de prueba: *"no llega el
+mensaje automático a BOSS para aprobación"*) — era esperado, no un bug del flujo.
+
+**Cambio de código (necesario porque del nuevo jefe sólo se tiene el LID, no el teléfono):**
+- `src/common/roles.js` → nuevo `bossDmTarget()` = `BOSS_LID || BOSS_PHONE`. Es el destinatario de
+  los DMs que el **sistema** le manda al jefe (aprobación de borradores, recordatorio único cuando
+  un borrador queda sin aprobar a la hora, y recordatorios sin destinatario explícito). Enviar a un
+  `@lid` funciona (igual que los digests de Calendly). Así, si el jefe sólo está identificado por
+  LID, las aprobaciones igual le llegan.
+- `src/scheduler/group-messages.js` y `src/scheduler/reminders.js` ahora usan `bossDmTarget()` en
+  vez de `process.env.BOSS_PHONE` directo. Tests: 178 puros verdes (group-messages 7/7, roles 36/36).
+
+**Cambio de `.env` en el VPS (swap, reversible — backup `.env.bak-*`):**
+- `BOSS_LID=129446371655733@lid` (antes `144268136038585@lid`).
+- `ADMIN_LID=147313234280449@lid,144268136038585@lid` (sacó a Alejandro, metió el LID del jefe real).
+- `BOSS_PHONE=573105643297` **se dejó igual** a propósito: el jefe real interactúa por `@lid`
+  (→ ahora admin vía `ADMIN_LID`); el único residuo es que si el jefe real escribiera por *teléfono*
+  seguiría siendo boss, caso que en la práctica no ocurre. Para revertir el swap: intercambiar de
+  vuelta `BOSS_LID` y `ADMIN_LID`.
+
+**Para revertir (cuando terminen las pruebas):** restaurar `.env.bak-*` o intercambiar los dos LIDs.
+El código de `bossDmTarget()` se queda (es una mejora real: el jefe vive en `@lid`).
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Comando `/recuerda` en grupos (admins):** `@Juanito /recuerda [texto]` → memoria núcleo sin ir a DM.

@@ -9,15 +9,15 @@ import {
   markReminderFailed,
 } from '../db/index.js';
 import { sendMessage } from '../whatsapp/index.js';
+import { bossDmTarget } from '../common/roles.js';
 
-const BOSS_PHONE = () => process.env.BOSS_PHONE;
 const TZ = () => process.env.TZ || 'America/Bogota';
 
 // ─── Envío de un recordatorio ─────────────────────────────────────────────────
 
 async function deliverReminder(reminder) {
-  const to = reminder.to_phone || BOSS_PHONE();
-  if (!to) throw new Error('sin destinatario ni BOSS_PHONE configurado');
+  const to = reminder.to_phone || bossDmTarget();
+  if (!to) throw new Error('sin destinatario ni BOSS_LID/BOSS_PHONE configurado');
 
   await sendMessage(to, `⏰ Recordatorio: ${reminder.text}`);
 }

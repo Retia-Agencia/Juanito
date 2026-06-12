@@ -14,11 +14,11 @@
 
 import { CronJob } from 'cron';
 import { isRecurringDue, isDraftDue, isGeneratedPublishDue, zonedNowParts } from './recurring-logic.js';
+import { bossDmTarget } from '../common/roles.js';
 
 const TZ = () => process.env.TZ || 'America/Bogota';
 const WINDOW_MIN = 30;
 const DRAFT_LEAD_MIN = () => Number(process.env.DRAFT_LEAD_MIN || 60);
-const BOSS_PHONE = () => process.env.BOSS_PHONE;
 
 let _injectedDeps = null;
 export function __setDeps(deps) {
@@ -74,9 +74,9 @@ async function processGenerated(d, row, nowParts) {
   // 1) Fase de borrador: aún no existe y ya estamos dentro del lead → generar + DM al jefe.
   if (!draft && isDraftDue({ days: row.days, timeHm: row.time_hm, nowParts, leadMin: DRAFT_LEAD_MIN() })) {
     if (row.last_sent_date === nowParts.date) return false; // ya publicado hoy
-    const boss = BOSS_PHONE();
+    const boss = bossDmTarget();
     if (!boss) {
-      console.error(`[Scheduler] Borrador #${row.id}: sin BOSS_PHONE para aprobar — omitido`);
+      console.error(`[Scheduler] Borrador #${row.id}: sin BOSS_LID/BOSS_PHONE para aprobar — omitido`);
       return false;
     }
     const feedback = d.getSetting(`editorial_feedback:${row.id}`, '') || '';
@@ -117,7 +117,7 @@ async function processGenerated(d, row, nowParts) {
     // Pendiente a la hora de publicar → recordarle al jefe UNA vez. No se publica.
     if (draft.status === 'pending' && !draft.reminded) {
       d.markDraftReminded(draft.id);
-      const boss = BOSS_PHONE();
+      const boss = bossDmTarget();
       if (boss) {
         await d.sendMessage(
           boss,

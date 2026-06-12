@@ -44,6 +44,16 @@ export function isPrivileged(role) {
   return role === 'admin' || role === 'boss';
 }
 
+// Destinatario para los DMs que el SISTEMA le manda al jefe (aprobación de
+// borradores, recordatorios sin destinatario explícito). Prefiere BOSS_LID: en
+// WhatsApp multi-device el jefe interactúa por @lid, y enviar a un @lid funciona
+// (los digests de Calendly ya entregan a LIDs). Cae al teléfono si no hay LID.
+// Así, si el jefe sólo está identificado por LID (sin teléfono a mano), igual le
+// llegan las aprobaciones. Devuelve null si no hay ninguno configurado.
+export function bossDmTarget() {
+  return BOSS_LID() || BOSS_PHONE() || null;
+}
+
 // ¿Hay un jefe o admin entre los participantes de un grupo?
 // Heurística restart-safe para autorizar grupos: si el dueño o el equipo está
 // dentro, el grupo es legítimo aunque no hayamos capturado el evento de "add".
