@@ -140,6 +140,33 @@ db.exec(`
     authorized_by TEXT,            -- JID/LID de quien autorizó, o 'participant'/'command'
     authorized_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  -- Personalidad por grupo: texto que un ADMIN configura (/persona) y se inyecta
+  -- en el prompt de grupo de ese chat. Aditivo sobre el prompt AISLADO de grupos
+  -- (no reabre memoria/recordatorios/datos del jefe).
+  CREATE TABLE IF NOT EXISTS group_personality (
+    group_id   TEXT PRIMARY KEY,
+    group_name TEXT,
+    persona    TEXT NOT NULL,
+    updated_by TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  -- Mensajes recurrentes a grupos (ej: invitación todos los jueves 8pm).
+  -- Los crea el jefe/admin por DM (tool schedule_group_message) y los entrega el
+  -- scheduler. days = CSV de días 0-6 (0=domingo), time_hm = 'HH:MM' hora local TZ.
+  CREATE TABLE IF NOT EXISTS scheduled_messages (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id       TEXT NOT NULL,
+    group_name     TEXT,
+    days           TEXT NOT NULL,
+    time_hm        TEXT NOT NULL,
+    text           TEXT NOT NULL,
+    created_by     TEXT,
+    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_sent_date TEXT,            -- 'YYYY-MM-DD' local del último envío (anti doble-envío)
+    active         INTEGER NOT NULL DEFAULT 1
+  );
 `);
 
 // ─── 2. Migración de bases existentes (esquema viejo) ─────────────────────────

@@ -3,6 +3,7 @@
 // La ejecución de las herramientas vive aquí dentro (handlers internos), no en el bot.
 
 import Anthropic from '@anthropic-ai/sdk';
+import { daysToCsv, normalizeTimeHm, csvToDayLabels } from '../scheduler/recurring-logic.js';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -49,6 +50,12 @@ async function resolveDeps() {
     searchMessages: db.searchMessages,
     searchMemory: db.searchMemory,
     searchSummaries: db.searchSummaries,
+    getGroupPersona: db.getGroupPersona,
+    // mensajes recurrentes a grupos (tool schedule_group_message)
+    createScheduledMessage: db.createScheduledMessage,
+    listScheduledMessages: db.listScheduledMessages,
+    cancelScheduledMessage: db.cancelScheduledMessage,
+    isGroupAuthorized: db.isGroupAuthorized,
     // contacts
     resolveContact: contacts.resolveContact,
     // whatsapp
@@ -139,6 +146,49 @@ const TOOLS = [
     },
   },
   {
+    name: 'schedule_group_message',
+    description:
+      'Programa, lista o cancela mensajes RECURRENTES que se envían automáticamente a un ' +
+      'grupo de WhatsApp en días y hora fijos cada semana. Úsalo cuando el jefe pida cosas como ' +
+      '"en el grupo X todos los jueves a las 8pm envía <mensaje>", pregunte qué mensajes ' +
+      'programados hay, o pida cancelar uno. Para recordatorios de una sola vez usa create_reminder.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['create', 'list', 'cancel'],
+          description: 'create = programar uno nuevo · list = ver los programados · cancel = cancelar por id',
+        },
+        group_name: {
+          type: 'string',
+          description: 'Nombre (o parte del nombre) del grupo destino. Requerido para create.',
+        },
+        days: {
+          type: 'array',
+          items: {
+            type: 'string',
+            enum: ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'],
+          },
+          description: 'Días de la semana en que se envía. Requerido para create.',
+        },
+        time: {
+          type: 'string',
+          description: 'Hora local de envío en formato 24h HH:MM (ej: "20:00" para las 8pm). Requerido para create.',
+        },
+        text: {
+          type: 'string',
+          description: 'El mensaje EXACTO que se enviará al grupo, tal cual lo pidió el jefe. Requerido para create.',
+        },
+        id: {
+          type: 'number',
+          description: 'Id del mensaje programado a cancelar. Requerido para cancel.',
+        },
+      },
+      required: ['action'],
+    },
+  },
+  {
     name: 'search_knowledge',
     description:
       'Busca en todo lo que el agente recuerda: historial de conversaciones, memoria de ' +
@@ -172,6 +222,7 @@ const GROUP_DENIED_TOOLS = new Set([
   'create_reminder',
   'summarize_group',
   'search_knowledge',
+  'schedule_group_message',
 ]);
 // Tools sensibles que el jefe (no-admin) NO debe ejecutar. save_memory escribe la
 // memoria NÚCLEO que alimenta el comportamiento del bot para TODOS → solo admin.
@@ -205,7 +256,7 @@ export function splitMemory(memory = []) {
 
 // Exportado para tests: permite verificar el aislamiento del prompt de grupo
 // (que NO toca memoria/recordatorios/resúmenes ni inyecta datos privados).
-export async function buildSystemPrompt(deps, { isGroup = false, role = 'boss' } = {}) {
+export async function buildSystemPrompt(deps, { isGroup = false, role = 'boss', chatId = null } = {}) {
   const now = new Date().toLocaleString('es-CO', {
     timeZone: process.env.TZ || 'America/Bogota',
     dateStyle: 'full',
@@ -228,6 +279,24 @@ export async function buildSystemPrompt(deps, { isGroup = false, role = 'boss' }
   // sino un chatbot general SIN acceso a datos privados. Las tools también van vacías
   // (ver toolsForRole). Separación dura por contexto = no hay datos que filtrar.
   if (isGroup) {
+    // Personalidad específica del grupo (si un admin la configuró con /persona).
+    // Es ADITIVA sobre este prompt aislado: ajusta tono/estilo para ese grupo,
+    // pero NO reabre memoria, recordatorios ni datos privados, y las reglas de
+    // seguridad siguen mandando. Solo admins escriben group_personality.
+    let personaBlock = '';
+    try {
+      const persona = chatId ? await deps?.getGroupPersona?.(chatId) : null;
+      if (persona) {
+        personaBlock = `
+
+Personalidad específica de ESTE grupo (configurada por el equipo — ajusta tu tono
+y estilo a esto, sin romper las reglas de seguridad ni el resto de este contexto):
+${persona}`;
+      }
+    } catch {
+      /* sin persona: prompt genérico */
+    }
+
     return `Eres ${botName}, un asistente amigable en un grupo de WhatsApp.
 Alguien te mencionó con @. Ayudas con cualquier consulta general: cálculos,
 información, redacción, ideas, o lo que alguien necesite.
@@ -237,7 +306,7 @@ Fecha y hora actual: ${now}
 Personalidad:
 - Tu nombre es ${botName} — si preguntan cómo te llamas, dilo con naturalidad.
 - Alegre, con buena energía, respetuoso y directo. Respuestas breves, sin relleno.
-- Respondes en el mismo idioma que te escriben.
+- Respondes en el mismo idioma que te escriben.${personaBlock}
 
 Sobre este contexto (importante):
 - NO tienes acceso a datos privados, memoria, recordatorios, notas ni información de
@@ -316,6 +385,9 @@ confirma al jefe en una línea natural:
   persona, te lo diré por el resultado de la herramienta: en ese caso pídele al
   jefe que aclare el contacto en vez de inventar.
 - summarize_group: lee y resume un grupo por nombre cuando pregunte qué pasó ahí.
+- schedule_group_message: programa/lista/cancela mensajes RECURRENTES a un grupo
+  (ej: "todos los jueves a las 8pm envía la invitación al grupo X"). El texto del
+  mensaje se guarda EXACTO; si el jefe no dio el texto literal, pídeselo antes.
 - search_knowledge: busca en historial, memoria y resúmenes lo que ya se habló.
 - remember_note: anota una nota o preferencia personal del jefe cuando lo pida.${
     role === 'admin'
@@ -464,6 +536,74 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
       return `Resumen de "${group.name || group.id}" (${periodStart} → ${periodEnd}):\n${summary}`;
     }
 
+    case 'schedule_group_message': {
+      const action = input.action;
+
+      if (action === 'list') {
+        const rows = (await deps.listScheduledMessages?.()) || [];
+        if (!rows.length) return 'No hay mensajes programados activos.';
+        return rows
+          .map(
+            (r) =>
+              `#${r.id} → "${r.group_name || r.group_id}" — ${csvToDayLabels(r.days)} a las ${r.time_hm}` +
+              `${r.last_sent_date ? ` (último envío: ${r.last_sent_date})` : ''}\n   "${r.text}"`
+          )
+          .join('\n');
+      }
+
+      if (action === 'cancel') {
+        if (!Number.isInteger(input.id)) {
+          return 'Para cancelar necesito el id del mensaje programado (pídelo con action=list).';
+        }
+        const changes = (await deps.cancelScheduledMessage?.(input.id)) || 0;
+        return changes
+          ? `Mensaje programado #${input.id} cancelado ✅ — no se enviará más.`
+          : `No encontré ningún mensaje programado activo con id ${input.id}.`;
+      }
+
+      if (action !== 'create') return 'Acción no reconocida. Usa create, list o cancel.';
+
+      // create — validar todo antes de tocar la DB.
+      const group = await deps.resolveGroupByName?.(input.group_name);
+      if (!group) {
+        return (
+          `No encontré ningún grupo que coincida con "${input.group_name || ''}". ` +
+          `Pídele al jefe el nombre exacto del grupo.`
+        );
+      }
+      // Solo grupos autorizados (default-deny): si Juanito no está habilitado ahí,
+      // no se programa nada — coherente con el anti-secuestro.
+      if (!(await deps.isGroupAuthorized?.(group.id))) {
+        return (
+          `El grupo "${group.name || group.id}" no está autorizado para Juanito. ` +
+          `Un admin debe habilitarlo primero (Juanito debe estar dentro y autorizado).`
+        );
+      }
+      const days = daysToCsv(input.days);
+      if (!days) {
+        return 'No entendí los días. Dímelos como días de la semana (ej: jueves y domingo).';
+      }
+      const timeHm = normalizeTimeHm(input.time);
+      if (!timeHm) {
+        return 'No entendí la hora. Necesito la hora en formato 24h, ej: 20:00 para las 8pm.';
+      }
+      const text = (input.text || '').trim();
+      if (!text) return 'Me falta el texto exacto del mensaje que se enviará al grupo.';
+
+      const id = await deps.createScheduledMessage?.({
+        groupId: group.id,
+        groupName: group.name || group.id,
+        days,
+        timeHm,
+        text,
+        createdBy: ctx.createdBy || null,
+      });
+      return (
+        `Listo ✅ Mensaje programado #${id}: se enviará a "${group.name || group.id}" ` +
+        `cada ${csvToDayLabels(days)} a las ${timeHm}.\nTexto: "${text}"`
+      );
+    }
+
     case 'search_knowledge': {
       const query = input.query;
       const sinceDays = input.since_days ?? 30;
@@ -563,7 +703,7 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
     messages.push({ role: 'user', content: userMessage });
   }
 
-  const system = await buildSystemPrompt(deps, { isGroup, role });
+  const system = await buildSystemPrompt(deps, { isGroup, role, chatId });
   // Tools gateadas por rol. En grupos devuelve [] → no se pasa a la API
   // (la API rechaza tools:[]).
   const tools = toolsForRole(role, { isGroup });

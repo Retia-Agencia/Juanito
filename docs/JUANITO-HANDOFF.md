@@ -71,6 +71,12 @@ un cambio relevante.
   aviso único al exceder el rate-limit (antes silencio), y `CLAUDE_GROUP_HISTORY` (palanca de costo).
   Probado con `scripts/load-test.js` (Capa 1, offline): throughput y costo (~$5/día/grupo, acotado
   por el rate-limit) OK. Estado de deploy al VPS: ver §18.D.
+- **🔵 Personalidad por grupo + mensajes recurrentes a grupos (2026-06-12), ver §18.E.** Para el
+  grupo del jefe "Patah San Juan de Ávila ✝️" (~300, religioso): `/persona <grupo> | <texto>`
+  (admin) inyecta un tono específico en el prompt de ESE grupo sin romper el aislamiento; y el
+  jefe/admin puede decir por DM *"en el grupo X todos los jueves a las 8pm envía <mensaje>"* →
+  tool `schedule_group_message` + scheduler cada minuto (anti doble-envío, solo grupos
+  autorizados, vía la cola anti-ban). `/programados` lista/cancela.
 
 Pendientes reales abiertos → ver §18 "Tareas pendientes".
 
@@ -1370,10 +1376,9 @@ choca con *"no exponer puertos"*. Queda como evolución futura si el lag de ≤5
     el stream. El tail debe estar abierto en el momento en que el closer escribe.
   - Verificación posterior en DB: `node scripts/calendly-optins.js` o el query directo de §8/§15.
 
-- **Memoria específica por grupo:** hoy Juanito responde en grupos sin saber nada del grupo. Permitir que
-  un admin asigne contexto. Implementación: tabla `group_memory(group_id PK, context, updated_at)`; tools
-  `set_group_context`/`get_group_context` (admin/boss); inyectar en `buildSystemPrompt()` cuando `isGroup`.
-  Archivos: `src/db/migrate.js`, `src/db/index.js`, `src/claude/index.js`, `src/bot/index.js`.
+- **✅ Memoria/personalidad específica por grupo — SHIPPED (2026-06-12) como `group_personality` +
+  `/persona`, ver §18.E.** (El diseño original proponía tools `set_group_context`; se implementó como
+  comando determinista para que el texto quede exacto.)
 
 ### 🟡 Media prioridad
 
@@ -1524,12 +1529,56 @@ Bloque B, §17).
   `environment:` del compose** (gotcha §12 — un `.env` con esos valores NO llegaba al contenedor;
   corrían siempre en default). Agregados.
 
+### 18.E 🔵 Personalidad por grupo + mensajes recurrentes a grupos (2026-06-12)
+
+**Contexto:** el jefe va a meter a Juanito al grupo **"Patah San Juan de Ávila ✝️"** (~300 personas,
+religioso) y pidió: (a) que Juanito responda ahí con tono alusivo a la temática y llame a los
+participantes "muchachos"; (b) invitaciones automáticas a las reuniones todos los jueves y domingos,
+creadas desde el DM del jefe/admin en lenguaje natural.
+
+**(a) Personalidad por grupo — `/persona` (admin-only, determinista):**
+- Tabla `group_personality(group_id PK, group_name, persona, updated_by, updated_at)` (migración
+  idempotente). CRUD en `src/db/index.js` (`setGroupPersona`/`getGroupPersona`/...).
+- `buildSystemPrompt` ahora recibe `chatId`; en la rama de grupo inyecta la persona como bloque
+  **ADITIVO** ("Personalidad específica de ESTE grupo…"). El **aislamiento queda intacto**: no se
+  reabre memoria/notas/recordatorios, el bloque de seguridad sigue, y la persona de un grupo no se
+  filtra a otro chat (tests en `test/prompt-context.test.js`). Solo admins escriben (mismo criterio
+  que `save_memory`: la persona moldea el comportamiento del bot).
+- Comando: `/persona` (lista) · `/persona <n|nombre>` (ver) · `/persona <n|nombre> | <texto>` (set,
+  el texto queda EXACTO) · `/persona <n|nombre> off`. Resuelve el grupo igual que `/grupos`
+  (número o substring). Se eligió comando y no tool para que Claude no parafrasee el texto.
+
+**(b) Mensajes recurrentes — tool `schedule_group_message` (boss+admin por DM) + `/programados`:**
+- El jefe dice por DM *"en el grupo Patah todos los jueves y domingos a las 8pm envía: …"* →
+  Claude usa la tool (action `create|list|cancel`). El prompt instruye guardar el texto EXACTO
+  (si el jefe no dio el literal, lo pide antes).
+- Tabla `scheduled_messages(id, group_id, days CSV 0-6, time_hm 'HH:MM', text, last_sent_date,
+  active, …)`. Lógica de "¿toca ahora?" **PURA** en `src/scheduler/recurring-logic.js`
+  (`isRecurringDue`: día + hora con ventana catch-up de 30 min + anti doble-envío por
+  `last_sent_date`; `zonedNowParts` vía Intl — sin tzdata, como todo en Alpine).
+- Scheduler `src/scheduler/group-messages.js` (cron cada minuto, como reminders): entrega SOLO a
+  grupos **autorizados** (si se revocó después de programar, omite — default-deny coherente) y el
+  envío pasa por la **cola anti-ban** de §18.D. Un fallo de envío reintenta al minuto siguiente
+  mientras dure la ventana.
+- Gateo: la tool NO existe en grupos (`GROUP_DENIED_TOOLS`); `create` exige grupo autorizado.
+  Gestión determinista: `/programados` (lista) · `/programados off <id>` (admin-only).
+- **Fix de paso:** `src/index.js` no propagaba `pushName` a `handleGroupMessage` → el aviso de
+  rate-limit de §18.D salía sin el nombre. Corregido.
+- **Tests:** `test/recurring-logic.test.js` (13 puros), +5 prompt-context (persona aislada),
+  +6 brain.tools (dispatch + gateo), +8 commands (/persona, /programados), +2 nativos
+  (CRUD en `test/data.db.test.js`). Sin env nuevas.
+
+**Cómo dejar listo el grupo del jefe (cuando Juanito entre):**
+1. El jefe/admin agrega a Juanito al grupo (queda auto-autorizado por el guard).
+2. Admin por DM: `/persona patah | <texto de personalidad religiosa, "muchachos", etc.>`
+3. Jefe o admin por DM, en lenguaje natural: *"en el grupo Patah todos los jueves y domingos a las
+   8:00pm envía: <texto exacto de la invitación>"* → confirmar con `/programados`.
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Comando `/recuerda` en grupos (admins):** `@Juanito /recuerda [texto]` → memoria núcleo sin ir a DM.
 - **Resumen on-demand explícito:** exponer `summarize_group` en el prompt del jefe.
-- **Personalización del tono por grupo** (formal en clientes, informal en internos), junto con
-  `set_group_context`.
+- **✅ Personalización del tono por grupo — SHIPPED (2026-06-12)** vía `/persona` (§18.E).
 - **Digests idempotentes / trazados:** hoy Push 1/2 no se registran por-closer; un reinicio a mitad del
   cron puede dejar a algún closer sin su digest (Push 3 sí es resiliente). No crítico.
 - **Forzar Title Case** en nombres de prospecto (hoy "Juan pineres" se respeta tal cual): una línea en

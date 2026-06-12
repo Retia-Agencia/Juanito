@@ -89,3 +89,54 @@ test('DM del admin: persona de equipo técnico', async () => {
   assert.ok(/equipo técnico \(admin\)/i.test(prompt), 'persona de admin en DM');
   assert.ok(prompt.includes('SECRETO-NUCLEO-123'), 'el admin sí ve la memoria núcleo');
 });
+
+// ─── Personalidad por grupo (aditiva sobre el prompt aislado) ──────────────────
+
+test('grupo con persona configurada: la inyecta SIN romper el aislamiento', async () => {
+  const deps = spyDeps();
+  deps.getGroupPersona = async (chatId) =>
+    chatId === 'patah@g.us' ? 'Grupo religioso católico. Refiérete a los participantes como "muchachos".' : null;
+
+  const prompt = await buildSystemPrompt(deps, { isGroup: true, role: 'unknown', chatId: 'patah@g.us' });
+
+  assert.ok(prompt.includes('muchachos'), 'inyecta la persona del grupo');
+  assert.ok(/Personalidad específica de ESTE grupo/i.test(prompt), 'la marca como configurada por el equipo');
+  // El blindaje sigue intacto:
+  assert.equal(deps.calls.getAllMemory, 0, 'la persona NO reabre memoria');
+  assert.ok(!prompt.includes('SECRETO-NUCLEO-123'));
+  assert.ok(/Reglas de seguridad/i.test(prompt), 'conserva el bloque de seguridad');
+  assert.ok(/NO tienes acceso a datos privados/i.test(prompt), 'conserva el aviso de contexto');
+});
+
+test('grupo SIN persona (u otro chatId): prompt genérico de siempre', async () => {
+  const deps = spyDeps();
+  deps.getGroupPersona = async (chatId) => (chatId === 'patah@g.us' ? 'persona X' : null);
+
+  const otro = await buildSystemPrompt(deps, { isGroup: true, role: 'unknown', chatId: 'otro@g.us' });
+  assert.ok(!otro.includes('persona X'), 'la persona de un grupo no se filtra a otro');
+  assert.ok(!/Personalidad específica de ESTE grupo/i.test(otro));
+
+  const sinChatId = await buildSystemPrompt(deps, { isGroup: true, role: 'unknown' });
+  assert.ok(!sinChatId.includes('persona X'), 'sin chatId no hay persona');
+});
+
+test('grupo: getGroupPersona que falla no rompe el prompt', async () => {
+  const deps = spyDeps();
+  deps.getGroupPersona = async () => {
+    throw new Error('db caída');
+  };
+  const prompt = await buildSystemPrompt(deps, { isGroup: true, role: 'unknown', chatId: 'x@g.us' });
+  assert.ok(/grupo de WhatsApp/i.test(prompt), 'cae al prompt genérico');
+});
+
+test('DM: la persona de grupo NO aplica (es solo para grupos)', async () => {
+  const deps = spyDeps();
+  let asked = 0;
+  deps.getGroupPersona = async () => {
+    asked++;
+    return 'persona de grupo';
+  };
+  const prompt = await buildSystemPrompt(deps, { isGroup: false, role: 'boss', chatId: 'dm@s.whatsapp.net' });
+  assert.equal(asked, 0, 'en DM ni se consulta');
+  assert.ok(!prompt.includes('persona de grupo'));
+});

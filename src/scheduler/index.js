@@ -8,6 +8,7 @@ import { CronJob } from 'cron';
 import { startReminderJob } from './reminders.js';
 import { startCalendlyJobs } from './calendly.js';
 import { startSheetsReportJob } from './sheets-report.js';
+import { startGroupMessagesJob } from './group-messages.js';
 import { cleanup } from '../db/index.js';
 
 const TZ = () => process.env.TZ || 'America/Bogota';
@@ -37,6 +38,7 @@ export function startCleanupJob() {
 export async function startAllJobs() {
   startReminderJob();
   startCleanupJob();
+  startGroupMessagesJob();
 
   // Recordatorios precall de Calendly (se autodesactiva si falta CALENDLY_TOKEN)
   try {

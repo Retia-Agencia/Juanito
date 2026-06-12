@@ -452,6 +452,66 @@ export function checkAndIncrementGroupUsage(sender, limit) {
   return { allowed: count <= limit, count };
 }
 
+// ─── Personalidad por grupo ───────────────────────────────────────────────────
+// Texto configurado por un admin (/persona) que se inyecta en el prompt de grupo
+// de ESE chat. Aditivo sobre el prompt aislado: no reabre datos privados.
+
+export function setGroupPersona({ groupId, groupName, persona, updatedBy }) {
+  db.prepare(`
+    INSERT INTO group_personality (group_id, group_name, persona, updated_by, updated_at)
+    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(group_id) DO UPDATE SET
+      group_name = excluded.group_name,
+      persona = excluded.persona,
+      updated_by = excluded.updated_by,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(groupId, groupName ?? null, persona, updatedBy ?? null);
+}
+
+export function getGroupPersona(groupId) {
+  if (!groupId) return null;
+  const row = db.prepare(`SELECT persona FROM group_personality WHERE group_id = ?`).get(groupId);
+  return row?.persona ?? null;
+}
+
+export function deleteGroupPersona(groupId) {
+  return db.prepare(`DELETE FROM group_personality WHERE group_id = ?`).run(groupId).changes;
+}
+
+export function listGroupPersonas() {
+  return db
+    .prepare(`SELECT group_id, group_name, persona, updated_by, updated_at FROM group_personality ORDER BY group_name`)
+    .all();
+}
+
+// ─── Mensajes recurrentes a grupos ────────────────────────────────────────────
+// Creados por jefe/admin vía DM (tool schedule_group_message); el scheduler los
+// entrega cuando isRecurringDue dice que toca (días + hora + anti doble-envío).
+
+export function createScheduledMessage({ groupId, groupName, days, timeHm, text, createdBy }) {
+  const info = db.prepare(`
+    INSERT INTO scheduled_messages (group_id, group_name, days, time_hm, text, created_by)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(groupId, groupName ?? null, days, timeHm, text, createdBy ?? null);
+  return info.lastInsertRowid;
+}
+
+export function listScheduledMessages({ activeOnly = true } = {}) {
+  const where = activeOnly ? 'WHERE active = 1' : '';
+  return db
+    .prepare(`SELECT id, group_id, group_name, days, time_hm, text, created_by, last_sent_date, active
+              FROM scheduled_messages ${where} ORDER BY id`)
+    .all();
+}
+
+export function cancelScheduledMessage(id) {
+  return db.prepare(`UPDATE scheduled_messages SET active = 0 WHERE id = ? AND active = 1`).run(id).changes;
+}
+
+export function markScheduledMessageSent(id, dateStr) {
+  db.prepare(`UPDATE scheduled_messages SET last_sent_date = ? WHERE id = ?`).run(dateStr, id);
+}
+
 // ─── Limpieza periódica ───────────────────────────────────────────────────────
 
 export function cleanup() {

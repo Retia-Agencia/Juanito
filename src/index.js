@@ -18,6 +18,12 @@ import {
   deauthorizeGroup,
   isGroupAuthorized,
   listAuthorizedGroups,
+  setGroupPersona,
+  getGroupPersona,
+  deleteGroupPersona,
+  listGroupPersonas,
+  listScheduledMessages,
+  cancelScheduledMessage,
 } from './db/index.js';
 import { resolveCloserByPushName } from './calendly/closers.js';
 import { getHealth } from './calendly/health.js';
@@ -106,6 +112,14 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
         leaveGroup,
         // /reporte — preview on-demand del reporte de leads del Sheet
         buildSheetsReport,
+        // /persona — personalidad por grupo
+        setGroupPersona,
+        getGroupPersona,
+        deleteGroupPersona,
+        listGroupPersonas,
+        // /programados — mensajes recurrentes a grupos
+        listScheduledMessages,
+        cancelScheduledMessage,
       }
     );
     if (cmdReply !== null) {
@@ -143,7 +157,8 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
   // bot mientras reiniciaba). Si aplica auto-leave, salimos sin procesar.
   if ((await enforceGroup(chatId, groupName)) === 'left') return;
 
-  await handleGroupMessage({ chatId, groupName, text, sender, isGroup, messageId, isBotMentioned }).catch((e) =>
+  // pushName viaja hasta el aviso de rate-limit (saluda por nombre al avisar).
+  await handleGroupMessage({ chatId, groupName, text, sender, isGroup, messageId, isBotMentioned, pushName }).catch((e) =>
     console.error('[Main] handleGroupMessage:', e.message)
   );
 }

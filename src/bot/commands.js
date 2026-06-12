@@ -4,6 +4,9 @@
 //
 // No importamos db/whatsapp al tope a propósito: así este módulo es testeable
 // sin las deps nativas (better-sqlite3). Las deps de /status se inyectan.
+// (recurring-logic es PURO — seguro de importar.)
+
+import { csvToDayLabels } from '../scheduler/recurring-logic.js';
 
 // Intenta manejar `text` como comando.
 // Devuelve un string de respuesta si lo manejó, o null si no aplica (para que
@@ -44,7 +47,127 @@ export async function handleCommand({ text, sender, role }, deps = {}) {
     return handleReporte(deps);
   }
 
+  // /persona — personalidad específica por grupo (se inyecta en el prompt de ese
+  // grupo). SOLO admins: la persona moldea cómo responde el bot, mismo criterio
+  // que save_memory.
+  if (cmd === '/persona' || cmd.startsWith('/persona ')) {
+    if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
+    return handlePersona({ text, sender }, deps);
+  }
+
+  // /programados — ver/cancelar los mensajes recurrentes a grupos. SOLO admins.
+  // (Crearlos es por lenguaje natural en el DM: tool schedule_group_message.)
+  if (cmd === '/programados' || cmd.startsWith('/programados ')) {
+    if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
+    return handleProgramados(text, deps);
+  }
+
   return null;
+}
+
+// /persona                        → lista las personas configuradas
+// /persona <n|nombre>             → muestra la persona de ese grupo
+// /persona <n|nombre> | <texto>   → setea la persona (el texto queda EXACTO)
+// /persona <n|nombre> off         → la elimina (vuelve al prompt genérico)
+async function handlePersona({ text, sender }, deps = {}) {
+  const { listGroups, setGroupPersona, getGroupPersona, deleteGroupPersona, listGroupPersonas } = deps;
+  const arg = (text || '').trim().slice('/persona'.length).trim();
+
+  if (!arg) {
+    let rows = [];
+    try {
+      rows = listGroupPersonas ? listGroupPersonas() : [];
+    } catch {
+      /* DB puede no estar lista */
+    }
+    const lines = ['🎭 Personalidades por grupo'];
+    if (rows.length) {
+      for (const r of rows) lines.push(`• ${r.group_name || r.group_id}: "${truncate(r.persona, 80)}"`);
+    } else {
+      lines.push('(ninguna configurada)');
+    }
+    lines.push('', 'Uso: /persona <n|nombre> | <texto> · /persona <n|nombre> off · /persona <n|nombre>');
+    return lines.join('\n');
+  }
+
+  let groups;
+  try {
+    groups = listGroups ? await listGroups() : [];
+  } catch {
+    return 'No pude listar los grupos ahora (¿WhatsApp conectado?).';
+  }
+  groups = [...groups].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'es'));
+
+  // set: "<target> | <texto>"
+  const pipeIdx = arg.indexOf('|');
+  if (pipeIdx !== -1) {
+    const targetArg = arg.slice(0, pipeIdx).trim();
+    const persona = arg.slice(pipeIdx + 1).trim();
+    if (!targetArg || !persona) return 'Uso: /persona <n|nombre> | <texto de la personalidad>';
+    const target = resolveGroupTarget(targetArg, groups);
+    if (!target) return `No encontré "${targetArg}". Usa /grupos para ver la lista y el número.`;
+    if (setGroupPersona) {
+      setGroupPersona({ groupId: target.id, groupName: target.name, persona, updatedBy: sender });
+    }
+    return `🎭 Personalidad de "${target.name || target.id}" guardada ✅\n"${persona}"`;
+  }
+
+  // off: "<target> off"
+  const parts = arg.split(/\s+/);
+  if (parts.length > 1 && parts[parts.length - 1].toLowerCase() === 'off') {
+    const targetArg = parts.slice(0, -1).join(' ');
+    const target = resolveGroupTarget(targetArg, groups);
+    if (!target) return `No encontré "${targetArg}". Usa /grupos para ver la lista y el número.`;
+    const changes = deleteGroupPersona ? deleteGroupPersona(target.id) : 0;
+    return changes
+      ? `🎭 Personalidad de "${target.name || target.id}" eliminada — vuelve al tono genérico.`
+      : `"${target.name || target.id}" no tenía personalidad configurada.`;
+  }
+
+  // ver: "<target>"
+  const target = resolveGroupTarget(arg, groups);
+  if (!target) return `No encontré "${arg}". Usa /grupos para ver la lista y el número.`;
+  const persona = getGroupPersona ? getGroupPersona(target.id) : null;
+  return persona
+    ? `🎭 Personalidad de "${target.name || target.id}":\n"${persona}"`
+    : `"${target.name || target.id}" no tiene personalidad configurada (usa /persona <n|nombre> | <texto>).`;
+}
+
+// /programados            → lista los mensajes recurrentes activos
+// /programados off <id>   → cancela uno
+function handleProgramados(text, deps = {}) {
+  const { listScheduledMessages, cancelScheduledMessage } = deps;
+  const parts = (text || '').trim().split(/\s+/); // [ '/programados', action?, id? ]
+  const action = (parts[1] || 'list').toLowerCase();
+
+  if (action === 'off') {
+    const id = Number(parts[2]);
+    if (!Number.isInteger(id)) return 'Uso: /programados off <id>';
+    const changes = cancelScheduledMessage ? cancelScheduledMessage(id) : 0;
+    return changes
+      ? `Mensaje programado #${id} cancelado ✅`
+      : `No hay ningún mensaje programado activo con id ${id}.`;
+  }
+
+  let rows = [];
+  try {
+    rows = listScheduledMessages ? listScheduledMessages() : [];
+  } catch {
+    /* DB puede no estar lista */
+  }
+  if (!rows.length) return '📆 No hay mensajes programados activos.';
+  const lines = [`📆 Mensajes programados (${rows.length})`, ''];
+  for (const r of rows) {
+    lines.push(`#${r.id} → ${r.group_name || r.group_id} — ${csvToDayLabels(r.days)} a las ${r.time_hm}`);
+    lines.push(`    "${truncate(r.text, 100)}"`);
+  }
+  lines.push('', 'Cancelar: /programados off <id>');
+  return lines.join('\n');
+}
+
+function truncate(s, n) {
+  const str = String(s || '');
+  return str.length > n ? `${str.slice(0, n - 1)}…` : str;
 }
 
 async function handleReporte({ buildSheetsReport } = {}) {

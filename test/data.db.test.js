@@ -224,3 +224,46 @@ test('getRecentMessages: sinceHours filtra por ventana y limit es tope duro', as
   const legacy = await wa.getRecentMessages(gid, 50);
   assert.equal(legacy.length, 4);
 });
+
+// ─── Personalidad por grupo + mensajes recurrentes ─────────────────────────────
+
+test('group_personality: set (upsert) / get / delete / list', () => {
+  const gid = 'patah@g.us';
+  assert.equal(db.getGroupPersona(gid), null, 'sin configurar → null');
+  db.setGroupPersona({ groupId: gid, groupName: 'Patah ✝️', persona: 'Tono religioso, di "muchachos"', updatedBy: 'a@lid' });
+  assert.equal(db.getGroupPersona(gid), 'Tono religioso, di "muchachos"');
+  db.setGroupPersona({ groupId: gid, groupName: 'Patah ✝️', persona: 'Versión 2', updatedBy: 'a@lid' });
+  assert.equal(db.getGroupPersona(gid), 'Versión 2', 'upsert actualiza');
+  assert.equal(db.listGroupPersonas().filter((p) => p.group_id === gid).length, 1, 'una sola fila');
+  assert.equal(db.deleteGroupPersona(gid), 1);
+  assert.equal(db.getGroupPersona(gid), null);
+  assert.equal(db.deleteGroupPersona(gid), 0, 'borrar de nuevo no afecta filas');
+  assert.equal(db.getGroupPersona(null), null, 'null tolerado');
+});
+
+test('scheduled_messages: create / list / markSent / cancel', () => {
+  const id = db.createScheduledMessage({
+    groupId: 'patah@g.us',
+    groupName: 'Patah ✝️',
+    days: '0,4',
+    timeHm: '20:00',
+    text: 'Muchachos, ¡reunión hoy!',
+    createdBy: 'boss@lid',
+  });
+  assert.ok(Number(id) > 0);
+
+  const rows = db.listScheduledMessages();
+  const row = rows.find((r) => r.id === Number(id));
+  assert.ok(row, 'aparece en la lista de activos');
+  assert.equal(row.days, '0,4');
+  assert.equal(row.time_hm, '20:00');
+  assert.equal(row.last_sent_date, null);
+
+  db.markScheduledMessageSent(id, '2026-06-11');
+  assert.equal(db.listScheduledMessages().find((r) => r.id === Number(id)).last_sent_date, '2026-06-11');
+
+  assert.equal(db.cancelScheduledMessage(id), 1);
+  assert.ok(!db.listScheduledMessages().some((r) => r.id === Number(id)), 'cancelado sale de los activos');
+  assert.ok(db.listScheduledMessages({ activeOnly: false }).some((r) => r.id === Number(id)), 'pero la fila queda (auditoría)');
+  assert.equal(db.cancelScheduledMessage(id), 0, 'cancelar dos veces no afecta');
+});

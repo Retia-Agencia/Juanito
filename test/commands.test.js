@@ -212,3 +212,98 @@ test('/reporte informa si la generación falla', async () => {
   const out = await handleCommand({ text: '/reporte', sender: 'a@lid', role: 'admin' }, deps);
   assert.match(out, /No pude generar el reporte ahora: 403 sin acceso/);
 });
+
+// ─── /persona (personalidad por grupo, admin-only) ────────────────────────────
+
+function personaDeps() {
+  const state = { personas: new Map() };
+  return {
+    _state: state,
+    listGroups: async () => [
+      { id: 'p@g.us', name: 'Patah San Juan de Ávila ✝️' },
+      { id: 'v@g.us', name: 'Ventas EstadoX' },
+    ],
+    setGroupPersona: ({ groupId, persona }) => state.personas.set(groupId, persona),
+    getGroupPersona: (id) => state.personas.get(id) ?? null,
+    deleteGroupPersona: (id) => (state.personas.delete(id) ? 1 : 0),
+    listGroupPersonas: () =>
+      [...state.personas.entries()].map(([group_id, persona]) => ({ group_id, group_name: group_id, persona })),
+  };
+}
+
+test('/persona para no-admin → deflexión', async () => {
+  assert.match(await handleCommand({ text: '/persona', sender: 'b@lid', role: 'boss' }, personaDeps()), /equipo técnico/);
+});
+
+test('/persona <nombre> | <texto> guarda EXACTO y se puede ver', async () => {
+  const deps = personaDeps();
+  const persona = 'Grupo religioso católico. Tono alusivo a la fe; di "muchachos".';
+  const out = await handleCommand(
+    { text: `/persona patah | ${persona}`, sender: 'a@lid', role: 'admin' },
+    deps
+  );
+  assert.match(out, /guardada ✅/);
+  assert.equal(deps._state.personas.get('p@g.us'), persona, 'el texto queda tal cual (con tildes y comillas)');
+
+  const ver = await handleCommand({ text: '/persona patah', sender: 'a@lid', role: 'admin' }, deps);
+  assert.ok(ver.includes(persona));
+});
+
+test('/persona <nombre> off elimina; sin configurar lo dice', async () => {
+  const deps = personaDeps();
+  deps._state.personas.set('p@g.us', 'algo');
+  assert.match(await handleCommand({ text: '/persona patah off', sender: 'a@lid', role: 'admin' }, deps), /eliminada/);
+  assert.equal(deps._state.personas.has('p@g.us'), false);
+  assert.match(await handleCommand({ text: '/persona patah off', sender: 'a@lid', role: 'admin' }, deps), /no tenía/);
+});
+
+test('/persona sin args lista las configuradas', async () => {
+  const deps = personaDeps();
+  deps._state.personas.set('v@g.us', 'Tono comercial directo');
+  const out = await handleCommand({ text: '/persona', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /Tono comercial directo/);
+  assert.match(out, /Uso: \/persona/);
+});
+
+test('/persona con grupo inexistente → ayuda', async () => {
+  const out = await handleCommand({ text: '/persona nadaqver | hola', sender: 'a@lid', role: 'admin' }, personaDeps());
+  assert.match(out, /No encontré/);
+});
+
+// ─── /programados (mensajes recurrentes, admin-only) ──────────────────────────
+
+function programadosDeps() {
+  const state = {
+    rows: [
+      { id: 3, group_id: 'p@g.us', group_name: 'Patah San Juan de Ávila ✝️', days: '0,4', time_hm: '20:00', text: 'Muchachos, ¡los esperamos hoy en la reunión!', active: 1 },
+    ],
+  };
+  return {
+    _state: state,
+    listScheduledMessages: () => state.rows.filter((r) => r.active),
+    cancelScheduledMessage: (id) => {
+      const row = state.rows.find((r) => r.id === id && r.active);
+      if (!row) return 0;
+      row.active = 0;
+      return 1;
+    },
+  };
+}
+
+test('/programados para no-admin → deflexión', async () => {
+  assert.match(await handleCommand({ text: '/programados', sender: 'b@lid', role: 'boss' }, programadosDeps()), /equipo técnico/);
+});
+
+test('/programados (admin) lista con días legibles y hora', async () => {
+  const out = await handleCommand({ text: '/programados', sender: 'a@lid', role: 'admin' }, programadosDeps());
+  assert.match(out, /#3 → Patah San Juan de Ávila ✝️ — domingo y jueves a las 20:00/);
+  assert.match(out, /los esperamos hoy/);
+});
+
+test('/programados off <id> cancela; id inexistente lo dice', async () => {
+  const deps = programadosDeps();
+  assert.match(await handleCommand({ text: '/programados off 3', sender: 'a@lid', role: 'admin' }, deps), /#3 cancelado ✅/);
+  assert.equal(deps._state.rows[0].active, 0);
+  assert.match(await handleCommand({ text: '/programados off 3', sender: 'a@lid', role: 'admin' }, deps), /No hay ningún/);
+  assert.match(await handleCommand({ text: '/programados off abc', sender: 'a@lid', role: 'admin' }, deps), /Uso:/);
+});
