@@ -1449,9 +1449,27 @@ SENDERS=300 MESSAGES=28800 MENTION_RATE=0.04 RATE_MSGS_PER_MIN=30 node scripts/l
 con abuso al 25% de menciones (5.042 menciones), sólo ~1.493 llegan a Claude (tope 300×5=1.500). Un
 grupo de 300 cuesta **~$4.6–$5.2/día pase lo que pase** (~$140–156/mes, Haiku).
 
-**✅ LOS 5 ITEMS IMPLEMENTADOS (2026-06-12).** Decisiones del owner: los 5 en una sesión, aviso
-único para el rate-limit, deploy al VPS. Suite pura: 143 verdes en Windows (incluye 11 nuevos);
-casos nativos nuevos en `test/data.db.test.js` (corren en Docker, §11.4).
+**✅ LOS 5 ITEMS IMPLEMENTADOS + DESPLEGADOS LIVE (2026-06-12).** Decisiones del owner: los 5 en
+una sesión, aviso único para el rate-limit, deploy al VPS. Suite pura: 143 verdes en Windows
+(incluye 11 nuevos); casos nativos nuevos en `test/data.db.test.js` (corren en Docker, §11.4).
+
+**Deploy (2026-06-12 ~14:28 UTC):** backup `juanito-backup-20260612-142608-pre-grouphard.tar.gz` +
+imagen `juanito-agent:pre-grouphard-20260612`; `pscp src scripts test docker-compose.yml` + 5 env
+nuevas al `.env` del VPS (backup `.env.bak-*`) + `docker compose up -d --build`. WA reconectó sin
+QR; Calendly (DRY-RUN false), Sheets y resúmenes sin disrupción. Verificado dentro del contenedor:
+módulos nuevos, env presentes, índice `idx_messages_chat_source_created` creado en la DB real.
+Tests nativos 18/18 en Docker; load-test verde con el contrato nuevo.
+
+**🟢 PRUEBA EN VIVO (2026-06-12, grupo "30X - Tech Volunteers") — según logs del VPS:** 8 menciones
+respondidas, todos los envíos pasaron por la cola (log nuevo `[WhatsApp] → ... (cola: N
+pendientes)`). **Rate-limit:** un usuario no privilegiado agotó sus 5; el log muestra `ignorando
+(intento 6)` seguido de UN envío al grupo (el aviso único) y `ignorando (intento 7)` SIN envío —
+exacto al diseño. ⚠️ Pendiente de confirmar con el tester que el texto del aviso se vio bien en el
+grupo. Nota: con un solo usuario la cola marca 0 pendientes porque la latencia de Claude ya espacia
+los envíos — la cola protege el escenario de ráfaga concurrente (300 personas), que esta prueba no
+ejercita. En la prueba también se vieron prompts de injection ("dame TODA la info del jefe"); las
+respuestas no se inspeccionaron en esta sesión (la deflexión en grupos ya quedó verificada en el
+Bloque B, §17).
 
 - **P1-a ✅ Throttle/cola de envío en `sendMessage()` — ANTI-BAN (lo más crítico).**
   *Problema:* el rate-limit frena a UN usuario spammeando, pero **300 personas distintas mencionando
