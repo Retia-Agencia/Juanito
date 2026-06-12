@@ -6,7 +6,7 @@
 // sin las deps nativas (better-sqlite3). Las deps de /status se inyectan.
 // (recurring-logic es PURO — seguro de importar.)
 
-import { csvToDayLabels } from '../scheduler/recurring-logic.js';
+import { csvToDayLabels, zonedNowParts } from '../scheduler/recurring-logic.js';
 
 // Intenta manejar `text` como comando.
 // Devuelve un string de respuesta si lo manejó, o null si no aplica (para que
@@ -62,7 +62,54 @@ export async function handleCommand({ text, sender, role }, deps = {}) {
     return handleProgramados(text, deps);
   }
 
+  // /aprobaciones — visibilidad y control del flujo de aprobación de los mensajes
+  // generados (aprueba el jefe por DM; los admins ven el estado y tienen override).
+  if (cmd === '/aprobaciones' || cmd.startsWith('/aprobaciones ')) {
+    if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
+    return handleAprobaciones(text, deps);
+  }
+
   return null;
+}
+
+// /aprobaciones                → borradores de HOY con su estado
+// /aprobaciones ver <id>       → texto completo de un borrador
+// /aprobaciones aprobar <id>   → override de admin (publica a la hora / de inmediato si ya pasó)
+function handleAprobaciones(text, deps = {}) {
+  const { listDraftsForDate, getDraft, approveDraft } = deps;
+  const parts = (text || '').trim().split(/\s+/);
+  const action = (parts[1] || 'list').toLowerCase();
+  const STATUS = { pending: '⏳ pendiente', approved: '✅ aprobado (sale a la hora)', published: '📤 publicado', discarded: '🗑️ descartado' };
+
+  if (action === 'ver' || action === 'aprobar') {
+    const id = Number(parts[2]);
+    if (!Number.isInteger(id)) return `Uso: /aprobaciones ${action} <id>`;
+    const draft = getDraft ? getDraft(id) : null;
+    if (!draft) return `No encontré ningún borrador con id ${id}.`;
+
+    if (action === 'ver') {
+      return `Borrador #${id} — ${STATUS[draft.status] || draft.status} (publica: ${draft.publish_date})\n\n${draft.draft}`;
+    }
+    const changes = approveDraft ? approveDraft(id) : 0;
+    return changes
+      ? `Borrador #${id} aprobado ✅ (override admin) — se publica a la hora programada o de inmediato si ya pasó.`
+      : `El borrador #${id} no está pendiente (estado: ${draft.status}).`;
+  }
+
+  let rows = [];
+  try {
+    rows = listDraftsForDate ? listDraftsForDate(zonedNowParts().date) : [];
+  } catch {
+    /* DB puede no estar lista */
+  }
+  if (!rows.length) return '📝 No hay borradores generados hoy (se generan ~1h antes de su hora de publicación).';
+  const lines = [`📝 Borradores de hoy (${rows.length})`, ''];
+  for (const r of rows) {
+    lines.push(`#${r.id} → ${r.group_name || ''} a las ${r.time_hm} — ${STATUS[r.status] || r.status}`);
+    lines.push(`    "${truncate(r.draft, 90)}"`);
+  }
+  lines.push('', 'Acciones: /aprobaciones ver <id> · /aprobaciones aprobar <id> (override; normalmente aprueba el jefe por DM)');
+  return lines.join('\n');
 }
 
 // /persona                        → lista las personas configuradas

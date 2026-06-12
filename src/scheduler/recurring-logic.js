@@ -98,3 +98,26 @@ export function isRecurringDue({ days, timeHm, lastSentDate, nowParts, windowMin
   const now = toMinutes(nowParts.hm);
   return now >= target && now < target + windowMin;
 }
+
+const isPublishDay = (days, dow) =>
+  String(days || '').split(',').map(Number).filter(Number.isInteger).includes(dow);
+
+// ¿Toca GENERAR el borrador de un mensaje kind='generated'? Se genera con
+// `leadMin` de anticipación a la hora de publicar, durante todo el resto del día
+// (sin tope superior: si el bot estuvo caído, genera tarde y el jefe aprueba tarde).
+// El dedup real es el UNIQUE(scheduled_id, publish_date) de scheduled_drafts.
+export function isDraftDue({ days, timeHm, nowParts, leadMin = 60 }) {
+  if (!isPublishDay(days, nowParts.dow)) return false;
+  const target = toMinutes(timeHm);
+  const now = toMinutes(nowParts.hm);
+  return now >= target - leadMin;
+}
+
+// ¿Toca PUBLICAR un mensaje kind='generated'? Requiere borrador APROBADO.
+// Sin tope superior dentro del día: una aprobación tardía publica al minuto
+// siguiente, mientras siga siendo el día programado.
+export function isGeneratedPublishDue({ days, timeHm, lastSentDate, nowParts }) {
+  if (!isPublishDay(days, nowParts.dow)) return false;
+  if (lastSentDate === nowParts.date) return false;
+  return toMinutes(nowParts.hm) >= toMinutes(timeHm);
+}

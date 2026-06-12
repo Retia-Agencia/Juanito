@@ -3,7 +3,7 @@
 // La ejecución de las herramientas vive aquí dentro (handlers internos), no en el bot.
 
 import Anthropic from '@anthropic-ai/sdk';
-import { daysToCsv, normalizeTimeHm, csvToDayLabels } from '../scheduler/recurring-logic.js';
+import { daysToCsv, normalizeTimeHm, csvToDayLabels, zonedNowParts } from '../scheduler/recurring-logic.js';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -56,6 +56,15 @@ async function resolveDeps() {
     listScheduledMessages: db.listScheduledMessages,
     cancelScheduledMessage: db.cancelScheduledMessage,
     isGroupAuthorized: db.isGroupAuthorized,
+    // borradores con aprobación (tool manage_drafts)
+    listPendingDrafts: db.listPendingDrafts,
+    getDraft: db.getDraft,
+    approveDraft: db.approveDraft,
+    reviseDraft: db.reviseDraft,
+    listRecentPublishedDrafts: db.listRecentPublishedDrafts,
+    getSetting: db.getSetting,
+    setSetting: db.setSetting,
+    generateScheduledDraft,
     // contacts
     resolveContact: contacts.resolveContact,
     // whatsapp
@@ -178,11 +187,52 @@ const TOOLS = [
         },
         text: {
           type: 'string',
-          description: 'El mensaje EXACTO que se enviará al grupo, tal cual lo pidió el jefe. Requerido para create.',
+          description:
+            'El mensaje EXACTO que se enviará al grupo, tal cual lo pidió el jefe. ' +
+            'Requerido para create cuando generated=false.',
+        },
+        generated: {
+          type: 'boolean',
+          description:
+            'true = el mensaje NO es fijo: Juanito redacta uno distinto cada vez según "brief" ' +
+            'y se publica SOLO tras aprobación del jefe por DM. Úsalo cuando pidan mensajes que ' +
+            'varíen (ej: "un mensaje alusivo a San José cada día"). Default false (texto fijo).',
+        },
+        brief: {
+          type: 'string',
+          description:
+            'Instrucción editorial COMPLETA para los mensajes generados (tema, tono, audiencia, ' +
+            'estructura, qué incluir). Requerido para create cuando generated=true.',
         },
         id: {
           type: 'number',
           description: 'Id del mensaje programado a cancelar. Requerido para cancel.',
+        },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'manage_drafts',
+    description:
+      'Gestiona los BORRADORES pendientes de aprobación de los mensajes generados para grupos. ' +
+      'Úsalo cuando el jefe quiera ver los borradores del día, aprobar uno ("apruebo", "envíalo", ' +
+      '"dale") o pedir cambios ("cámbiale X", "más corto", "quita el emoji"). Tras una corrección ' +
+      'se regenera el borrador y se le muestra de nuevo.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['list', 'approve', 'revise'],
+          description: 'list = ver borradores de hoy · approve = aprobar por id · revise = corregir por id',
+        },
+        id: { type: 'number', description: 'Id del borrador (para approve/revise).' },
+        feedback: {
+          type: 'string',
+          description:
+            'La corrección del jefe, tal cual la dijo (para revise). Se aplica ahora Y se acumula ' +
+            'para los mensajes futuros.',
         },
       },
       required: ['action'],
@@ -223,6 +273,7 @@ const GROUP_DENIED_TOOLS = new Set([
   'summarize_group',
   'search_knowledge',
   'schedule_group_message',
+  'manage_drafts',
 ]);
 // Tools sensibles que el jefe (no-admin) NO debe ejecutar. save_memory escribe la
 // memoria NÚCLEO que alimenta el comportamiento del bot para TODOS → solo admin.
@@ -346,6 +397,27 @@ ${bossNotes.map((m) => `- ${m.value}`).join('\n')}`
         .join('\n')}`
     : '';
 
+  // Borradores pendientes de aprobación (mensajes generados para grupos). Le da a
+  // Claude el contexto para entender "apruebo" / "cámbiale X" sin que el jefe tenga
+  // que citar ids — pero la acción siempre pasa por la tool manage_drafts.
+  let draftsBlock = '';
+  try {
+    const today = zonedNowParts().date;
+    const pending = (await deps.listPendingDrafts?.(today)) || [];
+    if (pending.length) {
+      draftsBlock = `## Borradores PENDIENTES de aprobación (hoy)
+Estos mensajes generados están esperando el visto bueno del jefe para publicarse en su
+grupo a la hora programada. Si el jefe aprueba ("apruebo", "envíalo", "dale"), usa
+manage_drafts con action=approve. Si pide cambios, usa action=revise con su corrección
+textual. Si hay varios y no es obvio a cuál se refiere, pregúntale.
+${pending
+  .map((d) => `- Borrador #${d.id} → "${d.group_name}" a las ${d.time_hm}:\n${d.draft}`)
+  .join('\n')}`;
+    }
+  } catch {
+    /* sin borradores: bloque vacío */
+  }
+
   // Bloque según el rol del interlocutor.
   const roleBlock =
     role === 'admin'
@@ -385,9 +457,12 @@ confirma al jefe en una línea natural:
   persona, te lo diré por el resultado de la herramienta: en ese caso pídele al
   jefe que aclare el contacto en vez de inventar.
 - summarize_group: lee y resume un grupo por nombre cuando pregunte qué pasó ahí.
-- schedule_group_message: programa/lista/cancela mensajes RECURRENTES a un grupo
-  (ej: "todos los jueves a las 8pm envía la invitación al grupo X"). El texto del
-  mensaje se guarda EXACTO; si el jefe no dio el texto literal, pídeselo antes.
+- schedule_group_message: programa/lista/cancela mensajes RECURRENTES a un grupo.
+  Dos tipos: texto FIJO (se guarda EXACTO; si el jefe no dio el literal, pídeselo) o
+  GENERADO (generated=true + brief editorial: Juanito redacta uno distinto cada vez
+  y el jefe lo aprueba por DM antes de publicarse).
+- manage_drafts: ver/aprobar/corregir los borradores pendientes de los mensajes
+  generados. Las correcciones se aplican ya y se acumulan para el futuro.
 - search_knowledge: busca en historial, memoria y resúmenes lo que ya se habló.
 - remember_note: anota una nota o preferencia personal del jefe cuando lo pida.${
     role === 'admin'
@@ -403,7 +478,8 @@ ${roleBlock}
 ${memoryBlock}
 ${bossNotesBlock}
 ${summaryBlock}
-${remindersBlock}`.trim();
+${remindersBlock}
+${draftsBlock}`.trim();
 }
 
 // ─── Helpers de período para summarize_group ──────────────────────────────────
@@ -587,6 +663,32 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
       if (!timeHm) {
         return 'No entendí la hora. Necesito la hora en formato 24h, ej: 20:00 para las 8pm.';
       }
+
+      // Mensaje GENERADO: sin texto fijo; Claude redacta cada día según el brief y
+      // el jefe aprueba por DM antes de publicar.
+      if (input.generated) {
+        const brief = (input.brief || '').trim();
+        if (!brief) {
+          return 'Me falta la instrucción editorial (brief): tema, tono, audiencia y qué debe incluir cada mensaje.';
+        }
+        const id = await deps.createScheduledMessage?.({
+          groupId: group.id,
+          groupName: group.name || group.id,
+          days,
+          timeHm,
+          text: '',
+          createdBy: ctx.createdBy || null,
+          kind: 'generated',
+          brief,
+        });
+        return (
+          `Listo ✅ Mensaje GENERADO #${id} para "${group.name || group.id}", ` +
+          `cada ${csvToDayLabels(days)} a las ${timeHm}. Redactaré un borrador distinto cada vez ` +
+          `y te lo mandaré por aquí ANTES de la hora para que lo apruebes o lo corrijas — ` +
+          `sin tu visto bueno no se publica.`
+        );
+      }
+
       const text = (input.text || '').trim();
       if (!text) return 'Me falta el texto exacto del mensaje que se enviará al grupo.';
 
@@ -602,6 +704,63 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
         `Listo ✅ Mensaje programado #${id}: se enviará a "${group.name || group.id}" ` +
         `cada ${csvToDayLabels(days)} a las ${timeHm}.\nTexto: "${text}"`
       );
+    }
+
+    case 'manage_drafts': {
+      const today = zonedNowParts().date;
+
+      if (input.action === 'list') {
+        const pending = (await deps.listPendingDrafts?.(today)) || [];
+        if (!pending.length) return 'No hay borradores pendientes de aprobación hoy.';
+        return pending
+          .map((d) => `Borrador #${d.id} → "${d.group_name}" a las ${d.time_hm}:\n${d.draft}`)
+          .join('\n\n');
+      }
+
+      if (!Number.isInteger(input.id)) {
+        return 'Necesito el id del borrador (míralos con action=list).';
+      }
+      const draft = await deps.getDraft?.(input.id);
+      if (!draft) return `No encontré ningún borrador con id ${input.id}.`;
+
+      if (input.action === 'approve') {
+        const changes = (await deps.approveDraft?.(input.id)) || 0;
+        if (!changes) {
+          return `El borrador #${input.id} no está pendiente (estado: ${draft.status}).`;
+        }
+        return (
+          `Borrador #${input.id} aprobado ✅ — se publicará en el grupo a la hora programada ` +
+          `(o en el próximo minuto si la hora ya pasó hoy).`
+        );
+      }
+
+      if (input.action === 'revise') {
+        const feedback = (input.feedback || '').trim();
+        if (!feedback) return 'Dime qué corregir del borrador y lo regenero.';
+        if (draft.status === 'published') return `El borrador #${input.id} ya se publicó; no puedo corregirlo.`;
+
+        // La corrección se ACUMULA para todos los futuros de este mensaje programado…
+        const fbKey = `editorial_feedback:${draft.scheduled_id}`;
+        const prior = (await deps.getSetting?.(fbKey, '')) || '';
+        const accumulated = `${prior}${prior ? '\n' : ''}- ${feedback}`;
+        await deps.setSetting?.(fbKey, accumulated);
+
+        // …y se aplica YA: regenerar el borrador con el brief + feedback acumulado.
+        const schedules = (await deps.listScheduledMessages?.({ activeOnly: false })) || [];
+        const sched = schedules.find((s) => s.id === draft.scheduled_id);
+        const recents = (await deps.listRecentPublishedDrafts?.(draft.scheduled_id, 3)) || [];
+        const newText = await deps.generateScheduledDraft?.({
+          brief: sched?.brief || '',
+          groupName: sched?.group_name || '',
+          feedback: accumulated,
+          recentTexts: recents,
+        });
+        if (!newText) return 'No pude regenerar el borrador ahora. Intenta de nuevo en un momento.';
+        await deps.reviseDraft?.(input.id, newText, feedback);
+        return `Corregido y guardado para el futuro. Nuevo borrador #${input.id}:\n\n${newText}\n\n¿Lo apruebo así?`;
+      }
+
+      return 'Acción no reconocida. Usa list, approve o revise.';
     }
 
     case 'search_knowledge': {
@@ -765,6 +924,49 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
 }
 
 // ─── Resumir mensajes de grupo ────────────────────────────────────────────────
+
+// ─── Generador de mensajes programados (kind='generated', con aprobación) ─────
+// Redacta el mensaje del día para un grupo según el `brief` editorial guardado,
+// las correcciones acumuladas del jefe y los últimos publicados (para variar).
+// El resultado NO se publica directo: pasa por el flujo de aprobación.
+
+export async function generateScheduledDraft({ brief, groupName, feedback = '', recentTexts = [] }) {
+  const today = new Date().toLocaleDateString('es-CO', {
+    timeZone: process.env.TZ || 'America/Bogota',
+    dateStyle: 'full',
+  });
+  const recentBlock = recentTexts.length
+    ? `\n\nMensajes ya publicados los días anteriores (NO los repitas — varía tema, ángulo y redacción):\n${recentTexts
+        .map((t, i) => `--- anterior ${i + 1} ---\n${t}`)
+        .join('\n')}`
+    : '';
+  const feedbackBlock = feedback
+    ? `\n\nCorrecciones acumuladas del jefe (OBLIGATORIAS, aplícalas siempre):\n${feedback}`
+    : '';
+
+  const response = await withRetry(() =>
+    client.messages.create({
+      model: MODEL,
+      max_tokens: 700,
+      system:
+        `Redactas mensajes para el grupo de WhatsApp "${groupName}". Respondes ÚNICAMENTE con el ` +
+        `mensaje final listo para enviar — sin título, sin comillas, sin explicación. Formato WhatsApp: ` +
+        `*negrilla* con asteriscos simples, emojis con moderación. Hoy es ${today}.`,
+      messages: [
+        {
+          role: 'user',
+          content: `Redacta el mensaje de hoy según esta instrucción editorial:\n\n${brief}${feedbackBlock}${recentBlock}`,
+        },
+      ],
+    })
+  );
+
+  return response.content
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n')
+    .trim();
+}
 
 export async function summarizeGroupMessages(groupName, messages) {
   const response = await withRetry(() =>

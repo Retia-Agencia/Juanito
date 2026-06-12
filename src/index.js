@@ -24,6 +24,9 @@ import {
   listGroupPersonas,
   listScheduledMessages,
   cancelScheduledMessage,
+  listDraftsForDate,
+  getDraft,
+  approveDraft,
 } from './db/index.js';
 import { resolveCloserByPushName } from './calendly/closers.js';
 import { getHealth } from './calendly/health.js';
@@ -120,6 +123,10 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
         // /programados — mensajes recurrentes a grupos
         listScheduledMessages,
         cancelScheduledMessage,
+        // /aprobaciones — estado/override del flujo de aprobación de generados
+        listDraftsForDate,
+        getDraft,
+        approveDraft,
       }
     );
     if (cmdReply !== null) {

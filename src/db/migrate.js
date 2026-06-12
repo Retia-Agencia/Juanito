@@ -165,7 +165,25 @@ db.exec(`
     created_by     TEXT,
     created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_sent_date TEXT,            -- 'YYYY-MM-DD' local del último envío (anti doble-envío)
-    active         INTEGER NOT NULL DEFAULT 1
+    active         INTEGER NOT NULL DEFAULT 1,
+    kind           TEXT NOT NULL DEFAULT 'fixed',  -- 'fixed' | 'generated' (con aprobación)
+    brief          TEXT             -- instrucción editorial para kind='generated'
+  );
+
+  -- Borradores de mensajes GENERADOS (kind='generated' en scheduled_messages):
+  -- el scheduler genera el borrador con anticipación, se lo manda al jefe por DM,
+  -- y SOLO se publica si fue aprobado. Un borrador por (mensaje, día).
+  CREATE TABLE IF NOT EXISTS scheduled_drafts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    scheduled_id INTEGER NOT NULL,
+    publish_date TEXT NOT NULL,      -- 'YYYY-MM-DD' local del día de publicación
+    draft        TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending',  -- pending|approved|published|discarded
+    feedback     TEXT,               -- última corrección aplicada (auditoría)
+    reminded     INTEGER NOT NULL DEFAULT 0,       -- ya se avisó "sigue pendiente" a la hora de publicar
+    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+    decided_at   DATETIME,
+    UNIQUE(scheduled_id, publish_date)
   );
 `);
 
@@ -187,6 +205,12 @@ addColumnIfMissing('calendly_optins', 'source', 'TEXT');
 addColumnIfMissing('calendly_optins', 'contact_jid', 'TEXT');
 // Pausa por-closer (botón de pánico fino: `/calendly off <closer>`). 0 = activo.
 addColumnIfMissing('calendly_optins', 'paused', 'INTEGER DEFAULT 0');
+
+// Mensajes programados GENERADOS (§18.E fase aprobación): kind 'fixed' (texto exacto,
+// comportamiento original) | 'generated' (Claude redacta cada día según `brief` y se
+// publica solo tras aprobación del jefe).
+addColumnIfMissing('scheduled_messages', 'kind', "TEXT NOT NULL DEFAULT 'fixed'");
+addColumnIfMissing('scheduled_messages', 'brief', 'TEXT');
 
 // Migrar el flag legacy `sent` -> `status` (una sola vez, idempotente)
 if (columnExists('reminders', 'sent')) {

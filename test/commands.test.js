@@ -307,3 +307,48 @@ test('/programados off <id> cancela; id inexistente lo dice', async () => {
   assert.match(await handleCommand({ text: '/programados off 3', sender: 'a@lid', role: 'admin' }, deps), /No hay ningún/);
   assert.match(await handleCommand({ text: '/programados off abc', sender: 'a@lid', role: 'admin' }, deps), /Uso:/);
 });
+
+// ─── /aprobaciones (estado y override del flujo de aprobación, admin-only) ─────
+
+function aprobacionesDeps() {
+  const state = {
+    drafts: [
+      { id: 5, scheduled_id: 7, publish_date: '2099-01-01', draft: 'Mensaje de San José para hoy…', status: 'pending', group_name: 'Patah', time_hm: '09:00' },
+      { id: 6, scheduled_id: 8, publish_date: '2099-01-01', draft: 'Recordatorio reunión 6:30pm', status: 'published', group_name: 'Patah', time_hm: '08:00' },
+    ],
+  };
+  return {
+    _state: state,
+    listDraftsForDate: () => state.drafts,
+    getDraft: (id) => state.drafts.find((d) => d.id === id) || null,
+    approveDraft: (id) => {
+      const d = state.drafts.find((x) => x.id === id && x.status === 'pending');
+      if (!d) return 0;
+      d.status = 'approved';
+      return 1;
+    },
+  };
+}
+
+test('/aprobaciones para no-admin → deflexión', async () => {
+  assert.match(await handleCommand({ text: '/aprobaciones', sender: 'b@lid', role: 'boss' }, aprobacionesDeps()), /equipo técnico/);
+});
+
+test('/aprobaciones (admin) lista los borradores de hoy con estado', async () => {
+  const out = await handleCommand({ text: '/aprobaciones', sender: 'a@lid', role: 'admin' }, aprobacionesDeps());
+  assert.match(out, /#5 → Patah a las 09:00 — ⏳ pendiente/);
+  assert.match(out, /#6 → Patah a las 08:00 — 📤 publicado/);
+});
+
+test('/aprobaciones ver <id> muestra el texto completo', async () => {
+  const out = await handleCommand({ text: '/aprobaciones ver 5', sender: 'a@lid', role: 'admin' }, aprobacionesDeps());
+  assert.match(out, /Mensaje de San José para hoy…/);
+});
+
+test('/aprobaciones aprobar <id> hace override; ya publicado lo dice', async () => {
+  const deps = aprobacionesDeps();
+  assert.match(await handleCommand({ text: '/aprobaciones aprobar 5', sender: 'a@lid', role: 'admin' }, deps), /aprobado ✅ \(override admin\)/);
+  assert.equal(deps._state.drafts[0].status, 'approved');
+  assert.match(await handleCommand({ text: '/aprobaciones aprobar 6', sender: 'a@lid', role: 'admin' }, deps), /no está pendiente/);
+  assert.match(await handleCommand({ text: '/aprobaciones aprobar abc', sender: 'a@lid', role: 'admin' }, deps), /Uso:/);
+});

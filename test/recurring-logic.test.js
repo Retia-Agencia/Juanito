@@ -118,3 +118,24 @@ test('due otra vez la semana siguiente (last_sent_date es de la semana pasada)',
     true
   );
 });
+
+// ─── isDraftDue / isGeneratedPublishDue (mensajes generados con aprobación) ────
+
+test('isDraftDue: entra en ventana lead antes de la hora y sigue el resto del día', async () => {
+  const { isDraftDue } = await import('../src/scheduler/recurring-logic.js');
+  const base = { days: '4', timeHm: '09:00', leadMin: 60 };
+  assert.equal(isDraftDue({ ...base, nowParts: { date: 'd', hm: '07:59', dow: 4 } }), false, 'antes del lead no');
+  assert.equal(isDraftDue({ ...base, nowParts: { date: 'd', hm: '08:00', dow: 4 } }), true, 'al inicio del lead sí');
+  assert.equal(isDraftDue({ ...base, nowParts: { date: 'd', hm: '11:00', dow: 4 } }), true, 'tarde el mismo día sí (bot caído)');
+  assert.equal(isDraftDue({ ...base, nowParts: { date: 'd', hm: '08:30', dow: 5 } }), false, 'otro día no');
+});
+
+test('isGeneratedPublishDue: desde la hora en adelante, sin tope, hasta cambiar de día', async () => {
+  const { isGeneratedPublishDue } = await import('../src/scheduler/recurring-logic.js');
+  const base = { days: '4', timeHm: '09:00', lastSentDate: null };
+  assert.equal(isGeneratedPublishDue({ ...base, nowParts: { date: 'd', hm: '08:59', dow: 4 } }), false);
+  assert.equal(isGeneratedPublishDue({ ...base, nowParts: { date: 'd', hm: '09:00', dow: 4 } }), true);
+  assert.equal(isGeneratedPublishDue({ ...base, nowParts: { date: 'd', hm: '17:45', dow: 4 } }), true, 'aprobación tardía publica');
+  assert.equal(isGeneratedPublishDue({ ...base, lastSentDate: 'd', nowParts: { date: 'd', hm: '10:00', dow: 4 } }), false, 'ya publicado hoy');
+  assert.equal(isGeneratedPublishDue({ ...base, nowParts: { date: 'd', hm: '10:00', dow: 5 } }), false, 'otro día no');
+});

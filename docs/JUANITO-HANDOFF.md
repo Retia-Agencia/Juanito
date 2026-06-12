@@ -77,6 +77,11 @@ un cambio relevante.
   jefe/admin puede decir por DM *"en el grupo X todos los jueves a las 8pm envía <mensaje>"* →
   tool `schedule_group_message` + scheduler cada minuto (anti doble-envío, solo grupos
   autorizados, vía la cola anti-ban). `/programados` lista/cancela.
+- **🔵 Mensajes GENERADOS con aprobación del jefe (2026-06-12), ver §18.F.** Para Patah (SOLO ese
+  grupo): mensaje diario 9am de San José + recordatorios jue/dom 8am de la reunión 6:30pm,
+  redactados por Claude según un brief, **aprobados por Dani por DM antes de publicarse** (sin
+  visto bueno NO sale), con correcciones en lenguaje natural que se acumulan como guía editorial.
+  Admins: `/aprobaciones` (estado + override). Falta el setup en vivo cuando Juanito entre al grupo.
 
 Pendientes reales abiertos → ver §18 "Tareas pendientes".
 
@@ -670,6 +675,7 @@ plink -pw <PW> root@157.230.152.202 "cd /root/juanito && docker compose up -d --
 | `WA_SEND_QUEUE_MAX` | — | `200` | Tamaño máx de la cola de envío; al excederse se descarta |
 | `SUMMARY_MAX_MSGS` | — | `400` | Tope de mensajes leídos por resumen de grupo |
 | `CLAUDE_GROUP_HISTORY` | — | `30` | Turnos de historial enviados a Claude en grupos (palanca de costo) |
+| `DRAFT_LEAD_MIN` | — | `60` | Minutos de anticipación con que se genera el borrador de un mensaje generado (§18.F) |
 | `SUMMARY_CRON` | — | `0 */4 * * *` | Frecuencia de resúmenes de grupos |
 | `SUMMARY_CYCLE_HOURS` | — | `4` | Ventana de mensajes por resumen |
 | `MAX_GROUPS_PER_CYCLE` | — | `10` | Máx grupos resumidos por ciclo |
@@ -1573,6 +1579,62 @@ creadas desde el DM del jefe/admin en lenguaje natural.
 2. Admin por DM: `/persona patah | <texto de personalidad religiosa, "muchachos", etc.>`
 3. Jefe o admin por DM, en lenguaje natural: *"en el grupo Patah todos los jueves y domingos a las
    8:00pm envía: <texto exacto de la invitación>"* → confirmar con `/programados`.
+
+### 18.F 🔵 Mensajes GENERADOS con flujo de aprobación del jefe (2026-06-12)
+
+**Pedido de Dani (owner) para el grupo "Patah San Juan de Ávila ✝️" — SOLO ese grupo:**
+- **Diario 9:00am:** mensaje alusivo a **San José** (devoción, valores, dones, símbolos, historia —
+  variar el ángulo cada día), tono cálido/amoroso para jóvenes 18-28, en regla con biblia católica/
+  catecismo/estudios de la iglesia, con una pequeña oración + petición + agradecimiento, emojis y
+  negrillas moderados. SIN fotos (decidido: no se implementa).
+- **Jueves y domingo 8:00am:** recordatorio de la reunión de ese día a las 6:30pm.
+- **Mientras se estabiliza: Dani aprueba CADA mensaje por DM antes de publicarse**, puede corregirlo
+  en lenguaje natural, y Juanito **aprende de las correcciones** (se acumulan como guía editorial).
+  Los admins ven el estado con `/aprobaciones` y tienen override.
+
+**Implementación (extiende §18.E — `scheduled_messages` ahora tiene `kind`):**
+- `kind='fixed'` (default): texto exacto, publica directo — comportamiento §18.E intacto.
+- `kind='generated'` + `brief` (instrucción editorial): el scheduler **genera un borrador**
+  `DRAFT_LEAD_MIN` (default 60) minutos antes de la hora → se lo manda al **jefe (BOSS_PHONE) por
+  DM** → estados en `scheduled_drafts` (`pending→approved→published`, UNIQUE por
+  (mensaje, fecha)):
+  - Jefe dice "apruebo"/"envíalo" → tool `manage_drafts` action=approve → se publica a la hora
+    programada (o al minuto siguiente si la hora ya pasó — aprobación tardía publica el mismo día).
+  - Jefe pide cambios → action=revise: la corrección se **acumula** en
+    `settings['editorial_feedback:<scheduled_id>']` (se inyecta en TODAS las generaciones futuras
+    de ese mensaje = "aprender de las correcciones") y el borrador se regenera y re-muestra.
+  - **Sin aprobación NO se publica** (fail-safe). A la hora, si sigue pendiente, recordatorio único
+    al jefe; si aprueba después, sale de inmediato.
+- **Generador** `generateScheduledDraft` (`src/claude/index.js`): brief + correcciones acumuladas +
+  últimos 3 publicados (para no repetirse). Mismo modelo de DMs (Haiku por defecto).
+- Los borradores pendientes del día se inyectan en el **prompt de DM** del jefe/admin → "apruebo" en
+  lenguaje natural funciona sin citar ids. Tool gateada: DM boss+admin, NUNCA en grupos.
+- **Scheduler** `src/scheduler/group-messages.js` refactorizado con seam `__setDeps` (patrón
+  calendly); `processFixed` / `processGenerated`. Lógica pura nueva en `recurring-logic.js`:
+  `isDraftDue` (lead → resto del día) e `isGeneratedPublishDue` (desde la hora, sin tope, mismo día).
+- **Comando `/aprobaciones`** (admin): lista los borradores de HOY con estado · `ver <id>` texto
+  completo · `aprobar <id>` override admin.
+- **Env nueva:** `DRAFT_LEAD_MIN` (default 60) — ya en el `environment:` del compose.
+- **Tests:** `test/group-messages.test.js` (7, ciclo con deps inyectadas: fixed, borrador al jefe,
+  no-publica-sin-aprobar + recordatorio único, publica a la hora, aprobación tardía, grupo no
+  autorizado, fallo aislado), +2 recurring-logic, +6 brain.tools, +4 commands, +1 nativo (ciclo
+  completo de drafts en DB). **Suite pura: 193/193.**
+
+**Setup pendiente (cuando Juanito entre al grupo Patah — owner):**
+1. Agregar a Juanito al grupo (auto-autorizado) + `/persona patah | <personalidad religiosa>`.
+2. Crear los 3 programados por DM (jefe o admin):
+   - *"En el grupo Patah todos los días a las 9am envía un mensaje generado sobre San José: <brief
+     completo de Dani>"* (generated).
+   - *"En el grupo Patah jueves y domingo a las 8am envía un recordatorio generado de la reunión de
+     hoy 6:30pm"* (generated) — o fijo si prefieren texto idéntico.
+3. Verificar con `/programados` y `/aprobaciones`. El primer borrador llega al DM de Dani ~8am/8:30am.
+
+**Pendiente (fases siguientes, decididas con el owner — NO implementadas):**
+- **Fase 2:** contexto del grupo por tiempo (~1 semana) vía resúmenes rolling del propio grupo
+  inyectados en su prompt + historial de 30.
+- **Fase 3:** DMs teológicos para miembros del grupo Patah (gate por membresía del grupo, límite
+  5/día, prompt experto-para-dummies, disclaimer IA, sin consejos personales — considerar Sonnet).
+- **Fase 0:** prueba de carga real metiendo a Juanito a un grupo de Wheels (sin código).
 
 ### 🟢 Baja prioridad / Nice-to-have
 

@@ -267,3 +267,44 @@ test('scheduled_messages: create / list / markSent / cancel', () => {
   assert.ok(db.listScheduledMessages({ activeOnly: false }).some((r) => r.id === Number(id)), 'pero la fila queda (auditoría)');
   assert.equal(db.cancelScheduledMessage(id), 0, 'cancelar dos veces no afecta');
 });
+
+test('scheduled_drafts: ciclo completo create→approve→publish + UNIQUE + feedback', () => {
+  const sid = db.createScheduledMessage({
+    groupId: 'patah@g.us',
+    groupName: 'Patah',
+    days: '1,2,3,4,5,6,0',
+    timeHm: '09:00',
+    text: '',
+    createdBy: 'boss@lid',
+    kind: 'generated',
+    brief: 'San José',
+  });
+  assert.equal(db.listScheduledMessages().find((r) => r.id === Number(sid)).kind, 'generated');
+
+  const did = db.createDraft({ scheduledId: sid, publishDate: '2026-06-12', draft: 'v1' });
+  assert.ok(Number(did) > 0);
+  assert.equal(db.createDraft({ scheduledId: sid, publishDate: '2026-06-12', draft: 'otro' }), null, 'UNIQUE por (sched, fecha)');
+  assert.equal(db.getDraftFor(sid, '2026-06-12').draft, 'v1');
+
+  // revise mantiene pending y guarda feedback
+  assert.equal(db.reviseDraft(did, 'v2', 'más corto'), 1);
+  const revised = db.getDraft(did);
+  assert.equal(revised.draft, 'v2');
+  assert.equal(revised.status, 'pending');
+
+  // approve → published; publish sin approve no hace nada
+  assert.equal(db.markDraftPublished(did), 0, 'publicar sin aprobar = 0 filas');
+  assert.equal(db.approveDraft(did), 1);
+  assert.equal(db.approveDraft(did), 0, 'doble aprobación = 0 filas');
+  assert.equal(db.markDraftPublished(did), 1);
+  assert.equal(db.getDraft(did).status, 'published');
+
+  // listas
+  assert.ok(db.listDraftsForDate('2026-06-12').some((d) => d.id === Number(did)));
+  assert.equal(db.listPendingDrafts('2026-06-12').length, 0);
+  assert.deepEqual(db.listRecentPublishedDrafts(sid, 3), ['v2']);
+
+  // reminded
+  db.markDraftReminded(did);
+  assert.equal(db.getDraft(did).reminded, 1);
+});

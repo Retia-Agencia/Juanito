@@ -488,18 +488,18 @@ export function listGroupPersonas() {
 // Creados por jefe/admin vía DM (tool schedule_group_message); el scheduler los
 // entrega cuando isRecurringDue dice que toca (días + hora + anti doble-envío).
 
-export function createScheduledMessage({ groupId, groupName, days, timeHm, text, createdBy }) {
+export function createScheduledMessage({ groupId, groupName, days, timeHm, text, createdBy, kind = 'fixed', brief = null }) {
   const info = db.prepare(`
-    INSERT INTO scheduled_messages (group_id, group_name, days, time_hm, text, created_by)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(groupId, groupName ?? null, days, timeHm, text, createdBy ?? null);
+    INSERT INTO scheduled_messages (group_id, group_name, days, time_hm, text, created_by, kind, brief)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(groupId, groupName ?? null, days, timeHm, text ?? '', createdBy ?? null, kind, brief);
   return info.lastInsertRowid;
 }
 
 export function listScheduledMessages({ activeOnly = true } = {}) {
   const where = activeOnly ? 'WHERE active = 1' : '';
   return db
-    .prepare(`SELECT id, group_id, group_name, days, time_hm, text, created_by, last_sent_date, active
+    .prepare(`SELECT id, group_id, group_name, days, time_hm, text, created_by, last_sent_date, active, kind, brief
               FROM scheduled_messages ${where} ORDER BY id`)
     .all();
 }
@@ -510,6 +510,83 @@ export function cancelScheduledMessage(id) {
 
 export function markScheduledMessageSent(id, dateStr) {
   db.prepare(`UPDATE scheduled_messages SET last_sent_date = ? WHERE id = ?`).run(dateStr, id);
+}
+
+// ─── Borradores con aprobación (kind='generated') ─────────────────────────────
+// Un borrador por (scheduled_id, publish_date). El flujo: el scheduler lo genera
+// → 'pending' → el jefe aprueba ('approved') → el scheduler publica ('published').
+// Una corrección REEMPLAZA el texto del mismo borrador (sigue 'pending').
+
+export function createDraft({ scheduledId, publishDate, draft }) {
+  const info = db.prepare(`
+    INSERT INTO scheduled_drafts (scheduled_id, publish_date, draft)
+    VALUES (?, ?, ?)
+    ON CONFLICT(scheduled_id, publish_date) DO NOTHING
+  `).run(scheduledId, publishDate, draft);
+  return info.changes ? info.lastInsertRowid : null; // null = ya existía
+}
+
+export function getDraft(id) {
+  return db.prepare(`SELECT * FROM scheduled_drafts WHERE id = ?`).get(id) || null;
+}
+
+export function getDraftFor(scheduledId, publishDate) {
+  return (
+    db.prepare(`SELECT * FROM scheduled_drafts WHERE scheduled_id = ? AND publish_date = ?`).get(scheduledId, publishDate) ||
+    null
+  );
+}
+
+export function listDraftsForDate(publishDate) {
+  return db
+    .prepare(`SELECT d.*, s.group_name, s.time_hm
+              FROM scheduled_drafts d JOIN scheduled_messages s ON s.id = d.scheduled_id
+              WHERE d.publish_date = ? ORDER BY s.time_hm`)
+    .all(publishDate);
+}
+
+export function listPendingDrafts(publishDate) {
+  return db
+    .prepare(`SELECT d.*, s.group_name, s.time_hm
+              FROM scheduled_drafts d JOIN scheduled_messages s ON s.id = d.scheduled_id
+              WHERE d.publish_date = ? AND d.status = 'pending' ORDER BY s.time_hm`)
+    .all(publishDate);
+}
+
+// Corrección: reemplaza el texto y vuelve (o sigue) en 'pending'.
+export function reviseDraft(id, newDraft, feedback) {
+  return db.prepare(`
+    UPDATE scheduled_drafts SET draft = ?, feedback = ?, status = 'pending', decided_at = NULL
+    WHERE id = ? AND status IN ('pending', 'approved')
+  `).run(newDraft, feedback ?? null, id).changes;
+}
+
+export function approveDraft(id) {
+  return db.prepare(`
+    UPDATE scheduled_drafts SET status = 'approved', decided_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND status = 'pending'
+  `).run(id).changes;
+}
+
+export function markDraftPublished(id) {
+  return db.prepare(`
+    UPDATE scheduled_drafts SET status = 'published' WHERE id = ? AND status = 'approved'
+  `).run(id).changes;
+}
+
+export function markDraftReminded(id) {
+  db.prepare(`UPDATE scheduled_drafts SET reminded = 1 WHERE id = ?`).run(id);
+}
+
+// Últimos textos PUBLICADOS de un mensaje programado (para que el generador varíe
+// y no se repita día a día).
+export function listRecentPublishedDrafts(scheduledId, limit = 3) {
+  return db
+    .prepare(`SELECT draft FROM scheduled_drafts
+              WHERE scheduled_id = ? AND status = 'published'
+              ORDER BY publish_date DESC LIMIT ?`)
+    .all(scheduledId, limit)
+    .map((r) => r.draft);
 }
 
 // ─── Limpieza periódica ───────────────────────────────────────────────────────

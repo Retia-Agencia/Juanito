@@ -343,3 +343,112 @@ test('schedule_group_message: gateo — disponible en DM (boss y admin), NUNCA e
   assert.ok(!names(toolsForRole('boss', { isGroup: true })).includes('schedule_group_message'), 'en grupo no');
   assert.ok(!names(toolsForRole('unknown', { isGroup: true })).includes('schedule_group_message'), 'en grupo no (unknown)');
 });
+
+// ─── schedule_group_message generated + manage_drafts (aprobación) ─────────────
+
+function draftDeps() {
+  const state = {
+    created: [],
+    drafts: [
+      { id: 5, scheduled_id: 7, publish_date: '2026-06-11', draft: 'Borrador original', status: 'pending', group_name: 'Patah', time_hm: '09:00' },
+    ],
+    settings: {},
+  };
+  return {
+    _state: state,
+    resolveGroupByName: async (name) => (/patah/i.test(name || '') ? { id: 'patah@g.us', name: 'Patah' } : null),
+    isGroupAuthorized: () => true,
+    createScheduledMessage: (row) => {
+      state.created.push(row);
+      return 7;
+    },
+    listScheduledMessages: () => [
+      { id: 7, group_id: 'patah@g.us', group_name: 'Patah', days: '1,2,3,4,5,6,0', time_hm: '09:00', kind: 'generated', brief: 'San José para jóvenes' },
+    ],
+    listPendingDrafts: () => state.drafts.filter((d) => d.status === 'pending'),
+    getDraft: (id) => state.drafts.find((d) => d.id === id) || null,
+    approveDraft: (id) => {
+      const d = state.drafts.find((x) => x.id === id && x.status === 'pending');
+      if (!d) return 0;
+      d.status = 'approved';
+      return 1;
+    },
+    reviseDraft: (id, newDraft, feedback) => {
+      const d = state.drafts.find((x) => x.id === id);
+      if (!d) return 0;
+      d.draft = newDraft;
+      d.feedback = feedback;
+      d.status = 'pending';
+      return 1;
+    },
+    listRecentPublishedDrafts: () => ['texto de ayer'],
+    getSetting: (k, def) => state.settings[k] ?? def,
+    setSetting: (k, v) => (state.settings[k] = v),
+    generateScheduledDraft: async ({ feedback }) => `REGENERADO con [${feedback}]`,
+  };
+}
+
+test('schedule_group_message create generated: guarda kind/brief sin exigir texto', async () => {
+  const deps = draftDeps();
+  const result = await dispatchTool(
+    {
+      name: 'schedule_group_message',
+      input: { action: 'create', group_name: 'patah', days: ['jueves'], time: '09:00', generated: true, brief: 'Mensaje sobre San José, tono cálido, jóvenes 18-28' },
+    },
+    deps,
+    ctx
+  );
+  assert.equal(deps._state.created.length, 1);
+  assert.equal(deps._state.created[0].kind, 'generated');
+  assert.match(deps._state.created[0].brief, /San José/);
+  assert.match(result, /GENERADO/);
+  assert.match(result, /sin tu visto bueno no se publica/i);
+});
+
+test('schedule_group_message create generated SIN brief → lo pide, no guarda', async () => {
+  const deps = draftDeps();
+  const result = await dispatchTool(
+    { name: 'schedule_group_message', input: { action: 'create', group_name: 'patah', days: ['jueves'], time: '09:00', generated: true } },
+    deps,
+    ctx
+  );
+  assert.match(result, /brief/i);
+  assert.equal(deps._state.created.length, 0);
+});
+
+test('manage_drafts list muestra los pendientes de hoy', async () => {
+  const out = await dispatchTool({ name: 'manage_drafts', input: { action: 'list' } }, draftDeps(), ctx);
+  assert.match(out, /Borrador #5/);
+  assert.match(out, /Borrador original/);
+});
+
+test('manage_drafts approve cambia el estado; doble aprobación lo dice', async () => {
+  const deps = draftDeps();
+  assert.match(await dispatchTool({ name: 'manage_drafts', input: { action: 'approve', id: 5 } }, deps, ctx), /aprobado ✅/);
+  assert.equal(deps._state.drafts[0].status, 'approved');
+  assert.match(await dispatchTool({ name: 'manage_drafts', input: { action: 'approve', id: 5 } }, deps, ctx), /no está pendiente/);
+});
+
+test('manage_drafts revise: acumula el feedback y regenera con él', async () => {
+  const deps = draftDeps();
+  const out = await dispatchTool(
+    { name: 'manage_drafts', input: { action: 'revise', id: 5, feedback: 'más corto y sin tantos emojis' } },
+    deps,
+    ctx
+  );
+  assert.match(out, /REGENERADO con \[- más corto y sin tantos emojis\]/);
+  assert.equal(deps._state.drafts[0].draft, 'REGENERADO con [- más corto y sin tantos emojis]');
+  assert.equal(deps._state.settings['editorial_feedback:7'], '- más corto y sin tantos emojis');
+
+  // Segunda corrección se ACUMULA (no reemplaza).
+  await dispatchTool({ name: 'manage_drafts', input: { action: 'revise', id: 5, feedback: 'agrega una petición' } }, deps, ctx);
+  assert.equal(deps._state.settings['editorial_feedback:7'], '- más corto y sin tantos emojis\n- agrega una petición');
+});
+
+test('manage_drafts: gateo — DM sí (boss/admin), grupos NUNCA', async () => {
+  const { toolsForRole } = await import('../src/claude/index.js');
+  const names = (tools) => tools.map((t) => t.name);
+  assert.ok(names(toolsForRole('boss')).includes('manage_drafts'));
+  assert.ok(names(toolsForRole('admin')).includes('manage_drafts'));
+  assert.ok(!names(toolsForRole('boss', { isGroup: true })).includes('manage_drafts'));
+});

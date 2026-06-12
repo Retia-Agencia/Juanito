@@ -36,6 +36,9 @@ services:
       - WA_SEND_JITTER_MS=${WA_SEND_JITTER_MS:-500}
       - WA_SEND_QUEUE_MAX=${WA_SEND_QUEUE_MAX:-200}
       - CLAUDE_GROUP_HISTORY=${CLAUDE_GROUP_HISTORY:-30}
+      # Mensajes generados con aprobación (§18.F): minutos de anticipación con que
+      # se genera el borrador y se le manda al jefe antes de la hora de publicar.
+      - DRAFT_LEAD_MIN=${DRAFT_LEAD_MIN:-60}
       # Rate limit en grupos (antes faltaban en environment: → no llegaban al contenedor).
       - GROUP_DAILY_LIMIT=${GROUP_DAILY_LIMIT:-5}
       - UNLIMITED_PHONES=${UNLIMITED_PHONES:-}
