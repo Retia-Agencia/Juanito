@@ -5,11 +5,11 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-06-10**
+Última actualización: **2026-06-12**
 
 ---
 
-## 0. TL;DR — estado al 2026-06-10 (leer primero)
+## 0. TL;DR — estado al 2026-06-12 (leer primero)
 
 - **Repo:** `main` == `origin/main`, working tree limpio.
 - **VPS:** contenedor sano, WA conectado sin QR, **`CALENDLY_DRY_RUN=false` (piloto Rodriguez LIVE
@@ -65,10 +65,12 @@ un cambio relevante.
   videos YouTube, por producto. Los 4 links verificados HTTP 200.
   Orden: (1)+(2)+(3) ✅ → **piloto real ✅ COMPLETADO** (ver §11.8). Tests: ~95 puros + 21 nativos.
 - **Secretos:** `CALENDLY_TOKEN` no se rota (decidido). Contraseña VPS diferida (ver §13).
-- **🔴 Antes de meterlo a un grupo de ~300 (pedido del jefe): hardening de carga, ver §18.D.** Lo
-  más crítico es el **throttle de envío anti-ban (P1-a)** — una ráfaga de menciones de mucha gente a
-  la vez puede tripear el anti-spam de WhatsApp. Probado con `scripts/load-test.js` (Capa 1, offline):
-  throughput y costo (~$5/día/grupo, acotado por el rate-limit) están OK; falta el hardening.
+- **✅ Hardening para grupos de ~300 — IMPLEMENTADO (2026-06-12), ver §18.D.** Los 5 items: throttle
+  anti-ban global en `sendMessage` (cola FIFO gap+jitter), cache TTL del subject del grupo (antes 1
+  `groupMetadata` por mensaje), resumen por ventana de TIEMPO real con tope (`SUMMARY_MAX_MSGS`),
+  aviso único al exceder el rate-limit (antes silencio), y `CLAUDE_GROUP_HISTORY` (palanca de costo).
+  Probado con `scripts/load-test.js` (Capa 1, offline): throughput y costo (~$5/día/grupo, acotado
+  por el rate-limit) OK. Estado de deploy al VPS: ver §18.D.
 
 Pendientes reales abiertos → ver §18 "Tareas pendientes".
 
@@ -657,6 +659,11 @@ plink -pw <PW> root@157.230.152.202 "cd /root/juanito && docker compose up -d --
 | `TZ` | — | `America/Bogota` | Zona horaria para recordatorios y scheduler |
 | `GROUP_DAILY_LIMIT` | — | `5` | Menciones máximas por usuario/día en grupos |
 | `UNLIMITED_PHONES` | — | — | Teléfonos sin rate limit en grupos (coma-separados) |
+| `WA_SEND_MIN_GAP_MS` | — | `1000` | Gap mínimo entre envíos de WhatsApp (cola anti-ban, §18.D) |
+| `WA_SEND_JITTER_MS` | — | `500` | Jitter aleatorio adicional sobre el gap |
+| `WA_SEND_QUEUE_MAX` | — | `200` | Tamaño máx de la cola de envío; al excederse se descarta |
+| `SUMMARY_MAX_MSGS` | — | `400` | Tope de mensajes leídos por resumen de grupo |
+| `CLAUDE_GROUP_HISTORY` | — | `30` | Turnos de historial enviados a Claude en grupos (palanca de costo) |
 | `SUMMARY_CRON` | — | `0 */4 * * *` | Frecuencia de resúmenes de grupos |
 | `SUMMARY_CYCLE_HOURS` | — | `4` | Ventana de mensajes por resumen |
 | `MAX_GROUPS_PER_CYCLE` | — | `10` | Máx grupos resumidos por ciclo |
@@ -1442,42 +1449,62 @@ SENDERS=300 MESSAGES=28800 MENTION_RATE=0.04 RATE_MSGS_PER_MIN=30 node scripts/l
 con abuso al 25% de menciones (5.042 menciones), sólo ~1.493 llegan a Claude (tope 300×5=1.500). Un
 grupo de 300 cuesta **~$4.6–$5.2/día pase lo que pase** (~$140–156/mes, Haiku).
 
-**Pendientes a implementar (priorizados). El P1-a es el más importante: que NO ocurra un ban.**
+**✅ LOS 5 ITEMS IMPLEMENTADOS (2026-06-12).** Decisiones del owner: los 5 en una sesión, aviso
+único para el rate-limit, deploy al VPS. Suite pura: 143 verdes en Windows (incluye 11 nuevos);
+casos nativos nuevos en `test/data.db.test.js` (corren en Docker, §11.4).
 
-- **P1-a 🔴 Throttle/cola de envío en `sendMessage()` — ANTI-BAN (lo más crítico).**
-  `src/whatsapp/index.js → sendMessage()` no tiene throttle. El rate-limit frena a UN usuario
-  spammeando, pero **300 personas distintas mencionando en el mismo minuto = ráfaga de ~300 envíos
-  legítimos** desde IP de datacenter — justo el patrón que disparó el softban anterior (ver §
-  "Historia técnica"/`entrypoint.sh`). **Fix:** cola de envío con intervalo mínimo (~1 msg cada
-  1–2 s) + jitter, global al socket. **Esto es la cara de envío del item (7) del roadmap
-  baby-proofing** ("caps anti-ban/costo: tope de mensajes salientes/min") — implementarlos juntos.
-  El harness no lo mide (es lo que mockeamos) pero el código lo confirma.
+- **P1-a ✅ Throttle/cola de envío en `sendMessage()` — ANTI-BAN (lo más crítico).**
+  *Problema:* el rate-limit frena a UN usuario spammeando, pero **300 personas distintas mencionando
+  en el mismo minuto = ráfaga de ~300 envíos legítimos** desde IP de datacenter — justo el patrón del
+  softban anterior. *Implementado:* módulo puro `src/whatsapp/send-queue.js` (`createSendQueue`):
+  cola FIFO global al socket que serializa TODOS los envíos con `gap + jitter` entre uno y otro
+  (duerme también tras el último → un envío que entre justo después igual respeta el gap). Si la
+  cola llega a `maxQueue`, `enqueue` **rechaza** (descarte anti-flood; los callers ya capturan).
+  Wiring dentro de `sendMessage()` → los 8+ call sites (bot, reminders, calendly, sheets, optin,
+  comandos) quedan throttleados sin tocarlos; `await sendMessage()` resuelve cuando el envío salió
+  de verdad. Config: `WA_SEND_MIN_GAP_MS=1000`, `WA_SEND_JITTER_MS=500`, `WA_SEND_QUEUE_MAX=200`
+  (en compose `environment:` ✅). Es la cara de envío del item (7) del roadmap baby-proofing.
+  Tests: `test/send-queue.test.js` (6, puros — FIFO, gap, jitter, cola llena, fallo no rompe, re-drain).
 
-- **P1-b 🔴 Cachear el subject del grupo — latencia bajo carga.**
-  `src/whatsapp/index.js:~258` llama `await sock.groupMetadata(chatId)` **por cada mensaje** del
-  grupo, sólo para sacar el nombre (un valor constante). A 200 msg/min son 200 awaits/min de gusto
-  en el hot path. **Fix:** cachear el subject por `chatId` y refrescarlo en
-  `group-participants.update` (o cada N min). Bajo esfuerzo, alto impacto en throughput real.
+- **P1-b ✅ Cache del subject del grupo — latencia bajo carga.**
+  *Problema:* `messages.upsert` llamaba `await sock.groupMetadata(chatId)` **por cada mensaje** del
+  grupo, sólo para el nombre. *Implementado:* módulo puro `src/whatsapp/subject-cache.js`
+  (`createTtlCache`, reloj inyectable): TTL 10 min para éxitos, 60 s para el fallback de error (no
+  martillar si el fetch falla). Helper `getGroupSubject(chatId)` en el hot path. Invalidación:
+  `group-participants.update` borra la entrada; listener nuevo `groups.update` actualiza el subject
+  directo cuando WhatsApp lo cambia. Tests: `test/subject-cache.test.js` (5, puros).
 
-- **P2 🔵 El resumen "de 4h" miente a escala.**
-  `runGroupSummaryCycle` (`src/scheduler/summaries.js`) y el tool `summarize_group`
-  (`src/claude/index.js`) leen sólo **50 mensajes** (`getRecentMessages(id, 50)`). En un grupo
-  activo eso son segundos/minutos, no 4 horas → el resumen cubre una tajada diminuta sin avisar.
-  **Fix:** leer por ventana de tiempo (mensajes desde `periodStart`) en vez de `LIMIT 50`, o subir
-  el tope y chunkear.
+- **P2 ✅ Resumen por ventana de TIEMPO real.**
+  *Problema:* `runGroupSummaryCycle` y el tool `summarize_group` leían "últimos 50 mensajes" — en un
+  grupo activo eso son minutos, no las 4h prometidas; y `summarize_group` **ignoraba el período** que
+  `parsePeriod` ya calculaba. *Implementado:* `getRecentMessages(chatId, limit, sinceHours)` filtra
+  con `created_at >= datetime('now', '-N hours')` (comparación 100% UTC — `created_at` es
+  `CURRENT_TIMESTAMP` de SQLite; nada de hora local, Alpine sin tzdata) y `limit` pasa a ser tope
+  duro. `summaries.js` pide `CYCLE_HOURS()` con tope `SUMMARY_MAX_MSGS` (default 400, en compose ✅);
+  `summarize_group` deriva `sinceHours` del período pedido (`parsePeriod` ahora lo devuelve). Si se
+  alcanza el tope, el texto a resumir abre con `(ventana truncada a los últimos N mensajes del
+  período)` para que el resumen lo diga. **Índice nuevo** `idx_messages_chat_source_created`
+  (`chat_id, source, created_at`) en `migrate.js` (idempotente) — el índice viejo `(source,
+  created_at)` no cubría los queries calientes por chat. Tests nativos en `test/data.db.test.js`.
 
-- **P2 🔵 UX: usuarios frecuentes ignorados en silencio.**
-  En un día ocupado realista ~23% de las menciones (259 de 1.144) se descartan por rate-limit, sin
-  ninguna respuesta. Quien menciona una 6ª vez no recibe nada. **Fix:** aviso único "alcanzaste tu
-  límite diario" en vez de silencio, o `GROUP_DAILY_LIMIT` configurable por grupo (ver pendiente ya
-  listado más arriba). Decisión de producto.
+- **P2 ✅ Aviso único al exceder el rate-limit (decisión de producto: aviso único).**
+  *Problema:* ~23% de menciones en un día ocupado se descartaban en silencio total.
+  *Implementado:* `checkAndIncrementGroupUsage` ahora incrementa SIEMPRE (cuenta intentos) y devuelve
+  `{ allowed, count }` → la 1ª denegación del día es detectable (`count === limit + 1`) y dispara UN
+  aviso en el grupo (`"{pushName}, ya alcanzaste tu límite de consultas por hoy (N). Se reinicia
+  mañana 🙂"`); las siguientes vuelven al silencio. El aviso pasa por la cola anti-ban de P1-a.
+  ⚠️ Breaking interno: el retorno dejó de ser boolean — actualizados `src/bot/index.js` y
+  `scripts/load-test.js`. Tests nativos en `test/data.db.test.js`.
 
-- **P3 🟢 Costo por llamada (opcional, ya acotado por el rate-limit).**
-  Cada mención re-envía hasta 30 turnos de historial sin caché (~2.710 tokens de entrada/llamada,
-  ~88% historial). Ojo: el prefijo de grupo (~2.700 tokens) está **por debajo del mínimo de caché
-  de Haiku (4.096 tokens)** → prompt caching ni se activaría. La palanca real sería reducir la
-  ventana de historial de grupo (hoy 30 en `chat()`, `src/claude/index.js:~550`). No urgente: el
-  rate-limit ya topa el día en ~$5.
+- **P3 ✅ Ventana de historial de grupo configurable (palanca de costo).**
+  `chat()` ahora usa `CLAUDE_GROUP_HISTORY` (default 30 = sin cambio de comportamiento; en compose ✅).
+  Bajarla recorta el driver de costo (~88% de los tokens de entrada son historial re-enviado sin
+  caché; el prefijo de grupo no llega al mínimo de caché de Haiku, 4.096 tokens). El rate-limit ya
+  topa el día en ~$5, por eso quedó como palanca y no como cambio de default.
+
+  **Bonus del mismo deploy:** `GROUP_DAILY_LIMIT` y `UNLIMITED_PHONES` **faltaban en el
+  `environment:` del compose** (gotcha §12 — un `.env` con esos valores NO llegaba al contenedor;
+  corrían siempre en default). Agregados.
 
 ### 🟢 Baja prioridad / Nice-to-have
 
