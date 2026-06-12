@@ -65,6 +65,10 @@ un cambio relevante.
   videos YouTube, por producto. Los 4 links verificados HTTP 200.
   Orden: (1)+(2)+(3) ✅ → **piloto real ✅ COMPLETADO** (ver §11.8). Tests: ~95 puros + 21 nativos.
 - **Secretos:** `CALENDLY_TOKEN` no se rota (decidido). Contraseña VPS diferida (ver §13).
+- **🔴 Antes de meterlo a un grupo de ~300 (pedido del jefe): hardening de carga, ver §18.D.** Lo
+  más crítico es el **throttle de envío anti-ban (P1-a)** — una ráfaga de menciones de mucha gente a
+  la vez puede tripear el anti-spam de WhatsApp. Probado con `scripts/load-test.js` (Capa 1, offline):
+  throughput y costo (~$5/día/grupo, acotado por el rate-limit) están OK; falta el hardening.
 
 Pendientes reales abiertos → ver §18 "Tareas pendientes".
 
@@ -1385,6 +1389,63 @@ choca con *"no exponer puertos"*. Queda como evolución futura si el lag de ≤5
 - **Roadmap baby-proofing restante:** (4) no mandar a terceros por orden del jefe (DIFERIDO: se implementa
   junto con la feature de envío); (5) cola de aprobación admin; (6) log de auditoría de lo que el jefe pide;
   (7) caps anti-ban/costo (tope de mensajes salientes/min y tokens por conversación).
+
+### 18.D 🔴 Hardening para grupos grandes — hallazgos de carga (Capa 1, 2026-06-12)
+
+**Contexto.** El jefe quiere meter a Juanito a un grupo de WhatsApp de ~300 personas y pidió
+probarlo en ese escenario antes de entregárselo. No conseguimos un grupo real de ese tamaño, así
+que construimos un **harness de carga sintética offline** (`scripts/load-test.js`, "Capa 1") que
+golpea el pipeline REAL de grupos (gating real: `markIfNew`, `isGroupAuthorized`,
+`checkAndIncrementGroupUsage`, `roleOf`) con DB aislada y Claude mockeado — cero API, cero
+WhatsApp, cero riesgo para la sesión del VPS. Reproducirlo:
+
+```
+node scripts/load-test.js                                   # default 300 / 5000 / 5%
+SENDERS=300 MESSAGES=28800 MENTION_RATE=0.04 RATE_MSGS_PER_MIN=30 node scripts/load-test.js
+```
+
+**Lo que NO es problema (validado a escala 300):** throughput de ingest ~15.000 msg/seg, queries
+`getRecentHistory`/`getRecentMessages` <0.07 ms, ~260 bytes/mensaje. SQLite (WAL) aguanta de sobra.
+**Costo acotado:** el rate-limit por-remitente (`GROUP_DAILY_LIMIT=5`) es el cortafuegos — incluso
+con abuso al 25% de menciones (5.042 menciones), sólo ~1.493 llegan a Claude (tope 300×5=1.500). Un
+grupo de 300 cuesta **~$4.6–$5.2/día pase lo que pase** (~$140–156/mes, Haiku).
+
+**Pendientes a implementar (priorizados). El P1-a es el más importante: que NO ocurra un ban.**
+
+- **P1-a 🔴 Throttle/cola de envío en `sendMessage()` — ANTI-BAN (lo más crítico).**
+  `src/whatsapp/index.js → sendMessage()` no tiene throttle. El rate-limit frena a UN usuario
+  spammeando, pero **300 personas distintas mencionando en el mismo minuto = ráfaga de ~300 envíos
+  legítimos** desde IP de datacenter — justo el patrón que disparó el softban anterior (ver §
+  "Historia técnica"/`entrypoint.sh`). **Fix:** cola de envío con intervalo mínimo (~1 msg cada
+  1–2 s) + jitter, global al socket. **Esto es la cara de envío del item (7) del roadmap
+  baby-proofing** ("caps anti-ban/costo: tope de mensajes salientes/min") — implementarlos juntos.
+  El harness no lo mide (es lo que mockeamos) pero el código lo confirma.
+
+- **P1-b 🔴 Cachear el subject del grupo — latencia bajo carga.**
+  `src/whatsapp/index.js:~258` llama `await sock.groupMetadata(chatId)` **por cada mensaje** del
+  grupo, sólo para sacar el nombre (un valor constante). A 200 msg/min son 200 awaits/min de gusto
+  en el hot path. **Fix:** cachear el subject por `chatId` y refrescarlo en
+  `group-participants.update` (o cada N min). Bajo esfuerzo, alto impacto en throughput real.
+
+- **P2 🔵 El resumen "de 4h" miente a escala.**
+  `runGroupSummaryCycle` (`src/scheduler/summaries.js`) y el tool `summarize_group`
+  (`src/claude/index.js`) leen sólo **50 mensajes** (`getRecentMessages(id, 50)`). En un grupo
+  activo eso son segundos/minutos, no 4 horas → el resumen cubre una tajada diminuta sin avisar.
+  **Fix:** leer por ventana de tiempo (mensajes desde `periodStart`) en vez de `LIMIT 50`, o subir
+  el tope y chunkear.
+
+- **P2 🔵 UX: usuarios frecuentes ignorados en silencio.**
+  En un día ocupado realista ~23% de las menciones (259 de 1.144) se descartan por rate-limit, sin
+  ninguna respuesta. Quien menciona una 6ª vez no recibe nada. **Fix:** aviso único "alcanzaste tu
+  límite diario" en vez de silencio, o `GROUP_DAILY_LIMIT` configurable por grupo (ver pendiente ya
+  listado más arriba). Decisión de producto.
+
+- **P3 🟢 Costo por llamada (opcional, ya acotado por el rate-limit).**
+  Cada mención re-envía hasta 30 turnos de historial sin caché (~2.710 tokens de entrada/llamada,
+  ~88% historial). Ojo: el prefijo de grupo (~2.700 tokens) está **por debajo del mínimo de caché
+  de Haiku (4.096 tokens)** → prompt caching ni se activaría. La palanca real sería reducir la
+  ventana de historial de grupo (hoy 30 en `chat()`, `src/claude/index.js:~550`). No urgente: el
+  rate-limit ya topa el día en ~$5.
 
 ### 🟢 Baja prioridad / Nice-to-have
 
