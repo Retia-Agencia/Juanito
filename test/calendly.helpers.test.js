@@ -220,7 +220,7 @@ test('buildPrecallText Push 1 incrusta el bloque de materiales por producto', ()
   const sb = buildPrecallText({ programKey: 'second_brain', pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
   assert.match(sb, /Es MUY IMPORTANTE que puedas ver estos materiales/);
   assert.match(sb, /juanito-brochures\/second-brain\.html/);
-  assert.match(sb, /youtube\.com\/watch\?v=DSQ5_8OKonU/);
+  assert.match(sb, /youtube\.com\/watch\?v=6zkrceZQU4Q/);
 
   const ab = buildPrecallText({ programKey: 'abogados', pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
   assert.match(ab, /juanito-brochures\/ia-abogados\.html/);
