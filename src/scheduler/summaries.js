@@ -12,6 +12,8 @@ const TZ = () => process.env.TZ || 'America/Bogota';
 const MAX_GROUPS = () => Number(process.env.MAX_GROUPS_PER_CYCLE || 10);
 const SUMMARY_CRON = () => process.env.SUMMARY_CRON || '0 */4 * * *'; // cada 4 horas
 const CYCLE_HOURS = () => Number(process.env.SUMMARY_CYCLE_HOURS || 4);
+// Tope duro de mensajes por resumen (un grupo de 300 puede generar miles en 4h).
+const SUMMARY_MAX_MSGS = () => Number(process.env.SUMMARY_MAX_MSGS || 400);
 
 function fmt(d) {
   const p = (n) => String(n).padStart(2, '0');
@@ -34,15 +36,21 @@ export async function runGroupSummaryCycle() {
 
     for (const group of groups.slice(0, MAX_GROUPS())) {
       try {
-        const messages = await getRecentMessages(group.id, 50);
+        // Ventana por TIEMPO real (las últimas CYCLE_HOURS), con tope duro — antes
+        // leía "últimos 50" y el "resumen de 4h" cubría minutos en un grupo activo.
+        const cap = SUMMARY_MAX_MSGS();
+        const messages = await getRecentMessages(group.id, cap, CYCLE_HOURS());
         if (!messages.length) continue;
 
-        const formatted = messages
+        let formatted = messages
           .filter((m) => m.body)
           .map((m) => `${m.sender?.pushname || m.sender?.id || '?'}: ${m.body}`)
           .join('\n');
 
         if (!formatted.trim()) continue;
+        if (messages.length >= cap) {
+          formatted = `(ventana truncada a los últimos ${cap} mensajes del período)\n${formatted}`;
+        }
 
         const summary = await summarizeGroupMessages(group.name || group.id, formatted);
 

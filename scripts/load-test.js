@@ -153,9 +153,10 @@ async function main() {
 
     if (!db.isGroupAuthorized(GROUP_ID)) continue; // autorizado en este harness
 
-    // Rate limit por remitente (igual que el bot).
+    // Rate limit por remitente (igual que el bot — devuelve { allowed, count }).
     if (!isUnlimitedSender(sender)) {
-      if (!db.checkAndIncrementGroupUsage(sender, GROUP_DAILY_LIMIT)) {
+      const { allowed } = db.checkAndIncrementGroupUsage(sender, GROUP_DAILY_LIMIT);
+      if (!allowed) {
         rateLimited++;
         continue;
       }

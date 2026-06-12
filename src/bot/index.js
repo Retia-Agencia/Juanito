@@ -55,7 +55,7 @@ export async function handleBossMessage(msg) {
 // Aplica rate limit a remitentes no registrados como ilimitados.
 
 export async function handleGroupMessage(msg) {
-  const { chatId, groupName, text, sender, isGroup, messageId, isBotMentioned } = msg;
+  const { chatId, groupName, text, sender, isGroup, messageId, isBotMentioned, pushName } = msg;
 
   if (!isGroup || !text) return;
   if (!markIfNew(messageId || `${chatId}:${text}`)) return;
@@ -69,11 +69,21 @@ export async function handleGroupMessage(msg) {
     return;
   }
 
-  // Rate limit: máx GROUP_DAILY_LIMIT consultas/día para remitentes no autorizados
+  // Rate limit: máx GROUP_DAILY_LIMIT consultas/día para remitentes no autorizados.
+  // La PRIMERA vez que alguien excede el límite se le avisa (una sola vez al día);
+  // las denegaciones siguientes son silencio, como antes (§18.D P2).
   if (!isUnlimitedSender(sender)) {
-    const allowed = checkAndIncrementGroupUsage(sender, GROUP_DAILY_LIMIT());
+    const limit = GROUP_DAILY_LIMIT();
+    const { allowed, count } = checkAndIncrementGroupUsage(sender, limit);
     if (!allowed) {
-      console.log(`[Bot] Rate limit para ${sender} en "${groupName}" — ignorando`);
+      console.log(`[Bot] Rate limit para ${sender} en "${groupName}" — ignorando (intento ${count})`);
+      if (count === limit + 1) {
+        const quien = pushName ? `${pushName}, ya` : 'Ya';
+        await sendMessage(
+          chatId,
+          `${quien} alcanzaste tu límite de consultas por hoy (${limit}). Se reinicia mañana 🙂`
+        ).catch(() => {});
+      }
       return;
     }
   }

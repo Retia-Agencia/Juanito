@@ -29,6 +29,16 @@ services:
       - MAX_GROUPS_PER_CYCLE=${MAX_GROUPS_PER_CYCLE:-10}
       - SUMMARY_CRON=${SUMMARY_CRON:-0 */4 * * *}
       - SUMMARY_CYCLE_HOURS=${SUMMARY_CYCLE_HOURS:-4}
+      # Hardening grupos grandes (§18.D): tope de mensajes por resumen, throttle
+      # global de envío (anti-ban) y ventana de historial de grupo.
+      - SUMMARY_MAX_MSGS=${SUMMARY_MAX_MSGS:-400}
+      - WA_SEND_MIN_GAP_MS=${WA_SEND_MIN_GAP_MS:-1000}
+      - WA_SEND_JITTER_MS=${WA_SEND_JITTER_MS:-500}
+      - WA_SEND_QUEUE_MAX=${WA_SEND_QUEUE_MAX:-200}
+      - CLAUDE_GROUP_HISTORY=${CLAUDE_GROUP_HISTORY:-30}
+      # Rate limit en grupos (antes faltaban en environment: → no llegaban al contenedor).
+      - GROUP_DAILY_LIMIT=${GROUP_DAILY_LIMIT:-5}
+      - UNLIMITED_PHONES=${UNLIMITED_PHONES:-}
       # Calendly precall pushes — sin estas vars el job arranca desactivado.
       # DRY_RUN y REQUIRE_OPTIN quedan en su default seguro (true) si no se setean.
       - CALENDLY_TOKEN=${CALENDLY_TOKEN}

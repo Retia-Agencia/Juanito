@@ -359,7 +359,10 @@ function parsePeriod(period) {
     start.setHours(start.getHours() - 24); // default: últimas 24h
   }
 
-  return { periodStart: formatDatetime(start), periodEnd: formatDatetime(now) };
+  // sinceHours alimenta la ventana de tiempo de getRecentMessages (§18.D P2):
+  // el resumen debe cubrir el período pedido, no "los últimos 50 mensajes".
+  const sinceHours = (now.getTime() - start.getTime()) / 3600000;
+  return { periodStart: formatDatetime(start), periodEnd: formatDatetime(now), sinceHours };
 }
 
 // ─── Handlers de herramientas (ejecución interna) ─────────────────────────────
@@ -431,12 +434,18 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
         );
       }
 
-      const { periodStart, periodEnd } = parsePeriod(input.period);
-      const raw = (await deps.getRecentMessages(group.id, 50)) || [];
-      const formatted = raw
+      const { periodStart, periodEnd, sinceHours } = parsePeriod(input.period);
+      // Ventana por TIEMPO (el período pedido) con tope duro — antes leía
+      // "últimos 50" e ignoraba el período (§18.D P2).
+      const cap = Number(process.env.SUMMARY_MAX_MSGS || 400);
+      const raw = (await deps.getRecentMessages(group.id, cap, sinceHours)) || [];
+      let formatted = raw
         .filter((m) => m.body)
         .map((m) => `${m.sender?.pushname || m.sender?.id || '?'}: ${m.body}`)
         .join('\n');
+      if (raw.length >= cap) {
+        formatted = `(ventana truncada a los últimos ${cap} mensajes del período)\n${formatted}`;
+      }
 
       if (!formatted.trim()) {
         return `No hay mensajes recientes en "${group.name || group.id}" para resumir.`;
@@ -545,9 +554,11 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
   // getRecentHistory ya incluye el mensaje recién guardado como último 'user'.
   // Filtramos por chatId para AISLAR contextos: el historial de un grupo no debe
   // mezclarse con los DMs privados del jefe (ni con otros grupos).
-  // Grupos cargan 30 mensajes (ventana más amplia para respuestas coherentes en conversaciones largas);
+  // Grupos cargan CLAUDE_GROUP_HISTORY mensajes (default 30; bajarlo es la palanca
+  // de costo en grupos grandes — el historial domina los tokens de entrada, §18.D P3);
   // DMs cargan 20 (contexto privado, ventana más chica = menos costo).
-  const messages = sanitizeHistory(await deps.getRecentHistory(isGroup ? 30 : 20, chatId));
+  const groupHistory = Number(process.env.CLAUDE_GROUP_HISTORY || 30);
+  const messages = sanitizeHistory(await deps.getRecentHistory(isGroup ? groupHistory : 20, chatId));
   if (!messages.length || messages[messages.length - 1].role !== 'user') {
     messages.push({ role: 'user', content: userMessage });
   }

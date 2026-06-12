@@ -161,3 +161,66 @@ test('dedup de webhooks: markIfNew', () => {
   assert.equal(db.markIfNew('msg-1'), false);
   assert.equal(db.markIfNew(null), true);
 });
+
+// ─── §18.D Hardening grupos grandes ────────────────────────────────────────────
+
+test('rate limit: {allowed,count}, 1ª denegación detectable, sigue contando intentos', () => {
+  const sender = '999888777@lid';
+  const limit = 3;
+
+  for (let i = 1; i <= limit; i++) {
+    const r = db.checkAndIncrementGroupUsage(sender, limit);
+    assert.equal(r.allowed, true, `intento ${i} permitido`);
+    assert.equal(r.count, i);
+  }
+
+  // Primera denegación: count === limit + 1 (gatilla el aviso único).
+  const first = db.checkAndIncrementGroupUsage(sender, limit);
+  assert.equal(first.allowed, false);
+  assert.equal(first.count, limit + 1);
+
+  // Denegaciones siguientes: siguen contando (silencio, sin aviso).
+  const second = db.checkAndIncrementGroupUsage(sender, limit);
+  assert.equal(second.allowed, false);
+  assert.equal(second.count, limit + 2);
+});
+
+test('migración crea el índice idx_messages_chat_source_created', () => {
+  const idx = db.default
+    .prepare("SELECT name FROM sqlite_master WHERE type='index'")
+    .all()
+    .map((i) => i.name);
+  assert.ok(idx.includes('idx_messages_chat_source_created'), 'falta el índice de chat');
+});
+
+test('getRecentMessages: sinceHours filtra por ventana y limit es tope duro', async () => {
+  const wa = await import('../src/whatsapp/index.js');
+  const def = db.default;
+  const gid = 'window-test@g.us';
+  const ins = def.prepare(
+    `INSERT INTO messages (role, content, source, chat_id, created_at)
+     VALUES ('user', ?, 'group', ?, datetime('now', ?))`
+  );
+  ins.run('[A]: viejo (10h)', gid, '-10 hours');
+  ins.run('[B]: dentro (2h)', gid, '-2 hours');
+  ins.run('[C]: dentro (1h)', gid, '-1 hours');
+  ins.run('[D]: ahora', gid, '-0 hours');
+
+  // Ventana de 4h → excluye el de 10h.
+  const inWindow = await wa.getRecentMessages(gid, 50, 4);
+  assert.deepEqual(
+    inWindow.map((m) => m.body),
+    ['dentro (2h)', 'dentro (1h)', 'ahora']
+  );
+
+  // El tope corta a los MÁS RECIENTES dentro de la ventana.
+  const capped = await wa.getRecentMessages(gid, 2, 4);
+  assert.deepEqual(
+    capped.map((m) => m.body),
+    ['dentro (1h)', 'ahora']
+  );
+
+  // Sin sinceHours → comportamiento histórico (últimos N sin ventana).
+  const legacy = await wa.getRecentMessages(gid, 50);
+  assert.equal(legacy.length, 4);
+});

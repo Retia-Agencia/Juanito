@@ -431,26 +431,25 @@ export function listAuthorizedGroups() {
 }
 
 // ─── Rate limiting de grupos ──────────────────────────────────────────────────
-// Devuelve true si el remitente puede enviar (e incrementa el contador),
-// false si ya alcanzó el límite diario.
+// Incrementa SIEMPRE el contador (cuenta intentos, no solo permitidos) y devuelve
+// { allowed, count }. Contar intentos permite detectar la PRIMERA denegación del
+// día (count === limit + 1) para avisar una sola vez en vez de silencio (§18.D P2).
 
 export function checkAndIncrementGroupUsage(sender, limit) {
   const today = new Date().toLocaleDateString('en-CA', {
     timeZone: process.env.TZ || 'America/Bogota',
   }); // YYYY-MM-DD en hora local
 
-  const row = db
-    .prepare(`SELECT count FROM group_usage WHERE sender = ? AND date = ?`)
-    .get(sender, today);
-
-  if ((row?.count || 0) >= limit) return false;
-
   db.prepare(`
     INSERT INTO group_usage (sender, date, count) VALUES (?, ?, 1)
     ON CONFLICT(sender, date) DO UPDATE SET count = count + 1
   `).run(sender, today);
 
-  return true;
+  const { count } = db
+    .prepare(`SELECT count FROM group_usage WHERE sender = ? AND date = ?`)
+    .get(sender, today);
+
+  return { allowed: count <= limit, count };
 }
 
 // ─── Limpieza periódica ───────────────────────────────────────────────────────

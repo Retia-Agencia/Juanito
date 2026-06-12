@@ -174,6 +174,9 @@ if (columnExists('reminders', 'sent')) {
 
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_messages_source_created ON messages(source, created_at);
+  -- Cubre los queries calientes por chat (getRecentHistory/getRecentMessages filtran
+  -- por chat_id + source + created_at); el índice (source, created_at) no los cubre.
+  CREATE INDEX IF NOT EXISTS idx_messages_chat_source_created ON messages(chat_id, source, created_at);
   CREATE INDEX IF NOT EXISTS idx_reminders_pending ON reminders(status, due_at);
   CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name);
   CREATE INDEX IF NOT EXISTS idx_group_context_created ON group_context(created_at);

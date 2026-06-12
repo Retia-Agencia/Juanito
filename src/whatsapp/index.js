@@ -17,9 +17,38 @@ import { updateQR, markConnected, startQRServer } from './qr-server.js';
 import { saveMessage } from '../db/index.js';
 import db from '../db/index.js';
 import { phonesMatch } from '../common/utils.js';
+import { createSendQueue } from './send-queue.js';
+import { createTtlCache } from './subject-cache.js';
 
 const SESSION_PATH = process.env.WA_SESSION_PATH || './data/wa-session';
 const QR_PATH = process.env.WA_QR_PATH || './data/wa-qr.png';
+
+// Cola global de envío — ANTI-BAN (§18.D P1-a). Serializa TODOS los envíos del
+// socket con gap + jitter para que una ráfaga de menciones (grupo de 300) no se
+// traduzca en una ráfaga de sends desde IP de datacenter.
+const sendQueue = createSendQueue({
+  minGapMs: Number(process.env.WA_SEND_MIN_GAP_MS || 1000),
+  jitterMs: Number(process.env.WA_SEND_JITTER_MS || 500),
+  maxQueue: Number(process.env.WA_SEND_QUEUE_MAX || 200),
+});
+
+// Cache del subject de cada grupo (§18.D P1-b) — evita un groupMetadata por mensaje.
+const subjectCache = createTtlCache({ ttlMs: 10 * 60 * 1000, negativeTtlMs: 60 * 1000 });
+
+async function getGroupSubject(chatId) {
+  const cached = subjectCache.get(chatId);
+  if (cached !== undefined) return cached;
+  try {
+    const meta = await sock.groupMetadata(chatId);
+    const subject = meta.subject || chatId;
+    subjectCache.set(chatId, subject);
+    return subject;
+  } catch {
+    // Fallback con TTL corto: no martillar groupMetadata si el fetch falla seguido.
+    subjectCache.set(chatId, chatId, { negative: true });
+    return chatId;
+  }
+}
 
 let sock = null;
 let botJid = null;    // "573332761238@s.whatsapp.net"
@@ -164,9 +193,17 @@ export async function connect({ onMessage, onGroupJoin, onGroupChange }) {
       //   - AGREGAN al bot       → autorizar (si lo agregó/hay boss/admin) o salir.
       //   - sale un participante → re-evaluar (si se fue el jefe/admin → revocar+salir).
       //   - SACAN al bot         → limpiar la autorización en DB.
+      // Cambios de metadata del grupo (subject, etc.) → refrescar el cache directo.
+      sock.ev.on('groups.update', (updates) => {
+        for (const u of updates || []) {
+          if (u?.id && u.subject) subjectCache.set(u.id, u.subject);
+        }
+      });
+
       sock.ev.on('group-participants.update', async (update) => {
         try {
           const { id: groupId, participants = [], action, author } = update;
+          subjectCache.delete(groupId);
           // Los participantes pueden venir como strings (JID/LID) o como objetos
           // ({ id, jid, lid }). Normalizamos a string antes de comparar.
           const pid = (p) => (typeof p === 'string' ? p : p?.id || p?.jid || p?.lid || '');
@@ -252,15 +289,7 @@ export async function connect({ onMessage, onGroupJoin, onGroupChange }) {
               (botLidNum && jid?.startsWith(botLidNum))
           );
 
-          let groupName = chatId;
-          if (isGroup) {
-            try {
-              const meta = await sock.groupMetadata(chatId);
-              groupName = meta.subject || chatId;
-            } catch {
-              groupName = chatId;
-            }
-          }
+          const groupName = isGroup ? await getGroupSubject(chatId) : chatId;
 
           // Guardar mensaje de grupo en DB (lectura pasiva)
           if (isGroup) {
@@ -297,8 +326,9 @@ export function isConnected() {
 export async function sendMessage(to, text) {
   if (!sock) throw new Error('sendMessage: WhatsApp no conectado aún');
   const jid = toJid(to);
-  await sock.sendMessage(jid, { text });
-  console.log(`[WhatsApp] → ${to}`);
+  // Todos los envíos pasan por la cola global (gap + jitter) — anti-ban §18.D P1-a.
+  await sendQueue.enqueue(() => sock.sendMessage(jid, { text }));
+  console.log(`[WhatsApp] → ${to} (cola: ${sendQueue.size()} pendientes)`);
 }
 
 // ─── Salir de un grupo (add no autorizado) ────────────────────────────────────
@@ -337,16 +367,26 @@ export async function listGroups() {
 
 // ─── Mensajes recientes de un grupo (desde SQLite) ────────────────────────────
 
-export async function getRecentMessages(chatId, limit = 30) {
+// `sinceHours` (opcional) filtra por ventana de tiempo real — el "resumen de 4h"
+// debe cubrir 4 horas, no los últimos N mensajes (§18.D P2). `limit` queda como
+// tope duro. La comparación es en UTC: created_at es CURRENT_TIMESTAMP de SQLite
+// (UTC) y datetime('now') también — no usar strings de hora local (Alpine sin tzdata).
+export async function getRecentMessages(chatId, limit = 30, sinceHours = null) {
+  const hours = Number(sinceHours);
+  const windowClause =
+    sinceHours != null && Number.isFinite(hours) && hours > 0
+      ? `AND created_at >= datetime('now', '-' || ? || ' hours')`
+      : '';
+  const params = windowClause ? [chatId, hours, limit] : [chatId, limit];
   const rows = db
     .prepare(
       `SELECT content, created_at AS timestamp
        FROM messages
-       WHERE chat_id = ? AND source = 'group'
+       WHERE chat_id = ? AND source = 'group' ${windowClause}
        ORDER BY created_at DESC
        LIMIT ?`
     )
-    .all(chatId, limit)
+    .all(...params)
     .reverse();
 
   return rows.map((row) => {
