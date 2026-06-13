@@ -3,9 +3,15 @@
 
 import { chat } from '../claude/index.js';
 import { sendMessage } from '../whatsapp/index.js';
-import { markIfNew, checkAndIncrementGroupUsage, isGroupAuthorized } from '../db/index.js';
+import {
+  markIfNew,
+  checkAndIncrementGroupUsage,
+  isGroupAuthorized,
+  getGroupApproval,
+  createPendingReply,
+} from '../db/index.js';
 import { phonesMatch } from '../common/utils.js';
-import { roleOf } from '../common/roles.js';
+import { roleOf, bossDmTarget } from '../common/roles.js';
 
 const BOSS_PHONE = () => process.env.BOSS_PHONE;
 const BOT_NAME = () => process.env.BOT_NAME || 'Juanito';
@@ -95,6 +101,31 @@ export async function handleGroupMessage(msg) {
     // rol real (no el default 'boss') para no tratar a cualquiera como el dueño.
     const role = roleOf(sender);
     const { text: reply } = await chat(text, chatId, { isGroup: true, role });
+
+    // Si el grupo exige aprobación, NO se publica: se guarda como pendiente y se le
+    // manda al jefe por DM para que apruebe/corrija/descarte (caduca por cron).
+    if (getGroupApproval(chatId)) {
+      const id = createPendingReply({
+        groupId: chatId,
+        groupName,
+        triggerSender: pushName || sender,
+        triggerText: text,
+        draft: reply,
+      });
+      const boss = bossDmTarget();
+      if (boss) {
+        await sendMessage(
+          boss,
+          `📨 *Respuesta pendiente #${id}* para el grupo *${groupName || chatId}*\n\n` +
+            `${pushName || 'Alguien'} escribió: "${text.slice(0, 200)}"\n\n` +
+            `Propongo responder:\n${reply}\n\n` +
+            `Responde *"apruebo"* para que salga, dime los cambios, o *"no"* para descartarla.`
+        ).catch(() => {});
+      }
+      console.log(`[Bot] Respuesta en "${groupName}" RETENIDA para aprobación (pendiente #${id})`);
+      return;
+    }
+
     await sendMessage(chatId, reply);
   } catch (err) {
     console.error('[Bot] Error respondiendo en grupo:', err.message);

@@ -27,6 +27,13 @@ import {
   listDraftsForDate,
   getDraft,
   approveDraft,
+  discardDraft,
+  setGroupApproval,
+  listApprovalGroups,
+  listPendingReplies,
+  getPendingReply,
+  approvePendingReply,
+  discardPendingReply,
 } from './db/index.js';
 import { resolveCloserByPushName } from './calendly/closers.js';
 import { getHealth } from './calendly/health.js';
@@ -127,6 +134,15 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
         listDraftsForDate,
         getDraft,
         approveDraft,
+        discardDraft,
+        // /aprobar_grupo + /respuestas — aprobación de respuestas en grupos
+        isGroupAuthorized,
+        setGroupApproval,
+        listApprovalGroups,
+        listPendingReplies,
+        getPendingReply,
+        approvePendingReply,
+        discardPendingReply,
       }
     );
     if (cmdReply !== null) {

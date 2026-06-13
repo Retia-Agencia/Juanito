@@ -69,19 +69,34 @@ export async function handleCommand({ text, sender, role }, deps = {}) {
     return handleAprobaciones(text, deps);
   }
 
+  // /aprobar_grupo <grupo> on|off — exige que el jefe apruebe las respuestas de Juanito
+  // en ese grupo antes de publicarse. SOLO admins (cambia el comportamiento del bot).
+  if (cmd === '/aprobar_grupo' || cmd.startsWith('/aprobar_grupo ')) {
+    if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
+    return handleAprobarGrupo({ text }, deps);
+  }
+
+  // /respuestas — respuestas de grupo pendientes de aprobación (el jefe decide por DM;
+  // los admins ven el estado y tienen override/rechazo). SOLO admins.
+  if (cmd === '/respuestas' || cmd.startsWith('/respuestas ')) {
+    if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
+    return handleRespuestas(text, deps);
+  }
+
   return null;
 }
 
 // /aprobaciones                → borradores de HOY con su estado
 // /aprobaciones ver <id>       → texto completo de un borrador
 // /aprobaciones aprobar <id>   → override de admin (publica a la hora / de inmediato si ya pasó)
+// /aprobaciones rechazar <id>  → descarta el borrador (pendiente o aprobado): no se publica hoy
 function handleAprobaciones(text, deps = {}) {
-  const { listDraftsForDate, getDraft, approveDraft } = deps;
+  const { listDraftsForDate, getDraft, approveDraft, discardDraft } = deps;
   const parts = (text || '').trim().split(/\s+/);
   const action = (parts[1] || 'list').toLowerCase();
   const STATUS = { pending: '⏳ pendiente', approved: '✅ aprobado (sale a la hora)', published: '📤 publicado', discarded: '🗑️ descartado' };
 
-  if (action === 'ver' || action === 'aprobar') {
+  if (action === 'ver' || action === 'aprobar' || action === 'rechazar' || action === 'descartar') {
     const id = Number(parts[2]);
     if (!Number.isInteger(id)) return `Uso: /aprobaciones ${action} <id>`;
     const draft = getDraft ? getDraft(id) : null;
@@ -89,6 +104,12 @@ function handleAprobaciones(text, deps = {}) {
 
     if (action === 'ver') {
       return `Borrador #${id} — ${STATUS[draft.status] || draft.status} (publica: ${draft.publish_date})\n\n${draft.draft}`;
+    }
+    if (action === 'rechazar' || action === 'descartar') {
+      const changes = discardDraft ? discardDraft(id) : 0;
+      return changes
+        ? `Borrador #${id} descartado 🗑️ — no se publicará hoy. Volverá a generarse el próximo día programado.`
+        : `El borrador #${id} no se puede descartar (estado: ${draft.status}).`;
     }
     const changes = approveDraft ? approveDraft(id) : 0;
     return changes
@@ -108,7 +129,101 @@ function handleAprobaciones(text, deps = {}) {
     lines.push(`#${r.id} → ${r.group_name || ''} a las ${r.time_hm} — ${STATUS[r.status] || r.status}`);
     lines.push(`    "${truncate(r.draft, 90)}"`);
   }
-  lines.push('', 'Acciones: /aprobaciones ver <id> · /aprobaciones aprobar <id> (override; normalmente aprueba el jefe por DM)');
+  lines.push('', 'Acciones: /aprobaciones ver <id> · aprobar <id> · rechazar <id> (override; normalmente el jefe aprueba/rechaza por DM)');
+  return lines.join('\n');
+}
+
+// /aprobar_grupo                → grupos con aprobación de respuestas activada
+// /aprobar_grupo <n|nombre> on  → activa: Juanito no responde ahí sin el visto bueno del jefe
+// /aprobar_grupo <n|nombre> off → desactiva: vuelve a responder directo
+async function handleAprobarGrupo({ text }, deps = {}) {
+  const { listGroups, setGroupApproval, listApprovalGroups, isGroupAuthorized } = deps;
+  const arg = (text || '').trim().slice('/aprobar_grupo'.length).trim();
+  const ttl = Number(process.env.REPLY_APPROVAL_TTL_MIN || 30);
+
+  if (!arg) {
+    let rows = [];
+    try {
+      rows = listApprovalGroups ? listApprovalGroups() : [];
+    } catch {
+      /* DB puede no estar lista */
+    }
+    const lines = ['🛂 Grupos con aprobación de respuestas (ON)'];
+    if (rows.length) for (const r of rows) lines.push(`• ${r.group_name || r.group_id}`);
+    else lines.push('(ninguno — Juanito responde directo en todos los grupos)');
+    lines.push('', 'Uso: /aprobar_grupo <n|nombre> on · /aprobar_grupo <n|nombre> off');
+    return lines.join('\n');
+  }
+
+  const parts = arg.split(/\s+/);
+  const onoff = parts[parts.length - 1].toLowerCase();
+  if (onoff !== 'on' && onoff !== 'off') return 'Uso: /aprobar_grupo <n|nombre> on · /aprobar_grupo <n|nombre> off';
+  const targetArg = parts.slice(0, -1).join(' ');
+  if (!targetArg) return 'Uso: /aprobar_grupo <n|nombre> on|off';
+
+  let groups;
+  try {
+    groups = listGroups ? await listGroups() : [];
+  } catch {
+    return 'No pude listar los grupos ahora (¿WhatsApp conectado?).';
+  }
+  groups = [...groups].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'es'));
+  const target = resolveGroupTarget(targetArg, groups);
+  if (!target) return `No encontré "${targetArg}". Usa /grupos para ver la lista y el número.`;
+
+  if (isGroupAuthorized && !isGroupAuthorized(target.id)) {
+    return `"${target.name || target.id}" no está autorizado todavía. Agrégalo al grupo (queda auto-autorizado) o actívalo con /grupos.`;
+  }
+  const changes = setGroupApproval ? setGroupApproval(target.id, onoff === 'on') : 0;
+  if (!changes) return `No pude cambiar la aprobación de "${target.name || target.id}".`;
+  return onoff === 'on'
+    ? `🛂 Aprobación ACTIVADA en "${target.name || target.id}". Juanito ya no responde ahí sin tu visto bueno: las propuestas te llegan por DM y caducan a los ${ttl} min.`
+    : `🛂 Aprobación DESACTIVADA en "${target.name || target.id}". Juanito vuelve a responder directo.`;
+}
+
+// /respuestas              → respuestas de grupo pendientes con su estado
+// /respuestas ver <id>     → texto completo + contexto
+// /respuestas aprobar <id> → override admin (sale al grupo en el próximo minuto)
+// /respuestas rechazar <id>→ descarta la respuesta
+function handleRespuestas(text, deps = {}) {
+  const { listPendingReplies, getPendingReply, approvePendingReply, discardPendingReply } = deps;
+  const parts = (text || '').trim().split(/\s+/);
+  const action = (parts[1] || 'list').toLowerCase();
+
+  if (action === 'ver' || action === 'aprobar' || action === 'rechazar' || action === 'descartar') {
+    const id = Number(parts[2]);
+    if (!Number.isInteger(id)) return `Uso: /respuestas ${action} <id>`;
+    const r = getPendingReply ? getPendingReply(id) : null;
+    if (!r) return `No encontré ninguna respuesta pendiente con id ${id}.`;
+
+    if (action === 'ver') {
+      return `Respuesta #${id} — ${r.status} en "${r.group_name || r.group_id}"\n${r.trigger_sender || '?'} dijo: "${truncate(r.trigger_text || '', 120)}"\n\n${r.draft}`;
+    }
+    if (action === 'aprobar') {
+      const changes = approvePendingReply ? approvePendingReply(id) : 0;
+      return changes
+        ? `Respuesta #${id} aprobada ✅ — sale al grupo en el próximo minuto.`
+        : `La respuesta #${id} no está pendiente (estado: ${r.status}).`;
+    }
+    const changes = discardPendingReply ? discardPendingReply(id) : 0;
+    return changes
+      ? `Respuesta #${id} descartada 🗑️ — Juanito no responderá a eso.`
+      : `La respuesta #${id} no se puede descartar (estado: ${r.status}).`;
+  }
+
+  let rows = [];
+  try {
+    rows = listPendingReplies ? listPendingReplies() : [];
+  } catch {
+    /* DB puede no estar lista */
+  }
+  if (!rows.length) return '📭 No hay respuestas de grupo pendientes de aprobación.';
+  const lines = [`📨 Respuestas pendientes (${rows.length})`, ''];
+  for (const r of rows) {
+    lines.push(`#${r.id} → ${r.group_name || r.group_id} (${r.trigger_sender || '?'})`);
+    lines.push(`    "${truncate(r.draft, 90)}"`);
+  }
+  lines.push('', 'Acciones: /respuestas ver <id> · aprobar <id> · rechazar <id> (normalmente el jefe decide por DM)');
   return lines.join('\n');
 }
 

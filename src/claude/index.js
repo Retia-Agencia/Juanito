@@ -8,11 +8,15 @@ import { daysToCsv, normalizeTimeHm, csvToDayLabels, zonedNowParts } from '../sc
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // Modelo por defecto: Haiku en todos lados (chatbot liviano y barato).
-// Fácil de cambiar por env, y se puede elegir por contexto:
-//   CLAUDE_MODEL        → modelo en DMs (jefe/admin).
+// Fácil de cambiar por env, y se puede elegir por CONTEXTO y por ROL:
+//   CLAUDE_MODEL        → modelo base en DMs (admin y, a futuro, otros usuarios).
 //   CLAUDE_GROUP_MODEL  → modelo en grupos. Si no se define, usa el mismo que DMs.
+//   CLAUDE_BOSS_MODEL   → modelo SOLO para el DM del jefe (role='boss'). Si no se define,
+//                         usa CLAUDE_MODEL. Permite darle Sonnet al jefe sin encarecer a
+//                         admins ni a futuros usuarios del DM ni a los grupos.
 const MODEL = process.env.CLAUDE_MODEL || 'claude-haiku-4-5-20251001';
 const GROUP_MODEL = process.env.CLAUDE_GROUP_MODEL || MODEL;
+const BOSS_MODEL = process.env.CLAUDE_BOSS_MODEL || MODEL;
 const MAX_TOKENS = Number(process.env.CLAUDE_MAX_TOKENS || 2048);
 
 // ─── Seam de dependencias (Track A) ───────────────────────────────────────────
@@ -61,10 +65,18 @@ async function resolveDeps() {
     getDraft: db.getDraft,
     approveDraft: db.approveDraft,
     reviseDraft: db.reviseDraft,
+    discardDraft: db.discardDraft,
     listRecentPublishedDrafts: db.listRecentPublishedDrafts,
     getSetting: db.getSetting,
     setSetting: db.setSetting,
     generateScheduledDraft,
+    // respuestas de grupo con aprobación (tool manage_replies)
+    listPendingReplies: db.listPendingReplies,
+    getPendingReply: db.getPendingReply,
+    approvePendingReply: db.approvePendingReply,
+    revisePendingReply: db.revisePendingReply,
+    discardPendingReply: db.discardPendingReply,
+    generateGroupReply,
     // contacts
     resolveContact: contacts.resolveContact,
     // whatsapp
@@ -217,15 +229,17 @@ const TOOLS = [
     description:
       'Gestiona los BORRADORES pendientes de aprobación de los mensajes generados para grupos. ' +
       'Úsalo cuando el jefe quiera ver los borradores del día, aprobar uno ("apruebo", "envíalo", ' +
-      '"dale") o pedir cambios ("cámbiale X", "más corto", "quita el emoji"). Tras una corrección ' +
-      'se regenera el borrador y se le muestra de nuevo.',
+      '"dale"), pedir cambios ("cámbiale X", "más corto", "quita el emoji") o rechazarlo ("no lo ' +
+      'mandes", "descártalo"). Tras una corrección se regenera el borrador y se le muestra de nuevo.',
     input_schema: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['list', 'approve', 'revise'],
-          description: 'list = ver borradores de hoy · approve = aprobar por id · revise = corregir por id',
+          enum: ['list', 'approve', 'revise', 'discard'],
+          description:
+            'list = ver borradores de hoy · approve = aprobar por id · revise = corregir por id · ' +
+            'discard = descartar/rechazar por id (no se publica hoy)',
         },
         id: { type: 'number', description: 'Id del borrador (para approve/revise).' },
         feedback: {
@@ -233,6 +247,33 @@ const TOOLS = [
           description:
             'La corrección del jefe, tal cual la dijo (para revise). Se aplica ahora Y se acumula ' +
             'para los mensajes futuros.',
+        },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: 'manage_replies',
+    description:
+      'Gestiona las RESPUESTAS de grupo pendientes de tu aprobación (en grupos donde Juanito ' +
+      'responde solo con tu visto bueno). Úsalo cuando el jefe quiera ver las respuestas ' +
+      'pendientes, aprobar una ("apruebo", "envíala", "dale"), corregirla ("cámbiala", "más ' +
+      'corto", "dile que…") o rechazarla ("no", "no respondas", "descártala"). Tras una ' +
+      'corrección se regenera la respuesta y se le muestra de nuevo.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['list', 'approve', 'revise', 'discard'],
+          description:
+            'list = ver pendientes · approve = aprobar por id (se publica en el grupo) · ' +
+            'revise = corregir por id · discard = descartar por id (no se responde)',
+        },
+        id: { type: 'number', description: 'Id de la respuesta pendiente (para approve/revise/discard).' },
+        feedback: {
+          type: 'string',
+          description: 'La corrección del jefe, tal cual la dijo (para revise). Se regenera la respuesta con ella.',
         },
       },
       required: ['action'],
@@ -274,6 +315,7 @@ const GROUP_DENIED_TOOLS = new Set([
   'search_knowledge',
   'schedule_group_message',
   'manage_drafts',
+  'manage_replies',
 ]);
 // Tools sensibles que el jefe (no-admin) NO debe ejecutar. save_memory escribe la
 // memoria NÚCLEO que alimenta el comportamiento del bot para TODOS → solo admin.
@@ -405,17 +447,45 @@ ${bossNotes.map((m) => `- ${m.value}`).join('\n')}`
     const today = zonedNowParts().date;
     const pending = (await deps.listPendingDrafts?.(today)) || [];
     if (pending.length) {
-      draftsBlock = `## Borradores PENDIENTES de aprobación (hoy)
-Estos mensajes generados están esperando el visto bueno del jefe para publicarse en su
-grupo a la hora programada. Si el jefe aprueba ("apruebo", "envíalo", "dale"), usa
-manage_drafts con action=approve. Si pide cambios, usa action=revise con su corrección
-textual. Si hay varios y no es obvio a cuál se refiere, pregúntale.
+      draftsBlock = `## Borradores PENDIENTES de aprobación (hoy) — CONTEXTO PRIORITARIO
+Hay un mensaje generado esperando el visto bueno del jefe para publicarse en su grupo a la
+hora programada. MIENTRAS exista un borrador pendiente, interpreta lo que diga el jefe en
+ESTE contexto y actúa SIEMPRE con la tool manage_drafts:
+- Si aprueba ("apruebo", "envíalo", "dale", "así está bien", "perfecto") → action=approve.
+- Si pide CUALQUIER cambio de redacción ("más corto", "una sola línea", "sin emoji",
+  "cámbialo", "otro tono", "agrégale X", "así no me gusta") → SE REFIERE AL BORRADOR →
+  action=revise con su corrección textual. NUNCA reformatees sus tareas, notas, recordatorios
+  ni su memoria: la corrección es SIEMPRE al borrador.
+- Si lo rechaza o no lo quiere ("no", "no lo mandes", "descártalo", "cancélalo", "bórralo") →
+  action=discard.
+Si hay varios borradores y no es obvio a cuál se refiere, pregúntale cuál.
 ${pending
   .map((d) => `- Borrador #${d.id} → "${d.group_name}" a las ${d.time_hm}:\n${d.draft}`)
   .join('\n')}`;
     }
   } catch {
     /* sin borradores: bloque vacío */
+  }
+
+  // Respuestas de grupo pendientes de aprobación (grupos con require_approval). Mismo
+  // patrón que los borradores: contexto para "apruebo"/"cámbiala"/"no" → tool manage_replies.
+  let repliesBlock = '';
+  try {
+    const replies = (await deps.listPendingReplies?.()) || [];
+    if (replies.length) {
+      repliesBlock = `## Respuestas de grupo PENDIENTES de tu aprobación — CONTEXTO PRIORITARIO
+En estos grupos Juanito NO responde sin tu visto bueno. Cada ítem es una respuesta que
+propongo enviar. MIENTRAS haya respuestas pendientes, actúa SIEMPRE con la tool manage_replies:
+- Si apruebas ("apruebo", "envíala", "dale", "está bien") → action=approve.
+- Si pides un cambio ("cámbiala", "más corto", "dile que…", "así no") → action=revise con tu corrección.
+- Si la rechazas ("no", "no respondas", "descártala") → action=discard.
+Si hay varias y no es obvio a cuál te refieres, pregúntale cuál.
+${replies
+  .map((r) => `- Respuesta #${r.id} en "${r.group_name}" (${r.trigger_sender} dijo: "${(r.trigger_text || '').slice(0, 80)}"):\n${r.draft}`)
+  .join('\n')}`;
+    }
+  } catch {
+    /* sin respuestas pendientes: bloque vacío */
   }
 
   // Bloque según el rol del interlocutor.
@@ -463,6 +533,8 @@ confirma al jefe en una línea natural:
   y el jefe lo aprueba por DM antes de publicarse).
 - manage_drafts: ver/aprobar/corregir los borradores pendientes de los mensajes
   generados. Las correcciones se aplican ya y se acumulan para el futuro.
+- manage_replies: ver/aprobar/corregir/descartar las RESPUESTAS de grupo que esperan tu
+  visto bueno (en grupos donde Juanito responde solo con tu aprobación).
 - search_knowledge: busca en historial, memoria y resúmenes lo que ya se habló.
 - remember_note: anota una nota o preferencia personal del jefe cuando lo pida.${
     role === 'admin'
@@ -479,7 +551,8 @@ ${memoryBlock}
 ${bossNotesBlock}
 ${summaryBlock}
 ${remindersBlock}
-${draftsBlock}`.trim();
+${draftsBlock}
+${repliesBlock}`.trim();
 }
 
 // ─── Helpers de período para summarize_group ──────────────────────────────────
@@ -760,7 +833,62 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
         return `Corregido y guardado para el futuro. Nuevo borrador #${input.id}:\n\n${newText}\n\n¿Lo apruebo así?`;
       }
 
-      return 'Acción no reconocida. Usa list, approve o revise.';
+      if (input.action === 'discard') {
+        if (draft.status === 'published') return `El borrador #${input.id} ya se publicó; no puedo descartarlo.`;
+        const changes = (await deps.discardDraft?.(input.id)) || 0;
+        return changes
+          ? `Listo, descarté el borrador #${input.id} ❌ — no se publicará hoy. Volverá a generarse el próximo día programado.`
+          : `El borrador #${input.id} no se puede descartar (estado: ${draft.status}).`;
+      }
+
+      return 'Acción no reconocida. Usa list, approve, revise o discard.';
+    }
+
+    case 'manage_replies': {
+      if (input.action === 'list') {
+        const pending = (await deps.listPendingReplies?.()) || [];
+        if (!pending.length) return 'No hay respuestas de grupo pendientes de aprobación.';
+        return pending.map((r) => `Respuesta #${r.id} en "${r.group_name}":\n${r.draft}`).join('\n\n');
+      }
+
+      if (!Number.isInteger(input.id)) {
+        return 'Necesito el id de la respuesta (míralas con action=list).';
+      }
+      const reply = await deps.getPendingReply?.(input.id);
+      if (!reply) return `No encontré ninguna respuesta pendiente con id ${input.id}.`;
+      if (reply.status === 'sent') return `La respuesta #${input.id} ya se envió al grupo.`;
+
+      if (input.action === 'approve') {
+        const changes = (await deps.approvePendingReply?.(input.id)) || 0;
+        return changes
+          ? `Aprobada ✅ — la respuesta #${input.id} se enviará al grupo en el próximo minuto.`
+          : `La respuesta #${input.id} no está pendiente (estado: ${reply.status}).`;
+      }
+
+      if (input.action === 'revise') {
+        const feedback = (input.feedback || '').trim();
+        if (!feedback) return 'Dime qué corregir de la respuesta y la regenero.';
+        const prior = reply.feedback ? `${reply.feedback}\n` : '';
+        const accumulated = `${prior}- ${feedback}`;
+        const newText = await deps.generateGroupReply?.({
+          groupId: reply.group_id,
+          groupName: reply.group_name,
+          triggerText: reply.trigger_text,
+          feedback: accumulated,
+        });
+        if (!newText) return 'No pude regenerar la respuesta ahora. Intenta de nuevo en un momento.';
+        await deps.revisePendingReply?.(input.id, newText, accumulated);
+        return `Corregida. Nueva respuesta #${input.id}:\n\n${newText}\n\n¿La apruebo así?`;
+      }
+
+      if (input.action === 'discard') {
+        const changes = (await deps.discardPendingReply?.(input.id)) || 0;
+        return changes
+          ? `Listo, descarté la respuesta #${input.id} ❌ — Juanito no responderá a eso.`
+          : `La respuesta #${input.id} no se puede descartar (estado: ${reply.status}).`;
+      }
+
+      return 'Acción no reconocida. Usa list, approve, revise o discard.';
     }
 
     case 'search_knowledge': {
@@ -868,8 +996,9 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
   const tools = toolsForRole(role, { isGroup });
   const toolsParam = tools.length > 0 ? { tools } : {};
 
-  // Modelo según contexto: Haiku (o lo que diga el env) en ambos por default.
-  const model = isGroup ? GROUP_MODEL : MODEL;
+  // Modelo según contexto Y rol: grupos → GROUP_MODEL; DM del jefe → BOSS_MODEL
+  // (puede ser Sonnet); cualquier otro DM (admin / futuros usuarios) → MODEL (Haiku).
+  const model = isGroup ? GROUP_MODEL : role === 'boss' ? BOSS_MODEL : MODEL;
 
   let response = await withRetry(() =>
     client.messages.create({
@@ -946,7 +1075,7 @@ export async function generateScheduledDraft({ brief, groupName, feedback = '', 
 
   const response = await withRetry(() =>
     client.messages.create({
-      model: MODEL,
+      model: BOSS_MODEL,
       max_tokens: 700,
       system:
         `Redactas mensajes para el grupo de WhatsApp "${groupName}". Respondes ÚNICAMENTE con el ` +
@@ -968,10 +1097,34 @@ export async function generateScheduledDraft({ brief, groupName, feedback = '', 
     .trim();
 }
 
+// Regenera una respuesta de grupo aplicando la corrección del jefe (tool manage_replies
+// action=revise). Reusa el MISMO prompt AISLADO de grupo (persona incluida, sin datos
+// privados) + la corrección, con el modelo del jefe (BOSS_MODEL) porque él la cura. Sin tools.
+export async function generateGroupReply({ groupId, groupName, triggerText, feedback = '' }) {
+  const deps = await resolveDeps();
+  const base = await buildSystemPrompt(deps, { isGroup: true, role: 'unknown', chatId: groupId });
+  const system = feedback
+    ? `${base}\n\n## Corrección del jefe (OBLIGATORIA, aplícala):\n${feedback}`
+    : base;
+  const response = await withRetry(() =>
+    client.messages.create({
+      model: BOSS_MODEL,
+      max_tokens: MAX_TOKENS,
+      system,
+      messages: [{ role: 'user', content: triggerText || '' }],
+    })
+  );
+  return response.content
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n')
+    .trim();
+}
+
 export async function summarizeGroupMessages(groupName, messages) {
   const response = await withRetry(() =>
     client.messages.create({
-      model: MODEL,
+      model: GROUP_MODEL,
       max_tokens: 300,
       system:
         'Eres un asistente que resume conversaciones de WhatsApp de forma muy concisa. Responde solo con el resumen, sin introducción.',

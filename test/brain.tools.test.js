@@ -381,6 +381,12 @@ function draftDeps() {
       d.status = 'pending';
       return 1;
     },
+    discardDraft: (id) => {
+      const d = state.drafts.find((x) => x.id === id && (x.status === 'pending' || x.status === 'approved'));
+      if (!d) return 0;
+      d.status = 'discarded';
+      return 1;
+    },
     listRecentPublishedDrafts: () => ['texto de ayer'],
     getSetting: (k, def) => state.settings[k] ?? def,
     setSetting: (k, v) => (state.settings[k] = v),
@@ -445,10 +451,101 @@ test('manage_drafts revise: acumula el feedback y regenera con él', async () =>
   assert.equal(deps._state.settings['editorial_feedback:7'], '- más corto y sin tantos emojis\n- agrega una petición');
 });
 
+test('manage_drafts discard: descarta el borrador y no se vuelve a descartar', async () => {
+  const deps = draftDeps();
+  const out = await dispatchTool({ name: 'manage_drafts', input: { action: 'discard', id: 5 } }, deps, ctx);
+  assert.match(out, /descart/i);
+  assert.equal(deps._state.drafts[0].status, 'discarded');
+  // Ya descartado → no se puede de nuevo (estado ya no es pending/approved).
+  assert.match(
+    await dispatchTool({ name: 'manage_drafts', input: { action: 'discard', id: 5 } }, deps, ctx),
+    /no se puede descartar/i
+  );
+});
+
+test('manage_drafts discard: un borrador ya publicado no se descarta', async () => {
+  const deps = draftDeps();
+  deps._state.drafts[0].status = 'published';
+  const out = await dispatchTool({ name: 'manage_drafts', input: { action: 'discard', id: 5 } }, deps, ctx);
+  assert.match(out, /ya se publicó/i);
+  assert.equal(deps._state.drafts[0].status, 'published');
+});
+
 test('manage_drafts: gateo — DM sí (boss/admin), grupos NUNCA', async () => {
   const { toolsForRole } = await import('../src/claude/index.js');
   const names = (tools) => tools.map((t) => t.name);
   assert.ok(names(toolsForRole('boss')).includes('manage_drafts'));
   assert.ok(names(toolsForRole('admin')).includes('manage_drafts'));
   assert.ok(!names(toolsForRole('boss', { isGroup: true })).includes('manage_drafts'));
+});
+
+// ─── manage_replies (aprobación de respuestas en grupos) ──────────────────────
+
+function replyDeps() {
+  const state = {
+    replies: [
+      { id: 9, group_id: 'g@g.us', group_name: 'Patah', trigger_sender: 'Pedro', trigger_text: 'a qué hora la misa?', draft: 'A las 6:30pm 🙏', status: 'pending', feedback: null },
+    ],
+  };
+  return {
+    _state: state,
+    listPendingReplies: () => state.replies.filter((r) => r.status === 'pending'),
+    getPendingReply: (id) => state.replies.find((r) => r.id === id) || null,
+    approvePendingReply: (id) => {
+      const r = state.replies.find((x) => x.id === id && x.status === 'pending');
+      if (!r) return 0;
+      r.status = 'approved';
+      return 1;
+    },
+    revisePendingReply: (id, newDraft, feedback) => {
+      const r = state.replies.find((x) => x.id === id);
+      if (!r) return 0;
+      r.draft = newDraft;
+      r.feedback = feedback;
+      r.status = 'pending';
+      return 1;
+    },
+    discardPendingReply: (id) => {
+      const r = state.replies.find((x) => x.id === id && (x.status === 'pending' || x.status === 'approved'));
+      if (!r) return 0;
+      r.status = 'discarded';
+      return 1;
+    },
+    generateGroupReply: async ({ feedback }) => `REGENERADA [${feedback}]`,
+  };
+}
+
+test('manage_replies list muestra las pendientes', async () => {
+  const out = await dispatchTool({ name: 'manage_replies', input: { action: 'list' } }, replyDeps(), ctx);
+  assert.match(out, /Respuesta #9/);
+  assert.match(out, /6:30pm/);
+});
+
+test('manage_replies approve aprueba; doble aprobación lo dice', async () => {
+  const deps = replyDeps();
+  assert.match(await dispatchTool({ name: 'manage_replies', input: { action: 'approve', id: 9 } }, deps, ctx), /Aprobada ✅/);
+  assert.equal(deps._state.replies[0].status, 'approved');
+  assert.match(await dispatchTool({ name: 'manage_replies', input: { action: 'approve', id: 9 } }, deps, ctx), /no está pendiente/);
+});
+
+test('manage_replies revise: regenera con la corrección acumulada', async () => {
+  const deps = replyDeps();
+  const out = await dispatchTool({ name: 'manage_replies', input: { action: 'revise', id: 9, feedback: 'más cálido' } }, deps, ctx);
+  assert.match(out, /REGENERADA \[- más cálido\]/);
+  assert.equal(deps._state.replies[0].draft, 'REGENERADA [- más cálido]');
+});
+
+test('manage_replies discard: descarta y no se puede de nuevo', async () => {
+  const deps = replyDeps();
+  assert.match(await dispatchTool({ name: 'manage_replies', input: { action: 'discard', id: 9 } }, deps, ctx), /descart/i);
+  assert.equal(deps._state.replies[0].status, 'discarded');
+  assert.match(await dispatchTool({ name: 'manage_replies', input: { action: 'discard', id: 9 } }, deps, ctx), /no se puede descartar/i);
+});
+
+test('manage_replies: gateo — DM sí (boss/admin), grupos NUNCA', async () => {
+  const { toolsForRole } = await import('../src/claude/index.js');
+  const names = (tools) => tools.map((t) => t.name);
+  assert.ok(names(toolsForRole('boss')).includes('manage_replies'));
+  assert.ok(names(toolsForRole('admin')).includes('manage_replies'));
+  assert.ok(!names(toolsForRole('boss', { isGroup: true })).includes('manage_replies'));
 });

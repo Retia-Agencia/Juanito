@@ -327,6 +327,12 @@ function aprobacionesDeps() {
       d.status = 'approved';
       return 1;
     },
+    discardDraft: (id) => {
+      const d = state.drafts.find((x) => x.id === id && (x.status === 'pending' || x.status === 'approved'));
+      if (!d) return 0;
+      d.status = 'discarded';
+      return 1;
+    },
   };
 }
 
@@ -351,4 +357,109 @@ test('/aprobaciones aprobar <id> hace override; ya publicado lo dice', async () 
   assert.equal(deps._state.drafts[0].status, 'approved');
   assert.match(await handleCommand({ text: '/aprobaciones aprobar 6', sender: 'a@lid', role: 'admin' }, deps), /no está pendiente/);
   assert.match(await handleCommand({ text: '/aprobaciones aprobar abc', sender: 'a@lid', role: 'admin' }, deps), /Uso:/);
+});
+
+test('/aprobaciones rechazar <id> descarta el borrador; publicado no se descarta', async () => {
+  const deps = aprobacionesDeps();
+  assert.match(await handleCommand({ text: '/aprobaciones rechazar 5', sender: 'a@lid', role: 'admin' }, deps), /descartado 🗑️/);
+  assert.equal(deps._state.drafts[0].status, 'discarded');
+  // #6 ya está publicado → no se puede descartar.
+  assert.match(await handleCommand({ text: '/aprobaciones rechazar 6', sender: 'a@lid', role: 'admin' }, deps), /no se puede descartar/);
+  assert.match(await handleCommand({ text: '/aprobaciones rechazar abc', sender: 'a@lid', role: 'admin' }, deps), /Uso:/);
+});
+
+test('/aprobaciones rechazar para no-admin → deflexión', async () => {
+  assert.match(await handleCommand({ text: '/aprobaciones rechazar 5', sender: 'b@lid', role: 'boss' }, aprobacionesDeps()), /equipo técnico/);
+});
+
+// ─── /aprobar_grupo (flag de aprobación de respuestas por grupo, admin-only) ───
+
+function aprobarGrupoDeps() {
+  const state = { approval: {} };
+  return {
+    _state: state,
+    listGroups: async () => [
+      { id: 'patah@g.us', name: 'Patah San Juan' },
+      { id: 'tech@g.us', name: 'Tech Volunteers' },
+    ],
+    isGroupAuthorized: (id) => id === 'patah@g.us' || id === 'tech@g.us',
+    setGroupApproval: (id, on) => {
+      state.approval[id] = on ? 1 : 0;
+      return 1;
+    },
+    listApprovalGroups: () =>
+      Object.entries(state.approval)
+        .filter(([, v]) => v)
+        .map(([group_id]) => ({ group_id, group_name: group_id })),
+  };
+}
+
+test('/aprobar_grupo para no-admin → deflexión', async () => {
+  assert.match(await handleCommand({ text: '/aprobar_grupo patah on', sender: 'b@lid', role: 'boss' }, aprobarGrupoDeps()), /equipo técnico/);
+});
+
+test('/aprobar_grupo <nombre> on activa el flag; off lo apaga', async () => {
+  const deps = aprobarGrupoDeps();
+  assert.match(await handleCommand({ text: '/aprobar_grupo patah on', sender: 'a@lid', role: 'admin' }, deps), /ACTIVADA/);
+  assert.equal(deps._state.approval['patah@g.us'], 1);
+  assert.match(await handleCommand({ text: '/aprobar_grupo patah off', sender: 'a@lid', role: 'admin' }, deps), /DESACTIVADA/);
+  assert.equal(deps._state.approval['patah@g.us'], 0);
+});
+
+test('/aprobar_grupo sin on|off → muestra uso; grupo inexistente → no encontrado', async () => {
+  const deps = aprobarGrupoDeps();
+  assert.match(await handleCommand({ text: '/aprobar_grupo patah', sender: 'a@lid', role: 'admin' }, deps), /Uso:/);
+  assert.match(await handleCommand({ text: '/aprobar_grupo inexistente on', sender: 'a@lid', role: 'admin' }, deps), /No encontré/);
+});
+
+test('/aprobar_grupo sin args lista los grupos con aprobación ON', async () => {
+  const deps = aprobarGrupoDeps();
+  await handleCommand({ text: '/aprobar_grupo patah on', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(await handleCommand({ text: '/aprobar_grupo', sender: 'a@lid', role: 'admin' }, deps), /patah@g\.us/);
+});
+
+// ─── /respuestas (respuestas de grupo pendientes, admin-only) ─────────────────
+
+function respuestasDeps() {
+  const state = {
+    replies: [
+      { id: 9, group_id: 'g@g.us', group_name: 'Patah', trigger_sender: 'Pedro', trigger_text: 'a qué hora?', draft: 'A las 6:30pm', status: 'pending' },
+      { id: 10, group_id: 'g@g.us', group_name: 'Patah', trigger_sender: 'Ana', trigger_text: 'gracias', draft: 'Con gusto', status: 'sent' },
+    ],
+  };
+  return {
+    _state: state,
+    listPendingReplies: () => state.replies.filter((r) => r.status === 'pending'),
+    getPendingReply: (id) => state.replies.find((r) => r.id === id) || null,
+    approvePendingReply: (id) => {
+      const r = state.replies.find((x) => x.id === id && x.status === 'pending');
+      if (!r) return 0;
+      r.status = 'approved';
+      return 1;
+    },
+    discardPendingReply: (id) => {
+      const r = state.replies.find((x) => x.id === id && (x.status === 'pending' || x.status === 'approved'));
+      if (!r) return 0;
+      r.status = 'discarded';
+      return 1;
+    },
+  };
+}
+
+test('/respuestas para no-admin → deflexión', async () => {
+  assert.match(await handleCommand({ text: '/respuestas', sender: 'b@lid', role: 'boss' }, respuestasDeps()), /equipo técnico/);
+});
+
+test('/respuestas (admin) lista las pendientes', async () => {
+  const out = await handleCommand({ text: '/respuestas', sender: 'a@lid', role: 'admin' }, respuestasDeps());
+  assert.match(out, /#9 → Patah \(Pedro\)/);
+  assert.doesNotMatch(out, /#10/); // la 'sent' no aparece
+});
+
+test('/respuestas aprobar/rechazar; ya-enviada no se descarta', async () => {
+  const deps = respuestasDeps();
+  assert.match(await handleCommand({ text: '/respuestas aprobar 9', sender: 'a@lid', role: 'admin' }, deps), /aprobada ✅/);
+  assert.equal(deps._state.replies[0].status, 'approved');
+  assert.match(await handleCommand({ text: '/respuestas rechazar 10', sender: 'a@lid', role: 'admin' }, deps), /no se puede descartar/);
+  assert.match(await handleCommand({ text: '/respuestas aprobar abc', sender: 'a@lid', role: 'admin' }, deps), /Uso:/);
 });

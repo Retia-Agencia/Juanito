@@ -135,10 +135,11 @@ db.exec(`
   -- grupos donde lo agregó un BOSS/ADMIN, donde un BOSS/ADMIN es participante, o
   -- que un admin habilitó con /grupo on. Un grupo NO listado aquí = no responde.
   CREATE TABLE IF NOT EXISTS authorized_groups (
-    group_id      TEXT PRIMARY KEY,
-    group_name    TEXT,
-    authorized_by TEXT,            -- JID/LID de quien autorizó, o 'participant'/'command'
-    authorized_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    group_id         TEXT PRIMARY KEY,
+    group_name       TEXT,
+    authorized_by    TEXT,            -- JID/LID de quien autorizó, o 'participant'/'command'
+    authorized_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+    require_approval INTEGER NOT NULL DEFAULT 0  -- 1 = las respuestas de Juanito en este grupo pasan por el jefe
   );
 
   -- Personalidad por grupo: texto que un ADMIN configura (/persona) y se inyecta
@@ -185,6 +186,23 @@ db.exec(`
     decided_at   DATETIME,
     UNIQUE(scheduled_id, publish_date)
   );
+
+  -- Respuestas de grupo PENDIENTES de aprobación (solo en grupos con require_approval=1).
+  -- Cuando mencionan a Juanito en uno de esos grupos, la respuesta NO se publica: se
+  -- guarda aquí y se le manda al jefe por DM. El jefe aprueba/corrige/descarta; un cron
+  -- envía las aprobadas y caduca las que llevan demasiado tiempo sin decisión.
+  CREATE TABLE IF NOT EXISTS pending_replies (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id       TEXT NOT NULL,
+    group_name     TEXT,
+    trigger_sender TEXT,             -- quién mencionó (pushName o jid, para contexto)
+    trigger_text   TEXT,             -- qué dijo (para que el jefe entienda el contexto)
+    draft          TEXT NOT NULL,    -- respuesta propuesta por Juanito
+    status         TEXT NOT NULL DEFAULT 'pending',  -- pending|approved|sent|discarded|expired
+    feedback       TEXT,             -- última corrección aplicada (auditoría)
+    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+    decided_at     DATETIME
+  );
 `);
 
 // ─── 2. Migración de bases existentes (esquema viejo) ─────────────────────────
@@ -211,6 +229,10 @@ addColumnIfMissing('calendly_optins', 'paused', 'INTEGER DEFAULT 0');
 // publica solo tras aprobación del jefe).
 addColumnIfMissing('scheduled_messages', 'kind', "TEXT NOT NULL DEFAULT 'fixed'");
 addColumnIfMissing('scheduled_messages', 'brief', 'TEXT');
+
+// Aprobación de respuestas en grupos (solo grupos con el flag en ON): cuando mencionan a
+// Juanito, su respuesta pasa por el jefe antes de publicarse. Flag por grupo.
+addColumnIfMissing('authorized_groups', 'require_approval', 'INTEGER NOT NULL DEFAULT 0');
 
 // Migrar el flag legacy `sent` -> `status` (una sola vez, idempotente)
 if (columnExists('reminders', 'sent')) {

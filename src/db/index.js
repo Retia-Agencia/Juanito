@@ -426,7 +426,29 @@ export function deauthorizeGroup(groupId) {
 
 export function listAuthorizedGroups() {
   return db
-    .prepare(`SELECT group_id, group_name, authorized_by, authorized_at FROM authorized_groups ORDER BY authorized_at ASC`)
+    .prepare(`SELECT group_id, group_name, authorized_by, authorized_at, require_approval FROM authorized_groups ORDER BY authorized_at ASC`)
+    .all();
+}
+
+// ─── Aprobación de respuestas en grupos (flag por grupo) ──────────────────────
+// Si require_approval = 1, las respuestas de Juanito en ese grupo NO se publican
+// directo: pasan por el jefe (ver pending_replies). El grupo debe estar autorizado.
+
+export function setGroupApproval(groupId, enabled) {
+  return db
+    .prepare(`UPDATE authorized_groups SET require_approval = ? WHERE group_id = ?`)
+    .run(enabled ? 1 : 0, groupId).changes;
+}
+
+export function getGroupApproval(groupId) {
+  if (!groupId) return false;
+  const row = db.prepare(`SELECT require_approval FROM authorized_groups WHERE group_id = ?`).get(groupId);
+  return !!row?.require_approval;
+}
+
+export function listApprovalGroups() {
+  return db
+    .prepare(`SELECT group_id, group_name FROM authorized_groups WHERE require_approval = 1 ORDER BY group_name`)
     .all();
 }
 
@@ -571,6 +593,87 @@ export function approveDraft(id) {
 export function markDraftPublished(id) {
   return db.prepare(`
     UPDATE scheduled_drafts SET status = 'published' WHERE id = ? AND status = 'approved'
+  `).run(id).changes;
+}
+
+// Descarta un borrador (pendiente o aprobado-no-publicado): no se publica hoy. El próximo
+// día programado se genera uno nuevo (el UNIQUE es por (scheduled_id, publish_date)).
+export function discardDraft(id) {
+  return db.prepare(`
+    UPDATE scheduled_drafts SET status = 'discarded', decided_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND status IN ('pending', 'approved')
+  `).run(id).changes;
+}
+
+// ─── Respuestas de grupo pendientes de aprobación ─────────────────────────────
+// En grupos con require_approval=1, la respuesta de Juanito se guarda aquí y se le
+// manda al jefe por DM. created_at es UTC (CURRENT_TIMESTAMP) → la caducidad compara
+// 100% en UTC con datetime('now') (Alpine sin tzdata, mismo criterio que calendly_pushes).
+
+export function createPendingReply({ groupId, groupName, triggerSender, triggerText, draft }) {
+  const info = db.prepare(`
+    INSERT INTO pending_replies (group_id, group_name, trigger_sender, trigger_text, draft)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(groupId, groupName ?? null, triggerSender ?? null, triggerText ?? null, draft);
+  return info.lastInsertRowid;
+}
+
+export function getPendingReply(id) {
+  return db.prepare(`SELECT * FROM pending_replies WHERE id = ?`).get(id) || null;
+}
+
+export function listPendingReplies() {
+  return db
+    .prepare(`SELECT * FROM pending_replies WHERE status = 'pending' ORDER BY created_at ASC`)
+    .all();
+}
+
+export function approvePendingReply(id) {
+  return db.prepare(`
+    UPDATE pending_replies SET status = 'approved', decided_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND status = 'pending'
+  `).run(id).changes;
+}
+
+export function revisePendingReply(id, newDraft, feedback) {
+  return db.prepare(`
+    UPDATE pending_replies SET draft = ?, feedback = ?, status = 'pending', decided_at = NULL
+    WHERE id = ? AND status IN ('pending', 'approved')
+  `).run(newDraft, feedback ?? null, id).changes;
+}
+
+export function discardPendingReply(id) {
+  return db.prepare(`
+    UPDATE pending_replies SET status = 'discarded', decided_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND status IN ('pending', 'approved')
+  `).run(id).changes;
+}
+
+// Aprobadas listas para enviar (las recoge el cron y las publica en el grupo).
+export function listApprovedPendingReplies() {
+  return db
+    .prepare(`SELECT * FROM pending_replies WHERE status = 'approved' ORDER BY decided_at ASC`)
+    .all();
+}
+
+export function markPendingReplySent(id) {
+  return db.prepare(`
+    UPDATE pending_replies SET status = 'sent' WHERE id = ? AND status = 'approved'
+  `).run(id).changes;
+}
+
+// Respuestas pendientes con más de `ttlMin` minutos sin decisión → caducan.
+export function listExpiredPendingReplies(ttlMin) {
+  return db
+    .prepare(`SELECT * FROM pending_replies
+              WHERE status = 'pending' AND created_at < datetime('now', ?)`)
+    .all(`-${Number(ttlMin)} minutes`);
+}
+
+export function markPendingReplyExpired(id) {
+  return db.prepare(`
+    UPDATE pending_replies SET status = 'expired', decided_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND status = 'pending'
   `).run(id).changes;
 }
 

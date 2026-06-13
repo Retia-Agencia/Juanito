@@ -14,6 +14,9 @@ services:
       - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-haiku-4-5-20251001}
       # Modelo en grupos. Vacío = usa CLAUDE_MODEL (mismo modelo en DM y grupos).
       - CLAUDE_GROUP_MODEL=${CLAUDE_GROUP_MODEL:-}
+      # Modelo SOLO para el DM del jefe (role=boss). Vacío = usa CLAUDE_MODEL. Permite
+      # darle Sonnet al jefe sin encarecer admins, futuros usuarios del DM, ni grupos.
+      - CLAUDE_BOSS_MODEL=${CLAUDE_BOSS_MODEL:-}
       - CLAUDE_MAX_TOKENS=${CLAUDE_MAX_TOKENS:-2048}
       - BOSS_PHONE=${BOSS_PHONE}
       # LID del jefe en WA multi-device (vacío = retrocompat: cualquier @lid no-admin = jefe).
@@ -39,6 +42,9 @@ services:
       # Mensajes generados con aprobación (§18.F): minutos de anticipación con que
       # se genera el borrador y se le manda al jefe antes de la hora de publicar.
       - DRAFT_LEAD_MIN=${DRAFT_LEAD_MIN:-60}
+      # Aprobación de respuestas en grupos: minutos que una respuesta retenida espera
+      # el visto bueno del jefe antes de caducar y descartarse.
+      - REPLY_APPROVAL_TTL_MIN=${REPLY_APPROVAL_TTL_MIN:-30}
       # Rate limit en grupos (antes faltaban en environment: → no llegaban al contenedor).
       - GROUP_DAILY_LIMIT=${GROUP_DAILY_LIMIT:-5}
       - UNLIMITED_PHONES=${UNLIMITED_PHONES:-}

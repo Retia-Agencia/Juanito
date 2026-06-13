@@ -129,6 +129,30 @@ test('grupo: getGroupPersona que falla no rompe el prompt', async () => {
   assert.ok(/grupo de WhatsApp/i.test(prompt), 'cae al prompt genérico');
 });
 
+// ─── Respuestas de grupo pendientes (bloque de aprobación en el DM del jefe) ──
+
+test('DM del jefe: inyecta las respuestas de grupo pendientes', async () => {
+  const deps = spyDeps();
+  deps.listPendingReplies = async () => [
+    { id: 7, group_name: 'Patah', trigger_sender: 'Pedro', trigger_text: 'hora?', draft: 'RESP-PENDIENTE-MARCA' },
+  ];
+  const prompt = await buildSystemPrompt(deps, { isGroup: false, role: 'boss' });
+  assert.ok(prompt.includes('RESP-PENDIENTE-MARCA'), 'la respuesta pendiente va en el DM del jefe');
+  assert.ok(/manage_replies/i.test(prompt), 'instruye usar la tool manage_replies');
+});
+
+test('grupo: NUNCA inyecta respuestas pendientes (aislamiento)', async () => {
+  const deps = spyDeps();
+  let asked = 0;
+  deps.listPendingReplies = async () => {
+    asked++;
+    return [{ id: 7, group_name: 'Patah', trigger_sender: 'Pedro', trigger_text: 'x', draft: 'RESP-PENDIENTE-MARCA' }];
+  };
+  const prompt = await buildSystemPrompt(deps, { isGroup: true, role: 'boss', chatId: 'g@g.us' });
+  assert.equal(asked, 0, 'en grupo ni se consulta');
+  assert.ok(!prompt.includes('RESP-PENDIENTE-MARCA'));
+});
+
 test('DM: la persona de grupo NO aplica (es solo para grupos)', async () => {
   const deps = spyDeps();
   let asked = 0;

@@ -308,3 +308,87 @@ test('scheduled_drafts: ciclo completo create→approve→publish + UNIQUE + fee
   db.markDraftReminded(did);
   assert.equal(db.getDraft(did).reminded, 1);
 });
+
+test('scheduled_drafts: discardDraft descarta pending/approved y no toca published', () => {
+  const sid = db.createScheduledMessage({
+    groupId: 'patah2@g.us',
+    groupName: 'Patah2',
+    days: '5',
+    timeHm: '09:00',
+    text: '',
+    createdBy: 'boss@lid',
+    kind: 'generated',
+    brief: 'San José',
+  });
+
+  // pending → discarded
+  const d1 = db.createDraft({ scheduledId: sid, publishDate: '2026-06-19', draft: 'p1' });
+  assert.equal(db.discardDraft(d1), 1);
+  assert.equal(db.getDraft(d1).status, 'discarded');
+  assert.equal(db.discardDraft(d1), 0, 'ya descartado = 0 filas');
+  assert.equal(db.listPendingDrafts('2026-06-19').length, 0, 'descartado no aparece como pendiente');
+
+  // approved → discarded (rescate antes de publicar)
+  const d2 = db.createDraft({ scheduledId: sid, publishDate: '2026-06-26', draft: 'p2' });
+  assert.equal(db.approveDraft(d2), 1);
+  assert.equal(db.discardDraft(d2), 1);
+  assert.equal(db.getDraft(d2).status, 'discarded');
+
+  // published NO se descarta
+  const d3 = db.createDraft({ scheduledId: sid, publishDate: '2026-07-03', draft: 'p3' });
+  db.approveDraft(d3);
+  db.markDraftPublished(d3);
+  assert.equal(db.discardDraft(d3), 0, 'publicado no se descarta');
+  assert.equal(db.getDraft(d3).status, 'published');
+});
+
+test('aprobación por grupo: flag require_approval (solo grupos autorizados)', () => {
+  db.authorizeGroup({ groupId: 'appr@g.us', groupName: 'Grupo Aprobación', authorizedBy: 'test' });
+  assert.equal(db.getGroupApproval('appr@g.us'), false, 'arranca en OFF');
+  assert.equal(db.setGroupApproval('appr@g.us', true), 1);
+  assert.equal(db.getGroupApproval('appr@g.us'), true);
+  assert.ok(db.listApprovalGroups().some((g) => g.group_id === 'appr@g.us'));
+  assert.equal(db.setGroupApproval('appr@g.us', false), 1);
+  assert.equal(db.getGroupApproval('appr@g.us'), false);
+  // grupo inexistente → 0 filas (no se puede activar sin autorizar)
+  assert.equal(db.setGroupApproval('nope@g.us', true), 0);
+});
+
+test('pending_replies: ciclo aprobar/enviar, revise, discard y caducidad', () => {
+  const id = db.createPendingReply({
+    groupId: 'g@g.us',
+    groupName: 'Patah',
+    triggerSender: 'Pedro',
+    triggerText: '¿a qué hora?',
+    draft: 'A las 6:30pm',
+  });
+  assert.ok(Number(id) > 0);
+  assert.equal(db.listPendingReplies().length, 1);
+
+  // revise mantiene pending y guarda feedback
+  assert.equal(db.revisePendingReply(id, 'A las 6:30 p.m. 🙏', '- más cálido'), 1);
+  assert.equal(db.getPendingReply(id).draft, 'A las 6:30 p.m. 🙏');
+  assert.equal(db.getPendingReply(id).status, 'pending');
+
+  // approve → aparece en la cola de envío; markSent lo saca
+  assert.equal(db.approvePendingReply(id), 1);
+  assert.equal(db.approvePendingReply(id), 0, 'doble aprobación = 0');
+  assert.ok(db.listApprovedPendingReplies().some((r) => r.id === Number(id)));
+  assert.equal(db.markPendingReplySent(id), 1);
+  assert.equal(db.getPendingReply(id).status, 'sent');
+  assert.equal(db.listPendingReplies().length, 0);
+
+  // discard sobre pending/approved; no sobre sent
+  const id2 = db.createPendingReply({ groupId: 'g@g.us', groupName: 'Patah', triggerSender: 'Ana', triggerText: 'hola', draft: 'hola Ana' });
+  assert.equal(db.discardPendingReply(id2), 1);
+  assert.equal(db.getPendingReply(id2).status, 'discarded');
+  assert.equal(db.discardPendingReply(id), 0, 'sent no se descarta');
+
+  // caducidad: una pendiente con created_at de hace 60 min cae con ttl 30, no con ttl 120
+  const id3 = db.createPendingReply({ groupId: 'g@g.us', groupName: 'Patah', triggerSender: 'Leo', triggerText: 'eco', draft: 'eco' });
+  db.default.prepare(`UPDATE pending_replies SET created_at = datetime('now','-60 minutes') WHERE id = ?`).run(id3);
+  assert.ok(db.listExpiredPendingReplies(30).some((r) => r.id === Number(id3)), 'caduca con ttl 30');
+  assert.ok(!db.listExpiredPendingReplies(120).some((r) => r.id === Number(id3)), 'no caduca con ttl 120');
+  assert.equal(db.markPendingReplyExpired(id3), 1);
+  assert.equal(db.getPendingReply(id3).status, 'expired');
+});
