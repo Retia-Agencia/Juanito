@@ -225,6 +225,29 @@ test('pausa global: con DRY_RUN=false y opt-in válido, pausado NO envía y el p
   assert.equal(h.wa.sent.length, 1, 'al reactivar se reanuda el push pendiente');
 });
 
+test('guard de obsolescencia: pausa larga → al despausar NO se envían recordatorios de llamadas ya pasadas', async () => {
+  // Reproduce el incidente real: un closer pausado acumula Push 3 que se revierten
+  // a 'scheduled' (no se consumen). Si la pausa dura más que las llamadas, al
+  // despausar NO deben dispararse en lote recordatorios "en 25 min" de citas viejas.
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'old', startInMin: 20, closerEmail: SALAZAR, nowMs: now })];
+  const h = installHarness(scheduler, { events, optins: [SALAZAR_PHONE], nowMs: now });
+  h.store.setCloserPaused(SALAZAR_PHONE, true);
+
+  await scheduler.runCalendlyPoll();
+  await scheduler.runCalendlyDelivery();
+  assert.equal(h.wa.sent.length, 0, 'pausado no envía');
+  assert.equal(h.store._rows[0].status, 'scheduled', 'queda re-agendable durante la pausa');
+
+  // Pasa el tiempo: la llamada ya ocurrió (now + 60 min > call_start = now + 20 min).
+  h.clock.ms = now + 60 * MIN;
+  h.store.setCloserPaused(SALAZAR_PHONE, false);
+  await scheduler.runCalendlyDelivery();
+
+  assert.equal(h.wa.sent.length, 0, 'no se envía un recordatorio de una llamada que ya pasó');
+  assert.equal(h.store._rows[0].status, 'skipped', 'el push obsoleto se descarta, no se entrega');
+});
+
 test('pausa por-closer: solo se corta al closer pausado, los demás reciben', async () => {
   const now = Date.now();
   const SALAZAR_JID = `573054312905@s.whatsapp.net`;

@@ -323,6 +323,16 @@ export async function runCalendlyDelivery() {
       // Claim atómico: si otro worker ya la tomó, claim devuelve false → saltar.
       if (d.claimCalendlyPush && !d.claimCalendlyPush(p.id)) continue;
       try {
+        // Guard de obsolescencia: si la llamada YA empezó, el recordatorio no sirve.
+        // Cubre pushes que quedaron 'scheduled' por una pausa (botón de pánico) o una
+        // caída de WhatsApp y se vaciarían en lote al reanudar. Comparación lexical de
+        // strings UTC 'YYYY-MM-DD HH:MM:SS' = comparación cronológica. (Los digests
+        // Push 1/2 no pasan por aquí; se calculan a hora fija por cron.)
+        if (toSqliteUtc(new Date(d.now())) >= p.call_start) {
+          d.markCalendlyPushSkipped(p.id, 'llamada ya pasó (push obsoleto)');
+          console.log(`[Calendly] Push ${p.push_n} #${p.id} omitido: llamada ya pasó (${p.call_start} UTC)`);
+          continue;
+        }
         // Re-validar: la cita pudo cancelarse o reagendarse después de agendar el push.
         const uri = `https://api.calendly.com/scheduled_events/${p.event_uuid}`;
         let ev = null;
