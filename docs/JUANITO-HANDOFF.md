@@ -1664,6 +1664,39 @@ mensaje automático a BOSS para aprobación"*) — era esperado, no un bug del f
 **Para revertir (cuando terminen las pruebas):** restaurar `.env.bak-*` o intercambiar los dos LIDs.
 El código de `bossDmTarget()` se queda (es una mejora real: el jefe vive en `@lid`).
 
+### 18.I 🔴 Reporte diario de "setting por programa" desde HubSpot (NUEVA — 2026-06-15)
+
+**Qué pide el jefe:** un push diario al BOSS (DM) con el estado del setting comercial en HubSpot,
+acotado a 2 programas: **AI Second Brain** (pipeline `904247681`) y **Ventas con LinkedIn**
+(pipeline `906259304`). Métricas deseadas: leads por priorización que necesitan setting manual,
+cuántos leads atendidos vs no, qué falta de los no atendibles, y desglose **por closer**.
+
+**Insumo:** la empresa pasó un skill de Claude completo ("Agente Comercial 30X V2.3") con toda la
+spec de datos (16 pipelines + stage IDs, recetas de query, reglas de gestión, tags). Está en el
+repo en `temp/` (8 archivos: `SKILL.md` + `01_SYSTEM_PROMPT.md` … `07_…`). Sirve como
+**especificación** del de-dónde-salen-los-datos, no como algo "instalable".
+
+**🔴 BLOQUEANTE — PASO CERO: falta acceso a HubSpot.** El skill NO trae datos por sí mismo; en
+Claude.ai reusa la conexión OAuth de HubSpot que un humano ya autorizó en su cuenta. Juanito corre
+headless (API de Anthropic en crudo, sin MCP), así que necesita **su propia credencial de HubSpot**.
+Hoy **no la tenemos** ("no nos la han autorizado"). Sin esto no hay reporte posible (idéntico al
+bloqueo del service account en §18.B). **Acción:** pedir al admin de HubSpot de 30X uno de:
+- **Camino A (recomendado p/ headless):** *Private App token* de **solo lectura** → env var en el VPS,
+  consultamos la REST API de HubSpot directo (reimplementamos los queries del skill nativamente, sin
+  `query_crm_data` porque ese motor SQL solo existe dentro del MCP). Scopes mínimos (read-only):
+  `crm.objects.deals.read`, `crm.objects.contacts.read`, `crm.objects.owners.read`,
+  `crm.objects.engagements.read` (llamadas/reuniones) y, si se incluye el objeto Leads dedicado,
+  `crm.objects.leads.read`. **NO pedir scopes `…write` ni `automation`** — el reporte es solo lectura
+  (menos privilegio = aprobación más fácil).
+- **Camino B (más cercano a "usar el skill"):** conectar el **MCP de HubSpot** vía el MCP connector de
+  la Messages API → reusa el skill casi tal cual. Requiere **actualizar `@anthropic-ai/sdk`** (0.27 →
+  actual) + forzar salida texto (sin `show_widget`/HTML/botones, que WhatsApp no renderiza).
+
+**Plan cuando llegue el acceso:** seguir el patrón de Sheets (§18.B):
+`src/hubspot/` (client + queries + aggregate + report-texto-WA) + `src/scheduler/hubspot-report.js`
+(cron diario, autodesactivable si falta el token, envío vía `bossDmTarget()` + cola anti-ban).
+Mapear stage IDs y recetas desde `temp/02_*` y `temp/05_*`.
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Comando `/recuerda` en grupos (admins):** `@Juanito /recuerda [texto]` → memoria núcleo sin ir a DM.
