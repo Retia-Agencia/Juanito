@@ -474,6 +474,40 @@ export function checkAndIncrementGroupUsage(sender, limit) {
   return { allowed: count <= limit, count };
 }
 
+// ─── Tope anti-ráfaga de respuestas del bot por grupo/hora ────────────────────
+// Cuenta cuántas respuestas AUTÓNOMAS publicó el bot en un grupo en la hora local
+// actual. Incrementa SIEMPRE y devuelve { allowed, count } (misma forma que el rate
+// limit por remitente). Sirve para que el bot no parezca ametralladora en un grupo.
+
+export function checkAndIncrementGroupReplyQuota(groupId, hourlyCap) {
+  const tz = process.env.TZ || 'America/Bogota';
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      hour12: false,
+    })
+      .formatToParts(new Date())
+      .map((p) => [p.type, p.value])
+  );
+  const hour = parts.hour === '24' ? '00' : parts.hour; // algunos ICU dan '24' a medianoche
+  const bucket = `${parts.year}-${parts.month}-${parts.day}-${hour}`; // 'YYYY-MM-DD-HH' local
+
+  db.prepare(`
+    INSERT INTO group_reply_usage (group_id, hour_bucket, count) VALUES (?, ?, 1)
+    ON CONFLICT(group_id, hour_bucket) DO UPDATE SET count = count + 1
+  `).run(groupId, bucket);
+
+  const { count } = db
+    .prepare(`SELECT count FROM group_reply_usage WHERE group_id = ? AND hour_bucket = ?`)
+    .get(groupId, bucket);
+
+  return { allowed: count <= hourlyCap, count };
+}
+
 // ─── Personalidad por grupo ───────────────────────────────────────────────────
 // Texto configurado por un admin (/persona) que se inyecta en el prompt de grupo
 // de ESE chat. Aditivo sobre el prompt aislado: no reabre datos privados.
@@ -610,11 +644,28 @@ export function discardDraft(id) {
 // manda al jefe por DM. created_at es UTC (CURRENT_TIMESTAMP) → la caducidad compara
 // 100% en UTC con datetime('now') (Alpine sin tzdata, mismo criterio que calendly_pushes).
 
-export function createPendingReply({ groupId, groupName, triggerSender, triggerText, draft }) {
+export function createPendingReply({
+  groupId,
+  groupName,
+  triggerSender,
+  triggerText,
+  triggerMsgId,
+  triggerParticipant,
+  draft,
+}) {
   const info = db.prepare(`
-    INSERT INTO pending_replies (group_id, group_name, trigger_sender, trigger_text, draft)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(groupId, groupName ?? null, triggerSender ?? null, triggerText ?? null, draft);
+    INSERT INTO pending_replies
+      (group_id, group_name, trigger_sender, trigger_text, trigger_msg_id, trigger_participant, draft)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    groupId,
+    groupName ?? null,
+    triggerSender ?? null,
+    triggerText ?? null,
+    triggerMsgId ?? null,
+    triggerParticipant ?? null,
+    draft
+  );
   return info.lastInsertRowid;
 }
 
@@ -702,6 +753,7 @@ export function cleanup() {
     `DELETE FROM processed_messages WHERE created_at < datetime('now', '-7 days')`,
     `DELETE FROM calendly_pushes WHERE status != 'scheduled' AND created_at < datetime('now', '-30 days')`,
     `DELETE FROM group_usage WHERE date < date('now', 'localtime', '-7 days')`,
+    `DELETE FROM group_reply_usage WHERE hour_bucket < strftime('%Y-%m-%d-%H', datetime('now', 'localtime', '-2 days'))`,
   ];
   let total = 0;
   for (const sql of stmts) total += db.prepare(sql).run().changes;

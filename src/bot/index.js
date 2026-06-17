@@ -6,6 +6,7 @@ import { sendMessage } from '../whatsapp/index.js';
 import {
   markIfNew,
   checkAndIncrementGroupUsage,
+  checkAndIncrementGroupReplyQuota,
   isGroupAuthorized,
   getGroupApproval,
   createPendingReply,
@@ -16,6 +17,9 @@ import { roleOf, bossDmTarget } from '../common/roles.js';
 const BOSS_PHONE = () => process.env.BOSS_PHONE;
 const BOT_NAME = () => process.env.BOT_NAME || 'Juanito';
 const GROUP_DAILY_LIMIT = () => Number(process.env.GROUP_DAILY_LIMIT || 5);
+// Tope de respuestas AUTÓNOMAS del bot por grupo por hora (anti-ráfaga). Las respuestas
+// aprobadas por el jefe NO cuentan contra este tope.
+const GROUP_REPLY_HOURLY_CAP = () => Number(process.env.GROUP_REPLY_HOURLY_CAP || 15);
 
 // Remitentes sin límite de consultas en grupos.
 // El jefe y los admins se reconocen por rol (roleOf maneja teléfono Y LID — en grupos
@@ -56,12 +60,49 @@ export async function handleBossMessage(msg) {
   }
 }
 
+// ─── DM de cualquiera (desconocido) ───────────────────────────────────────────
+// Juanito responde a quien le escriba por privado como un asistente general AISLADO
+// (sin datos privados ni tools — ver buildSystemPrompt publicDm). Es SIEMPRE una
+// respuesta a un mensaje entrante: nunca escribe primero (regla anti-ban). Volumen
+// acotado por un rate-limit por remitente (mismo tope diario que en grupos).
+
+export async function handlePublicDm({ from, text, messageId, pushName }) {
+  if (!from || !text) return;
+  if (!markIfNew(messageId)) return;
+
+  // Rate-limit por remitente. Clave prefijada 'dm:' para no compartir contador con los
+  // grupos. Al exceder, un único aviso (la 1ª denegación del día) y luego silencio.
+  const limit = GROUP_DAILY_LIMIT();
+  const { allowed, count } = checkAndIncrementGroupUsage(`dm:${from}`, limit);
+  if (!allowed) {
+    console.log(`[Bot] Rate limit DM para ${from} — ignorando (intento ${count})`);
+    if (count === limit + 1) {
+      const quien = pushName ? `${pushName}, ya` : 'Ya';
+      await sendMessage(
+        from,
+        `${quien} alcanzaste tu límite de mensajes por hoy (${limit}). Se reinicia mañana 🙂`
+      ).catch(() => {});
+    }
+    return;
+  }
+
+  console.log(`[Bot] DM público de ${pushName || from}: ${text.slice(0, 60)}`);
+
+  try {
+    const { text: reply } = await chat(text, from, { publicDm: true, role: 'unknown' });
+    await sendMessage(from, reply);
+  } catch (err) {
+    console.error('[Bot] Error en DM público:', err.message);
+    await sendMessage(from, 'Perdón, algo falló de mi lado. Intentá de nuevo 🙏').catch(() => {});
+  }
+}
+
 // ─── Mención en grupo ─────────────────────────────────────────────────────────
 // Solo responde a @mention real (función nativa de WhatsApp).
 // Aplica rate limit a remitentes no registrados como ilimitados.
 
 export async function handleGroupMessage(msg) {
-  const { chatId, groupName, text, sender, isGroup, messageId, isBotMentioned, pushName } = msg;
+  const { chatId, groupName, text, sender, isGroup, messageId, isBotMentioned, pushName, rawMsg } = msg;
 
   if (!isGroup || !text) return;
   if (!markIfNew(messageId || `${chatId}:${text}`)) return;
@@ -87,7 +128,8 @@ export async function handleGroupMessage(msg) {
         const quien = pushName ? `${pushName}, ya` : 'Ya';
         await sendMessage(
           chatId,
-          `${quien} alcanzaste tu límite de consultas por hoy (${limit}). Se reinicia mañana 🙂`
+          `${quien} alcanzaste tu límite de consultas por hoy (${limit}). Se reinicia mañana 🙂`,
+          { quoted: rawMsg }
         ).catch(() => {});
       }
       return;
@@ -95,6 +137,20 @@ export async function handleGroupMessage(msg) {
   }
 
   console.log(`[Bot] Mencionado en "${groupName}": ${text.slice(0, 60)}`);
+
+  const requiresApproval = getGroupApproval(chatId);
+
+  // Tope anti-ráfaga por grupo/hora — SOLO para respuestas autónomas (las que se
+  // publican sin pasar por el jefe). Las que requieren aprobación NO cuentan acá (el
+  // jefe las sanciona) pero igual quedan espaciadas por la cola por-grupo.
+  if (!requiresApproval) {
+    const cap = GROUP_REPLY_HOURLY_CAP();
+    const { allowed, count } = checkAndIncrementGroupReplyQuota(chatId, cap);
+    if (!allowed) {
+      console.log(`[Bot] Tope horario de respuestas alcanzado en "${groupName}" (${count}/${cap}) — silencio`);
+      return;
+    }
+  }
 
   try {
     // El prompt de grupo es aislado e ignora el rol para la persona, pero pasamos el
@@ -104,12 +160,16 @@ export async function handleGroupMessage(msg) {
 
     // Si el grupo exige aprobación, NO se publica: se guarda como pendiente y se le
     // manda al jefe por DM para que apruebe/corrija/descarte (caduca por cron).
-    if (getGroupApproval(chatId)) {
+    if (requiresApproval) {
       const id = createPendingReply({
         groupId: chatId,
         groupName,
         triggerSender: pushName || sender,
         triggerText: text,
+        // Identidad del mensaje gatillo → permite CITARLO cuando la respuesta salga
+        // (minutos después, tras la aprobación del jefe).
+        triggerMsgId: rawMsg?.key?.id,
+        triggerParticipant: rawMsg?.key?.participant,
         draft: reply,
       });
       const boss = bossDmTarget();
@@ -126,7 +186,7 @@ export async function handleGroupMessage(msg) {
       return;
     }
 
-    await sendMessage(chatId, reply);
+    await sendMessage(chatId, reply, { quoted: rawMsg });
   } catch (err) {
     console.error('[Bot] Error respondiendo en grupo:', err.message);
   }

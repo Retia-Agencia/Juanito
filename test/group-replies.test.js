@@ -63,6 +63,39 @@ test('caduca las pendientes viejas y avisa al jefe', async () => {
   assert.match(aviso.text, /caduc/i);
 });
 
+test('cita el mensaje gatillo cuando hay trigger_msg_id (reconstruye quoted)', async () => {
+  const deps = makeDeps({
+    approved: [{
+      id: 6, group_id: 'g@g.us', group_name: 'Patah', draft: 'La reunión es a las 8',
+      trigger_msg_id: 'ABC123', trigger_participant: '57300@s.whatsapp.net', trigger_text: '¿a qué hora?',
+    }],
+  });
+  const calls = [];
+  deps.sendMessage = async (to, text, opts) => { calls.push({ to, text, opts }); };
+  await runPendingRepliesCycle(deps);
+
+  assert.equal(calls.length, 1);
+  const q = calls[0].opts?.quoted;
+  assert.ok(q, 'debe pasar quoted');
+  assert.equal(q.key.id, 'ABC123');
+  assert.equal(q.key.remoteJid, 'g@g.us');
+  assert.equal(q.key.participant, '57300@s.whatsapp.net');
+  assert.equal(q.key.fromMe, false);
+  assert.equal(q.message.conversation, '¿a qué hora?');
+});
+
+test('respuesta pre-migración (sin trigger_msg_id) → envía SIN cita', async () => {
+  const deps = makeDeps({
+    approved: [{ id: 7, group_id: 'g@g.us', group_name: 'Patah', draft: 'Hola' }],
+  });
+  const calls = [];
+  deps.sendMessage = async (to, text, opts) => { calls.push({ to, text, opts }); };
+  await runPendingRepliesCycle(deps);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].opts?.quoted, undefined, 'sin trigger_msg_id no debe citar');
+});
+
 test('un fallo de envío no rompe el ciclo (sigue con las demás)', async () => {
   const deps = makeDeps({
     approved: [

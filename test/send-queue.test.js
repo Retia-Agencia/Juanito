@@ -104,3 +104,70 @@ test('un enqueue posterior a drenar la cola también sale (re-drain)', async () 
   assert.equal(await q.enqueue(() => Promise.resolve('segundo')), 'segundo');
   assert.equal(q.size(), 0);
 });
+
+// ─── Espaciado por key (anti-ráfaga por grupo) ─────────────────────────────────
+// Reloj virtual: el `wait` falso AVANZA el tiempo, así el gap por-key es testeable.
+function virtualClock() {
+  let t = 0;
+  return { now: () => t, wait: (ms) => { t += ms; return Promise.resolve(); } };
+}
+
+test('dos envíos a la MISMA key se separan ≥ perKeyGap', async () => {
+  const c = virtualClock();
+  const q = createSendQueue({
+    minGapMs: 100, jitterMs: 0, maxQueue: 10,
+    perKeyGapMs: 8000, perKeyJitterMs: 0,
+    wait: c.wait, random: () => 0, now: c.now,
+  });
+
+  const sentAt = {};
+  const mk = (id) => () => { sentAt[id] = c.now(); return Promise.resolve(id); };
+
+  await Promise.all([
+    q.enqueue(mk('a1'), { key: 'g1' }),
+    q.enqueue(mk('a2'), { key: 'g1' }),
+  ]);
+
+  assert.ok(sentAt.a2 - sentAt.a1 >= 8000, `esperado ≥8000, fue ${sentAt.a2 - sentAt.a1}`);
+});
+
+test('keys distintas NO se bloquean entre sí (solo el gap global)', async () => {
+  const c = virtualClock();
+  const q = createSendQueue({
+    minGapMs: 100, jitterMs: 0, maxQueue: 10,
+    perKeyGapMs: 8000, perKeyJitterMs: 0,
+    wait: c.wait, random: () => 0, now: c.now,
+  });
+
+  const sentAt = {};
+  const mk = (id) => () => { sentAt[id] = c.now(); return Promise.resolve(id); };
+
+  await Promise.all([
+    q.enqueue(mk('g1'), { key: 'g1' }),
+    q.enqueue(mk('g2'), { key: 'g2' }),
+  ]);
+
+  // El segundo (otra key) sale tras el gap global, NO tras el perKeyGap.
+  assert.ok(sentAt.g2 - sentAt.g1 < 8000, 'distinta key no debe esperar el gap por-grupo');
+});
+
+test('un grupo saturado no posterga a un envío sin key (DM)', async () => {
+  const c = virtualClock();
+  const q = createSendQueue({
+    minGapMs: 100, jitterMs: 0, maxQueue: 10,
+    perKeyGapMs: 8000, perKeyJitterMs: 0,
+    wait: c.wait, random: () => 0, now: c.now,
+  });
+
+  const order = [];
+  const mk = (id) => () => { order.push(id); return Promise.resolve(id); };
+
+  await Promise.all([
+    q.enqueue(mk('g1a'), { key: 'g1' }),
+    q.enqueue(mk('g1b'), { key: 'g1' }), // tendría que esperar 8s
+    q.enqueue(mk('dm'), {}),             // sin key → elegible de inmediato, NO debe quedar atrás
+  ]);
+
+  // El DM (sin key) se adelanta al 2º del grupo saturado.
+  assert.ok(order.indexOf('dm') < order.indexOf('g1b'), `orden inesperado: ${order.join(',')}`);
+});

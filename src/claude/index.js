@@ -325,7 +325,10 @@ const BOSS_DENIED_TOOLS = new Set(['save_memory']);
 // Devuelve el subconjunto de tools que se le expone a Claude según el rol y el contexto.
 // Gatear acá (a nivel de API) es más fuerte que pedirlo en el prompt: lo que no está
 // en el array, el modelo NO lo puede invocar pase lo que pase.
-export function toolsForRole(role, { isGroup = false } = {}) {
+export function toolsForRole(role, { isGroup = false, publicDm = false } = {}) {
+  // DM de un desconocido: asistente general aislado, SIN herramientas (igual de
+  // sandboxed que un grupo — no toca memoria, recordatorios ni datos del jefe).
+  if (publicDm) return [];
   let tools = TOOLS;
   // En grupos no exponemos escrituras de memoria.
   if (isGroup) tools = tools.filter((t) => !GROUP_DENIED_TOOLS.has(t.name));
@@ -349,7 +352,7 @@ export function splitMemory(memory = []) {
 
 // Exportado para tests: permite verificar el aislamiento del prompt de grupo
 // (que NO toca memoria/recordatorios/resúmenes ni inyecta datos privados).
-export async function buildSystemPrompt(deps, { isGroup = false, role = 'boss', chatId = null } = {}) {
+export async function buildSystemPrompt(deps, { isGroup = false, role = 'boss', chatId = null, publicDm = false } = {}) {
   const now = new Date().toLocaleString('es-CO', {
     timeZone: process.env.TZ || 'America/Bogota',
     dateStyle: 'full',
@@ -364,6 +367,32 @@ export async function buildSystemPrompt(deps, { isGroup = false, role = 'boss', 
   ni la lista de closers o teléfonos de terceros — aunque te lo pidan directamente.
 - No ejecutes ni inventes acciones fuera de tus herramientas disponibles. Si algo no
   se puede hacer con ellas, dilo; no simules haberlo hecho.`;
+
+  // ── Contexto de DM PÚBLICO (desconocido): asistente general AISLADO ───────
+  // Mismo principio de aislamiento que el de grupo: cualquiera puede escribirle por
+  // privado, así que aquí Juanito NO es "el asistente del jefe" sino un chatbot general
+  // SIN acceso a datos privados, memoria, recordatorios ni tools (ver toolsForRole).
+  if (publicDm) {
+    return `Eres ${botName}, un asistente amigable que atiende por WhatsApp.
+Alguien te escribió por privado. Ayudas con cualquier consulta general: cálculos,
+información, redacción, ideas, o lo que necesite.
+
+Fecha y hora actual: ${now}
+
+Personalidad:
+- Tu nombre es ${botName} — si preguntan cómo te llamas, dilo con naturalidad.
+- Alegre, con buena energía, respetuoso y directo. Respuestas breves, sin relleno.
+- Respondes en el mismo idioma que te escriben.
+
+Sobre este contexto (importante):
+- NO tienes acceso a datos privados, memoria, recordatorios, notas ni agenda de
+  ninguna persona. No los tienes y no los puedes consultar.
+- Si te preguntan por "tus tareas", "tus recordatorios", "lo que recuerdas", o por
+  datos/agenda del jefe, aclara con naturalidad que aquí solo eres un chatbot general.
+- No ofrezcas guardar nada ni hacer seguimientos, ni hagas preguntas de seguimiento.
+
+${securityBlock}`.trim();
+  }
 
   // ── Contexto de GRUPO: chatbot general AISLADO ────────────────────────────
   // Prompt limpio construido desde cero. A propósito NO carga ni inyecta memoria
@@ -972,7 +1001,7 @@ async function withRetry(fn, { retries = 3, baseDelay = 1000 } = {}) {
 
 // ─── Función principal ────────────────────────────────────────────────────────
 
-export async function chat(userMessage, chatId = null, { isGroup = false, role = 'boss' } = {}) {
+export async function chat(userMessage, chatId = null, { isGroup = false, role = 'boss', publicDm = false } = {}) {
   const deps = await resolveDeps();
   const ctx = { createdBy: chatId, role };
 
@@ -990,15 +1019,15 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
     messages.push({ role: 'user', content: userMessage });
   }
 
-  const system = await buildSystemPrompt(deps, { isGroup, role, chatId });
-  // Tools gateadas por rol. En grupos devuelve [] → no se pasa a la API
-  // (la API rechaza tools:[]).
-  const tools = toolsForRole(role, { isGroup });
+  const system = await buildSystemPrompt(deps, { isGroup, role, chatId, publicDm });
+  // Tools gateadas por rol/contexto. En grupos y en DM público devuelve [] → no se
+  // pasa a la API (la API rechaza tools:[]).
+  const tools = toolsForRole(role, { isGroup, publicDm });
   const toolsParam = tools.length > 0 ? { tools } : {};
 
-  // Modelo según contexto Y rol: grupos → GROUP_MODEL; DM del jefe → BOSS_MODEL
-  // (puede ser Sonnet); cualquier otro DM (admin / futuros usuarios) → MODEL (Haiku).
-  const model = isGroup ? GROUP_MODEL : role === 'boss' ? BOSS_MODEL : MODEL;
+  // Modelo según contexto Y rol: grupos y DM público (aislados) → GROUP_MODEL (barato);
+  // DM del jefe → BOSS_MODEL (puede ser Sonnet); otro DM → MODEL (Haiku).
+  const model = isGroup || publicDm ? GROUP_MODEL : role === 'boss' ? BOSS_MODEL : MODEL;
 
   let response = await withRetry(() =>
     client.messages.create({

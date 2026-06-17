@@ -30,6 +30,10 @@ const sendQueue = createSendQueue({
   minGapMs: Number(process.env.WA_SEND_MIN_GAP_MS || 1000),
   jitterMs: Number(process.env.WA_SEND_JITTER_MS || 500),
   maxQueue: Number(process.env.WA_SEND_QUEUE_MAX || 200),
+  // Espaciado por grupo: dos respuestas al MISMO grupo se separan ≥ gap (+ jitter) →
+  // el bot no parece ametralladora dentro de un grupo. Default 8-10s.
+  perKeyGapMs: Number(process.env.WA_SEND_PER_GROUP_GAP_MS || 8000),
+  perKeyJitterMs: Number(process.env.WA_SEND_PER_GROUP_JITTER_MS || 2000),
 });
 
 // Cache del subject de cada grupo (§18.D P1-b) — evita un groupMetadata por mensaje.
@@ -305,7 +309,10 @@ export async function connect({ onMessage, onGroupJoin, onGroupChange }) {
             }
           }
 
-          await onMessage({ chatId, isGroup, text, sender, groupName, messageId, isBotMentioned, pushName: msg.pushName || null }).catch((e) =>
+          // rawMsg (solo grupos): mínimo para CITAR el mensaje al responder (reply nativo).
+          const rawMsg = isGroup ? { key: msg.key, message: msg.message } : null;
+
+          await onMessage({ chatId, isGroup, text, sender, groupName, messageId, isBotMentioned, pushName: msg.pushName || null, rawMsg }).catch((e) =>
             console.error('[WhatsApp] Error en onMessage:', e.message)
           );
         }
@@ -323,11 +330,20 @@ export function isConnected() {
   return !!sock;
 }
 
-export async function sendMessage(to, text) {
+// `opts.quoted` (opcional): un WAMessage ({ key, message }) para responder CITANDO ese
+// mensaje (reply nativo de WhatsApp). Se usa en grupos para que la respuesta no se
+// confunda con quién preguntó, dado el delay de la cola anti-ban.
+export async function sendMessage(to, text, { quoted } = {}) {
   if (!sock) throw new Error('sendMessage: WhatsApp no conectado aún');
   const jid = toJid(to);
+  // Espaciado por-grupo: los envíos a un grupo (@g.us) llevan key = jid → la cola los
+  // separa entre sí. Los DMs van sin key (no se retrasan entre ellos).
+  const key = jid.endsWith('@g.us') ? jid : null;
   // Todos los envíos pasan por la cola global (gap + jitter) — anti-ban §18.D P1-a.
-  await sendQueue.enqueue(() => sock.sendMessage(jid, { text }));
+  await sendQueue.enqueue(
+    () => sock.sendMessage(jid, { text }, quoted ? { quoted } : {}),
+    { key }
+  );
   console.log(`[WhatsApp] → ${to} (cola: ${sendQueue.size()} pendientes)`);
 }
 

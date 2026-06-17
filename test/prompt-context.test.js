@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 // El SDK de Anthropic exige una apiKey al construir el cliente (claude/index.js).
 process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || 'test-key';
 
-const { buildSystemPrompt } = await import('../src/claude/index.js');
+const { buildSystemPrompt, toolsForRole } = await import('../src/claude/index.js');
 
 // Deps espía: cuentan cuántas veces se llama a cada fuente de datos privados y
 // devuelven datos "marcados" para detectar si se filtran al prompt.
@@ -163,4 +163,43 @@ test('DM: la persona de grupo NO aplica (es solo para grupos)', async () => {
   const prompt = await buildSystemPrompt(deps, { isGroup: false, role: 'boss', chatId: 'dm@s.whatsapp.net' });
   assert.equal(asked, 0, 'en DM ni se consulta');
   assert.ok(!prompt.includes('persona de grupo'));
+});
+
+// ─── DM público (desconocido): asistente general AISLADO ───────────────────────
+
+test('DM público: NO consulta memoria/resúmenes/recordatorios', async () => {
+  const deps = spyDeps();
+  await buildSystemPrompt(deps, { publicDm: true, role: 'unknown' });
+  assert.equal(deps.calls.getAllMemory, 0, 'no debe leer memoria en DM público');
+  assert.equal(deps.calls.getRecentSummaries, 0, 'no debe leer resúmenes');
+  assert.equal(deps.calls.getUpcomingReminders, 0, 'no debe leer recordatorios');
+});
+
+test('DM público: el prompt NO filtra datos privados del jefe y conserva seguridad', async () => {
+  const deps = spyDeps();
+  const prompt = await buildSystemPrompt(deps, { publicDm: true, role: 'unknown' });
+  for (const secret of ['SECRETO-NUCLEO-123', 'SECRETO-NOTA-JEFE', 'SECRETO-RESUMEN-GRUPO', 'SECRETO-RECORDATORIO']) {
+    assert.ok(!prompt.includes(secret), `el DM público no debe filtrar ${secret}`);
+  }
+  assert.ok(/Reglas de seguridad/i.test(prompt), 'conserva el bloque de seguridad');
+  assert.ok(/escribió por privado/i.test(prompt), 'se presenta como chatbot de DM, no de grupo');
+  assert.ok(!/dueño de esto/i.test(prompt), 'no trata al interlocutor como el dueño');
+});
+
+test('DM público: NO inyecta respuestas pendientes ni persona de grupo', async () => {
+  const deps = spyDeps();
+  let pend = 0;
+  let pers = 0;
+  deps.listPendingReplies = async () => { pend++; return [{ id: 1, draft: 'RESP-PENDIENTE-MARCA' }]; };
+  deps.getGroupPersona = async () => { pers++; return 'persona X'; };
+  const prompt = await buildSystemPrompt(deps, { publicDm: true, role: 'unknown', chatId: 'x@s.whatsapp.net' });
+  assert.equal(pend, 0, 'no consulta respuestas pendientes');
+  assert.equal(pers, 0, 'no consulta persona de grupo');
+  assert.ok(!prompt.includes('RESP-PENDIENTE-MARCA'));
+  assert.ok(!prompt.includes('persona X'));
+});
+
+test('toolsForRole: en DM público NO expone ninguna herramienta', () => {
+  assert.deepEqual(toolsForRole('unknown', { publicDm: true }), []);
+  assert.deepEqual(toolsForRole('admin', { publicDm: true }), [], 'ni siquiera para admin');
 });

@@ -53,7 +53,21 @@ export async function runPendingRepliesCycle(deps) {
         console.log(`[Scheduler] Respuesta #${r.id} descartada: grupo no autorizado`);
         continue;
       }
-      await d.sendMessage(r.group_id, r.draft);
+      // Citar el mensaje que disparó la respuesta (reply nativo) para que no se confunda
+      // con quién preguntó, dado que sale minutos después. Si la fila es pre-migración
+      // (sin trigger_msg_id) → sin cita (degradación segura).
+      const quoted = r.trigger_msg_id
+        ? {
+            key: {
+              remoteJid: r.group_id,
+              id: r.trigger_msg_id,
+              participant: r.trigger_participant || undefined,
+              fromMe: false,
+            },
+            message: { conversation: r.trigger_text || '' },
+          }
+        : undefined;
+      await d.sendMessage(r.group_id, r.draft, { quoted });
       d.markPendingReplySent(r.id);
       console.log(`[Scheduler] Respuesta aprobada #${r.id} enviada a "${r.group_name || r.group_id}"`);
     } catch (err) {

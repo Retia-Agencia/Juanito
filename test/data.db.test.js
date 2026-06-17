@@ -392,3 +392,41 @@ test('pending_replies: ciclo aprobar/enviar, revise, discard y caducidad', () =>
   assert.equal(db.markPendingReplyExpired(id3), 1);
   assert.equal(db.getPendingReply(id3).status, 'expired');
 });
+
+test('pending_replies: persiste la identidad del mensaje gatillo (para citar)', () => {
+  const id = db.createPendingReply({
+    groupId: 'g2@g.us',
+    groupName: 'Patah',
+    triggerSender: 'Pedro',
+    triggerText: '¿a qué hora?',
+    triggerMsgId: 'MSGID-99',
+    triggerParticipant: '57301@s.whatsapp.net',
+    draft: 'A las 8',
+  });
+  const row = db.getPendingReply(id);
+  assert.equal(row.trigger_msg_id, 'MSGID-99');
+  assert.equal(row.trigger_participant, '57301@s.whatsapp.net');
+  // y viaja en la cola de aprobadas (SELECT *)
+  db.approvePendingReply(id);
+  const approved = db.listApprovedPendingReplies().find((r) => r.id === Number(id));
+  assert.equal(approved.trigger_msg_id, 'MSGID-99');
+});
+
+test('group_reply_usage: cuenta por grupo/hora y corta al tope', () => {
+  const g = 'cap@g.us';
+  const cap = 3;
+  const counts = [];
+  for (let i = 0; i < 4; i++) counts.push(db.checkAndIncrementGroupReplyQuota(g, cap));
+  assert.deepEqual(counts.map((c) => c.count), [1, 2, 3, 4]);
+  assert.deepEqual(counts.map((c) => c.allowed), [true, true, true, false]);
+  // otro grupo lleva su propio contador
+  assert.equal(db.checkAndIncrementGroupReplyQuota('otro@g.us', cap).count, 1);
+});
+
+test('migración crea group_reply_usage y columnas de cita en pending_replies', () => {
+  const def = db.default;
+  const tables = def.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((t) => t.name);
+  assert.ok(tables.includes('group_reply_usage'), 'falta tabla group_reply_usage');
+  const cols = def.prepare('PRAGMA table_info(pending_replies)').all().map((c) => c.name);
+  for (const c of ['trigger_msg_id', 'trigger_participant']) assert.ok(cols.includes(c), `falta ${c}`);
+});

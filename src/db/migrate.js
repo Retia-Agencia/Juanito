@@ -234,6 +234,22 @@ addColumnIfMissing('scheduled_messages', 'brief', 'TEXT');
 // Juanito, su respuesta pasa por el jefe antes de publicarse. Flag por grupo.
 addColumnIfMissing('authorized_groups', 'require_approval', 'INTEGER NOT NULL DEFAULT 0');
 
+// Identidad del mensaje que disparó la respuesta pendiente → permite CITARLO (reply
+// nativo) cuando la respuesta aprobada se publica minutos después.
+addColumnIfMissing('pending_replies', 'trigger_msg_id', 'TEXT');
+addColumnIfMissing('pending_replies', 'trigger_participant', 'TEXT');
+
+// Tope anti-ráfaga: cuántas respuestas AUTÓNOMAS publicó el bot en cada grupo, por hora.
+// hour_bucket = 'YYYY-MM-DD-HH' en hora local. Se limpia con el resto en la limpieza diaria.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS group_reply_usage (
+    group_id    TEXT NOT NULL,
+    hour_bucket TEXT NOT NULL,   -- 'YYYY-MM-DD-HH' hora local
+    count       INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (group_id, hour_bucket)
+  );
+`);
+
 // Migrar el flag legacy `sent` -> `status` (una sola vez, idempotente)
 if (columnExists('reminders', 'sent')) {
   const migrated = db

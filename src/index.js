@@ -3,7 +3,7 @@
 
 import 'dotenv/config';
 import { connect, sendMessage, isConnected, leaveGroup, listGroups } from './whatsapp/index.js';
-import { handleBossMessage, handleGroupMessage } from './bot/index.js';
+import { handleBossMessage, handleGroupMessage, handlePublicDm } from './bot/index.js';
 import { handleCommand } from './bot/commands.js';
 import { handleCloserOptin } from './calendly/optin.js';
 import { startAllJobs } from './scheduler/index.js';
@@ -95,7 +95,7 @@ async function handleGroupCommand({ chatId, groupName, text, sender, messageId }
   return true;
 }
 
-async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, isBotMentioned, pushName }) {
+async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, isBotMentioned, pushName, rawMsg }) {
   if (!text) return;
 
   if (!isGroup) {
@@ -163,10 +163,24 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
       );
       return;
     }
-    // DM de un closer → registrar su opt-in (si es un closer conocido).
-    // Pasa pushName para resolver closers cuando el LID no se mapea a teléfono.
-    await handleCloserOptin({ from: sender, pushName, messageId }).catch((e) =>
-      console.error('[Main] handleCloserOptin:', e.message)
+    // Ignorar remitentes que NO son una persona (status/broadcast/newsletter): no se
+    // les responde nunca (no son interlocutores reales).
+    if (!sender?.endsWith('@s.whatsapp.net') && !sender?.endsWith('@lid')) {
+      return;
+    }
+
+    // DM de un closer → registrar su opt-in (si es un closer conocido). Devuelve true
+    // si lo manejó. Pasa pushName para resolver closers cuando el LID no se mapea a teléfono.
+    const handled = await handleCloserOptin({ from: sender, pushName, messageId }).catch((e) => {
+      console.error('[Main] handleCloserOptin:', e.message);
+      return false;
+    });
+    if (handled) return;
+
+    // Cualquier otro DM (desconocido) → asistente general aislado. SIEMPRE es una
+    // respuesta a un mensaje entrante: Juanito nunca escribe primero (regla anti-ban).
+    await handlePublicDm({ from: sender, text, messageId, pushName }).catch((e) =>
+      console.error('[Main] handlePublicDm:', e.message)
     );
     return;
   }
@@ -181,7 +195,8 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
   if ((await enforceGroup(chatId, groupName)) === 'left') return;
 
   // pushName viaja hasta el aviso de rate-limit (saluda por nombre al avisar).
-  await handleGroupMessage({ chatId, groupName, text, sender, isGroup, messageId, isBotMentioned, pushName }).catch((e) =>
+  // rawMsg permite responder CITANDO el mensaje que mencionó al bot.
+  await handleGroupMessage({ chatId, groupName, text, sender, isGroup, messageId, isBotMentioned, pushName, rawMsg }).catch((e) =>
     console.error('[Main] handleGroupMessage:', e.message)
   );
 }
