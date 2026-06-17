@@ -69,8 +69,15 @@ export async function handleCommand({ text, sender, role }, deps = {}) {
     return handleAprobaciones(text, deps);
   }
 
-  // /aprobar_grupo <grupo> on|off — exige que el jefe apruebe las respuestas de Juanito
-  // en ese grupo antes de publicarse. SOLO admins (cambia el comportamiento del bot).
+  // /confirmaciones — control unificado de las confirmaciones (visto bueno del jefe) antes
+  // de que Juanito envíe: por grupo (mención) y global para DMs de desconocidos. SOLO admins.
+  if (cmd === '/confirmaciones' || cmd.startsWith('/confirmaciones ')) {
+    if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
+    return handleConfirmaciones({ text }, deps);
+  }
+
+  // /aprobar_grupo <grupo> on|off — ALIAS retro-compatible de `/confirmaciones grupo …`.
+  // SOLO admins (cambia el comportamiento del bot).
   if (cmd === '/aprobar_grupo' || cmd.startsWith('/aprobar_grupo ')) {
     if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
     return handleAprobarGrupo({ text }, deps);
@@ -133,13 +140,76 @@ function handleAprobaciones(text, deps = {}) {
   return lines.join('\n');
 }
 
-// /aprobar_grupo                → grupos con aprobación de respuestas activada
+// /confirmaciones                       → estado: DM (ON/OFF) + grupos con confirmación ON
+// /confirmaciones dm on|off             → activa/desactiva la confirmación GLOBAL de DMs
+// /confirmaciones grupo <n|nombre> on   → exige tu visto bueno en ese grupo
+// /confirmaciones grupo <n|nombre> off  → ese grupo vuelve a responder directo
+async function handleConfirmaciones({ text }, deps = {}) {
+  const { listApprovalGroups, isDmApprovalOn, setDmApproval } = deps;
+  const arg = (text || '').trim().slice('/confirmaciones'.length).trim();
+  const ttl = Number(process.env.REPLY_APPROVAL_TTL_MIN || 30);
+
+  // Sin args → estado.
+  if (!arg) {
+    let dmOn = false;
+    try {
+      dmOn = isDmApprovalOn ? isDmApprovalOn() : false;
+    } catch {
+      /* DB puede no estar lista */
+    }
+    let rows = [];
+    try {
+      rows = listApprovalGroups ? listApprovalGroups() : [];
+    } catch {
+      /* DB puede no estar lista */
+    }
+    const lines = [
+      '🛂 Confirmaciones (visto bueno del jefe antes de enviar)',
+      `• DM (desconocidos): ${dmOn ? 'ON ✅ — cada DM te llega para aprobar' : 'OFF — Juanito responde directo'}`,
+      '• Grupos con confirmación ON:',
+    ];
+    if (rows.length) for (const r of rows) lines.push(`   – ${r.group_name || r.group_id}`);
+    else lines.push('   (ninguno — Juanito responde directo en todos los grupos)');
+    lines.push(
+      '',
+      'Uso: /confirmaciones dm on|off · /confirmaciones grupo <n|nombre> on|off',
+      'Las propuestas te llegan por DM y caducan a los ' + ttl + ' min sin decisión.'
+    );
+    return lines.join('\n');
+  }
+
+  const parts = arg.split(/\s+/);
+  const sub = parts[0].toLowerCase();
+
+  // /confirmaciones dm on|off
+  if (sub === 'dm') {
+    const onoff = (parts[1] || '').toLowerCase();
+    if (onoff !== 'on' && onoff !== 'off') return 'Uso: /confirmaciones dm on · /confirmaciones dm off';
+    if (setDmApproval) setDmApproval(onoff === 'on');
+    return onoff === 'on'
+      ? `🛂 Confirmación de DMs ACTIVADA. Cada DM de un desconocido te llega por DM para aprobar/corregir/descartar (caduca a los ${ttl} min). Juanito no responde sin tu visto bueno.`
+      : '🛂 Confirmación de DMs DESACTIVADA. Juanito vuelve a responder los DMs directo.';
+  }
+
+  // /confirmaciones grupo <n|nombre> on|off
+  if (sub === 'grupo') {
+    const rest = parts.slice(1);
+    const onoff = (rest[rest.length - 1] || '').toLowerCase();
+    if (onoff !== 'on' && onoff !== 'off') return 'Uso: /confirmaciones grupo <n|nombre> on|off';
+    const targetArg = rest.slice(0, -1).join(' ');
+    if (!targetArg) return 'Uso: /confirmaciones grupo <n|nombre> on|off';
+    return applyGroupApproval(targetArg, onoff, deps);
+  }
+
+  return 'Uso: /confirmaciones · /confirmaciones dm on|off · /confirmaciones grupo <n|nombre> on|off';
+}
+
+// /aprobar_grupo                → ALIAS: grupos con confirmación de respuestas activada
 // /aprobar_grupo <n|nombre> on  → activa: Juanito no responde ahí sin el visto bueno del jefe
 // /aprobar_grupo <n|nombre> off → desactiva: vuelve a responder directo
 async function handleAprobarGrupo({ text }, deps = {}) {
-  const { listGroups, setGroupApproval, listApprovalGroups, isGroupAuthorized } = deps;
+  const { listApprovalGroups } = deps;
   const arg = (text || '').trim().slice('/aprobar_grupo'.length).trim();
-  const ttl = Number(process.env.REPLY_APPROVAL_TTL_MIN || 30);
 
   if (!arg) {
     let rows = [];
@@ -151,7 +221,7 @@ async function handleAprobarGrupo({ text }, deps = {}) {
     const lines = ['🛂 Grupos con aprobación de respuestas (ON)'];
     if (rows.length) for (const r of rows) lines.push(`• ${r.group_name || r.group_id}`);
     else lines.push('(ninguno — Juanito responde directo en todos los grupos)');
-    lines.push('', 'Uso: /aprobar_grupo <n|nombre> on · /aprobar_grupo <n|nombre> off');
+    lines.push('', 'Uso: /aprobar_grupo <n|nombre> on|off (alias de /confirmaciones grupo …)');
     return lines.join('\n');
   }
 
@@ -160,6 +230,14 @@ async function handleAprobarGrupo({ text }, deps = {}) {
   if (onoff !== 'on' && onoff !== 'off') return 'Uso: /aprobar_grupo <n|nombre> on · /aprobar_grupo <n|nombre> off';
   const targetArg = parts.slice(0, -1).join(' ');
   if (!targetArg) return 'Uso: /aprobar_grupo <n|nombre> on|off';
+  return applyGroupApproval(targetArg, onoff, deps);
+}
+
+// Lógica compartida por /confirmaciones grupo y el alias /aprobar_grupo: resuelve el grupo
+// por número o nombre, valida que esté autorizado y activa/desactiva su require_approval.
+async function applyGroupApproval(targetArg, onoff, deps = {}) {
+  const { listGroups, setGroupApproval, isGroupAuthorized } = deps;
+  const ttl = Number(process.env.REPLY_APPROVAL_TTL_MIN || 30);
 
   let groups;
   try {
@@ -175,10 +253,10 @@ async function handleAprobarGrupo({ text }, deps = {}) {
     return `"${target.name || target.id}" no está autorizado todavía. Agrégalo al grupo (queda auto-autorizado) o actívalo con /grupos.`;
   }
   const changes = setGroupApproval ? setGroupApproval(target.id, onoff === 'on') : 0;
-  if (!changes) return `No pude cambiar la aprobación de "${target.name || target.id}".`;
+  if (!changes) return `No pude cambiar la confirmación de "${target.name || target.id}".`;
   return onoff === 'on'
-    ? `🛂 Aprobación ACTIVADA en "${target.name || target.id}". Juanito ya no responde ahí sin tu visto bueno: las propuestas te llegan por DM y caducan a los ${ttl} min.`
-    : `🛂 Aprobación DESACTIVADA en "${target.name || target.id}". Juanito vuelve a responder directo.`;
+    ? `🛂 Confirmación ACTIVADA en "${target.name || target.id}". Juanito ya no responde ahí sin tu visto bueno: las propuestas te llegan por DM y caducan a los ${ttl} min.`
+    : `🛂 Confirmación DESACTIVADA en "${target.name || target.id}". Juanito vuelve a responder directo.`;
 }
 
 // /respuestas              → respuestas de grupo pendientes con su estado

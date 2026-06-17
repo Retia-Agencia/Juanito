@@ -69,8 +69,9 @@ pruebas. Detalle en §3 del handoff.
 
 ## Comandos (DM admin)
 
-`/calendly on|off [closer]` · `/grupos` · `/reporte(s)` · `/persona <grupo> | <texto>` ·
-`/programados` · `/aprobaciones` · `/respuestas` · `/status` · `/whoami` · `/id`
+`/confirmaciones [dm|grupo …] on|off` · `/calendly on|off [closer]` · `/grupos` ·
+`/reporte(s)` · `/persona <grupo> | <texto>` · `/programados` · `/aprobaciones` · `/respuestas` ·
+`/status` · `/whoami` · `/id` — manual completo en [docs/MANUAL-DE-USO.md](docs/MANUAL-DE-USO.md).
 
 ## Variables de entorno
 

@@ -9,6 +9,7 @@ import {
   checkAndIncrementGroupReplyQuota,
   isGroupAuthorized,
   getGroupApproval,
+  isDmApprovalOn,
   createPendingReply,
 } from '../db/index.js';
 import { phonesMatch } from '../common/utils.js';
@@ -66,7 +67,7 @@ export async function handleBossMessage(msg) {
 // respuesta a un mensaje entrante: nunca escribe primero (regla anti-ban). Volumen
 // acotado por un rate-limit por remitente (mismo tope diario que en grupos).
 
-export async function handlePublicDm({ from, text, messageId, pushName }) {
+export async function handlePublicDm({ from, text, messageId, pushName, rawMsg }) {
   if (!from || !text) return;
   if (!markIfNew(messageId)) return;
 
@@ -90,6 +91,38 @@ export async function handlePublicDm({ from, text, messageId, pushName }) {
 
   try {
     const { text: reply } = await chat(text, from, { publicDm: true, role: 'unknown' });
+
+    // Toggle global de aprobación de DMs (admin: /confirmaciones dm on). Si está ON, NO se
+    // responde directo: la respuesta se retiene como pendiente (kind='dm') y se le manda al
+    // jefe por DM para que apruebe/corrija/descarte. Un cron entrega las aprobadas y caduca
+    // las que llevan demasiado tiempo sin decisión (mismo carril que las respuestas de grupo).
+    if (isDmApprovalOn()) {
+      const id = createPendingReply({
+        kind: 'dm',
+        groupId: from,
+        groupName: `DM de ${pushName || from}`,
+        triggerSender: pushName || from,
+        triggerText: text,
+        // Identidad del mensaje gatillo → permite CITARLO cuando la respuesta salga tras la
+        // aprobación del jefe (minutos después).
+        triggerMsgId: rawMsg?.key?.id,
+        triggerParticipant: rawMsg?.key?.participant,
+        draft: reply,
+      });
+      const boss = bossDmTarget();
+      if (boss) {
+        await sendMessage(
+          boss,
+          `📨 *Respuesta pendiente #${id}* para el *DM de ${pushName || from}*\n\n` +
+            `${pushName || 'Alguien'} escribió: "${text.slice(0, 200)}"\n\n` +
+            `Propongo responder:\n${reply}\n\n` +
+            `Responde *"apruebo"* para que salga, dime los cambios, o *"no"* para descartarla.`
+        ).catch(() => {});
+      }
+      console.log(`[Bot] DM de ${pushName || from} RETENIDO para aprobación (pendiente #${id})`);
+      return;
+    }
+
     await sendMessage(from, reply);
   } catch (err) {
     console.error('[Bot] Error en DM público:', err.message);

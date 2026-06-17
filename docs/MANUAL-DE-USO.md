@@ -1,0 +1,194 @@
+# Manual de uso — Comandos de Juanito
+
+Guía práctica de los comandos que el **equipo (admin)** y el **jefe** usan por WhatsApp para
+controlar a Juanito. Todos los comandos se escriben **por DM** (mensaje privado a Juanito), salvo
+`/grupo` que se usa **dentro del grupo**.
+
+> Para el detalle técnico y el estado vivo del proyecto, ver [JUANITO-HANDOFF.md](JUANITO-HANDOFF.md).
+> Esta guía es de **operación**: qué escribir y qué hace.
+
+---
+
+## Quién puede usar cada comando
+
+Juanito reconoce a cada quien por su rol (resuelto en `src/common/roles.js`):
+
+- **admin** (equipo técnico): puede usar **todos** los comandos.
+- **jefe** (Dani): usa los comandos de aprobación por lenguaje natural (ver más abajo). Los comandos
+  marcados *(admin)* le devuelven una deflexión cálida ("eso es del equipo técnico 🙂").
+- **closer / desconocido**: no tienen acceso a comandos.
+
+`/whoami` y `/id` son la excepción: **cualquiera** puede usarlos (sirven para capturar tu propio LID).
+
+---
+
+## ⭐ Confirmaciones antes de enviar — `/confirmaciones`
+
+Controla cuándo Juanito necesita **tu visto bueno** antes de que un mensaje salga. Hay dos planos:
+
+- **Por grupo** (menciones en grupos): se activa **grupo por grupo**.
+- **DMs de desconocidos**: un **único toggle global** (todos los DMs o ninguno).
+
+Cuando una confirmación está activa, Juanito **no envía**: te manda la propuesta por DM y tú decides.
+Las propuestas **caducan a los 30 min** sin decisión (configurable con `REPLY_APPROVAL_TTL_MIN`).
+
+| Comando | Qué hace |
+|---|---|
+| `/confirmaciones` | Muestra el estado: DM (ON/OFF) + lista de grupos con confirmación ON |
+| `/confirmaciones dm on` | **Todos** los DMs de desconocidos pasan por tu aprobación |
+| `/confirmaciones dm off` | Juanito responde los DMs directo (default) |
+| `/confirmaciones grupo <n\|nombre> on` | Ese grupo exige tu visto bueno antes de responder |
+| `/confirmaciones grupo <n\|nombre> off` | Ese grupo vuelve a responder directo (default) |
+
+`<n|nombre>` = número de la lista de `/grupos`, o parte del nombre del grupo (ej: `Automatiza`).
+
+**Ejemplo (el caso del jefe):**
+```
+/confirmaciones grupo Automatizaciones on     → ese grupo te pide confirmación
+/confirmaciones grupo Volunteers off          → Volunteers responde directo (no molesta)
+/confirmaciones dm on                         → cada DM de cualquiera te llega para aprobar
+/confirmaciones                               → ver cómo quedó todo
+```
+
+> **Default seguro:** todo arranca en **OFF** → si nunca activas nada, Juanito responde directo como
+> siempre. Sólo lo que actives explícitamente pasa por ti.
+
+**Alias retro-compatible:** `/aprobar_grupo <n|nombre> on|off` hace lo mismo que
+`/confirmaciones grupo …` (se mantiene por memoria muscular).
+
+### Cómo aprobar lo que te llega (jefe)
+
+Cuando una confirmación está activa, Juanito te escribe por DM algo como:
+
+```
+📨 Respuesta pendiente #7 para el DM de Pedro
+Pedro escribió: "¿hacen automatizaciones de WhatsApp?"
+Propongo responder: Sí, justo eso hacemos…
+Responde "apruebo" para que salga, dime los cambios, o "no" para descartarla.
+```
+
+Le respondes **en lenguaje natural**, sin comandos ni ids:
+
+- **Aprobar:** "apruebo", "envíala", "dale", "está bien" → sale en ≤1 min (citando el mensaje original).
+- **Corregir:** "más corto", "dile que el martes", "cámbiala" → la regenera y te la muestra de nuevo.
+- **Rechazar:** "no", "no respondas", "descártala" → no se envía.
+
+Esto aplica **igual** a respuestas de grupo y a DMs.
+
+### Verlas/gestionarlas como admin — `/respuestas`
+
+| Comando | Qué hace |
+|---|---|
+| `/respuestas` | Lista las respuestas pendientes (grupo **y** DM) con su estado |
+| `/respuestas ver <id>` | Muestra el texto completo + contexto |
+| `/respuestas aprobar <id>` | Override: la envía en el próximo minuto |
+| `/respuestas rechazar <id>` | La descarta |
+
+---
+
+## Grupos — `/grupos` y `/grupo`
+
+Juanito **solo responde en grupos autorizados** (anti-secuestro, default-deny).
+
+| Comando | Dónde | Qué hace |
+|---|---|---|
+| `/grupos` | DM *(admin)* | Lista numerada de todos los grupos + su estado (✅ autorizado / ⛔ no) |
+| `/grupos on <n\|nombre>` | DM *(admin)* | Habilita a Juanito para responder en ese grupo |
+| `/grupos off <n\|nombre>` | DM *(admin)* | Revoca y Juanito **se sale** del grupo |
+| `/grupo` | en el grupo | Muestra si está habilitado aquí |
+| `/grupo on` | en el grupo *(jefe/admin)* | Habilita a Juanito en este grupo |
+| `/grupo off` | en el grupo *(jefe/admin)* | Lo deshabilita y se sale |
+
+---
+
+## Personalidad por grupo — `/persona` *(admin)*
+
+Define el tono con el que Juanito responde en un grupo concreto (se inyecta en su prompt).
+
+| Comando | Qué hace |
+|---|---|
+| `/persona` | Lista las personalidades configuradas |
+| `/persona <n\|nombre>` | Muestra la personalidad de ese grupo |
+| `/persona <n\|nombre> \| <texto>` | Define la personalidad (el texto queda **exacto**) |
+| `/persona <n\|nombre> off` | La elimina (vuelve al tono genérico) |
+
+Ejemplo: `/persona Patah | Grupo católico. Tono cercano a la fe; di "muchachos".`
+
+---
+
+## Mensajes recurrentes a grupos — `/programados` *(admin)*
+
+Ver/cancelar los mensajes que Juanito envía de forma recurrente a un grupo. **Crearlos** es por
+lenguaje natural en el DM del jefe ("manda cada jueves a las 8pm al grupo X…").
+
+| Comando | Qué hace |
+|---|---|
+| `/programados` | Lista los mensajes recurrentes activos (días + hora) |
+| `/programados off <id>` | Cancela uno |
+
+Los mensajes **generados** (Claude redacta cada día según un brief) pasan por aprobación: ver
+`/aprobaciones`.
+
+---
+
+## Aprobación de mensajes generados — `/aprobaciones` *(admin)*
+
+Estado y override del flujo de los **mensajes programados generados** (los que Claude redacta cada
+día y el jefe aprueba por DM antes de publicarse).
+
+| Comando | Qué hace |
+|---|---|
+| `/aprobaciones` | Borradores de hoy con su estado (⏳ pendiente / ✅ aprobado / 📤 publicado / 🗑️) |
+| `/aprobaciones ver <id>` | Texto completo del borrador |
+| `/aprobaciones aprobar <id>` | Override: lo aprueba (normalmente lo hace el jefe por DM) |
+| `/aprobaciones rechazar <id>` | Lo descarta: no se publica hoy |
+
+---
+
+## Calendly (recordatorios precall) — `/calendly` *(admin)*
+
+Botón de pánico de los pushes a closers.
+
+| Comando | Qué hace |
+|---|---|
+| `/calendly` | Estado global + closers pausados |
+| `/calendly off` | Pausa **todos** los pushes (global) |
+| `/calendly on` | Reactiva los pushes |
+| `/calendly off <closer>` | Pausa solo a ese closer (nombre completo, ej: `Pablo Lozano`) |
+| `/calendly on <closer>` | Reactiva solo a ese closer |
+
+---
+
+## Reporte de leads — `/reporte` *(admin)*
+
+| Comando | Qué hace |
+|---|---|
+| `/reporte` / `/reportes` | Genera el reporte diario de leads del Sheet **ahora** y lo devuelve como preview por DM (no lo publica en el grupo; eso lo hace el cron de las 20:00) |
+
+---
+
+## Diagnóstico e identidad
+
+| Comando | Quién | Qué hace |
+|---|---|---|
+| `/status` | *(admin)* | Estado del sistema: WhatsApp, uptime, Calendly token, DRY_RUN, opt-ins, salud de jobs |
+| `/whoami` / `/id` | cualquiera | Devuelve tu JID/LID y tu rol (útil para configurar un admin nuevo) |
+
+---
+
+## Resumen rápido (cheat sheet)
+
+```
+/confirmaciones                          ← estado de las confirmaciones
+/confirmaciones dm on|off                ← confirmar TODOS los DMs (global)
+/confirmaciones grupo <n|nombre> on|off  ← confirmar un grupo
+/respuestas [ver|aprobar|rechazar <id>]  ← pendientes (grupo + DM)
+/grupos [on|off <n|nombre>]              ← autorizar/listar grupos
+/grupo [on|off]                          ← (dentro del grupo)
+/persona <n|nombre> | <texto>            ← tono por grupo
+/programados [off <id>]                  ← recurrentes
+/aprobaciones [ver|aprobar|rechazar <id>]← borradores generados
+/calendly [on|off] [closer]              ← pushes precall
+/reporte                                 ← preview del reporte de leads
+/status · /whoami · /id                  ← diagnóstico e identidad
+```

@@ -502,8 +502,8 @@ ${pending
   try {
     const replies = (await deps.listPendingReplies?.()) || [];
     if (replies.length) {
-      repliesBlock = `## Respuestas de grupo PENDIENTES de tu aprobación — CONTEXTO PRIORITARIO
-En estos grupos Juanito NO responde sin tu visto bueno. Cada ítem es una respuesta que
+      repliesBlock = `## Respuestas PENDIENTES de tu aprobación — CONTEXTO PRIORITARIO
+En estos grupos/DMs Juanito NO responde sin tu visto bueno. Cada ítem es una respuesta que
 propongo enviar. MIENTRAS haya respuestas pendientes, actúa SIEMPRE con la tool manage_replies:
 - Si apruebas ("apruebo", "envíala", "dale", "está bien") → action=approve.
 - Si pides un cambio ("cámbiala", "más corto", "dile que…", "así no") → action=revise con tu corrección.
@@ -904,6 +904,8 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
           groupName: reply.group_name,
           triggerText: reply.trigger_text,
           feedback: accumulated,
+          // Un pendiente de DM se regenera con el prompt público aislado (no el de grupo).
+          publicDm: reply.kind === 'dm',
         });
         if (!newText) return 'No pude regenerar la respuesta ahora. Intenta de nuevo en un momento.';
         await deps.revisePendingReply?.(input.id, newText, accumulated);
@@ -1129,9 +1131,11 @@ export async function generateScheduledDraft({ brief, groupName, feedback = '', 
 // Regenera una respuesta de grupo aplicando la corrección del jefe (tool manage_replies
 // action=revise). Reusa el MISMO prompt AISLADO de grupo (persona incluida, sin datos
 // privados) + la corrección, con el modelo del jefe (BOSS_MODEL) porque él la cura. Sin tools.
-export async function generateGroupReply({ groupId, groupName, triggerText, feedback = '' }) {
+export async function generateGroupReply({ groupId, groupName, triggerText, feedback = '', publicDm = false }) {
   const deps = await resolveDeps();
-  const base = await buildSystemPrompt(deps, { isGroup: true, role: 'unknown', chatId: groupId });
+  const base = publicDm
+    ? await buildSystemPrompt(deps, { publicDm: true, role: 'unknown' })
+    : await buildSystemPrompt(deps, { isGroup: true, role: 'unknown', chatId: groupId });
   const system = feedback
     ? `${base}\n\n## Corrección del jefe (OBLIGATORIA, aplícala):\n${feedback}`
     : base;

@@ -1762,6 +1762,52 @@ hizo para no inyectar tráfico al piloto LIVE): (a) DM desde un número que NO s
 asistente general + corte al 6º del día; (b) mención en grupo → respuesta **citando**; varias
 menciones → espaciadas ~8-10s; (c) recordatorio/programado a un grupo topado → sale igual.
 
+### 18.K 🔵 Confirmaciones por grupo + toggle global de DMs + manual de uso (2026-06-17)
+
+**Qué pidió el jefe:** poder elegir **por grupo** si una respuesta necesita su confirmación antes de
+salir (ej: "Volunteers" no, "Automatizaciones" sí), y un **toggle global para DMs** (ON → todo DM de
+un desconocido le llega para aprobar; OFF → Juanito responde directo). Más un **manual de uso** de los
+comandos.
+
+**Lo que ya existía:** la confirmación **por grupo** ya estaba (columna `authorized_groups.require_approval`,
+comando `/aprobar_grupo`, retención en `handleGroupMessage` → `pending_replies` → cron `group-replies.js`).
+Cumple el ejemplo Volunteers/Automatizaciones tal cual (default OFF por grupo).
+
+**Lo nuevo:**
+- **Toggle global de DMs** (`settings.dm_approval`, helpers `isDmApprovalOn`/`setDmApproval`). En
+  `handlePublicDm` (`src/bot/index.js`): si está ON, en vez de enviar, se crea un pendiente
+  `kind='dm'` y se le avisa al jefe por DM (mismo formato que los de grupo). `src/index.js` ahora pasa
+  `rawMsg` a `handlePublicDm` para poder **citar** el DM al entregarlo.
+- **Reutilización del carril de aprobación:** columna nueva `pending_replies.kind` (`'group'` |
+  `'dm'`, default `'group'`, migración idempotente). El cron `group-replies.js` **salta** el chequeo
+  `isGroupAuthorized` cuando `kind='dm'` (un DM no vive en `authorized_groups`); todo lo demás
+  (aprobar/corregir/descartar por lenguaje natural vía `manage_replies`, `/respuestas`, caducidad por
+  TTL, cita del gatillo) funciona igual para DMs. El `revise` de un DM regenera con el prompt
+  `publicDm` (no el de grupo) — `generateGroupReply({ publicDm })`.
+- **Comando unificado `/confirmaciones`** (`src/bot/commands.js`, admin-only):
+  `/confirmaciones` (estado: DM + grupos ON) · `/confirmaciones dm on|off` ·
+  `/confirmaciones grupo <n|nombre> on|off`. `/aprobar_grupo` queda como **alias** (comparte
+  `applyGroupApproval`). Deps nuevas inyectadas: `isDmApprovalOn`, `setDmApproval`.
+- **Manual de uso:** nuevo [docs/MANUAL-DE-USO.md](MANUAL-DE-USO.md) con todos los comandos admin/jefe,
+  sintaxis, ejemplos y el modelo de confirmaciones.
+
+**Defaults seguros:** `dm_approval` y `require_approval` por grupo arrancan **OFF** → comportamiento
+idéntico al actual hasta que el jefe active algo. Los DMs pendientes caducan con el mismo
+`REPLY_APPROVAL_TTL_MIN` (30 min).
+
+**Tests:** +8 `commands` (`/confirmaciones` estado/dm/grupo + alias + deflexión), +1 `group-replies`
+(entrega de `kind='dm'` sin chequeo de grupo). 57/57 en los dos suites puros (Windows).
+
+**✅ DESPLEGADO LIVE (2026-06-17 ~23:06 UTC).** Backup `juanito-backup-20260617-230430-pre-confirmaciones.tar.gz`
++ imagen `juanito-agent:pre-confirmaciones-20260617-230430`; `pscp src test` + `docker compose up -d --build`.
+Verificado en logs: migración `+ pending_replies.kind añadida`, WA reconectó **sin QR**
+(`Reconnection with existing sync data`), schedulers OK (incl. "respuestas con aprobación"), Calendly
+DRY-RUN false intacto. ⚠️ **Cambios LIVE pero aún SIN commitear en git** (working tree de `main`).
+
+**🟡 PENDIENTE — round-trip real.** Falta validar end-to-end en WhatsApp real: (a) `/confirmaciones dm on`
+→ DM de un desconocido llega al jefe; "apruebo" → sale citando; (b) `/confirmaciones grupo
+Automatizaciones on` → mención llega al jefe, Volunteers responde directo.
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Comando `/recuerda` en grupos (admins):** `@Juanito /recuerda [texto]` → memoria núcleo sin ir a DM.

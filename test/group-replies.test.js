@@ -51,6 +51,18 @@ test('aprobada en grupo NO autorizado (revocado) → se descarta, no se envía',
   assert.deepEqual(deps._state.marks.sent, []);
 });
 
+test('pendiente de DM (kind=dm) se entrega aunque NO esté autorizado como grupo', async () => {
+  // Un DM nunca vive en authorized_groups → si se aplicara el chequeo, se descartaría siempre.
+  const deps = makeDeps({
+    approved: [{ id: 8, kind: 'dm', group_id: '57300@s.whatsapp.net', group_name: 'DM de Pedro', draft: 'Hola Pedro' }],
+    isGroupAuthorized: () => false,
+  });
+  await runPendingRepliesCycle(deps);
+  assert.deepEqual(deps._sent, [{ to: '57300@s.whatsapp.net', text: 'Hola Pedro' }]);
+  assert.deepEqual(deps._state.marks.sent, [8]);
+  assert.deepEqual(deps._state.marks.discarded, []);
+});
+
 test('caduca las pendientes viejas y avisa al jefe', async () => {
   const deps = makeDeps({
     expired: [{ id: 3, group_id: 'g@g.us', group_name: 'Patah', draft: 'vieja' }],

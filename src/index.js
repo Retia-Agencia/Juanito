@@ -14,6 +14,8 @@ import {
   isCalendlyPaused,
   setCalendlyPaused,
   setCloserPaused,
+  isDmApprovalOn,
+  setDmApproval,
   authorizeGroup,
   deauthorizeGroup,
   isGroupAuthorized,
@@ -135,10 +137,12 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
         getDraft,
         approveDraft,
         discardDraft,
-        // /aprobar_grupo + /respuestas — aprobación de respuestas en grupos
+        // /confirmaciones + /aprobar_grupo + /respuestas — confirmaciones de envío
         isGroupAuthorized,
         setGroupApproval,
         listApprovalGroups,
+        isDmApprovalOn,
+        setDmApproval,
         listPendingReplies,
         getPendingReply,
         approvePendingReply,
@@ -179,7 +183,7 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
 
     // Cualquier otro DM (desconocido) → asistente general aislado. SIEMPRE es una
     // respuesta a un mensaje entrante: Juanito nunca escribe primero (regla anti-ban).
-    await handlePublicDm({ from: sender, text, messageId, pushName }).catch((e) =>
+    await handlePublicDm({ from: sender, text, messageId, pushName, rawMsg }).catch((e) =>
       console.error('[Main] handlePublicDm:', e.message)
     );
     return;

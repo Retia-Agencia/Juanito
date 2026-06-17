@@ -390,6 +390,16 @@ export function setCalendlyPaused(paused) {
   return setSetting('calendly_paused', paused ? '1' : '0');
 }
 
+// Toggle GLOBAL de aprobación de DMs: si está ON, todo DM de un desconocido se retiene
+// y pasa por el visto bueno del jefe antes de responder (ver handlePublicDm + pending_replies
+// kind='dm'). OFF (default) = Juanito responde directo, como siempre.
+export function isDmApprovalOn() {
+  return getSetting('dm_approval', '0') === '1';
+}
+export function setDmApproval(on) {
+  return setSetting('dm_approval', on ? '1' : '0');
+}
+
 // Pausa por-closer: marca la fila del opt-in. Devuelve el # de filas afectadas
 // (0 si el closer no tiene opt-in registrado todavía).
 export function setCloserPaused(phone, paused) {
@@ -652,11 +662,12 @@ export function createPendingReply({
   triggerMsgId,
   triggerParticipant,
   draft,
+  kind = 'group',
 }) {
   const info = db.prepare(`
     INSERT INTO pending_replies
-      (group_id, group_name, trigger_sender, trigger_text, trigger_msg_id, trigger_participant, draft)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+      (group_id, group_name, trigger_sender, trigger_text, trigger_msg_id, trigger_participant, draft, kind)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     groupId,
     groupName ?? null,
@@ -664,7 +675,8 @@ export function createPendingReply({
     triggerText ?? null,
     triggerMsgId ?? null,
     triggerParticipant ?? null,
-    draft
+    draft,
+    kind
   );
   return info.lastInsertRowid;
 }

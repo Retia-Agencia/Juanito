@@ -418,6 +418,68 @@ test('/aprobar_grupo sin args lista los grupos con aprobación ON', async () => 
   assert.match(await handleCommand({ text: '/aprobar_grupo', sender: 'a@lid', role: 'admin' }, deps), /patah@g\.us/);
 });
 
+// ─── /confirmaciones (toggle unificado grupo + DM global, admin-only) ─────────
+
+function confirmacionesDeps() {
+  const state = { dm: false, approval: {} };
+  return {
+    _state: state,
+    isDmApprovalOn: () => state.dm,
+    setDmApproval: (on) => { state.dm = !!on; return 1; },
+    listGroups: async () => [
+      { id: 'auto@g.us', name: 'Automatizaciones' },
+      { id: 'vol@g.us', name: 'Volunteers' },
+    ],
+    isGroupAuthorized: (id) => id === 'auto@g.us' || id === 'vol@g.us',
+    setGroupApproval: (id, on) => { state.approval[id] = on ? 1 : 0; return 1; },
+    listApprovalGroups: () =>
+      Object.entries(state.approval)
+        .filter(([, v]) => v)
+        .map(([group_id]) => ({ group_id, group_name: group_id })),
+  };
+}
+
+test('/confirmaciones para no-admin → deflexión', async () => {
+  assert.match(await handleCommand({ text: '/confirmaciones', sender: 'b@lid', role: 'boss' }, confirmacionesDeps()), /equipo técnico/);
+});
+
+test('/confirmaciones sin args → estado (DM OFF + grupos)', async () => {
+  const out = await handleCommand({ text: '/confirmaciones', sender: 'a@lid', role: 'admin' }, confirmacionesDeps());
+  assert.match(out, /DM \(desconocidos\): OFF/);
+  assert.match(out, /ninguno/);
+});
+
+test('/confirmaciones dm on|off cambia el toggle global y se refleja', async () => {
+  const deps = confirmacionesDeps();
+  assert.match(await handleCommand({ text: '/confirmaciones dm on', sender: 'a@lid', role: 'admin' }, deps), /ACTIVADA/);
+  assert.equal(deps._state.dm, true);
+  assert.match(await handleCommand({ text: '/confirmaciones', sender: 'a@lid', role: 'admin' }, deps), /DM \(desconocidos\): ON/);
+  assert.match(await handleCommand({ text: '/confirmaciones dm off', sender: 'a@lid', role: 'admin' }, deps), /DESACTIVADA/);
+  assert.equal(deps._state.dm, false);
+});
+
+test('/confirmaciones dm sin on|off → uso', async () => {
+  assert.match(await handleCommand({ text: '/confirmaciones dm', sender: 'a@lid', role: 'admin' }, confirmacionesDeps()), /Uso: \/confirmaciones dm/);
+});
+
+test('/confirmaciones grupo <nombre> on|off activa/desactiva por grupo', async () => {
+  const deps = confirmacionesDeps();
+  assert.match(await handleCommand({ text: '/confirmaciones grupo Automatizaciones on', sender: 'a@lid', role: 'admin' }, deps), /ACTIVADA en "Automatizaciones"/);
+  assert.equal(deps._state.approval['auto@g.us'], 1);
+  assert.match(await handleCommand({ text: '/confirmaciones grupo Automatizaciones off', sender: 'a@lid', role: 'admin' }, deps), /DESACTIVADA en "Automatizaciones"/);
+  assert.equal(deps._state.approval['auto@g.us'], 0);
+});
+
+test('/confirmaciones grupo inexistente → no encontrado', async () => {
+  assert.match(await handleCommand({ text: '/confirmaciones grupo nada on', sender: 'a@lid', role: 'admin' }, confirmacionesDeps()), /No encontré/);
+});
+
+test('alias /aprobar_grupo sigue funcionando (comparte lógica)', async () => {
+  const deps = confirmacionesDeps();
+  assert.match(await handleCommand({ text: '/aprobar_grupo Volunteers on', sender: 'a@lid', role: 'admin' }, deps), /ACTIVADA en "Volunteers"/);
+  assert.equal(deps._state.approval['vol@g.us'], 1);
+});
+
 // ─── /respuestas (respuestas de grupo pendientes, admin-only) ─────────────────
 
 function respuestasDeps() {

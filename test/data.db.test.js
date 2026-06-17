@@ -428,5 +428,12 @@ test('migración crea group_reply_usage y columnas de cita en pending_replies', 
   const tables = def.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((t) => t.name);
   assert.ok(tables.includes('group_reply_usage'), 'falta tabla group_reply_usage');
   const cols = def.prepare('PRAGMA table_info(pending_replies)').all().map((c) => c.name);
-  for (const c of ['trigger_msg_id', 'trigger_participant']) assert.ok(cols.includes(c), `falta ${c}`);
+  for (const c of ['trigger_msg_id', 'trigger_participant', 'kind']) assert.ok(cols.includes(c), `falta ${c}`);
+});
+
+test('pending_replies: createPendingReply persiste kind (default group; dm explícito)', () => {
+  const gid = db.createPendingReply({ groupId: 'g@g.us', groupName: 'Patah', draft: 'x' });
+  assert.equal(db.getPendingReply(gid).kind, 'group', 'default debe ser group');
+  const did = db.createPendingReply({ kind: 'dm', groupId: '57300@s.whatsapp.net', groupName: 'DM de Pedro', draft: 'hola' });
+  assert.equal(db.getPendingReply(did).kind, 'dm');
 });

@@ -48,7 +48,9 @@ export async function runPendingRepliesCycle(deps) {
   for (const r of d.listApprovedPendingReplies() || []) {
     try {
       // Default-deny: si el grupo se revocó después de aprobar, no se envía y se saca de la cola.
-      if (!d.isGroupAuthorized(r.group_id)) {
+      // Los pendientes de DM (kind='dm') NO viven en authorized_groups: se entregan al JID del
+      // contacto directamente, así que se saltan esta verificación.
+      if (r.kind !== 'dm' && !d.isGroupAuthorized(r.group_id)) {
         d.discardPendingReply(r.id);
         console.log(`[Scheduler] Respuesta #${r.id} descartada: grupo no autorizado`);
         continue;

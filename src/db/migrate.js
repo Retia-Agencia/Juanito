@@ -200,6 +200,7 @@ db.exec(`
     draft          TEXT NOT NULL,    -- respuesta propuesta por Juanito
     status         TEXT NOT NULL DEFAULT 'pending',  -- pending|approved|sent|discarded|expired
     feedback       TEXT,             -- última corrección aplicada (auditoría)
+    kind           TEXT NOT NULL DEFAULT 'group',  -- 'group' (mención en grupo) | 'dm' (DM de desconocido)
     created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
     decided_at     DATETIME
   );
@@ -238,6 +239,11 @@ addColumnIfMissing('authorized_groups', 'require_approval', 'INTEGER NOT NULL DE
 // nativo) cuando la respuesta aprobada se publica minutos después.
 addColumnIfMissing('pending_replies', 'trigger_msg_id', 'TEXT');
 addColumnIfMissing('pending_replies', 'trigger_participant', 'TEXT');
+
+// Tipo de pendiente: 'group' (mención en grupo con require_approval) | 'dm' (DM de un
+// desconocido cuando el toggle global dm_approval está ON). Filas viejas quedan 'group'.
+// El cron de entrega salta la verificación de grupo autorizado cuando kind='dm'.
+addColumnIfMissing('pending_replies', 'kind', "TEXT NOT NULL DEFAULT 'group'");
 
 // Tope anti-ráfaga: cuántas respuestas AUTÓNOMAS publicó el bot en cada grupo, por hora.
 // hour_bucket = 'YYYY-MM-DD-HH' en hora local. Se limpia con el resto en la limpieza diaria.
