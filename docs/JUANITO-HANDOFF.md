@@ -1697,6 +1697,71 @@ bloqueo del service account en §18.B). **Acción:** pedir al admin de HubSpot d
 (cron diario, autodesactivable si falta el token, envío vía `bossDmTarget()` + cola anti-ban).
 Mapear stage IDs y recetas desde `temp/02_*` y `temp/05_*`.
 
+### 18.J 🔵 DMs de cualquiera (aislado) + respuestas citadas + ritmo por grupo (2026-06-17)
+
+**Qué pidió el jefe:** (1) que Juanito responda por DM a **cualquiera** que le escriba, manteniendo
+la regla anti-ban dura *"no escribir a ningún número sin recibir un mensaje previo"*; (2) que en
+grupos **cite (reply nativo)** el mensaje de cada persona, para que las respuestas no se confundan
+dado el delay de la cola anti-ban; (3) revisar la "apilación" anti-ráfaga para que el bot no dispare
+muchas respuestas seguidas en un grupo y levante red flags.
+
+**✅ DESPLEGADO LIVE (2026-06-17 ~04:23 UTC).** Backup `juanito-backup-20260617-042129-pre-dmgrupos.tar.gz`
++ imagen `juanito-agent:pre-dmgrupos-20260617-042129`; `pscp src test docker-compose.yml` +
+`docker compose up -d --build`. WA reconectó sin QR; Calendly (DRY-RUN false), Sheets y schedulers sin
+disrupción. Verificado dentro del contenedor: schema migrado (tabla + columnas), env nuevas presentes,
+**264/264 tests** (pure + `data.*` nativos), y smoke del prompt de DM público (aislado, sin fuga de
+memoria, `tools=[]`). Commits `098c3c0` (feature) + `0b7da3b` (test de regresión) en `main`.
+
+**(1) DM de cualquiera — `handlePublicDm` (`src/bot/index.js`):**
+- En `onMessage` (`src/index.js`), la rama DM no-privilegiada: filtra JIDs no-persona
+  (`status@broadcast`/`@broadcast`/`@newsletter`); intenta `handleCloserOptin` (flujo closer intacto);
+  si no era closer → `handlePublicDm`.
+- Responde como **asistente general AISLADO**: nueva rama `publicDm` en `buildSystemPrompt`
+  (sin memoria/notas/recordatorios/resúmenes, conserva el bloque de seguridad), `toolsForRole`
+  devuelve `[]`, y `chat()` usa `GROUP_MODEL` (barato). Mismo blindaje que el prompt de grupo.
+- **Anti-ban:** es SIEMPRE respuesta a un entrante (nunca escribe primero — invariante estructural,
+  no hay ruta de cold-send nueva; Calendly ya estaba protegido por `calendly_optins`). Volumen
+  acotado por rate-limit por remitente reusando `GROUP_DAILY_LIMIT` con clave prefijada `dm:` (no
+  comparte contador con grupos); aviso único al exceder, luego silencio. Dedup por `markIfNew`.
+
+**(2) Respuestas citadas en grupos:**
+- `sendMessage(to, text, { quoted })` (`src/whatsapp/index.js`) → `sock.sendMessage(jid, {text}, {quoted})`.
+  El `messages.upsert` propaga `rawMsg` ({key, message}) solo para grupos.
+- Camino inmediato: cita el mensaje gatillo (y el aviso de rate-limit también). Camino de aprobación:
+  `createPendingReply` persiste `trigger_msg_id`/`trigger_participant` y `group-replies.js` reconstruye
+  el `quoted` al enviar la aprobada minutos después (degradación segura si la fila es pre-migración).
+
+**(3) Anti-ráfaga por grupo (cola "key-aware"):**
+- `src/whatsapp/send-queue.js` ahora separa los envíos a la **misma key** (= group_id) ≥
+  `WA_SEND_PER_GROUP_GAP_MS` (+ jitter) con un **scheduler justo**: toma el primer job elegible en
+  orden FIFO; si ninguno lo es, duerme hasta que el más cercano lo sea → un grupo saturado NO bloquea
+  a otros grupos ni a los DMs. El gap global de §18.D P1-a se mantiene encima.
+- **Tope por grupo/hora** (`GROUP_REPLY_HOURLY_CAP`, tabla `group_reply_usage`,
+  `checkAndIncrementGroupReplyQuota`): aplica SOLO a respuestas **autónomas** a menciones en
+  `handleGroupMessage`. Al excederlo → silencio.
+- ⚠️ **Garantía clave (con test de regresión `test/scheduled-bypass-cap.test.js`):** los
+  **recordatorios** y **mensajes programados** NUNCA los frena el tope — salen por los schedulers,
+  que llaman `sendMessage` directo y jamás pasan por `handleGroupMessage`. Las respuestas **aprobadas
+  por el jefe** tampoco cuentan contra el tope (pero sí respetan el espaciado por grupo de la cola).
+
+**Env nuevas (en `docker-compose.yml` con defaults seguros, gotcha §12):**
+`WA_SEND_PER_GROUP_GAP_MS=8000`, `WA_SEND_PER_GROUP_JITTER_MS=2000` (→ ~8-10s),
+`GROUP_REPLY_HOURLY_CAP=15`. Documentadas en `.env.example`.
+
+**Schema (migración idempotente `addColumnIfMissing` + `CREATE TABLE IF NOT EXISTS`):**
+`pending_replies` + `trigger_msg_id`/`trigger_participant`; tabla nueva
+`group_reply_usage(group_id, hour_bucket, count)` (limpiada en `cleanup()` a -2 días).
+
+**Tests:** +9 `send-queue` (key-aware: gap por-key, keys independientes, DM no se posterga),
++4 `prompt-context` (publicDm aislado + `toolsForRole`), +2 `group-replies` (quoted reconstruido /
+sin cita pre-migración), +3 `data.db` (quota + columnas), +3 `scheduled-bypass-cap` (invariante +
+conductual). 228 puros en Windows; 264 en Docker.
+
+**🟡 PENDIENTE — round-trip real de WhatsApp.** Falta validar end-to-end con mensajes reales (no se
+hizo para no inyectar tráfico al piloto LIVE): (a) DM desde un número que NO sea jefe/admin/closer →
+asistente general + corte al 6º del día; (b) mención en grupo → respuesta **citando**; varias
+menciones → espaciadas ~8-10s; (c) recordatorio/programado a un grupo topado → sale igual.
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Comando `/recuerda` en grupos (admins):** `@Juanito /recuerda [texto]` → memoria núcleo sin ir a DM.
