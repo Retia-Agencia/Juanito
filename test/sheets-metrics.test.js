@@ -34,7 +34,7 @@ const REAL_ROWS = [
 
 test('formatMetrics: encabezado + número de semana de "Filtrar semana"', () => {
   const out = formatMetrics(REAL_ROWS, { now: NOW });
-  assert.match(out, /📈 Métricas semanales/);
+  assert.match(out, /📈 Métricas/);
   assert.match(out, /Semana 2/);
 });
 

@@ -1897,7 +1897,10 @@ cold-start. Todo sale por la cola.
 
 **✅ ACTIVADO LIVE (2026-06-18 ~15:25 UTC).** SA: `juanito-lector-sheets@juanito-sheets.iam.gserviceaccount.com`
 (comparten el sheet con ese correo, NO con correos personales). Spreadsheet
-`1lipje1RTD-1VkW7uQnCUPOE32nrtlMt4NLYQD6i1mU4`, pestaña `Resumen Semanal`. En `/root/juanito/.env`:
+`1lipje1RTD-1VkW7uQnCUPOE32nrtlMt4NLYQD6i1mU4`, pestaña **`Resumen Diario`** (creada 2026-06-18:
+clona las métricas de `Resumen Semanal` pero filtra por `Fecha Call Agendada = hoy` vía
+`=TEXT(TODAY(),"M/D/YY")` en B4; las fechas en `Registro` son TEXTO, por eso el match es por texto —
+si alguien escribe la fecha en otro formato, esa fila no cuenta). En `/root/juanito/.env`:
 `SHEETS_METRICS_ID/TAB`, `SHEETS_METRICS_RECIPIENTS=boss,158025419608301@lid` (jefe + Sebas).
 Lectura real verificada (formato OK con datos de la semana 2); job `[Métricas] activo ✅ (2 destinatarios)`.
 Primer envío automático: hoy 20:00. `formatMetrics` quedó a medida del layout real (show rate por closer,

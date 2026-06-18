@@ -40,7 +40,7 @@ export function formatMetrics(rows, { now = new Date(), tz = 'America/Bogota', t
     }
   }
 
-  const lines = [title || '📈 Métricas semanales — Show rate por closer'];
+  const lines = [title || '📈 Métricas del día — Show rate por closer'];
   lines.push(week ? `🗓️ Semana ${week}` : `🗓️ ${dayLabel(now, tz)}`);
 
   let any = false;
