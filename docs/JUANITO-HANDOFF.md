@@ -1833,8 +1833,13 @@ solo ve/toca lo suyo); mutaciones por **id explícito** (sin id → pide listar 
 **Tests:** +8 `brain.tools` (list/cancel/snooze + sin-id + sin-fecha + aislamiento por createdBy +
 gateo grupo/DM-público). 39/39 en el suite puro (Windows). Pendiente: validar en Docker los nativos.
 
-**🟡 PENDIENTE — deploy + round-trip real.** Aún SIN desplegar al VPS; falta probar en WhatsApp:
-"¿qué tengo pendiente?" → lista; "cancela el #N" → cancelado; "recuérdamelo el viernes 9am" → snooze.
+**✅ DESPLEGADO LIVE (2026-06-18 ~13:56 UTC).** Backup `juanito-backup-20260618-pre-reminders.tar.gz`
+en `/root`; `pscp src test` + `docker compose up -d --build`. Verificado en logs: WA reconectó **sin QR**
+(`Reconnection with existing sync data`), `manage_reminders` ×4 dentro del contenedor, todos los
+schedulers OK, Calendly DRY-RUN false intacto. Sin migración (status es TEXT libre).
+
+**🟡 PENDIENTE — round-trip real.** Falta probar en WhatsApp: "¿qué tengo pendiente?" → lista;
+"cancela el #N" → cancelado; "recuérdamelo el viernes 9am" → snooze.
 
 ### 🟢 Baja prioridad / Nice-to-have
 
