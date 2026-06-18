@@ -1,31 +1,39 @@
 // src/scheduler/sheets-metrics.js
-// Cron del reporte diario de "métricas de desempeño" (§18.N). A las 20:00 lee una
-// pestaña con las métricas YA CALCULADAS (otro spreadsheet) y la envía por DM a una
-// lista de personas (el jefe y Sebastián Rodríguez), en paralelo al reporte de leads
-// del grupo "Ventas EstadoX" (que es un job aparte y no se toca).
+// Cron del reporte diario de "métricas de desempeño" (§18.N). A las 20:00 lee la
+// pestaña con las métricas YA CALCULADAS (otro spreadsheet) y publica CADA SECCIÓN en
+// su grupo de WhatsApp: la sección 30X en un grupo y la de ESTADOX en otro (ya NO va
+// por DM). Corre en paralelo al reporte de leads del grupo "Ventas EstadoX" (job aparte).
 //
 // El ENVÍO sale del proceso principal (tiene el socket de WA) y pasa por la cola
-// anti-ban. El job se autodesactiva si falta la key del SA, el ID/pestaña, o los
-// destinatarios — para no romper el arranque.
+// anti-ban. El job se autodesactiva si falta la key del SA, el ID/pestaña, o el mapeo
+// de secciones a grupos.
 
 import { CronJob } from 'cron';
-import { sendMessage } from '../whatsapp/index.js';
+import { sendMessage, resolveGroupByName } from '../whatsapp/index.js';
 import { fetchSheetValues } from '../sheets/index.js';
 import { formatMetrics } from '../sheets/metrics.js';
-import { resolveRecipients } from './metrics-recipients.js';
+import { sectionTargets } from './metrics-targets.js';
 
 const TZ = () => process.env.TZ || 'America/Bogota';
 const CRON = () => process.env.SHEETS_METRICS_CRON || '0 20 * * *';
 const METRICS_ID = () => (process.env.SHEETS_METRICS_ID || '').trim();
 const METRICS_TAB = () => (process.env.SHEETS_METRICS_TAB || '').trim();
 
-export { resolveRecipients };
+export { sectionTargets };
 
-// Núcleo orquestador (sin cron): lee la pestaña → formatea. Exportado para el preview
-// on-demand (/metricas) y para tests.
-export async function buildMetricsReport({ now = new Date() } = {}) {
+// Un grupo puede venir como group_id (…@g.us) o como NOMBRE (se resuelve en runtime).
+async function resolveTarget(t) {
+  if (!t) return null;
+  if (t.endsWith('@g.us')) return t;
+  const g = await resolveGroupByName(t);
+  return g?.id || null;
+}
+
+// Núcleo orquestador: lee la pestaña → formatea. Sin `company` devuelve el reporte
+// COMPLETO (preview /reportes metricas); con `company` devuelve sólo esa sección.
+export async function buildMetricsReport({ now = new Date(), company } = {}) {
   const rows = await fetchSheetValues({ id: METRICS_ID(), tab: METRICS_TAB() });
-  return { message: formatMetrics(rows, { now }), rows };
+  return { message: formatMetrics(rows, { now, company }), rows };
 }
 
 export function startSheetsMetricsJob() {
@@ -37,9 +45,9 @@ export function startSheetsMetricsJob() {
     console.warn('[Métricas] sin SHEETS_METRICS_ID/TAB → reporte de métricas desactivado');
     return;
   }
-  const recipients = resolveRecipients();
-  if (!recipients.length) {
-    console.warn('[Métricas] sin SHEETS_METRICS_RECIPIENTS → reporte de métricas desactivado');
+  const targets = sectionTargets();
+  if (!targets.length) {
+    console.warn('[Métricas] sin grupos por sección (SHEETS_METRICS_30X_GROUP / _ESTADOX_GROUP) → desactivado');
     return;
   }
 
@@ -47,14 +55,18 @@ export function startSheetsMetricsJob() {
     CRON(),
     async () => {
       try {
-        const { message } = await buildMetricsReport();
-        // Un fallo a un destinatario no debe frenar al otro (cada envío con su catch).
-        for (const to of recipients) {
-          await sendMessage(to, message).catch((e) =>
-            console.error(`[Métricas] error enviando a ${to}:`, e.message)
+        const rows = await fetchSheetValues({ id: METRICS_ID(), tab: METRICS_TAB() });
+        for (const { company, group } of targets) {
+          const target = await resolveTarget(group);
+          if (!target) {
+            console.error(`[Métricas] no pude resolver el grupo "${group}" para ${company} (¿Juanito está en el grupo?)`);
+            continue;
+          }
+          const message = formatMetrics(rows, { company });
+          await sendMessage(target, message).catch((e) =>
+            console.error(`[Métricas] envío ${company} → ${group}:`, e.message)
           );
         }
-        console.log(`[Métricas] reporte enviado a ${recipients.length} destinatario(s)`);
       } catch (e) {
         console.error('[Métricas] error en el reporte de métricas:', e.message);
       }
@@ -63,7 +75,5 @@ export function startSheetsMetricsJob() {
     true,
     TZ()
   );
-  console.log(
-    `[Métricas] Job de métricas activo ✅ (cron "${CRON()}", ${resolveRecipients().length} destinatario(s))`
-  );
+  console.log(`[Métricas] Job de métricas activo ✅ (cron "${CRON()}", ${targets.length} sección/es → grupos)`);
 }

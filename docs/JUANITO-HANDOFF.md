@@ -1872,28 +1872,28 @@ EstadoX" (ese no se toca).
 
 **Implementación (job independiente, calcado de §18.B):**
 - `src/sheets/client.js` → `fetchSheetValues({ id, tab })` (lector genérico; reúsa la auth JWT del SA).
-- `src/sheets/metrics.js` (PURO) → `formatMetrics(rows)`: render genérico de filas ya calculadas
-  (1 celda → sección en negrita; 2 → "• etiqueta: valor"; 3+ → unidas con " · "; vacías se saltan).
-- `src/scheduler/sheets-metrics.js` → `buildMetricsReport()` + `startSheetsMetricsJob()` (cron, envía
-  a cada destinatario por la **cola anti-ban**, cada uno con su `.catch`). Tick en try/catch.
-- `src/scheduler/metrics-recipients.js` (PURO) → `resolveRecipients()`: CSV de
-  `SHEETS_METRICS_RECIPIENTS`; token `boss` → `bossDmTarget()`; dedup. Separado para testearlo sin
-  arrastrar `better-sqlite3`.
+- `src/sheets/metrics.js` (PURO) → `formatMetrics(rows, { company })`: a medida del layout (show rate
+  por closer, secciones 30X/ESTADOX). Sin `company` = reporte completo; con `company` = SOLO esa sección.
+- `src/scheduler/sheets-metrics.js` → `buildMetricsReport()` + `startSheetsMetricsJob()`. **Entrega POR
+  SECCIÓN A UN GRUPO** (ya NO por DM): la sección 30X se publica en un grupo y la de ESTADOX en otro,
+  vía `resolveGroupByName` + la **cola anti-ban** (cada uno con su `.catch`). Tick en try/catch.
+- `src/scheduler/metrics-targets.js` (PURO) → `sectionTargets()`: mapea `SHEETS_METRICS_30X_GROUP` y
+  `SHEETS_METRICS_ESTADOX_GROUP` (nombre o group_id). Separado para testearlo sin arrastrar `better-sqlite3`.
 - Comando **unificado `/reportes [leads|metricas]`** (`/reporte` y `/metricas` quedan como alias;
   helpers `isReportCommand`/`wantsMetrics` exportados). En **DM** (admin) = preview. **Dentro de un
   grupo autorizado** (jefe/admin), `handleGroupReportCommand` en `src/index.js` lo **publica EN ese
   grupo** (sin mención; gateado por `isPrivileged` + `isGroupAuthorized`). ⚠️ `/reportes metricas` en
   un grupo expone las métricas a todos los del grupo (decisión explícita del jefe).
-- Env nuevas (en `.env.example` **y** `docker-compose.yml`): `SHEETS_METRICS_ID`, `SHEETS_METRICS_TAB`,
-  `SHEETS_METRICS_RECIPIENTS` (default sugerido `boss,158025419608301@lid`), `SHEETS_METRICS_CRON`
-  (default `0 20 * * *`). El job **se autodesactiva** si falta GOOGLE_SA_KEY, el ID/pestaña o los
-  destinatarios.
+- Env (en `.env.example` **y** `docker-compose.yml`): `SHEETS_METRICS_ID`, `SHEETS_METRICS_TAB`,
+  `SHEETS_METRICS_30X_GROUP`, `SHEETS_METRICS_ESTADOX_GROUP`, `SHEETS_METRICS_CRON` (default `0 20 * * *`).
+  El job **se autodesactiva** si falta GOOGLE_SA_KEY, el ID/pestaña, o el mapeo de secciones a grupos.
 
-**Anti-ban:** ambos destinatarios ya son contactos (jefe + Sebas con opt-in `contact_jid`) → sin
-cold-start. Todo sale por la cola.
+**Entrega por grupo (cambio 2026-06-18):** ya NO va por DM a Dani/Sebas. La sección **30X → grupo
+"Closers Second Brain"** y **ESTADOX → grupo "Closers IA para Abogados"**. ⚠️ **Prerequisito:** Juanito
+debe ser **miembro** de ambos grupos (y autorizado / con un boss-admin para no auto-salir si
+`GROUP_AUTOLEAVE=on`); si no, `resolveGroupByName` devuelve null y esa sección no se envía (queda logueado).
 
-**Tests:** +8 `sheets-metrics` (formatMetrics 5 + resolveRecipients 3), +3 `commands` (`/metricas`).
-296/296 en Docker (VPS).
+**Tests:** `sheets-metrics` (formatMetrics completo + por empresa + `sectionTargets`), `commands` (`/metricas`).
 
 **✅ ACTIVADO LIVE (2026-06-18 ~15:25 UTC).** SA: `juanito-lector-sheets@juanito-sheets.iam.gserviceaccount.com`
 (comparten el sheet con ese correo, NO con correos personales). Spreadsheet
@@ -1901,10 +1901,13 @@ cold-start. Todo sale por la cola.
 clona las métricas de `Resumen Semanal` pero filtra por `Fecha Call Agendada = hoy` vía
 `=TEXT(TODAY(),"M/D/YY")` en B4; las fechas en `Registro` son TEXTO, por eso el match es por texto —
 si alguien escribe la fecha en otro formato, esa fila no cuenta). En `/root/juanito/.env`:
-`SHEETS_METRICS_ID/TAB`, `SHEETS_METRICS_RECIPIENTS=boss,158025419608301@lid` (jefe + Sebas).
-Lectura real verificada (formato OK con datos de la semana 2); job `[Métricas] activo ✅ (2 destinatarios)`.
-Primer envío automático: hoy 20:00. `formatMetrics` quedó a medida del layout real (show rate por closer,
-secciones 30X/ESTADOX) con fallback genérico.
+`SHEETS_METRICS_ID/TAB` + `SHEETS_METRICS_30X_GROUP` / `SHEETS_METRICS_ESTADOX_GROUP`.
+Lectura real verificada (formato OK con datos de hoy). `formatMetrics` a medida del layout (show rate
+por closer), con entrega por sección a cada grupo.
+
+**⏳ PENDIENTE para que entregue:** agregar a Juanito a los grupos "Closers Second Brain" y
+"Closers IA para Abogados" (no es miembro aún — verificado en DB 2026-06-18) y autorizarlo. Hasta
+entonces el job corre pero loguea "no pude resolver el grupo …" y no envía.
 
 > ⚠️ **Gotcha de deploy confirmado:** las env nuevas requieren copiar **también** `docker-compose.yml`
 > al VPS (`pscp docker-compose.yml`) + `docker compose up -d`. La receta `pscp src test` NO lo incluye;

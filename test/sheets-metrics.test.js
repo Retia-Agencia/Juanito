@@ -1,86 +1,68 @@
 // test/sheets-metrics.test.js
-// Cubre el formateo PURO de métricas (formatMetrics, layout "Resumen Semanal — Show
-// rate por closer") y la resolución de destinatarios (resolveRecipients).
+// Cubre el formateo PURO de métricas (formatMetrics: completo y por empresa) y el
+// mapeo sección→grupo (sectionTargets).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { formatMetrics } from '../src/sheets/metrics.js';
-import { resolveRecipients } from '../src/scheduler/metrics-recipients.js';
+import { sectionTargets } from '../src/scheduler/metrics-targets.js';
 
 const NOW = new Date('2026-06-18T22:00:00Z'); // 17:00 en Bogotá → 18/06/2026
 
-// Filas como las devuelve la API de Sheets (sin celdas vacías al final de cada fila).
 const HEADER = ['#', 'Closer', 'Agendados', 'Shows', 'Show Rate Total', 'Pushes 3/3', 'Shows 3/3', 'Show Rate 3/3', 'Shows <4', 'Show Rate <4', 'Delta', 'Interpretación'];
-const REAL_ROWS = [
-  ['RESUMEN SEMANAL — SHOW RATE POR CLOSER & EMPRESA'],
-  ['Actualizar semana en celda D4 • Las fórmulas se calculan automáticamente'],
-  [],
-  ['Filtrar semana:', '', '2', '', '(Cambiar este número para ver semana 1, 2 o 3)'],
+const ROWS = [
+  ['RESUMEN DIARIO — SHOW RATE POR CLOSER & EMPRESA'],
+  ['Día:', '6/18/26'],
   [],
   ['30X'],
   HEADER,
-  ['1', 'Pablo Lozano', '36', '13', '36.1%', '14', '10', '71.4%', '3', '13.6%', '+57.8%', 'Protocolo impacta show rate'],
-  ['2', 'Juan Sebastian Salazar', '8', '6', '75.0%', '5', '4', '80.0%', '2', '66.7%', '+13.3%', 'Protocolo impacta show rate'],
-  ['3', 'Maca Celis', '15', '0', '0.0%', '0', '0', '0.0%', '0', '0.0%', '0.0%', 'Muestra insuficiente'],
+  ['1', 'Pablo Lozano', '12', '4', '33.3%', '3', '2', '66.7%', '2', '0.0%', '+66.7%', 'Protocolo impacta show rate'],
+  ['2', 'Maca Celis', '0', '0', '0.0%', '0', '0', '0.0%', '0', '0.0%', '0.0%', 'Sin datos'],
   [],
   ['ESTADOX'],
   HEADER,
-  ['1', 'Juan Sebastian Salazar', '0', '0', '0.0%', '0', '0', '0.0%', '0', '0.0%', '0.0%', 'Sin datos'],
-  ['2', 'Daniela Camacho', '0', '0', '0.0%', '0', '0', '0.0%', '0', '0.0%', '0.0%', 'Sin datos'],
+  ['1', 'Daniela Camacho', '5', '3', '60.0%', '2', '2', '100.0%', '1', '33.3%', '+66.7%', 'Protocolo impacta show rate'],
 ];
 
-// ─── formatMetrics (layout real) ──────────────────────────────────────────────
+// ─── formatMetrics: completo ──────────────────────────────────────────────────
 
-test('formatMetrics: encabezado + número de semana de "Filtrar semana"', () => {
-  const out = formatMetrics(REAL_ROWS, { now: NOW });
+test('formatMetrics completo: ambas secciones en negrita + sus closers', () => {
+  const out = formatMetrics(ROWS, { now: NOW });
   assert.match(out, /📈 Métricas/);
-  assert.match(out, /Semana 2/);
-});
-
-test('formatMetrics: secciones por empresa en negrita', () => {
-  const out = formatMetrics(REAL_ROWS, { now: NOW });
   assert.match(out, /\*30X\*/);
   assert.match(out, /\*ESTADOX\*/);
+  assert.match(out, /• Pablo Lozano — 4\/12 shows \(33\.3%\) · 3\/3: 66\.7% · <4: 0\.0% · Δ \+66\.7%/);
+  assert.match(out, /• Daniela Camacho — 3\/5 shows \(60\.0%\)/);
 });
 
-test('formatMetrics: fila de closer con datos → shows/agendados + show rates + delta', () => {
-  const out = formatMetrics(REAL_ROWS, { now: NOW });
-  assert.match(out, /• Pablo Lozano — 13\/36 shows \(36\.1%\) · 3\/3: 71\.4% · <4: 13\.6% · Δ \+57\.8%/);
-  assert.match(out, /• Juan Sebastian Salazar — 6\/8 shows \(75\.0%\) · 3\/3: 80\.0% · <4: 66\.7% · Δ \+13\.3%/);
+// ─── formatMetrics: por empresa (una sección → un grupo) ──────────────────────
+
+test('formatMetrics company=30X: SOLO la sección 30X, título con la empresa', () => {
+  const out = formatMetrics(ROWS, { now: NOW, company: '30X' });
+  assert.match(out, /📈 Métricas del día — 30X/);
+  assert.match(out, /• Pablo Lozano/);
+  assert.match(out, /• Maca Celis — sin datos/);
+  assert.doesNotMatch(out, /Daniela Camacho/); // nada de ESTADOX
+  assert.doesNotMatch(out, /\*ESTADOX\*/);
 });
 
-test('formatMetrics: delta 0.0% se omite (Maca Celis, con agendados pero 0 shows)', () => {
-  const out = formatMetrics(REAL_ROWS, { now: NOW });
-  assert.match(out, /• Maca Celis — 0\/15 shows \(0\.0%\)/);
-  assert.doesNotMatch(out, /Maca Celis.*Δ/); // delta 0.0% no se imprime
+test('formatMetrics company=ESTADOX: SOLO la sección ESTADOX', () => {
+  const out = formatMetrics(ROWS, { now: NOW, company: 'ESTADOX' });
+  assert.match(out, /— ESTADOX/);
+  assert.match(out, /• Daniela Camacho/);
+  assert.doesNotMatch(out, /Pablo Lozano/);
 });
 
-test('formatMetrics: closer 0 agendados y 0 shows → "sin datos"', () => {
-  const out = formatMetrics(REAL_ROWS, { now: NOW });
-  assert.match(out, /• Daniela Camacho — sin datos/);
+test('formatMetrics company inexistente → lo dice', () => {
+  assert.match(formatMetrics([['30X'], HEADER], { now: NOW, company: 'ESTADOX' }), /no hay métricas para ESTADOX/i);
 });
 
-test('formatMetrics: ignora filas de título/instrucciones', () => {
-  const out = formatMetrics(REAL_ROWS, { now: NOW });
-  assert.doesNotMatch(out, /RESUMEN SEMANAL —/); // la fila de título no se renderiza
-  assert.doesNotMatch(out, /se calculan automáticamente/);
-});
-
-// ─── fallback genérico (estructura inesperada) ────────────────────────────────
-
-test('formatMetrics: sin filas de closer → fallback genérico (filas no vacías)', () => {
-  const out = formatMetrics([['Total ventas', '42'], ['Meta', '50']], { now: NOW });
-  assert.match(out, /• Total ventas: 42/);
-  assert.match(out, /• Meta: 50/);
-});
-
-test('formatMetrics: sin contenido → lo dice', () => {
+test('formatMetrics: sin contenido → fallback lo dice', () => {
   assert.match(formatMetrics([], { now: NOW }), /no hay métricas disponibles/i);
-  assert.match(formatMetrics([['', '']], { now: NOW }), /no hay métricas disponibles/i);
 });
 
-// ─── resolveRecipients ────────────────────────────────────────────────────────
+// ─── sectionTargets ───────────────────────────────────────────────────────────
 
 function withEnv(vars, fn) {
   const saved = {};
@@ -96,23 +78,26 @@ function withEnv(vars, fn) {
   }
 }
 
-test('resolveRecipients: CSV parseado, "boss" → destino del jefe, sin duplicados', () => {
+test('sectionTargets: mapea cada empresa a su grupo configurado', () => {
   withEnv(
-    { SHEETS_METRICS_RECIPIENTS: 'boss, 158025419608301@lid , 158025419608301@lid', BOSS_LID: '144@lid', BOSS_PHONE: '' },
+    { SHEETS_METRICS_30X_GROUP: 'Closers Second Brain', SHEETS_METRICS_ESTADOX_GROUP: 'Closers IA para Abogados' },
     () => {
-      assert.deepEqual(resolveRecipients(), ['144@lid', '158025419608301@lid']);
+      assert.deepEqual(sectionTargets(), [
+        { company: '30X', group: 'Closers Second Brain' },
+        { company: 'ESTADOX', group: 'Closers IA para Abogados' },
+      ]);
     }
   );
 });
 
-test('resolveRecipients: "boss" cae al teléfono si no hay BOSS_LID', () => {
-  withEnv({ SHEETS_METRICS_RECIPIENTS: 'boss', BOSS_LID: '', BOSS_PHONE: '573105643297' }, () => {
-    assert.deepEqual(resolveRecipients(), ['573105643297']);
+test('sectionTargets: omite las secciones sin grupo', () => {
+  withEnv({ SHEETS_METRICS_30X_GROUP: 'Closers Second Brain', SHEETS_METRICS_ESTADOX_GROUP: '' }, () => {
+    assert.deepEqual(sectionTargets(), [{ company: '30X', group: 'Closers Second Brain' }]);
   });
 });
 
-test('resolveRecipients: vacío → lista vacía (job se autodesactiva)', () => {
-  withEnv({ SHEETS_METRICS_RECIPIENTS: '' }, () => {
-    assert.deepEqual(resolveRecipients(), []);
+test('sectionTargets: sin nada configurado → vacío (job se autodesactiva)', () => {
+  withEnv({ SHEETS_METRICS_30X_GROUP: '', SHEETS_METRICS_ESTADOX_GROUP: '' }, () => {
+    assert.deepEqual(sectionTargets(), []);
   });
 });
