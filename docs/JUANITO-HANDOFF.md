@@ -1913,6 +1913,20 @@ entonces el job corre pero loguea "no pude resolver el grupo …" y no envía.
 > al VPS (`pscp docker-compose.yml`) + `docker compose up -d`. La receta `pscp src test` NO lo incluye;
 > si solo se copia el código, las vars nuevas quedan sin pasar al contenedor (compose corre con default).
 
+### 🛠️ Incidente 2026-06-18 — "Premature close" en toda llamada a Claude (RESUELTO)
+
+Tras un rebuild, todo DM/grupo respondía *"Perdón, algo falló de mi lado"*. Logs:
+`Invalid response body while trying to fetch …/v1/messages: Premature close` (status undefined, 3
+reintentos fallidos). **Diagnóstico:** `fetch` crudo a la API funcionaba 4/4, pero el **SDK**
+(`@anthropic-ai/sdk@0.27.0`) fallaba 4/4 → incompatibilidad del SDK viejo con el **undici de Node
+22.23.0**, que el **tag móvil `node:22-alpine`** trajo en el rebuild. **Fix:** subir el SDK a `^0.105.0`
+(la Messages API + tool-use son estables; el código solo usa campos estables). Verificado 4/4 SDK_OK
+en el contenedor. Commit `a631228`.
+
+> ⚠️ **Recomendación de hardening (pendiente):** **pinear el base image** del Dockerfile (hoy
+> `node:22-alpine`, tag móvil) a una versión/digest fija para que un rebuild no vuelva a cambiar el
+> runtime por debajo. El deploy de package.json/lock también debe copiarse al VPS (no va en `pscp src test`).
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Comando `/recuerda` en grupos (admins):** `@Juanito /recuerda [texto]` → memoria núcleo sin ir a DM.
