@@ -39,6 +39,8 @@ jefe le devuelven una deflexión cálida.
 | **Rechazar** | "no", "no respondas", "descártala" |
 | **Aprobar/rechazar** un mensaje generado del día | igual: "apruebo" / "no, hoy no" |
 | **Programar** un mensaje recurrente a un grupo | "en el grupo Patah todos los jueves a las 8pm manda…" |
+| **Crear** un recordatorio (para él o para otro) | "recuérdame pagar el arriendo el viernes a las 9am" |
+| **Ver/cancelar/posponer** sus recordatorios | "¿qué tengo pendiente?", "cancela el de las 3", "recuérdamelo mañana mejor" |
 | **Pedir/recordar/consultar** cosas | le habla normal: tiene memoria, notas y recordatorios |
 
 Cuando una confirmación está activa, Juanito le escribe primero por DM (*"📨 Respuesta pendiente

@@ -1808,6 +1808,34 @@ DRY-RUN false intacto. ⚠️ **Cambios LIVE pero aún SIN commitear en git** (w
 → DM de un desconocido llega al jefe; "apruebo" → sale citando; (b) `/confirmaciones grupo
 Automatizaciones on` → mención llega al jefe, Volunteers responde directo.
 
+### 18.L 🔵 Gestión de recordatorios por el jefe (tool `manage_reminders`) (2026-06-18)
+
+**Qué faltaba:** el jefe podía **crear** recordatorios (`create_reminder`) pero no **verlos, cancelarlos
+ni posponerlos** por lenguaje natural. Hueco más sentido de su set de tools.
+
+**Lo nuevo — tool `manage_reminders`** (`src/claude/index.js`), patrón calcado de `manage_replies`/
+`manage_drafts`: enum `action: list | cancel | snooze` + `id` + `new_due_at`. Se deja `create_reminder`
+intacto (tool aparte, disparador "crear nuevo" vs "operar existentes" — la descripción lo separa
+explícitamente para no confundir al modelo).
+- `list` → lectura pura, los pendientes del solicitante ordenados por fecha (marca destinatario si es
+  para un tercero).
+- `cancel` → `status='cancelled'` (no DELETE → reversible; el scheduler solo lee `'pending'`).
+- `snooze` → nueva `due_at`, sigue `pending`. Exige `new_due_at`.
+
+**Seguridad / razonamiento:** todo va **scopeado por `created_by = ctx.createdBy`** (aislamiento: el jefe
+solo ve/toca lo suyo); mutaciones por **id explícito** (sin id → pide listar primero, igual que
+`schedule_group_message`); enum acotado, sin texto libre interpretable. Gateada en `GROUP_DENIED_TOOLS`
+(grupos/DM público nunca la reciben).
+
+**DB nuevas** (`src/db/index.js`, sin migración — `status` es TEXT libre y `'cancelled'` queda inerte):
+`listReminders(createdBy)`, `cancelReminder(id, createdBy)`, `snoozeReminder(id, newDueAt, createdBy)`.
+
+**Tests:** +8 `brain.tools` (list/cancel/snooze + sin-id + sin-fecha + aislamiento por createdBy +
+gateo grupo/DM-público). 39/39 en el suite puro (Windows). Pendiente: validar en Docker los nativos.
+
+**🟡 PENDIENTE — deploy + round-trip real.** Aún SIN desplegar al VPS; falta probar en WhatsApp:
+"¿qué tengo pendiente?" → lista; "cancela el #N" → cancelado; "recuérdamelo el viernes 9am" → snooze.
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Comando `/recuerda` en grupos (admins):** `@Juanito /recuerda [texto]` → memoria núcleo sin ir a DM.

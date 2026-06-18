@@ -549,3 +549,93 @@ test('manage_replies: gateo — DM sí (boss/admin), grupos NUNCA', async () => 
   assert.ok(names(toolsForRole('admin')).includes('manage_replies'));
   assert.ok(!names(toolsForRole('boss', { isGroup: true })).includes('manage_replies'));
 });
+
+// ─── manage_reminders (ver/cancelar/posponer recordatorios del jefe) ──────────
+
+function reminderDeps() {
+  const state = {
+    reminders: [
+      { id: 3, text: 'pagar arriendo', due_at: '2026-06-20 09:00:00', to_phone: BOSS, created_by: BOSS, status: 'pending' },
+      { id: 4, text: 'llamar a Ana', due_at: '2026-06-21 15:00:00', to_phone: '573009998877', created_by: BOSS, status: 'pending' },
+    ],
+  };
+  return {
+    _state: state,
+    // Scope por created_by, igual que la DB real (aislamiento).
+    listReminders: (createdBy) => state.reminders.filter((r) => r.status === 'pending' && r.created_by === createdBy),
+    cancelReminder: (id, createdBy) => {
+      const r = state.reminders.find((x) => x.id === id && x.created_by === createdBy && x.status === 'pending');
+      if (!r) return 0;
+      r.status = 'cancelled';
+      return 1;
+    },
+    snoozeReminder: (id, newDueAt, createdBy) => {
+      const r = state.reminders.find((x) => x.id === id && x.created_by === createdBy && x.status === 'pending');
+      if (!r) return 0;
+      r.due_at = newDueAt;
+      return 1;
+    },
+  };
+}
+
+test('manage_reminders list muestra los pendientes; marca destinatario de terceros', async () => {
+  const out = await dispatchTool({ name: 'manage_reminders', input: { action: 'list' } }, reminderDeps(), ctx);
+  assert.match(out, /#3 → 2026-06-20 09:00:00: "pagar arriendo"/);
+  assert.match(out, /#4 .* "llamar a Ana" \(para 573009998877\)/); // recordatorio para un tercero
+  assert.doesNotMatch(out, /#3.*\(para/); // el propio no marca destinatario
+});
+
+test('manage_reminders list sin pendientes lo dice', async () => {
+  const deps = reminderDeps();
+  deps._state.reminders.forEach((r) => (r.status = 'cancelled'));
+  const out = await dispatchTool({ name: 'manage_reminders', input: { action: 'list' } }, deps, ctx);
+  assert.match(out, /no tienes recordatorios pendientes/i);
+});
+
+test('manage_reminders cancel por id cambia estado; doble cancel lo dice', async () => {
+  const deps = reminderDeps();
+  assert.match(await dispatchTool({ name: 'manage_reminders', input: { action: 'cancel', id: 3 } }, deps, ctx), /#3 cancelado ✅/);
+  assert.equal(deps._state.reminders[0].status, 'cancelled');
+  // Ya no está pending → no se vuelve a cancelar.
+  assert.match(await dispatchTool({ name: 'manage_reminders', input: { action: 'cancel', id: 3 } }, deps, ctx), /no encontré/i);
+});
+
+test('manage_reminders cancel sin id pide listar primero', async () => {
+  const out = await dispatchTool({ name: 'manage_reminders', input: { action: 'cancel' } }, reminderDeps(), ctx);
+  assert.match(out, /necesito el id/i);
+});
+
+test('manage_reminders snooze reprograma la fecha', async () => {
+  const deps = reminderDeps();
+  const out = await dispatchTool(
+    { name: 'manage_reminders', input: { action: 'snooze', id: 3, new_due_at: '2026-06-25 09:00:00' } },
+    deps,
+    ctx
+  );
+  assert.match(out, /#3 reprogramado para 2026-06-25 09:00:00 ✅/);
+  assert.equal(deps._state.reminders[0].due_at, '2026-06-25 09:00:00');
+});
+
+test('manage_reminders snooze sin new_due_at pregunta para cuándo', async () => {
+  const out = await dispatchTool({ name: 'manage_reminders', input: { action: 'snooze', id: 3 } }, reminderDeps(), ctx);
+  assert.match(out, /para cuándo/i);
+});
+
+test('manage_reminders: aislamiento — otro createdBy no ve ni cancela los del jefe', async () => {
+  const deps = reminderDeps();
+  const otherCtx = { createdBy: '573009990000' };
+  // No ve los del jefe.
+  assert.match(await dispatchTool({ name: 'manage_reminders', input: { action: 'list' } }, deps, otherCtx), /no tienes recordatorios/i);
+  // No puede cancelar uno ajeno.
+  assert.match(await dispatchTool({ name: 'manage_reminders', input: { action: 'cancel', id: 3 } }, deps, otherCtx), /no encontré/i);
+  assert.equal(deps._state.reminders[0].status, 'pending'); // intacto
+});
+
+test('manage_reminders: gateo — DM sí (boss/admin), grupos NUNCA', async () => {
+  const { toolsForRole } = await import('../src/claude/index.js');
+  const names = (tools) => tools.map((t) => t.name);
+  assert.ok(names(toolsForRole('boss')).includes('manage_reminders'), 'boss en DM sí');
+  assert.ok(names(toolsForRole('admin')).includes('manage_reminders'), 'admin en DM sí');
+  assert.ok(!names(toolsForRole('boss', { isGroup: true })).includes('manage_reminders'), 'en grupo no');
+  assert.ok(!names(toolsForRole('boss', { publicDm: true })).includes('manage_reminders'), 'en DM público no');
+});

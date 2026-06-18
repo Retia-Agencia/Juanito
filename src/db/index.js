@@ -121,6 +121,43 @@ export function getUpcomingReminders(hours = 24) {
     .all(localNow(), localNow(hours));
 }
 
+// ── Gestión de recordatorios por el jefe (tool manage_reminders) ──────────────
+// Scope SIEMPRE por created_by: el solicitante solo ve/toca lo que él agendó
+// (aislamiento — no puede listar ni cancelar recordatorios de otra persona).
+
+// Lista los pendientes de un creador, ordenados por fecha. Incluye los ya vencidos
+// que aún no se enviaron (útil para "¿qué tengo pendiente?").
+export function listReminders(createdBy) {
+  return db
+    .prepare(`
+      SELECT id, text, due_at, to_phone FROM reminders
+      WHERE status = 'pending' AND created_by = ?
+      ORDER BY due_at ASC
+    `)
+    .all(createdBy);
+}
+
+// Cancela un recordatorio propio y pendiente. status='cancelled' (no DELETE) =
+// reversible y el scheduler (que solo lee 'pending') lo ignora automáticamente.
+export function cancelReminder(id, createdBy) {
+  return db
+    .prepare(`
+      UPDATE reminders SET status = 'cancelled'
+      WHERE id = ? AND created_by = ? AND status = 'pending'
+    `)
+    .run(id, createdBy).changes;
+}
+
+// Reprograma un recordatorio propio y pendiente (sigue pending, nueva due_at).
+export function snoozeReminder(id, newDueAt, createdBy) {
+  return db
+    .prepare(`
+      UPDATE reminders SET due_at = ?
+      WHERE id = ? AND created_by = ? AND status = 'pending'
+    `)
+    .run(newDueAt, id, createdBy).changes;
+}
+
 // ─── Resúmenes de chats/grupos ────────────────────────────────────────────────
 
 export function saveSummary({ chatId, chatName, summary, periodStart = null, periodEnd = null }) {

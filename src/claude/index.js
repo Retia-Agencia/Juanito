@@ -47,6 +47,10 @@ async function resolveDeps() {
     getRecentHistory: db.getRecentHistory,
     saveReminder: db.saveReminder,
     getUpcomingReminders: db.getUpcomingReminders,
+    // gestión de recordatorios por el jefe (tool manage_reminders)
+    listReminders: db.listReminders,
+    cancelReminder: db.cancelReminder,
+    snoozeReminder: db.snoozeReminder,
     setMemory: db.setMemory,
     getAllMemory: db.getAllMemory,
     saveSummary: db.saveSummary,
@@ -110,6 +114,35 @@ const TOOLS = [
         },
       },
       required: ['text', 'due_at'],
+    },
+  },
+  {
+    name: 'manage_reminders',
+    description:
+      'Ver, cancelar o posponer los recordatorios YA EXISTENTES del jefe. Úsalo cuando ' +
+      'pregunte qué tiene pendiente ("¿qué recordatorios tengo?", "¿qué tengo hoy?"), quiera ' +
+      'cancelar uno ("cancela el de las 3", "ya lo hice, bórralo") o posponerlo ("recuérdamelo ' +
+      'mañana mejor"). Para CREAR uno nuevo usa create_reminder, NO esta tool.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['list', 'cancel', 'snooze'],
+          description: 'list = ver los pendientes · cancel = cancelar por id · snooze = reprogramar por id',
+        },
+        id: {
+          type: 'number',
+          description: 'Id del recordatorio (requerido para cancel y snooze; se obtiene con action=list).',
+        },
+        new_due_at: {
+          type: 'string',
+          description:
+            'Nueva fecha y hora en formato YYYY-MM-DD HH:MM:SS, en la zona horaria del jefe. ' +
+            'Requerido para snooze.',
+        },
+      },
+      required: ['action'],
     },
   },
   {
@@ -311,6 +344,7 @@ const GROUP_DENIED_TOOLS = new Set([
   'save_memory',
   'remember_note',
   'create_reminder',
+  'manage_reminders',
   'summarize_group',
   'search_knowledge',
   'schedule_group_message',
@@ -648,6 +682,45 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
       return forName
         ? `Recordatorio creado para ${forName} (${toPhone}) el ${input.due_at}: "${input.text}".`
         : `Recordatorio creado para el ${input.due_at}: "${input.text}".`;
+    }
+
+    case 'manage_reminders': {
+      const action = input.action;
+
+      if (action === 'list') {
+        const rows = (await deps.listReminders?.(ctx.createdBy)) || [];
+        if (!rows.length) return 'No tienes recordatorios pendientes 🙂';
+        return rows
+          .map(
+            (r) =>
+              `#${r.id} → ${r.due_at}: "${r.text}"` +
+              (r.to_phone && r.to_phone !== ctx.createdBy ? ` (para ${r.to_phone})` : '')
+          )
+          .join('\n');
+      }
+
+      if (action === 'cancel') {
+        if (!Number.isInteger(input.id)) {
+          return 'Para cancelar necesito el id (míralos con "¿qué recordatorios tengo?").';
+        }
+        const changes = (await deps.cancelReminder?.(input.id, ctx.createdBy)) || 0;
+        return changes
+          ? `Recordatorio #${input.id} cancelado ✅`
+          : `No encontré un recordatorio pendiente tuyo con id ${input.id}.`;
+      }
+
+      if (action === 'snooze') {
+        if (!Number.isInteger(input.id)) {
+          return 'Para posponer necesito el id (míralos con "¿qué recordatorios tengo?").';
+        }
+        if (!input.new_due_at?.trim()) return '¿Para cuándo lo pospongo?';
+        const changes = (await deps.snoozeReminder?.(input.id, input.new_due_at, ctx.createdBy)) || 0;
+        return changes
+          ? `Recordatorio #${input.id} reprogramado para ${input.new_due_at} ✅`
+          : `No encontré un recordatorio pendiente tuyo con id ${input.id}.`;
+      }
+
+      return 'No entendí la acción sobre los recordatorios.';
     }
 
     case 'save_memory': {
