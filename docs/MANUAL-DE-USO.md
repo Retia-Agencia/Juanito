@@ -18,7 +18,9 @@ Juanito reconoce a cada quien por su rol (resuelto en `src/common/roles.js`):
   marcados *(admin)* le devuelven una deflexión cálida ("eso es del equipo técnico 🙂").
 - **closer / desconocido**: no tienen acceso a comandos.
 
-`/whoami` y `/id` son la excepción: **cualquiera** puede usarlos (sirven para capturar tu propio LID).
+`/whoami`, `/id` y `/help` son la excepción: **cualquiera** puede usarlos. `/help` es **role-aware**:
+el equipo ve la lista de comandos, el jefe ve "háblame normal" + sus dos comandos, un desconocido ve
+un saludo mínimo.
 
 ---
 
@@ -202,6 +204,7 @@ Botón de pánico de los pushes a closers.
 | Comando | Quién | Qué hace |
 |---|---|---|
 | `/status` | *(admin)* | Estado del sistema: WhatsApp, uptime, Calendly token, DRY_RUN, opt-ins, salud de jobs |
+| `/help` / `/ayuda` / `/comandos` | cualquiera | Ayuda **según tu rol**: el equipo ve los comandos; el jefe ve "háblame normal"; un desconocido, un saludo |
 | `/whoami` / `/id` | cualquiera | Devuelve tu JID/LID y tu rol (útil para configurar un admin nuevo) |
 
 ---
@@ -221,4 +224,5 @@ Botón de pánico de los pushes a closers.
 /calendly [on|off] [closer]              ← pushes precall
 /reporte                                 ← preview del reporte de leads
 /status · /whoami · /id                  ← diagnóstico e identidad
+/help · /ayuda · /comandos               ← ayuda según tu rol
 ```

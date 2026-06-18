@@ -70,6 +70,26 @@ Desde tu **DM admin**:
 
 ---
 
+## ✅ Bloque E — Gestión de recordatorios del jefe (§18.L)
+
+Todo desde el **DM del jefe**, hablándole normal (sin comandos):
+
+- [ ] **E1.** Crear: `recuérdame pagar el arriendo el viernes a las 9am`
+      → confirma que creó el recordatorio.
+- [ ] **E2.** Listar: `¿qué recordatorios tengo?`
+      → lista numerada con **ids** y fechas (debe aparecer el de E1).
+- [ ] **E3.** Posponer: `recuérdamelo mejor el lunes a las 8am` (o `pospón el #N al lunes 8am`)
+      → `Recordatorio #N reprogramado para … ✅`; vuelve a listar y confirma la nueva fecha.
+- [ ] **E4.** Cancelar: `cancela el #N` (o `ya lo hice, bórralo`)
+      → `Recordatorio #N cancelado ✅`; al listar de nuevo ya no aparece.
+- [ ] **E5.** (aislamiento) Desde el DM de **otra persona** (no jefe/admin) pregunta
+      `¿qué recordatorios tengo?` → **NO** ve los del jefe (responde que no tiene).
+
+> Bonus `/help`: escribe `/help` como **jefe** → debe decir "háblame normal" + tus comandos
+> (`/whoami`, `/id`), **sin** la lista del equipo. Como **admin** → lista completa de comandos.
+
+---
+
 ## 🔄 Dejar todo en default seguro (antes de la reunión)
 
 - [ ] `/confirmaciones dm off`
@@ -79,8 +99,8 @@ Desde tu **DM admin**:
 
 ---
 
-**Criterio de aprobación:** si A1–A3, B1–B2, C1–C3 y D1–D3 pasan, entregás sin riesgo de sorpresa
-en vivo. C4/C5/D4/D5 son refuerzo.
+**Criterio de aprobación:** si A1–A3, B1–B2, C1–C3, D1–D3 y E1–E4 pasan, entregás sin riesgo de
+sorpresa en vivo. C4/C5/D4/D5/E5 son refuerzo.
 
 **Si algo falla:** anota el bloque exacto y el log del contenedor (`docker compose logs --tail=50`)
 y revísalo con calma — no improvises fixes la noche antes.

@@ -20,6 +20,13 @@ export async function handleCommand({ text, sender, role }, deps = {}) {
     return `Tu ID: ${sender}\nRol: ${role}`;
   }
 
+  // /help — disponible para cualquiera, pero el contenido es POR ROL: el admin ve
+  // la lista de comandos; el jefe ve que no necesita comandos (habla normal); un
+  // desconocido ve un saludo mínimo. Determinista, sin tokens.
+  if (cmd === '/help' || cmd === '/ayuda' || cmd === '/comandos') {
+    return buildHelp(role);
+  }
+
   // /status — solo admins.
   if (cmd === '/status') {
     if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
@@ -408,6 +415,59 @@ function handleProgramados(text, deps = {}) {
 function truncate(s, n) {
   const str = String(s || '');
   return str.length > n ? `${str.slice(0, n - 1)}…` : str;
+}
+
+// Contenido de /help SEGÚN el rol. El jefe (boss) no opera por comandos: se le
+// recuerda que habla normal. El admin ve la lista completa. Un desconocido, lo mínimo.
+// (Sincronizar con docs/MANUAL-DE-USO.md si cambian los comandos.)
+function buildHelp(role) {
+  if (role === 'admin') {
+    return [
+      '🛠️ Comandos de Juanito (equipo)',
+      '',
+      'Confirmaciones:',
+      '• /confirmaciones — estado (DM + grupos)',
+      '• /confirmaciones dm on|off — confirmar todos los DMs de desconocidos',
+      '• /confirmaciones grupo <n|nombre> on|off — confirmar un grupo',
+      '• /respuestas [ver|aprobar|rechazar <id>] — pendientes (grupo + DM)',
+      '',
+      'Grupos:',
+      '• /grupos [on|off <n|nombre>] — listar/autorizar grupos',
+      '• /grupo [on|off] — (dentro del grupo)',
+      '• /persona <n|nombre> | <texto> — tono por grupo',
+      '',
+      'Programados:',
+      '• /programados [off <id>] — mensajes recurrentes',
+      '• /aprobaciones [ver|aprobar|rechazar <id>] — borradores generados',
+      '',
+      'Operación:',
+      '• /calendly [on|off] [closer] — pushes precall',
+      '• /reporte — preview del reporte de leads',
+      '• /status — estado del sistema',
+      '• /whoami · /id — tu ID y rol',
+    ].join('\n');
+  }
+
+  if (role === 'boss') {
+    return [
+      '👋 Hola, soy Juanito.',
+      '',
+      'No necesitas comandos: háblame normal y yo me encargo.',
+      '• "apruebo" / "más corto" / "no" — para lo que te paso a confirmar',
+      '• "recuérdame pagar el viernes 9am" — te creo un recordatorio',
+      '• "¿qué tengo pendiente?" / "cancela el de las 3" — gestiono tus recordatorios',
+      '• "en el grupo X los jueves 8pm manda…" — programo mensajes a un grupo',
+      '• o pregúntame lo que necesites',
+      '',
+      'Comandos: /whoami · /id (te dicen tu ID y rol).',
+    ].join('\n');
+  }
+
+  // unknown / closer
+  return [
+    '👋 Soy Juanito, un asistente. Escríbeme tu consulta y te ayudo.',
+    '(/whoami te dice tu ID y rol.)',
+  ].join('\n');
 }
 
 async function handleReporte({ buildSheetsReport } = {}) {

@@ -22,6 +22,35 @@ test('/whoami tolera mayúsculas y espacios, y tiene alias /id', async () => {
   assert.match(await handleCommand({ text: '/id', sender: 'y@lid', role: 'boss' }), /y@lid/);
 });
 
+// ─── /help (role-aware, disponible para cualquiera) ───────────────────────────
+
+test('/help (admin) lista los comandos del equipo', async () => {
+  const out = await handleCommand({ text: '/help', sender: 'a@lid', role: 'admin' });
+  assert.match(out, /\/confirmaciones/);
+  assert.match(out, /\/grupos/);
+  assert.match(out, /\/calendly/);
+  assert.match(out, /equipo/i);
+});
+
+test('/help (jefe) NO lista comandos del equipo; le dice que hable normal', async () => {
+  const out = await handleCommand({ text: '/help', sender: 'b@lid', role: 'boss' });
+  assert.match(out, /háblame normal/i);
+  assert.match(out, /recuérdame|recordatorio/i);
+  assert.doesNotMatch(out, /\/calendly|\/grupos|\/confirmaciones/); // sin comandos de admin
+  assert.match(out, /\/whoami/); // pero sí los suyos
+});
+
+test('/help (desconocido) saludo mínimo, sin comandos de admin', async () => {
+  const out = await handleCommand({ text: '/help', sender: 'z@lid', role: 'unknown' });
+  assert.match(out, /asistente/i);
+  assert.doesNotMatch(out, /\/calendly|\/grupos/);
+});
+
+test('/help tiene alias /ayuda y /comandos, tolera mayúsculas/espacios', async () => {
+  assert.match(await handleCommand({ text: '  /Ayuda ', sender: 'a@lid', role: 'admin' }), /\/grupos/);
+  assert.match(await handleCommand({ text: '/COMANDOS', sender: 'a@lid', role: 'admin' }), /\/grupos/);
+});
+
 test('/status (admin) reporta estado con las deps inyectadas', async () => {
   const out = await handleCommand({ text: '/status', sender: 'a@lid', role: 'admin' }, deps);
   assert.match(out, /WhatsApp: conectado/);
