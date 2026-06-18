@@ -12,7 +12,7 @@
     "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.27.0",
+    "@anthropic-ai/sdk": "^0.105.0",
     "@whiskeysockets/baileys": "^7.0.0-rc13",
     "better-sqlite3": "^11.0.0",
     "cron": "^3.1.7",
