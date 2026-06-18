@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { handleCommand } = await import('../src/bot/commands.js');
+const { handleCommand, isReportCommand, wantsMetrics } = await import('../src/bot/commands.js');
 
 const deps = {
   listOptins: () => [{ phone: '1' }, { phone: '2' }, { phone: '3' }],
@@ -49,6 +49,47 @@ test('/help (desconocido) saludo mínimo, sin comandos de admin', async () => {
 test('/help tiene alias /ayuda y /comandos, tolera mayúsculas/espacios', async () => {
   assert.match(await handleCommand({ text: '  /Ayuda ', sender: 'a@lid', role: 'admin' }), /\/grupos/);
   assert.match(await handleCommand({ text: '/COMANDOS', sender: 'a@lid', role: 'admin' }), /\/grupos/);
+});
+
+// ─── /reportes unificado (leads | metricas) ───────────────────────────────────
+
+test('isReportCommand reconoce /reportes, /reporte, /metricas y sus variantes con arg', () => {
+  for (const c of ['/reporte', '/reportes', '/metricas', '/métricas', '/reportes leads', '/reportes metricas', '/metricas ']) {
+    assert.ok(isReportCommand(c), c);
+  }
+  for (const c of ['/report', '/grupos', 'reportes', '/reporteros']) {
+    assert.ok(!isReportCommand(c), c);
+  }
+});
+
+test('wantsMetrics distingue métricas de leads', () => {
+  assert.ok(wantsMetrics('/metricas'));
+  assert.ok(wantsMetrics('/métricas'));
+  assert.ok(wantsMetrics('/reportes metricas'));
+  assert.ok(wantsMetrics('/reportes métricas'));
+  assert.ok(!wantsMetrics('/reportes'));
+  assert.ok(!wantsMetrics('/reportes leads'));
+  assert.ok(!wantsMetrics('/reporte'));
+});
+
+test('/reportes metricas (admin) usa buildMetricsReport', async () => {
+  const out = await handleCommand(
+    { text: '/reportes metricas', sender: 'a@lid', role: 'admin' },
+    { buildMetricsReport: async () => ({ message: 'MÉTRICAS-OK' }), buildSheetsReport: async () => ({ message: 'LEADS-OK' }) }
+  );
+  assert.equal(out, 'MÉTRICAS-OK');
+});
+
+test('/reportes y /reportes leads (admin) usan buildSheetsReport (leads)', async () => {
+  const deps = { buildMetricsReport: async () => ({ message: 'MÉTRICAS-OK' }), buildSheetsReport: async () => ({ message: 'LEADS-OK' }) };
+  assert.equal(await handleCommand({ text: '/reportes', sender: 'a@lid', role: 'admin' }, deps), 'LEADS-OK');
+  assert.equal(await handleCommand({ text: '/reportes leads', sender: 'a@lid', role: 'admin' }, deps), 'LEADS-OK');
+  assert.equal(await handleCommand({ text: '/reporte', sender: 'a@lid', role: 'admin' }, deps), 'LEADS-OK'); // back-compat
+});
+
+test('/reportes (jefe) → deflexión cálida (admin-only en DM)', async () => {
+  const out = await handleCommand({ text: '/reportes', sender: 'b@lid', role: 'boss' });
+  assert.match(out, /equipo técnico/);
 });
 
 test('/metricas (admin) devuelve el preview usando buildMetricsReport inyectado', async () => {

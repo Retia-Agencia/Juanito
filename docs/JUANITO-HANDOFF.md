@@ -1879,7 +1879,11 @@ EstadoX" (ese no se toca).
 - `src/scheduler/metrics-recipients.js` (PURO) → `resolveRecipients()`: CSV de
   `SHEETS_METRICS_RECIPIENTS`; token `boss` → `bossDmTarget()`; dedup. Separado para testearlo sin
   arrastrar `better-sqlite3`.
-- Comando admin **`/metricas`** (preview on-demand, espejo de `/reporte`).
+- Comando **unificado `/reportes [leads|metricas]`** (`/reporte` y `/metricas` quedan como alias;
+  helpers `isReportCommand`/`wantsMetrics` exportados). En **DM** (admin) = preview. **Dentro de un
+  grupo autorizado** (jefe/admin), `handleGroupReportCommand` en `src/index.js` lo **publica EN ese
+  grupo** (sin mención; gateado por `isPrivileged` + `isGroupAuthorized`). ⚠️ `/reportes metricas` en
+  un grupo expone las métricas a todos los del grupo (decisión explícita del jefe).
 - Env nuevas (en `.env.example` **y** `docker-compose.yml`): `SHEETS_METRICS_ID`, `SHEETS_METRICS_TAB`,
   `SHEETS_METRICS_RECIPIENTS` (default sugerido `boss,158025419608301@lid`), `SHEETS_METRICS_CRON`
   (default `0 20 * * *`). El job **se autodesactiva** si falta GOOGLE_SA_KEY, el ID/pestaña o los

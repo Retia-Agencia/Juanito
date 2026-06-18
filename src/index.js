@@ -4,7 +4,7 @@
 import 'dotenv/config';
 import { connect, sendMessage, isConnected, leaveGroup, listGroups } from './whatsapp/index.js';
 import { handleBossMessage, handleGroupMessage, handlePublicDm } from './bot/index.js';
-import { handleCommand } from './bot/commands.js';
+import { handleCommand, isReportCommand, wantsMetrics } from './bot/commands.js';
 import { handleCloserOptin } from './calendly/optin.js';
 import { startAllJobs } from './scheduler/index.js';
 import { roleOf, isPrivileged } from './common/roles.js';
@@ -94,6 +94,30 @@ async function handleGroupCommand({ chatId, groupName, text, sender, messageId }
   } else {
     const on = isGroupAuthorized(chatId);
     await sendMessage(chatId, `Estado en este grupo: ${on ? 'habilitado ✅' : 'no autorizado ⛔'}`).catch(() => {});
+  }
+  return true;
+}
+
+// ─── /reportes [leads|metricas] dentro de un grupo (jefe/admin, grupo autorizado) ──
+// PUBLICA el reporte EN el grupo donde se pide (on-demand). No requiere mención.
+// Gateado: solo jefe/admin y solo en grupos autorizados (default-deny). Devuelve true
+// si manejó el mensaje. ⚠️ "metricas" expone las métricas de desempeño a todo el grupo.
+async function handleGroupReportCommand({ chatId, text, sender, messageId }) {
+  const cmd = (text || '').trim().toLowerCase();
+  if (!isReportCommand(cmd)) return false;
+  if (!markIfNew(messageId)) return true;
+
+  if (!isPrivileged(roleOf(sender))) {
+    await sendMessage(chatId, 'Ese comando es solo para el equipo 🙂').catch(() => {});
+    return true;
+  }
+  if (!isGroupAuthorized(chatId)) return true; // grupo no autorizado → ignorar en silencio
+
+  try {
+    const { message } = wantsMetrics(cmd) ? await buildMetricsReport() : await buildSheetsReport();
+    await sendMessage(chatId, message).catch((e) => console.error('[Main] reporte en grupo:', e.message));
+  } catch (e) {
+    await sendMessage(chatId, `No pude generar el reporte ahora: ${e.message}`).catch(() => {});
   }
   return true;
 }
@@ -195,6 +219,9 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
   // Grupo: el mensaje ya fue guardado pasivamente por whatsapp/index.js.
   // Primero el comando admin /grupo (no requiere mención); si lo manejó, cortamos.
   if (await handleGroupCommand({ chatId, groupName, text, sender, messageId })) return;
+
+  // /reportes [leads|metricas] en el grupo (jefe/admin, grupo autorizado) → publica acá.
+  if (await handleGroupReportCommand({ chatId, text, sender, messageId })) return;
 
   // Anti-secuestro robusto: evalúa autorización en CADA mensaje de grupo (cubre los
   // adds que el evento `group-participants.update` no capturó, p.ej. si agregaron al

@@ -195,7 +195,8 @@ Botón de pánico de los pushes a closers.
 
 | Comando | Qué hace |
 |---|---|
-| `/reporte` / `/reportes` | Genera el reporte diario de leads del Sheet **ahora** y lo devuelve como preview por DM (no lo publica en el grupo; eso lo hace el cron de las 20:00) |
+| `/reportes` / `/reportes leads` | Reporte de **leads** del Sheet **ahora**. En DM = preview; **dentro de un grupo autorizado** (jefe/admin) lo **publica en ese grupo** |
+| `/reportes metricas` | Reporte de **métricas de desempeño** ahora. En DM = preview; **en un grupo** (jefe/admin) lo **publica ahí** ⚠️ (las métricas quedan visibles para todo el grupo). Alias: `/metricas` |
 
 ---
 
@@ -222,7 +223,7 @@ Botón de pánico de los pushes a closers.
 /programados [off <id>]                  ← recurrentes
 /aprobaciones [ver|aprobar|rechazar <id>]← borradores generados
 /calendly [on|off] [closer]              ← pushes precall
-/reporte                                 ← preview del reporte de leads
+/reportes [leads|metricas]               ← reporte (DM=preview · en grupo lo publica)
 /status · /whoami · /id                  ← diagnóstico e identidad
 /help · /ayuda · /comandos               ← ayuda según tu rol
 ```

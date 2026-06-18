@@ -8,6 +8,29 @@
 
 import { csvToDayLabels, zonedNowParts } from '../scheduler/recurring-logic.js';
 
+// Reconoce el comando unificado de reportes y sus alias (/reportes, /reporte, /metricas).
+// `cmd` es el texto en minúsculas y sin espacios al borde. Exportado para que el router
+// de grupos use exactamente el mismo criterio (sin duplicar la lógica de parseo).
+export function isReportCommand(cmd) {
+  return (
+    cmd === '/reporte' ||
+    cmd === '/reportes' ||
+    cmd === '/metricas' ||
+    cmd === '/métricas' ||
+    cmd.startsWith('/reporte ') ||
+    cmd.startsWith('/reportes ') ||
+    cmd.startsWith('/metricas ') ||
+    cmd.startsWith('/métricas ')
+  );
+}
+
+// ¿El comando de reporte pide MÉTRICAS? (/metricas, o /reportes metricas)
+export function wantsMetrics(cmd) {
+  if (cmd.startsWith('/metric') || cmd.startsWith('/métric')) return true;
+  const arg = (cmd.split(/\s+/)[1] || '').trim();
+  return arg.startsWith('metric') || arg.startsWith('métric');
+}
+
 // Intenta manejar `text` como comando.
 // Devuelve un string de respuesta si lo manejó, o null si no aplica (para que
 // el flujo siga su curso normal hacia Claude / opt-in).
@@ -47,18 +70,12 @@ export async function handleCommand({ text, sender, role }, deps = {}) {
     return handleGrupos({ text, sender }, deps);
   }
 
-  // /reporte — genera el reporte diario de leads del Sheet AHORA y lo devuelve como
-  // preview por DM (no lo publica en el grupo; eso lo hace el cron de las 20:00). SOLO admins.
-  if (cmd === '/reporte' || cmd === '/reportes') {
+  // /reportes [leads|metricas] — preview on-demand del reporte (§18.B/N). Sin parámetro
+  // o "leads" → reporte de leads; "metricas" → métricas de desempeño. `/metricas` y
+  // `/reporte` quedan como alias. SOLO admins en DM (el preview no publica nada).
+  if (isReportCommand(cmd)) {
     if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
-    return handleReporte(deps);
-  }
-
-  // /metricas — preview on-demand del reporte de métricas de desempeño (§18.N). No lo
-  // envía a nadie; solo lo devuelve por DM al admin para verificar. SOLO admins.
-  if (cmd === '/metricas' || cmd === '/métricas') {
-    if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
-    return handleMetricas(deps);
+    return wantsMetrics(cmd) ? handleMetricas(deps) : handleReporte(deps);
   }
 
   // /persona — personalidad específica por grupo (se inyecta en el prompt de ese
@@ -449,7 +466,7 @@ function buildHelp(role) {
       '',
       'Operación:',
       '• /calendly [on|off] [closer] — pushes precall',
-      '• /reporte — preview del reporte de leads',
+      '• /reportes [leads|metricas] — preview (en grupo lo publica; jefe/admin)',
       '• /status — estado del sistema',
       '• /whoami · /id — tu ID y rol',
     ].join('\n');
