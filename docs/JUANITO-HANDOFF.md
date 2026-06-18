@@ -1863,6 +1863,40 @@ Disponible para **cualquiera** (como `/whoami`), pero el contenido depende del r
 **desconocido** → saludo mínimo. Alias `/ayuda` y `/comandos`. Tests: +4 `commands`. Manual actualizado.
 **✅ Desplegado LIVE 2026-06-18 ~14:20 UTC** (ver §18.L).
 
+### 18.N 🔵 Reporte diario de métricas de desempeño por DM (2026-06-18)
+
+**Qué pidió el jefe:** enviar por **DM** a **Dani (el jefe)** y a **Sebastián Rodríguez**, todos los
+días a las 8pm, las **métricas de desempeño** que viven en una pestaña de **otro** Google Sheet (con
+las métricas **ya calculadas**), **además** del reporte de leads que ya sale en el grupo "Ventas
+EstadoX" (ese no se toca).
+
+**Implementación (job independiente, calcado de §18.B):**
+- `src/sheets/client.js` → `fetchSheetValues({ id, tab })` (lector genérico; reúsa la auth JWT del SA).
+- `src/sheets/metrics.js` (PURO) → `formatMetrics(rows)`: render genérico de filas ya calculadas
+  (1 celda → sección en negrita; 2 → "• etiqueta: valor"; 3+ → unidas con " · "; vacías se saltan).
+- `src/scheduler/sheets-metrics.js` → `buildMetricsReport()` + `startSheetsMetricsJob()` (cron, envía
+  a cada destinatario por la **cola anti-ban**, cada uno con su `.catch`). Tick en try/catch.
+- `src/scheduler/metrics-recipients.js` (PURO) → `resolveRecipients()`: CSV de
+  `SHEETS_METRICS_RECIPIENTS`; token `boss` → `bossDmTarget()`; dedup. Separado para testearlo sin
+  arrastrar `better-sqlite3`.
+- Comando admin **`/metricas`** (preview on-demand, espejo de `/reporte`).
+- Env nuevas (en `.env.example` **y** `docker-compose.yml`): `SHEETS_METRICS_ID`, `SHEETS_METRICS_TAB`,
+  `SHEETS_METRICS_RECIPIENTS` (default sugerido `boss,158025419608301@lid`), `SHEETS_METRICS_CRON`
+  (default `0 20 * * *`). El job **se autodesactiva** si falta GOOGLE_SA_KEY, el ID/pestaña o los
+  destinatarios.
+
+**Anti-ban:** ambos destinatarios ya son contactos (jefe + Sebas con opt-in `contact_jid`) → sin
+cold-start. Todo sale por la cola.
+
+**Tests:** +8 `sheets-metrics` (formatMetrics 5 + resolveRecipients 3), +3 `commands` (`/metricas`).
+296/296 en Docker (VPS).
+
+**⏳ PENDIENTE — acción del dueño para activar (el código ya está listo/desplegado pero inerte):**
+1. Compartir el spreadsheet de métricas con el email del **service account** (lectura).
+2. Pasar el **ID** del spreadsheet y el **nombre exacto** de la pestaña → setear `SHEETS_METRICS_ID`,
+   `SHEETS_METRICS_TAB` y `SHEETS_METRICS_RECIPIENTS` en `/root/juanito/.env` + `docker compose up -d`.
+3. Pasar una **muestra del layout** de la pestaña para afinar `formatMetrics` si hace falta.
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Comando `/recuerda` en grupos (admins):** `@Juanito /recuerda [texto]` → memoria núcleo sin ir a DM.

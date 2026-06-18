@@ -109,3 +109,10 @@ export async function fetchLeadRows({ id = LEADS_ID(), tab = LEADS_TAB() } = {})
 export async function fetchSetteoRows({ id = LEADS_ID(), tab = SETTEO_TAB() } = {}) {
   return fetchTab(tab, id);
 }
+
+// Lector genérico: filas crudas de CUALQUIER spreadsheet/pestaña (mismo service
+// account). Lo usa el reporte de métricas de desempeño (§18.N), que vive en otro
+// archivo. El dueño debe compartir ese spreadsheet con el email del SA.
+export async function fetchSheetValues({ id, tab }) {
+  return fetchTab(tab, id);
+}

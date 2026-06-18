@@ -8,6 +8,7 @@ import { CronJob } from 'cron';
 import { startReminderJob } from './reminders.js';
 import { startCalendlyJobs } from './calendly.js';
 import { startSheetsReportJob } from './sheets-report.js';
+import { startSheetsMetricsJob } from './sheets-metrics.js';
 import { startGroupMessagesJob } from './group-messages.js';
 import { startGroupRepliesJob } from './group-replies.js';
 import { cleanup } from '../db/index.js';
@@ -54,6 +55,14 @@ export async function startAllJobs() {
     startSheetsReportJob();
   } catch (err) {
     console.warn('[Scheduler] Reporte de Sheets no disponible:', err.message);
+  }
+
+  // Reporte diario de métricas de desempeño por DM (se autodesactiva si falta
+  // GOOGLE_SA_KEY, el ID/pestaña o los destinatarios)
+  try {
+    startSheetsMetricsJob();
+  } catch (err) {
+    console.warn('[Scheduler] Reporte de métricas no disponible:', err.message);
   }
 
   // El job de resúmenes lo aporta el Track B. Mientras no exista en la rama,

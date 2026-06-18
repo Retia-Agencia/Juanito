@@ -16,4 +16,5 @@ export { parseSubmittedAt } from './parse.js';
 export { zonedParts, computeWindow } from './window.js';
 export { summarize, countSelfCheckout, averagePriorDays } from './aggregate.js';
 export { formatReport } from './report.js';
-export { fetchLeadRows, fetchSetteoRows, LEADS_ID, LEADS_TAB, SETTEO_TAB } from './client.js';
+export { formatMetrics } from './metrics.js';
+export { fetchLeadRows, fetchSetteoRows, fetchSheetValues, LEADS_ID, LEADS_TAB, SETTEO_TAB } from './client.js';

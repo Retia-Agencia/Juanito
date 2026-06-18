@@ -41,6 +41,7 @@ import { resolveCloserByPushName } from './calendly/closers.js';
 import { getHealth } from './calendly/health.js';
 import { enforceGroup, reevaluateGroup, onSelfRemoved, sweepGroups } from './bot/group-guard.js';
 import { buildSheetsReport } from './scheduler/sheets-report.js';
+import { buildMetricsReport } from './scheduler/sheets-metrics.js';
 
 // ─── Add a un grupo: autorizar (boss/admin) o salir (default-deny) ────────────
 // Si lo agrega directamente un boss/admin, autoriza sin más. En cualquier otro
@@ -124,6 +125,8 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
         leaveGroup,
         // /reporte — preview on-demand del reporte de leads del Sheet
         buildSheetsReport,
+        // /metricas — preview on-demand del reporte de métricas de desempeño
+        buildMetricsReport,
         // /persona — personalidad por grupo
         setGroupPersona,
         getGroupPersona,

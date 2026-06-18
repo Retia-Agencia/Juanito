@@ -74,6 +74,11 @@ services:
       - SHEETS_LEADS_TAB=${SHEETS_LEADS_TAB:-}
       - SHEETS_REPORT_CRON=${SHEETS_REPORT_CRON:-0 20 * * *}
       - SHEETS_SRC_AHEAD_HOURS=${SHEETS_SRC_AHEAD_HOURS:-3}
+      # Reporte diario de MÉTRICAS de desempeño por DM (§18.N) — sin ID/TAB/recipients el job se autodesactiva.
+      - SHEETS_METRICS_ID=${SHEETS_METRICS_ID:-}
+      - SHEETS_METRICS_TAB=${SHEETS_METRICS_TAB:-}
+      - SHEETS_METRICS_RECIPIENTS=${SHEETS_METRICS_RECIPIENTS:-}
+      - SHEETS_METRICS_CRON=${SHEETS_METRICS_CRON:-0 20 * * *}
       # QR web server — solo durante la vinculación inicial.
       # Descomentar la línea de abajo y agregar QR_PORT=3001 al .env.
       # Volver a comentar una vez vinculado.

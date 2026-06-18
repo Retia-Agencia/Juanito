@@ -51,6 +51,25 @@ test('/help tiene alias /ayuda y /comandos, tolera mayúsculas/espacios', async 
   assert.match(await handleCommand({ text: '/COMANDOS', sender: 'a@lid', role: 'admin' }), /\/grupos/);
 });
 
+test('/metricas (admin) devuelve el preview usando buildMetricsReport inyectado', async () => {
+  const out = await handleCommand(
+    { text: '/metricas', sender: 'a@lid', role: 'admin' },
+    { buildMetricsReport: async () => ({ message: '📈 Métricas de desempeño\n• Cierres: 3' }) }
+  );
+  assert.match(out, /Métricas de desempeño/);
+  assert.match(out, /Cierres: 3/);
+});
+
+test('/metricas (jefe) → deflexión cálida (es de admin)', async () => {
+  const out = await handleCommand({ text: '/metricas', sender: 'b@lid', role: 'boss' });
+  assert.match(out, /equipo técnico/);
+});
+
+test('/metricas sin buildMetricsReport configurado avisa con claridad', async () => {
+  const out = await handleCommand({ text: '/metricas', sender: 'a@lid', role: 'admin' }, {});
+  assert.match(out, /no está configurado/i);
+});
+
 test('/status (admin) reporta estado con las deps inyectadas', async () => {
   const out = await handleCommand({ text: '/status', sender: 'a@lid', role: 'admin' }, deps);
   assert.match(out, /WhatsApp: conectado/);

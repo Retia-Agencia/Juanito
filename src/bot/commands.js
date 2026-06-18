@@ -54,6 +54,13 @@ export async function handleCommand({ text, sender, role }, deps = {}) {
     return handleReporte(deps);
   }
 
+  // /metricas — preview on-demand del reporte de métricas de desempeño (§18.N). No lo
+  // envía a nadie; solo lo devuelve por DM al admin para verificar. SOLO admins.
+  if (cmd === '/metricas' || cmd === '/métricas') {
+    if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
+    return handleMetricas(deps);
+  }
+
   // /persona — personalidad específica por grupo (se inyecta en el prompt de ese
   // grupo). SOLO admins: la persona moldea cómo responde el bot, mismo criterio
   // que save_memory.
@@ -479,6 +486,18 @@ async function handleReporte({ buildSheetsReport } = {}) {
     return message;
   } catch (e) {
     return `No pude generar el reporte ahora: ${e.message}`;
+  }
+}
+
+async function handleMetricas({ buildMetricsReport } = {}) {
+  if (!buildMetricsReport) {
+    return 'El reporte de métricas no está configurado (falta el service account, el spreadsheet o los destinatarios).';
+  }
+  try {
+    const { message } = await buildMetricsReport();
+    return message;
+  } catch (e) {
+    return `No pude generar las métricas ahora: ${e.message}`;
   }
 }
 
