@@ -653,9 +653,17 @@ function parsePeriod(period) {
 // Exportado para tests: ejecuta una herramienta con dependencias inyectadas y
 // devuelve el string que se manda como tool_result a Claude.
 
+// El scheduler compara due_at como STRING contra 'YYYY-MM-DD HH:MM:SS' (localNow).
+// Una fecha mal formada se guarda sin error pero NUNCA dispara → fallo silencioso.
+// Validar acá convierte ese fallo en una re-pregunta útil.
+const DUE_AT_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+
 export async function dispatchTool({ name, input }, deps, ctx = {}) {
   switch (name) {
     case 'create_reminder': {
+      if (!DUE_AT_RE.test(String(input.due_at || '').trim())) {
+        return 'Necesito la fecha y hora exactas (formato YYYY-MM-DD HH:MM:SS) para crear el recordatorio. ¿Para cuándo es?';
+      }
       const recipient = input.recipient?.trim();
       let toPhone = ctx.createdBy; // por defecto, el recordatorio es para el jefe
       let forName = null;
@@ -714,6 +722,9 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
           return 'Para posponer necesito el id (míralos con "¿qué recordatorios tengo?").';
         }
         if (!input.new_due_at?.trim()) return '¿Para cuándo lo pospongo?';
+        if (!DUE_AT_RE.test(input.new_due_at.trim())) {
+          return 'Necesito la nueva fecha y hora exactas (formato YYYY-MM-DD HH:MM:SS). ¿Para cuándo lo pospongo?';
+        }
         const changes = (await deps.snoozeReminder?.(input.id, input.new_due_at, ctx.createdBy)) || 0;
         return changes
           ? `Recordatorio #${input.id} reprogramado para ${input.new_due_at} ✅`

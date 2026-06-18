@@ -75,6 +75,17 @@ test('create_reminder con recipient NO resuelto no guarda y pide aclaración', a
   assert.match(result, /no encontré|aclar|exacto/i);
 });
 
+test('create_reminder con fecha mal formada NO guarda y pide la fecha exacta', async () => {
+  const deps = makeDeps();
+  const result = await dispatchTool(
+    { name: 'create_reminder', input: { text: 'pagar', due_at: 'mañana 3pm' } },
+    deps,
+    ctx
+  );
+  assert.equal(deps.calls.saveReminder, undefined); // no se guardó basura que nunca dispararía
+  assert.match(result, /YYYY-MM-DD|fecha y hora exact/i);
+});
+
 test('create_reminder sin recipient usa al jefe (createdBy) como destino', async () => {
   const deps = makeDeps();
 
@@ -619,6 +630,17 @@ test('manage_reminders snooze reprograma la fecha', async () => {
 test('manage_reminders snooze sin new_due_at pregunta para cuándo', async () => {
   const out = await dispatchTool({ name: 'manage_reminders', input: { action: 'snooze', id: 3 } }, reminderDeps(), ctx);
   assert.match(out, /para cuándo/i);
+});
+
+test('manage_reminders snooze con fecha mal formada NO reprograma y pide la fecha exacta', async () => {
+  const deps = reminderDeps();
+  const out = await dispatchTool(
+    { name: 'manage_reminders', input: { action: 'snooze', id: 3, new_due_at: 'el lunes' } },
+    deps,
+    ctx
+  );
+  assert.match(out, /YYYY-MM-DD|fecha y hora exact/i);
+  assert.equal(deps._state.reminders[0].due_at, '2026-06-20 09:00:00'); // intacto, no se guardó basura
 });
 
 test('manage_reminders: aislamiento — otro createdBy no ve ni cancela los del jefe', async () => {
