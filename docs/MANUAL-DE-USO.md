@@ -22,6 +22,34 @@ Juanito reconoce a cada quien por su rol (resuelto en `src/common/roles.js`):
 
 ---
 
+## 👔 Qué hace el jefe (sin comandos)
+
+El jefe **no necesita aprender comandos**. Su control de Juanito es **conversacional**: le habla
+normal por DM y Juanito entiende. Los comandos `/` marcados *(admin)* son del equipo técnico; al
+jefe le devuelven una deflexión cálida.
+
+**Comandos `/` que el jefe sí puede usar:** solo `/whoami` y `/id` (ver su ID y rol). Nada más.
+
+**Lo que el jefe controla hablándole normal (lenguaje natural, sin sintaxis):**
+
+| Qué quiere hacer | Cómo lo dice (ejemplos) |
+|---|---|
+| **Aprobar** una respuesta pendiente (grupo o DM) | "apruebo", "envíala", "dale", "está bien" |
+| **Corregir** antes de enviar | "más corto", "dile que el martes", "cámbiala" |
+| **Rechazar** | "no", "no respondas", "descártala" |
+| **Aprobar/rechazar** un mensaje generado del día | igual: "apruebo" / "no, hoy no" |
+| **Programar** un mensaje recurrente a un grupo | "en el grupo Patah todos los jueves a las 8pm manda…" |
+| **Pedir/recordar/consultar** cosas | le habla normal: tiene memoria, notas y recordatorios |
+
+Cuando una confirmación está activa, Juanito le escribe primero por DM (*"📨 Respuesta pendiente
+#N para…"*) y el jefe decide ahí mismo en una frase. **El DM del jefe es el único contexto con
+acceso a su memoria/notas** (en grupos Juanito va aislado).
+
+> **En una línea:** el **equipo técnico (admin)** opera Juanito con los comandos `/`; el **jefe**
+> no aprende sintaxis — aprueba y pide cosas hablándole normal por WhatsApp.
+
+---
+
 ## ⭐ Confirmaciones antes de enviar — `/confirmaciones`
 
 Controla cuándo Juanito necesita **tu visto bueno** antes de que un mensaje salga. Hay dos planos:
