@@ -1895,11 +1895,17 @@ cold-start. Todo sale por la cola.
 **Tests:** +8 `sheets-metrics` (formatMetrics 5 + resolveRecipients 3), +3 `commands` (`/metricas`).
 296/296 en Docker (VPS).
 
-**⏳ PENDIENTE — acción del dueño para activar (el código ya está listo/desplegado pero inerte):**
-1. Compartir el spreadsheet de métricas con el email del **service account** (lectura).
-2. Pasar el **ID** del spreadsheet y el **nombre exacto** de la pestaña → setear `SHEETS_METRICS_ID`,
-   `SHEETS_METRICS_TAB` y `SHEETS_METRICS_RECIPIENTS` en `/root/juanito/.env` + `docker compose up -d`.
-3. Pasar una **muestra del layout** de la pestaña para afinar `formatMetrics` si hace falta.
+**✅ ACTIVADO LIVE (2026-06-18 ~15:25 UTC).** SA: `juanito-lector-sheets@juanito-sheets.iam.gserviceaccount.com`
+(comparten el sheet con ese correo, NO con correos personales). Spreadsheet
+`1lipje1RTD-1VkW7uQnCUPOE32nrtlMt4NLYQD6i1mU4`, pestaña `Resumen Semanal`. En `/root/juanito/.env`:
+`SHEETS_METRICS_ID/TAB`, `SHEETS_METRICS_RECIPIENTS=boss,158025419608301@lid` (jefe + Sebas).
+Lectura real verificada (formato OK con datos de la semana 2); job `[Métricas] activo ✅ (2 destinatarios)`.
+Primer envío automático: hoy 20:00. `formatMetrics` quedó a medida del layout real (show rate por closer,
+secciones 30X/ESTADOX) con fallback genérico.
+
+> ⚠️ **Gotcha de deploy confirmado:** las env nuevas requieren copiar **también** `docker-compose.yml`
+> al VPS (`pscp docker-compose.yml`) + `docker compose up -d`. La receta `pscp src test` NO lo incluye;
+> si solo se copia el código, las vars nuevas quedan sin pasar al contenedor (compose corre con default).
 
 ### 🟢 Baja prioridad / Nice-to-have
 
