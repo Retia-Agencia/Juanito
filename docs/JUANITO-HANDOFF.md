@@ -1838,8 +1838,30 @@ en `/root`; `pscp src test` + `docker compose up -d --build`. Verificado en logs
 (`Reconnection with existing sync data`), `manage_reminders` ×4 dentro del contenedor, todos los
 schedulers OK, Calendly DRY-RUN false intacto. Sin migración (status es TEXT libre).
 
+**Hardening (gate de release 2026-06-18):** `create_reminder` y `snooze` ahora **validan el formato de
+fecha** (`YYYY-MM-DD HH:MM:SS`); antes una fecha mal formada se guardaba sin error pero NUNCA disparaba
+(fallo silencioso). Commit `b80deef`.
+
+**⚠️ Limitación conocida (no bloqueante, preexistente de `create_reminder`):** los recordatorios se
+scopean por `created_by` con igualdad exacta del JID. Si el jefe crea uno desde su `@lid` y luego
+consulta desde su teléfono (o viceversa), no coinciden y el recordatorio le queda invisible. En la
+práctica el jefe interactúa por un único LID (multi-device), así que no muerde; normalizar la
+identidad jefe (LID↔teléfono) a una clave canónica queda como nice-to-have.
+
+**✅ DESPLEGADO LIVE (2026-06-18 ~14:20 UTC, junto con `/help` y el fix de validación).** Backup
+`juanito-backup-20260618-pre-help.tar.gz`. WA reconectó sin QR, `buildHelp`/`DUE_AT_RE` dentro del
+contenedor, schedulers OK, Calendly DRY-RUN false intacto. **Suite completo en Docker (VPS): 285/285.**
+
 **🟡 PENDIENTE — round-trip real.** Falta probar en WhatsApp: "¿qué tengo pendiente?" → lista;
 "cancela el #N" → cancelado; "recuérdamelo el viernes 9am" → snooze.
+
+### 18.M 🔵 Comando `/help` role-aware (2026-06-18)
+
+Disponible para **cualquiera** (como `/whoami`), pero el contenido depende del rol (`buildHelp` en
+`src/bot/commands.js`, determinista sin tokens): **admin** → lista completa de comandos por categoría;
+**jefe** → "háblame normal" + sus ejemplos (aprobar, recordatorios, programar) + solo `/whoami`/`/id`;
+**desconocido** → saludo mínimo. Alias `/ayuda` y `/comandos`. Tests: +4 `commands`. Manual actualizado.
+**✅ Desplegado LIVE 2026-06-18 ~14:20 UTC** (ver §18.L).
 
 ### 🟢 Baja prioridad / Nice-to-have
 
