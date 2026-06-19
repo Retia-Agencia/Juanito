@@ -220,7 +220,7 @@ export function formatLeadTime(startIso, tz = TZ()) {
 // click. Videos: YouTube.
 export const MATERIAL_LINKS = {
   second_brain: {
-    brochure: 'https://drive.google.com/file/d/1WUQftLcYWM5uCzE59Hql0B6cTpxoziO_/view',
+    brochure: 'https://drive.google.com/file/d/1Yq7cK4kJ_tjX97v1TQbjy0cmkXLNLg4d/view',
     video: 'https://www.youtube.com/watch?v=DGA0nf0geN0',
   },
   abogados: {
