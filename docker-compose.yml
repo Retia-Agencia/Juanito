@@ -44,13 +44,23 @@ services:
       - WA_SEND_PER_GROUP_JITTER_MS=${WA_SEND_PER_GROUP_JITTER_MS:-2000}
       # Tope de respuestas autónomas del bot por grupo por hora (las aprobadas no cuentan).
       - GROUP_REPLY_HOURLY_CAP=${GROUP_REPLY_HOURLY_CAP:-15}
-      - CLAUDE_GROUP_HISTORY=${CLAUDE_GROUP_HISTORY:-30}
+      # Contexto de grupo POR TIEMPO (§18.O): ventana en minutos + tope MÁXIMO de mensajes.
+      - CLAUDE_GROUP_HISTORY=${CLAUDE_GROUP_HISTORY:-100}
+      - CLAUDE_GROUP_HISTORY_MINUTES=${CLAUDE_GROUP_HISTORY_MINUTES:-30}
       # Mensajes generados con aprobación (§18.F): minutos de anticipación con que
       # se genera el borrador y se le manda al jefe antes de la hora de publicar.
       - DRAFT_LEAD_MIN=${DRAFT_LEAD_MIN:-60}
       # Aprobación de respuestas en grupos: minutos que una respuesta retenida espera
-      # el visto bueno del jefe antes de caducar y descartarse.
+      # el visto bueno del jefe antes de RESCATARSE (avisa al remitente + el jefe puede
+      # aún aprobarla con "apruebo #id"). §18.O
       - REPLY_APPROVAL_TTL_MIN=${REPLY_APPROVAL_TTL_MIN:-30}
+      - REPLY_EXPIRY_NOTICE=${REPLY_EXPIRY_NOTICE:-}
+      # Ventana de descanso/sueño (§18.O): dentro de ella NO se molesta al jefe con
+      # aprobaciones (quedan en cola → digest al volver el horario laboral) y al remitente
+      # se le avisa. Vacío = sin ventana (apagado). HH:MM en la TZ del bot, cruza medianoche.
+      - QUIET_HOURS_START=${QUIET_HOURS_START:-}
+      - QUIET_HOURS_END=${QUIET_HOURS_END:-}
+      - QUIET_HOURS_NOTICE=${QUIET_HOURS_NOTICE:-}
       # Rate limit en grupos (antes faltaban en environment: → no llegaban al contenedor).
       - GROUP_DAILY_LIMIT=${GROUP_DAILY_LIMIT:-5}
       - UNLIMITED_PHONES=${UNLIMITED_PHONES:-}
