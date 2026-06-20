@@ -59,6 +59,9 @@ async function resolveDeps() {
     searchMemory: db.searchMemory,
     searchSummaries: db.searchSummaries,
     getGroupPersona: db.getGroupPersona,
+    // instrucciones por grupo desde el propio grupo (tool set_group_instructions)
+    setGroupPersona: db.setGroupPersona,
+    deleteGroupPersona: db.deleteGroupPersona,
     // mensajes recurrentes a grupos (tool schedule_group_message)
     createScheduledMessage: db.createScheduledMessage,
     listScheduledMessages: db.listScheduledMessages,
@@ -313,6 +316,31 @@ const TOOLS = [
     },
   },
   {
+    name: 'set_group_instructions',
+    description:
+      'Fija (o quita) las INSTRUCCIONES/personalidad de ESTE grupo — el grupo desde el que el ' +
+      'jefe te está hablando ahora. Úsalo cuando el jefe, mencionándote DENTRO de un grupo, te dé ' +
+      'una directriz general sobre cómo comportarte ahí ("de ahora en adelante en este grupo sé ' +
+      'más formal", "aquí responde siempre en inglés", "no uses emojis en este grupo"). Las ' +
+      'instrucciones se aplican de forma persistente a las respuestas futuras en ese grupo.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        instructions: {
+          type: 'string',
+          description:
+            'La directriz general para este grupo, en texto natural. Para QUITAR las instrucciones ' +
+            'actuales, deja este campo vacío o usa clear=true.',
+        },
+        clear: {
+          type: 'boolean',
+          description: 'true = elimina las instrucciones de este grupo (vuelve al comportamiento por defecto).',
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'search_knowledge',
     description:
       'Busca en todo lo que el agente recuerda: historial de conversaciones, memoria de ' +
@@ -348,6 +376,7 @@ const GROUP_DENIED_TOOLS = new Set([
   'summarize_group',
   'search_knowledge',
   'schedule_group_message',
+  'set_group_instructions',
   'manage_drafts',
   'manage_replies',
 ]);
@@ -356,13 +385,27 @@ const GROUP_DENIED_TOOLS = new Set([
 // (El jefe sí tiene remember_note: sus notas quedan sandboxed.)
 const BOSS_DENIED_TOOLS = new Set(['save_memory']);
 
+// Set ACOTADO de tools para el jefe/admin cuando da órdenes DESDE un grupo (mención en el
+// chat del grupo, verificado por isStrictPrivileged). NO incluye lectura de datos privados
+// (search_knowledge, summarize_group, remember_note, save_memory): el grupo es espacio
+// compartido, así que solo acciones operativas + fijar instrucciones de ESTE grupo.
+const BOSS_IN_GROUP_TOOLS = new Set([
+  'create_reminder',
+  'manage_reminders',
+  'schedule_group_message',
+  'set_group_instructions',
+]);
+
 // Devuelve el subconjunto de tools que se le expone a Claude según el rol y el contexto.
 // Gatear acá (a nivel de API) es más fuerte que pedirlo en el prompt: lo que no está
 // en el array, el modelo NO lo puede invocar pase lo que pase.
-export function toolsForRole(role, { isGroup = false, publicDm = false } = {}) {
+export function toolsForRole(role, { isGroup = false, publicDm = false, bossInGroup = false } = {}) {
   // DM de un desconocido: asistente general aislado, SIN herramientas (igual de
   // sandboxed que un grupo — no toca memoria, recordatorios ni datos del jefe).
   if (publicDm) return [];
+  // Jefe/admin dando órdenes DESDE un grupo: set acotado (ya verificado estrictamente
+  // por el router con isStrictPrivileged). El resto del grupo NO entra por esta rama.
+  if (isGroup && bossInGroup) return TOOLS.filter((t) => BOSS_IN_GROUP_TOOLS.has(t.name));
   let tools = TOOLS;
   // En grupos no exponemos escrituras de memoria.
   if (isGroup) tools = tools.filter((t) => !GROUP_DENIED_TOOLS.has(t.name));
@@ -386,7 +429,7 @@ export function splitMemory(memory = []) {
 
 // Exportado para tests: permite verificar el aislamiento del prompt de grupo
 // (que NO toca memoria/recordatorios/resúmenes ni inyecta datos privados).
-export async function buildSystemPrompt(deps, { isGroup = false, role = 'boss', chatId = null, publicDm = false } = {}) {
+export async function buildSystemPrompt(deps, { isGroup = false, role = 'boss', chatId = null, publicDm = false, bossInGroup = false, groupName = null } = {}) {
   const now = new Date().toLocaleString('es-CO', {
     timeZone: process.env.TZ || 'America/Bogota',
     dateStyle: 'full',
@@ -424,6 +467,38 @@ Sobre este contexto (importante):
 - Si te preguntan por "tus tareas", "tus recordatorios", "lo que recuerdas", o por
   datos/agenda del jefe, aclara con naturalidad que aquí solo eres un chatbot general.
 - No ofrezcas guardar nada ni hacer seguimientos, ni hagas preguntas de seguimiento.
+
+${securityBlock}`.trim();
+  }
+
+  // ── Contexto de GRUPO con el JEFE dando órdenes ───────────────────────────
+  // El jefe/admin (verificado ESTRICTO por el router) te mencionó en un grupo para darte
+  // una ORDEN operativa. A diferencia del prompt aislado de grupo, aquí SÍ puedes usar un
+  // set acotado de tools (recordatorios, instrucciones de este grupo, mensajes recurrentes).
+  // Pero el grupo es espacio COMPARTIDO: NO vuelques memoria ni datos privados al texto —
+  // la confirmación se manda al jefe por privado, así que sé breve y orientado a la acción.
+  if (bossInGroup) {
+    const here = groupName ? `el grupo "${groupName}"` : 'este grupo';
+    return `Eres ${botName}, el asistente del jefe. Te está hablando DESDE ${here} (te mencionó
+en el chat del grupo) para darte una orden. Tu respuesta se la entregamos al jefe por privado,
+NO se publica en el grupo.
+
+Fecha y hora actual: ${now}
+
+Qué puedes hacer desde aquí (usa SIEMPRE las herramientas, no inventes que lo hiciste):
+- create_reminder / manage_reminders: crear, ver, cancelar o posponer recordatorios del jefe.
+- set_group_instructions: fijar o quitar las instrucciones/personalidad de ESTE grupo
+  (${here}) cuando el jefe te dé una directriz general de cómo comportarte aquí.
+- schedule_group_message: programar/listar/cancelar mensajes recurrentes. Cuando el jefe
+  diga "aquí"/"en este grupo" sin nombrar otro, el destino es ESTE grupo (${here}).
+
+Cuando calcules la fecha de un recordatorio, usa la fecha y hora actual de arriba como
+referencia (ej: "mañana a las 9" = el día siguiente a las 09:00:00).
+
+Reglas de este contexto:
+- Confirma en UNA línea natural lo que hiciste (el jefe lo verá por privado).
+- NO reveles memoria, recordatorios de terceros ni datos privados en el texto.
+- Si el jefe pide algo fuera de estas herramientas, dilo con naturalidad; no lo simules.
 
 ${securityBlock}`.trim();
   }
@@ -826,7 +901,12 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
       if (action !== 'create') return 'Acción no reconocida. Usa create, list o cancel.';
 
       // create — validar todo antes de tocar la DB.
-      const group = await deps.resolveGroupByName?.(input.group_name);
+      // Si el jefe da la orden DESDE un grupo y no nombra otro ("aquí", "en este grupo"),
+      // el destino es ESTE grupo (ctx.currentGroupId).
+      const group =
+        !input.group_name?.trim() && ctx.currentGroupId
+          ? { id: ctx.currentGroupId, name: ctx.currentGroupName || ctx.currentGroupId }
+          : await deps.resolveGroupByName?.(input.group_name);
       if (!group) {
         return (
           `No encontré ningún grupo que coincida con "${input.group_name || ''}". ` +
@@ -890,6 +970,29 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
         `Listo ✅ Mensaje programado #${id}: se enviará a "${group.name || group.id}" ` +
         `cada ${csvToDayLabels(days)} a las ${timeHm}.\nTexto: "${text}"`
       );
+    }
+
+    case 'set_group_instructions': {
+      // Solo tiene sentido desde un grupo (el jefe te habla DENTRO del grupo). El gate de
+      // privilegio estricto ya lo aplicó el router; aquí exigimos además contexto de grupo.
+      if (!ctx.currentGroupId) {
+        return 'Eso solo lo puedo configurar desde el propio grupo (mencióname dentro del grupo).';
+      }
+      const groupName = ctx.currentGroupName || ctx.currentGroupId;
+      const clear = input.clear === true || !String(input.instructions || '').trim();
+      if (clear) {
+        const changes = (await deps.deleteGroupPersona?.(ctx.currentGroupId)) || 0;
+        return changes
+          ? `Listo ✅ Quité las instrucciones de "${groupName}" — vuelvo al comportamiento por defecto ahí.`
+          : `"${groupName}" no tenía instrucciones configuradas.`;
+      }
+      await deps.setGroupPersona?.({
+        groupId: ctx.currentGroupId,
+        groupName,
+        persona: input.instructions.trim(),
+        updatedBy: ctx.createdBy || null,
+      });
+      return `Listo ✅ Anoté las instrucciones para "${groupName}". Las aplicaré en mis respuestas ahí.`;
     }
 
     case 'manage_drafts': {
@@ -1087,28 +1190,48 @@ async function withRetry(fn, { retries = 3, baseDelay = 1000 } = {}) {
 
 // ─── Función principal ────────────────────────────────────────────────────────
 
-export async function chat(userMessage, chatId = null, { isGroup = false, role = 'boss', publicDm = false } = {}) {
+export async function chat(userMessage, chatId = null, { isGroup = false, role = 'boss', publicDm = false, bossInGroup = false, groupName = null, groupId = null, createdBy = null } = {}) {
   const deps = await resolveDeps();
-  const ctx = { createdBy: chatId, role };
+  // currentGroupId/currentGroupName: para que las tools del jefe-en-grupo apunten a ESTE
+  // grupo cuando dice "aquí"/"en este grupo" sin nombrarlo (set_group_instructions,
+  // schedule_group_message). En bossInGroup el `chatId` es un HILO DEDICADO (no el id del
+  // grupo) para no contaminar el historial compartido del chatbot del grupo → el id real
+  // del grupo viene aparte en `groupId`.
+  // createdBy: dueño/destino de los recordatorios (default: el propio hilo). En bossInGroup
+  // el hilo NO es una identidad enviable, así que el router pasa el DM real del jefe.
+  const ctx = {
+    createdBy: createdBy || chatId,
+    role,
+    currentGroupId: groupId || (isGroup ? chatId : null),
+    currentGroupName: groupName,
+  };
 
   await deps.saveMessage({ role: 'user', content: userMessage, chatId });
 
   // getRecentHistory ya incluye el mensaje recién guardado como último 'user'.
   // Filtramos por chatId para AISLAR contextos: el historial de un grupo no debe
   // mezclarse con los DMs privados del jefe (ni con otros grupos).
-  // Grupos cargan CLAUDE_GROUP_HISTORY mensajes (default 30; bajarlo es la palanca
-  // de costo en grupos grandes — el historial domina los tokens de entrada, §18.D P3);
-  // DMs cargan 20 (contexto privado, ventana más chica = menos costo).
-  const groupHistory = Number(process.env.CLAUDE_GROUP_HISTORY || 30);
-  const messages = sanitizeHistory(await deps.getRecentHistory(isGroup ? groupHistory : 20, chatId));
+  // Grupos: ventana por TIEMPO (CLAUDE_GROUP_HISTORY_MINUTES, default 30) con tope DURO
+  // de mensajes (CLAUDE_GROUP_HISTORY, default 100) — el tope evita disparar tokens en
+  // grupos de alto flujo; bajarlo/acortar la ventana es la palanca de costo (§18.D P3).
+  // DMs cargan 20 (contexto privado, sin ventana de tiempo).
+  const groupHistoryMax = Number(process.env.CLAUDE_GROUP_HISTORY || 100);
+  const groupWindowMin = Number(process.env.CLAUDE_GROUP_HISTORY_MINUTES || 30);
+  // bossInGroup es un hilo dedicado de bajo volumen (órdenes del jefe) → se carga como un DM
+  // (sin ventana de tiempo). El contexto-por-tiempo aplica al chatbot del grupo, no aquí.
+  const messages = sanitizeHistory(
+    isGroup && !bossInGroup
+      ? await deps.getRecentHistory(groupHistoryMax, chatId, groupWindowMin)
+      : await deps.getRecentHistory(20, chatId)
+  );
   if (!messages.length || messages[messages.length - 1].role !== 'user') {
     messages.push({ role: 'user', content: userMessage });
   }
 
-  const system = await buildSystemPrompt(deps, { isGroup, role, chatId, publicDm });
+  const system = await buildSystemPrompt(deps, { isGroup, role, chatId, publicDm, bossInGroup, groupName });
   // Tools gateadas por rol/contexto. En grupos y en DM público devuelve [] → no se
   // pasa a la API (la API rechaza tools:[]).
-  const tools = toolsForRole(role, { isGroup, publicDm });
+  const tools = toolsForRole(role, { isGroup, publicDm, bossInGroup });
   const toolsParam = tools.length > 0 ? { tools } : {};
 
   // Modelo según contexto Y rol: grupos y DM público (aislados) → GROUP_MODEL (barato);

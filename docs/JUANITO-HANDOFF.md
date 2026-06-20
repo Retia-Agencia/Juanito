@@ -1927,6 +1927,49 @@ en el contenedor. Commit `a631228`.
 > `node:22-alpine`, tag móvil) a una versión/digest fija para que un rebuild no vuelva a cambiar el
 > runtime por debajo. El deploy de package.json/lock también debe copiarse al VPS (no va en `pscp src test`).
 
+### 18.O 🔵 Órdenes del jefe en grupo · contexto por tiempo · aprobaciones con horario y rescate (2026-06-19)
+
+Tres mejoras pedidas por el jefe. Tests con `__setDeps` (sin DB/WA reales).
+
+**1) El jefe da órdenes DESDE el grupo (mención).** El prompt de grupo sigue AISLADO para todos…
+salvo que quien menciona sea el jefe/admin verificado **ESTRICTO**. Entonces Juanito usa un set
+acotado de tools y **confirma por DM al jefe** (no publica nada en el grupo).
+- ⚠️ **Seguridad:** `roleOf()` (`src/common/roles.js:37`) trata **cualquier `@lid` como jefe** si
+  `BOSS_LID` está vacío, y en grupos *todos* llegan como `@lid`. Por eso esta vía usa
+  **`isStrictPrivileged(sender)`** (nuevo en `roles.js`): exige `ADMIN_LID`, `BOSS_LID` exacto, o
+  `BOSS_PHONE` — **nunca** el fallback. Sin `BOSS_LID`/`ADMIN_LID` reales, la feature queda apagada.
+- `src/bot/index.js` → `handleGroupMessage`: rama nueva tras la autorización; salta rate-limit/quota.
+- `src/claude/index.js`: `chat()`/`buildSystemPrompt`/`toolsForRole` aceptan `bossInGroup` + `groupName`;
+  `ctx.currentGroupId/currentGroupName`. Set acotado `BOSS_IN_GROUP_TOOLS` = `create_reminder`,
+  `manage_reminders`, `schedule_group_message`, **`set_group_instructions`** (nuevo tool → escribe
+  `group_personality` de ESTE grupo, reutiliza `setGroupPersona`, misma storage que `/persona`).
+  `schedule_group_message` hace default al grupo actual cuando el jefe dice "aquí" sin nombrarlo.
+
+**2) Contexto de grupo POR TIEMPO (con tope alto).** Antes: 30 turnos fijos. Ahora: ventana de
+`CLAUDE_GROUP_HISTORY_MINUTES` (default 30) con tope duro `CLAUDE_GROUP_HISTORY` (default subido a 100).
+`getRecentHistory(limit, chatId, sinceMinutes)` ahora acepta ventana de tiempo (UTC). Es la palanca de
+costo en grupos de alto flujo. DMs sin cambios (20, sin ventana).
+
+**3a) Aprobaciones en horario de descanso (quiet hours).** Solo con aprobaciones ON. Dentro de
+`QUIET_HOURS_START`–`QUIET_HOURS_END` (default 21:00–07:00, TZ del bot, cruza medianoche):
+- La pendiente se crea con **`held=1`** (nueva columna en `pending_replies`): **no** se notifica al
+  jefe y **no** corre el TTL.
+- Al remitente se le avisa, amable y **una vez al día** (dedup `markIfNew('quiet:'+sender+':'+fecha)`).
+- Al volver el horario laboral, el cron `group-replies` manda **un solo digest** al jefe con todas las
+  retenidas y las **libera** (`releaseHeldPendingReply` → `held=0` + `created_at=ahora`, el reloj de
+  30 min arranca recién ahí). Util nuevo `isWithinQuietHours()` en `src/common/utils.js`.
+
+**3b) Rescate al vencer (antes se descartaba).** Cuando una pendiente (no retenida) llega al TTL sin
+decisión, `runPendingRepliesCycle` ya **no la descarta en silencio**:
+- al **remitente** le manda un aviso amable de "lo estoy validando" (grupo: citado; DM: directo);
+- al **jefe** le re-avisa con el borrador y cómo rescatarla;
+- la marca `expired` (no se re-dispara). `approvePendingReply`/`discardPendingReply` ahora aceptan
+  `expired` → **"apruebo #id"** la revive (el cron de entrega la publica) y **"no #id"** la descarta.
+
+**Archivos:** `roles.js`, `utils.js`, `db/index.js`, `db/migrate.js` (ALTER `held`), `claude/index.js`,
+`bot/index.js`, `scheduler/group-replies.js`, `.env.example`. **Env nuevas:** `CLAUDE_GROUP_HISTORY_MINUTES`,
+`CLAUDE_GROUP_HISTORY` (=100), `QUIET_HOURS_START/END/NOTICE`, `REPLY_EXPIRY_NOTICE`.
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Comando `/recuerda` en grupos (admins):** `@Juanito /recuerda [texto]` → memoria núcleo sin ir a DM.

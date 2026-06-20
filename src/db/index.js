@@ -26,26 +26,34 @@ export function saveMessage({ role, content, source = 'bot', chatId = null }) {
 // Si se pasa chatId, se filtra a ESE hilo: aísla el historial de cada grupo y de
 // los DMs del jefe entre sí (evita que datos de un DM privado se filtren a un grupo).
 // Sin chatId mantiene el comportamiento anterior (todos los hilos 'bot').
-export function getRecentHistory(limit = 20, chatId = null) {
+// `sinceMinutes` (opcional): ventana de TIEMPO — solo turnos de los últimos N minutos.
+// `limit` sigue siendo el tope DURO de mensajes (palanca anti-tokens en grupos con alto
+// flujo). created_at es UTC (CURRENT_TIMESTAMP) → la ventana compara 100% en UTC.
+export function getRecentHistory(limit = 20, chatId = null, sinceMinutes = null) {
+  const mins = Number(sinceMinutes);
+  const hasWindow = sinceMinutes != null && Number.isFinite(mins) && mins > 0;
+  const windowClause = hasWindow ? `AND created_at >= datetime('now', ?)` : '';
+  const windowArg = hasWindow ? [`-${mins} minutes`] : [];
+
   if (chatId) {
     return db
       .prepare(`
         SELECT role, content FROM messages
-        WHERE source = 'bot' AND chat_id = ?
+        WHERE source = 'bot' AND chat_id = ? ${windowClause}
         ORDER BY created_at DESC
         LIMIT ?
       `)
-      .all(chatId, limit)
+      .all(chatId, ...windowArg, limit)
       .reverse();
   }
   return db
     .prepare(`
       SELECT role, content FROM messages
-      WHERE source = 'bot'
+      WHERE source = 'bot' ${windowClause}
       ORDER BY created_at DESC
       LIMIT ?
     `)
-    .all(limit)
+    .all(...windowArg, limit)
     .reverse();
 }
 
@@ -700,11 +708,12 @@ export function createPendingReply({
   triggerParticipant,
   draft,
   kind = 'group',
+  held = 0,
 }) {
   const info = db.prepare(`
     INSERT INTO pending_replies
-      (group_id, group_name, trigger_sender, trigger_text, trigger_msg_id, trigger_participant, draft, kind)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      (group_id, group_name, trigger_sender, trigger_text, trigger_msg_id, trigger_participant, draft, kind, held)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     groupId,
     groupName ?? null,
@@ -713,7 +722,8 @@ export function createPendingReply({
     triggerMsgId ?? null,
     triggerParticipant ?? null,
     draft,
-    kind
+    kind,
+    held ? 1 : 0
   );
   return info.lastInsertRowid;
 }
@@ -728,10 +738,13 @@ export function listPendingReplies() {
     .all();
 }
 
+// Aprueba una pendiente. Acepta también 'expired': si caducó (30 min sin decisión) y el
+// jefe la quiere rescatar después ("apruebo #id"), la resucita → el cron de entrega la
+// recoge y la publica. held=0 al aprobar (por si se aprueba una retenida directamente).
 export function approvePendingReply(id) {
   return db.prepare(`
-    UPDATE pending_replies SET status = 'approved', decided_at = CURRENT_TIMESTAMP
-    WHERE id = ? AND status = 'pending'
+    UPDATE pending_replies SET status = 'approved', held = 0, decided_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND status IN ('pending', 'expired')
   `).run(id).changes;
 }
 
@@ -745,7 +758,7 @@ export function revisePendingReply(id, newDraft, feedback) {
 export function discardPendingReply(id) {
   return db.prepare(`
     UPDATE pending_replies SET status = 'discarded', decided_at = CURRENT_TIMESTAMP
-    WHERE id = ? AND status IN ('pending', 'approved')
+    WHERE id = ? AND status IN ('pending', 'approved', 'expired')
   `).run(id).changes;
 }
 
@@ -763,11 +776,30 @@ export function markPendingReplySent(id) {
 }
 
 // Respuestas pendientes con más de `ttlMin` minutos sin decisión → caducan.
+// Excluye las retenidas en horario de descanso (held=1): esas no corren el reloj de TTL
+// hasta que se liberan (releaseHeldPendingReply reinicia created_at al notificar al jefe).
 export function listExpiredPendingReplies(ttlMin) {
   return db
     .prepare(`SELECT * FROM pending_replies
-              WHERE status = 'pending' AND created_at < datetime('now', ?)`)
+              WHERE status = 'pending' AND held = 0 AND created_at < datetime('now', ?)`)
     .all(`-${Number(ttlMin)} minutes`);
+}
+
+// Pendientes retenidas en horario de descanso (aún no notificadas al jefe).
+export function listHeldPendingReplies() {
+  return db
+    .prepare(`SELECT * FROM pending_replies WHERE status = 'pending' AND held = 1 ORDER BY created_at ASC`)
+    .all();
+}
+
+// Libera una retenida: el jefe ya volvió al horario laboral y se le notificó. Reinicia
+// created_at a ahora para que el reloj de caducidad (30 min) arranque desde la notificación,
+// no desde la madrugada en que entró.
+export function releaseHeldPendingReply(id) {
+  return db.prepare(`
+    UPDATE pending_replies SET held = 0, created_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND status = 'pending' AND held = 1
+  `).run(id).changes;
 }
 
 export function markPendingReplyExpired(id) {

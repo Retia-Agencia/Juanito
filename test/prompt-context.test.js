@@ -165,6 +165,31 @@ test('DM: la persona de grupo NO aplica (es solo para grupos)', async () => {
   assert.ok(!prompt.includes('persona de grupo'));
 });
 
+// ─── Jefe dando órdenes DESDE el grupo (bossInGroup) ──────────────────────────
+
+test('bossInGroup: prompt orientado a la acción, sin leer ni filtrar datos privados', async () => {
+  const deps = spyDeps();
+  const prompt = await buildSystemPrompt(deps, {
+    isGroup: true,
+    bossInGroup: true,
+    role: 'boss',
+    chatId: 'bossorders:patah@g.us',
+    groupName: 'Patah',
+  });
+  // No toca fuentes de datos privados
+  assert.equal(deps.calls.getAllMemory, 0);
+  assert.equal(deps.calls.getRecentSummaries, 0);
+  assert.equal(deps.calls.getUpcomingReminders, 0);
+  for (const secret of ['SECRETO-NUCLEO-123', 'SECRETO-NOTA-JEFE', 'SECRETO-RECORDATORIO']) {
+    assert.ok(!prompt.includes(secret), `bossInGroup no debe filtrar ${secret}`);
+  }
+  // Reconoce el grupo y las acciones disponibles, conserva seguridad
+  assert.ok(prompt.includes('Patah'), 'nombra el grupo de origen');
+  assert.ok(/set_group_instructions/.test(prompt), 'menciona la tool de instrucciones del grupo');
+  assert.ok(/por privado/i.test(prompt), 'aclara que confirma por privado, no en el grupo');
+  assert.ok(/Reglas de seguridad/i.test(prompt), 'conserva el bloque de seguridad');
+});
+
 // ─── DM público (desconocido): asistente general AISLADO ───────────────────────
 
 test('DM público: NO consulta memoria/resúmenes/recordatorios', async () => {

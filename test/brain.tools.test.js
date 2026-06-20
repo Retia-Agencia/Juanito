@@ -355,6 +355,70 @@ test('schedule_group_message: gateo — disponible en DM (boss y admin), NUNCA e
   assert.ok(!names(toolsForRole('unknown', { isGroup: true })).includes('schedule_group_message'), 'en grupo no (unknown)');
 });
 
+// ─── Órdenes del jefe DESDE el grupo (bossInGroup) ────────────────────────────
+
+test('schedule_group_message create SIN group_name usa el grupo actual (ctx.currentGroupId)', async () => {
+  const deps = scheduleDeps();
+  const result = await dispatchTool(
+    {
+      name: 'schedule_group_message',
+      input: { action: 'create', days: ['lunes'], time: '08:00', text: 'Buenos días equipo' },
+    },
+    deps,
+    { createdBy: BOSS, role: 'boss', currentGroupId: 'patah@g.us', currentGroupName: 'Patah' }
+  );
+  assert.equal(deps._state.created.length, 1);
+  assert.equal(deps._state.created[0].groupId, 'patah@g.us');
+  assert.match(result, /#7/);
+});
+
+test('set_group_instructions guarda la persona de ESTE grupo (reutiliza setGroupPersona)', async () => {
+  const calls = { set: [], del: [] };
+  const deps = {
+    setGroupPersona: (row) => calls.set.push(row),
+    deleteGroupPersona: (id) => { calls.del.push(id); return 1; },
+  };
+  const result = await dispatchTool(
+    { name: 'set_group_instructions', input: { instructions: 'Sé más formal y sin emojis.' } },
+    deps,
+    { createdBy: BOSS, role: 'boss', currentGroupId: 'patah@g.us', currentGroupName: 'Patah' }
+  );
+  assert.equal(calls.set.length, 1);
+  assert.equal(calls.set[0].groupId, 'patah@g.us');
+  assert.equal(calls.set[0].persona, 'Sé más formal y sin emojis.');
+  assert.match(result, /Patah/);
+});
+
+test('set_group_instructions con clear=true (o vacío) borra la persona del grupo', async () => {
+  const calls = { set: [], del: [] };
+  const deps = {
+    setGroupPersona: (row) => calls.set.push(row),
+    deleteGroupPersona: (id) => { calls.del.push(id); return 1; },
+  };
+  await dispatchTool(
+    { name: 'set_group_instructions', input: { clear: true } },
+    deps,
+    { createdBy: BOSS, role: 'boss', currentGroupId: 'patah@g.us', currentGroupName: 'Patah' }
+  );
+  assert.deepEqual(calls.del, ['patah@g.us']);
+  assert.equal(calls.set.length, 0);
+});
+
+test('set_group_instructions fuera de un grupo (sin currentGroupId) no hace nada', async () => {
+  const calls = { set: [], del: [] };
+  const deps = {
+    setGroupPersona: (row) => calls.set.push(row),
+    deleteGroupPersona: (id) => { calls.del.push(id); return 1; },
+  };
+  const result = await dispatchTool(
+    { name: 'set_group_instructions', input: { instructions: 'algo' } },
+    deps,
+    { createdBy: BOSS, role: 'boss' }
+  );
+  assert.equal(calls.set.length, 0);
+  assert.match(result, /desde el propio grupo/i);
+});
+
 // ─── schedule_group_message generated + manage_drafts (aprobación) ─────────────
 
 function draftDeps() {

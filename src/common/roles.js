@@ -44,6 +44,25 @@ export function isPrivileged(role) {
   return role === 'admin' || role === 'boss';
 }
 
+// Privilegio ESTRICTO para acciones desde un GRUPO (órdenes del jefe en el chat del grupo).
+// A diferencia de roleOf(), NO usa el fallback retrocompat "cualquier @lid = jefe": en un
+// grupo TODOS los participantes llegan como @lid, así que ese fallback convertiría a todo el
+// grupo en jefe. Aquí exigimos identidad CONFIGURADA explícitamente:
+//   - LID en ADMIN_LID, o
+//   - BOSS_LID definido y el sender es EXACTAMENTE ese LID, o
+//   - el teléfono canónico del jefe (BOSS_PHONE).
+// Si no hay BOSS_LID/ADMIN_LID/BOSS_PHONE configurados, devuelve false → la feature de
+// órdenes-en-grupo queda apagada de forma segura.
+export function isStrictPrivileged(sender) {
+  if (!sender) return false;
+  const isLid = sender.endsWith('@lid');
+  if (isLid && ADMIN_LIDS().includes(sender)) return true;
+  const bossLid = BOSS_LID();
+  if (isLid && bossLid && sender === bossLid) return true;
+  if (phonesMatch(sender, BOSS_PHONE())) return true;
+  return false;
+}
+
 // Destinatario para los DMs que el SISTEMA le manda al jefe (aprobación de
 // borradores, recordatorios sin destinatario explícito). Prefiere BOSS_LID: en
 // WhatsApp multi-device el jefe interactúa por @lid, y enviar a un @lid funciona

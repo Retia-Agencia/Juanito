@@ -245,6 +245,12 @@ addColumnIfMissing('pending_replies', 'trigger_participant', 'TEXT');
 // El cron de entrega salta la verificación de grupo autorizado cuando kind='dm'.
 addColumnIfMissing('pending_replies', 'kind', "TEXT NOT NULL DEFAULT 'group'");
 
+// Retenida en horario de descanso (quiet hours): se creó mientras el jefe "dormía", así
+// que NO se le notificó todavía y NO cuenta para la caducidad por TTL. Al volver el horario
+// laboral, un cron le manda el digest al jefe y la libera (held=0 + created_at=ahora → el
+// reloj de 30 min arranca recién ahí). Filas viejas quedan held=0 (comportamiento de siempre).
+addColumnIfMissing('pending_replies', 'held', 'INTEGER NOT NULL DEFAULT 0');
+
 // Tope anti-ráfaga: cuántas respuestas AUTÓNOMAS publicó el bot en cada grupo, por hora.
 // hour_bucket = 'YYYY-MM-DD-HH' en hora local. Se limpia con el resto en la limpieza diaria.
 db.exec(`

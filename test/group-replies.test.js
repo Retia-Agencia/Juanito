@@ -15,13 +15,16 @@ function makeDeps(over = {}) {
   const state = {
     approved: over.approved || [],
     expired: over.expired || [],
-    marks: { sent: [], expired: [], discarded: [] },
+    held: over.held || [],
+    marks: { sent: [], expired: [], discarded: [], released: [] },
   };
   const deps = {
     _sent: sent,
     _state: state,
     listApprovedPendingReplies: () => state.approved,
     listExpiredPendingReplies: () => state.expired,
+    listHeldPendingReplies: () => state.held,
+    releaseHeldPendingReply: (id) => state.marks.released.push(id),
     isGroupAuthorized: over.isGroupAuthorized || (() => true),
     markPendingReplySent: (id) => state.marks.sent.push(id),
     markPendingReplyExpired: (id) => state.marks.expired.push(id),
@@ -63,16 +66,71 @@ test('pendiente de DM (kind=dm) se entrega aunque NO esté autorizado como grupo
   assert.deepEqual(deps._state.marks.discarded, []);
 });
 
-test('caduca las pendientes viejas y avisa al jefe', async () => {
+test('vencimiento → rescate: avisa al remitente, re-avisa al jefe con cómo rescatar, marca expired', async () => {
   const deps = makeDeps({
-    expired: [{ id: 3, group_id: 'g@g.us', group_name: 'Patah', draft: 'vieja' }],
+    expired: [{
+      id: 3, group_id: 'g@g.us', group_name: 'Patah', draft: 'vieja',
+      trigger_sender: 'Ana', trigger_text: '¿precio?',
+    }],
   });
   await runPendingRepliesCycle(deps);
   assert.deepEqual(deps._state.marks.expired, [3]);
-  // aviso al jefe (bossDmTarget = BOSS_LID)
+  // a) aviso amable al remitente original (al grupo)
+  const aRemitente = deps._sent.find((m) => m.to === 'g@g.us');
+  assert.ok(aRemitente, 'debe avisar al remitente');
+  // b) re-aviso al jefe con instrucciones de rescate (apruebo/no #id) + el borrador
   const aviso = deps._sent.find((m) => m.to === '111@lid');
-  assert.ok(aviso, 'debe avisar al jefe');
-  assert.match(aviso.text, /caduc/i);
+  assert.ok(aviso, 'debe re-avisar al jefe');
+  assert.match(aviso.text, /apruebo #3/i);
+  assert.match(aviso.text, /no #3/i);
+  assert.match(aviso.text, /vieja/, 'incluye el borrador para rescatarlo');
+  // no se descarta (rescatable)
+  assert.deepEqual(deps._state.marks.discarded, []);
+});
+
+test('vencimiento de un DM (kind=dm) → avisa al JID del remitente sin cita', async () => {
+  const deps = makeDeps({
+    expired: [{ id: 9, kind: 'dm', group_id: '57300@s.whatsapp.net', group_name: 'DM de Pedro', draft: 'resp' }],
+  });
+  const calls = [];
+  deps.sendMessage = async (to, text, opts) => { calls.push({ to, text, opts }); };
+  await runPendingRepliesCycle(deps);
+  const aRemitente = calls.find((m) => m.to === '57300@s.whatsapp.net');
+  assert.ok(aRemitente, 'avisa al remitente del DM');
+  assert.equal(aRemitente.opts?.quoted, undefined, 'en DM no cita');
+});
+
+test('quiet hours OFF + retenidas → digest único al jefe y las libera', async () => {
+  const deps = makeDeps({
+    held: [
+      { id: 10, group_id: 'g@g.us', group_name: 'Patah', trigger_sender: 'Ana', trigger_text: 'hola' },
+      { id: 11, kind: 'dm', group_id: '57300@s.whatsapp.net', group_name: 'DM de Pedro', trigger_sender: 'Pedro', trigger_text: 'q tal' },
+    ],
+  });
+  await runPendingRepliesCycle(deps);
+  // un solo mensaje al jefe (digest) que menciona ambas
+  const digest = deps._sent.filter((m) => m.to === '111@lid');
+  assert.equal(digest.length, 1, 'un solo digest');
+  assert.match(digest[0].text, /#10/);
+  assert.match(digest[0].text, /#11/);
+  // ambas liberadas
+  assert.deepEqual(deps._state.marks.released.sort(), [10, 11]);
+});
+
+test('quiet hours ON → NO manda digest ni libera (el jefe duerme)', async () => {
+  process.env.QUIET_HOURS_START = '00:00';
+  process.env.QUIET_HOURS_END = '23:59'; // ventana que cubre casi todo el día
+  try {
+    const deps = makeDeps({
+      held: [{ id: 12, group_id: 'g@g.us', group_name: 'Patah', trigger_sender: 'Ana', trigger_text: 'hola' }],
+    });
+    await runPendingRepliesCycle(deps);
+    assert.equal(deps._sent.filter((m) => m.to === '111@lid').length, 0, 'no notifica dentro del descanso');
+    assert.deepEqual(deps._state.marks.released, [], 'no libera dentro del descanso');
+  } finally {
+    delete process.env.QUIET_HOURS_START;
+    delete process.env.QUIET_HOURS_END;
+  }
 });
 
 test('cita el mensaje gatillo cuando hay trigger_msg_id (reconstruye quoted)', async () => {

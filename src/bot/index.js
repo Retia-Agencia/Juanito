@@ -12,12 +12,31 @@ import {
   isDmApprovalOn,
   createPendingReply,
 } from '../db/index.js';
-import { phonesMatch } from '../common/utils.js';
-import { roleOf, bossDmTarget } from '../common/roles.js';
+import { phonesMatch, isWithinQuietHours } from '../common/utils.js';
+import { roleOf, bossDmTarget, isStrictPrivileged } from '../common/roles.js';
 
 const BOSS_PHONE = () => process.env.BOSS_PHONE;
 const BOT_NAME = () => process.env.BOT_NAME || 'Juanito';
 const GROUP_DAILY_LIMIT = () => Number(process.env.GROUP_DAILY_LIMIT || 5);
+
+// Aviso amable al remitente cuando Juanito está en horario de descanso (quiet hours) y las
+// aprobaciones están ON: su mensaje queda en cola y el jefe lo verá al volver. Configurable.
+const QUIET_HOURS_NOTICE = () =>
+  process.env.QUIET_HOURS_NOTICE ||
+  'por ahora estoy fuera de horario 🌙. Le paso tu mensaje al equipo y te respondo apenas ' +
+    'volvamos al horario laboral. ¡Gracias por la paciencia!';
+
+function localDateStr() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/Bogota' });
+}
+
+// Avisa al remitente, UNA sola vez por día (dedup vía markIfNew), que es horario fuera de
+// servicio. quoted (opcional) cita su mensaje original en grupos.
+async function sendQuietHoursNotice(target, sender, pushName, quoted) {
+  if (!markIfNew(`quiet:${sender}:${localDateStr()}`)) return;
+  const saludo = pushName ? `¡Hola, ${pushName}! ` : '¡Hola! ';
+  await sendMessage(target, saludo + QUIET_HOURS_NOTICE(), quoted ? { quoted } : {}).catch(() => {});
+}
 // Tope de respuestas AUTÓNOMAS del bot por grupo por hora (anti-ráfaga). Las respuestas
 // aprobadas por el jefe NO cuentan contra este tope.
 const GROUP_REPLY_HOURLY_CAP = () => Number(process.env.GROUP_REPLY_HOURLY_CAP || 15);
@@ -97,6 +116,8 @@ export async function handlePublicDm({ from, text, messageId, pushName, rawMsg }
     // jefe por DM para que apruebe/corrija/descarte. Un cron entrega las aprobadas y caduca
     // las que llevan demasiado tiempo sin decisión (mismo carril que las respuestas de grupo).
     if (isDmApprovalOn()) {
+      // En horario de descanso: retener (held=1) sin molestar al jefe y avisar al remitente.
+      const quiet = isWithinQuietHours();
       const id = createPendingReply({
         kind: 'dm',
         groupId: from,
@@ -108,7 +129,15 @@ export async function handlePublicDm({ from, text, messageId, pushName, rawMsg }
         triggerMsgId: rawMsg?.key?.id,
         triggerParticipant: rawMsg?.key?.participant,
         draft: reply,
+        held: quiet ? 1 : 0,
       });
+
+      if (quiet) {
+        await sendQuietHoursNotice(from, from, pushName, rawMsg);
+        console.log(`[Bot] DM de ${pushName || from} RETENIDO por horario de descanso (pendiente #${id})`);
+        return;
+      }
+
       const boss = bossDmTarget();
       if (boss) {
         await sendMessage(
@@ -146,6 +175,32 @@ export async function handleGroupMessage(msg) {
   // (jefe/admin presente) y el auto-leave los maneja group-guard antes de llegar aquí.
   if (!isGroupAuthorized(chatId)) {
     console.log(`[Bot] Grupo no autorizado "${groupName}" — ignorando mención de ${sender}`);
+    return;
+  }
+
+  // Órdenes del jefe DESDE el grupo: si quien menciona es el jefe/admin (verificado ESTRICTO
+  // — NO el fallback "cualquier @lid = jefe", que en grupos convertiría a todos en jefe),
+  // Juanito ejecuta la orden con un set acotado de tools (recordatorios, instrucciones del
+  // grupo, mensajes recurrentes) y le confirma por PRIVADO — no publica nada en el grupo.
+  if (isStrictPrivileged(sender)) {
+    console.log(`[Bot] Orden del jefe desde "${groupName}": ${text.slice(0, 60)}`);
+    try {
+      const boss = bossDmTarget();
+      // Hilo DEDICADO (`bossorders:<grupo>`): aísla las órdenes del jefe del historial
+      // compartido del chatbot del grupo. El id real del grupo va en groupId (para que las
+      // tools apunten a "este grupo"); los recordatorios se crean con la identidad del jefe.
+      const { text: reply } = await chat(text, `bossorders:${chatId}`, {
+        isGroup: true,
+        role: roleOf(sender),
+        bossInGroup: true,
+        groupId: chatId,
+        groupName,
+        createdBy: boss || sender,
+      });
+      if (boss) await sendMessage(boss, reply);
+    } catch (err) {
+      console.error('[Bot] Error en orden del jefe desde grupo:', err.message);
+    }
     return;
   }
 
@@ -194,6 +249,10 @@ export async function handleGroupMessage(msg) {
     // Si el grupo exige aprobación, NO se publica: se guarda como pendiente y se le
     // manda al jefe por DM para que apruebe/corrija/descarte (caduca por cron).
     if (requiresApproval) {
+      // En horario de descanso NO se molesta al jefe: la pendiente se RETIENE (held=1, no
+      // notifica ni caduca) y al remitente se le avisa amablemente. Un cron le manda el
+      // digest al jefe al volver el horario laboral.
+      const quiet = isWithinQuietHours();
       const id = createPendingReply({
         groupId: chatId,
         groupName,
@@ -204,7 +263,15 @@ export async function handleGroupMessage(msg) {
         triggerMsgId: rawMsg?.key?.id,
         triggerParticipant: rawMsg?.key?.participant,
         draft: reply,
+        held: quiet ? 1 : 0,
       });
+
+      if (quiet) {
+        await sendQuietHoursNotice(chatId, sender, pushName, rawMsg);
+        console.log(`[Bot] Respuesta en "${groupName}" RETENIDA por horario de descanso (pendiente #${id})`);
+        return;
+      }
+
       const boss = bossDmTarget();
       if (boss) {
         await sendMessage(

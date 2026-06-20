@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 // El SDK de Anthropic exige una apiKey al construir el cliente (claude/index.js).
 process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || 'test-key';
 
-const { roleOf, isPrivileged, groupHasPrivilegedMember } = await import('../src/common/roles.js');
+const { roleOf, isPrivileged, isStrictPrivileged, groupHasPrivilegedMember } = await import('../src/common/roles.js');
 const { toolsForRole, splitMemory } = await import('../src/claude/index.js');
 
 // Helper: corre fn con env temporal y restaura al terminar.
@@ -95,6 +95,45 @@ test('groupHasPrivilegedMember: detecta admin/boss entre participantes (strings 
     assert.equal(groupHasPrivilegedMember([`${BOSS_PHONE}@s.whatsapp.net`]), true, 'boss por teléfono');
     assert.equal(groupHasPrivilegedMember([]), false, 'vacío → false');
   });
+});
+
+test('isStrictPrivileged: jefe por BOSS_LID exacto, admin por ADMIN_LID, jefe por teléfono', () => {
+  withEnv({ BOSS_PHONE, BOSS_LID, ADMIN_LID }, () => {
+    assert.equal(isStrictPrivileged(BOSS_LID), true);
+    assert.equal(isStrictPrivileged(ADMIN_LID), true);
+    assert.equal(isStrictPrivileged(`${BOSS_PHONE}@s.whatsapp.net`), true);
+    assert.equal(isStrictPrivileged('999999999999999@lid'), false);
+    assert.equal(isStrictPrivileged(''), false);
+  });
+});
+
+test('isStrictPrivileged: SIN BOSS_LID, un @lid cualquiera NO es privilegiado (no usa el fallback)', () => {
+  // Diferencia clave con roleOf(): en grupos todos llegan como @lid; el fallback
+  // "cualquier @lid = jefe" convertiría a todo el grupo en jefe. isStrictPrivileged NO lo usa.
+  withEnv({ BOSS_PHONE, BOSS_LID: undefined, ADMIN_LID }, () => {
+    assert.equal(isStrictPrivileged('999999999999999@lid'), false);
+    // pero un LID admin sigue siéndolo, y el jefe por teléfono también
+    assert.equal(isStrictPrivileged(ADMIN_LID), true);
+    assert.equal(isStrictPrivileged(`${BOSS_PHONE}@s.whatsapp.net`), true);
+  });
+});
+
+test('toolsForRole: jefe-en-grupo (bossInGroup) expone solo el set acotado', () => {
+  const names = toolsForRole('boss', { isGroup: true, bossInGroup: true }).map((t) => t.name);
+  assert.deepEqual(
+    names.sort(),
+    ['create_reminder', 'manage_reminders', 'schedule_group_message', 'set_group_instructions'].sort()
+  );
+  // NO expone lectura de datos privados ni memoria
+  assert.ok(!names.includes('search_knowledge'));
+  assert.ok(!names.includes('summarize_group'));
+  assert.ok(!names.includes('save_memory'));
+});
+
+test('toolsForRole: grupo SIN bossInGroup sigue sin tools de acción (aislado)', () => {
+  const names = toolsForRole('boss', { isGroup: true }).map((t) => t.name);
+  assert.ok(!names.includes('create_reminder'));
+  assert.ok(!names.includes('set_group_instructions'));
 });
 
 test('toolsForRole: admin en DM tiene save_memory', () => {
