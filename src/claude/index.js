@@ -1210,7 +1210,9 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
   // grupo) para no contaminar el historial compartido del chatbot del grupo → el id real
   // del grupo viene aparte en `groupId`.
   // createdBy: dueño/destino de los recordatorios (default: el propio hilo). En bossInGroup
-  // el hilo NO es una identidad enviable, así que el router pasa el DM real del jefe.
+  // el hilo NO es una identidad enviable, así que el router pasa el LID de QUIEN dio la orden
+  // (jefe o admin) → un recordatorio sin destinatario explícito queda para esa persona y se
+  // le entrega a ella, no a un destino fijo.
   const ctx = {
     createdBy: createdBy || chatId,
     role,

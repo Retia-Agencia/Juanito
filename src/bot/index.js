@@ -186,17 +186,18 @@ export async function handleGroupMessage(msg) {
   if (isStrictPrivileged(sender)) {
     console.log(`[Bot] Orden del jefe desde "${groupName}": ${text.slice(0, 60)}`);
     try {
-      const boss = bossDmTarget();
       // Hilo DEDICADO (`bossorders:<grupo>`): aísla las órdenes del jefe del historial
       // compartido del chatbot del grupo. El id real del grupo va en groupId (para que las
-      // tools apunten a "este grupo"); los recordatorios se crean con la identidad del jefe.
+      // tools apunten a "este grupo"). createdBy = QUIEN dio la orden (el sender real): así un
+      // recordatorio sin destinatario explícito queda para esa persona y se le entrega a ELLA,
+      // no a un destino fijo. En grupo el sender es su LID, que es identidad DM-able.
       const { text: reply } = await chat(text, `bossorders:${chatId}`, {
         isGroup: true,
         role: roleOf(sender),
         bossInGroup: true,
         groupId: chatId,
         groupName,
-        createdBy: boss || sender,
+        createdBy: sender,
       });
       await sendMessage(chatId, reply, { quoted: rawMsg });
     } catch (err) {
