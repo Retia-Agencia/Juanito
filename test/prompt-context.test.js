@@ -167,7 +167,7 @@ test('DM: la persona de grupo NO aplica (es solo para grupos)', async () => {
 
 // ─── Jefe dando órdenes DESDE el grupo (bossInGroup) ──────────────────────────
 
-test('bossInGroup: prompt orientado a la acción, sin leer ni filtrar datos privados', async () => {
+test('bossInGroup: clasifica orden vs pregunta, responde en el grupo, sin filtrar datos privados', async () => {
   const deps = spyDeps();
   const prompt = await buildSystemPrompt(deps, {
     isGroup: true,
@@ -186,7 +186,11 @@ test('bossInGroup: prompt orientado a la acción, sin leer ni filtrar datos priv
   // Reconoce el grupo y las acciones disponibles, conserva seguridad
   assert.ok(prompt.includes('Patah'), 'nombra el grupo de origen');
   assert.ok(/set_group_instructions/.test(prompt), 'menciona la tool de instrucciones del grupo');
-  assert.ok(/por privado/i.test(prompt), 'aclara que confirma por privado, no en el grupo');
+  // Clasifica ORDEN vs PREGUNTA normal (la mejora de razonamiento)
+  assert.ok(/ORDEN/.test(prompt) && /PREGUNTA/.test(prompt), 'distingue orden vs pregunta');
+  // Responde EN EL GRUPO (ya no por privado) y protege datos privados ofreciéndolos por DM
+  assert.ok(/mismo grupo/i.test(prompt), 'aclara que la respuesta se publica en el grupo');
+  assert.ok(/por privado|DM/i.test(prompt), 'ofrece los datos privados por DM, no en el grupo');
   assert.ok(/Reglas de seguridad/i.test(prompt), 'conserva el bloque de seguridad');
 });
 

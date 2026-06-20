@@ -181,7 +181,8 @@ export async function handleGroupMessage(msg) {
   // Órdenes del jefe DESDE el grupo: si quien menciona es el jefe/admin (verificado ESTRICTO
   // — NO el fallback "cualquier @lid = jefe", que en grupos convertiría a todos en jefe),
   // Juanito ejecuta la orden con un set acotado de tools (recordatorios, instrucciones del
-  // grupo, mensajes recurrentes) y le confirma por PRIVADO — no publica nada en el grupo.
+  // grupo, mensajes recurrentes) y confirma EN EL MISMO grupo donde se dio la orden (citando
+  // el mensaje gatillo), para que quien la dio la vea donde la escribió.
   if (isStrictPrivileged(sender)) {
     console.log(`[Bot] Orden del jefe desde "${groupName}": ${text.slice(0, 60)}`);
     try {
@@ -197,7 +198,7 @@ export async function handleGroupMessage(msg) {
         groupName,
         createdBy: boss || sender,
       });
-      if (boss) await sendMessage(boss, reply);
+      await sendMessage(chatId, reply, { quoted: rawMsg });
     } catch (err) {
       console.error('[Bot] Error en orden del jefe desde grupo:', err.message);
     }

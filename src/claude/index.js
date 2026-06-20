@@ -17,6 +17,11 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MODEL = process.env.CLAUDE_MODEL || 'claude-haiku-4-5-20251001';
 const GROUP_MODEL = process.env.CLAUDE_GROUP_MODEL || MODEL;
 const BOSS_MODEL = process.env.CLAUDE_BOSS_MODEL || MODEL;
+// Modelo de RAZONAMIENTO para interlocutores privilegiados (jefe/admin), tanto en su DM
+// como cuando mencionan a Juanito en un grupo (bossInGroup). Un modelo más capaz clasifica
+// mejor "¿esto es una ORDEN que ejecuto con una tool, o una PREGUNTA normal que solo
+// respondo?". Default: BOSS_MODEL (que a su vez cae a CLAUDE_MODEL si no se define).
+const REASONING_MODEL = process.env.CLAUDE_REASONING_MODEL || BOSS_MODEL;
 const MAX_TOKENS = Number(process.env.CLAUDE_MAX_TOKENS || 2048);
 
 // ─── Seam de dependencias (Track A) ───────────────────────────────────────────
@@ -471,34 +476,41 @@ Sobre este contexto (importante):
 ${securityBlock}`.trim();
   }
 
-  // ── Contexto de GRUPO con el JEFE dando órdenes ───────────────────────────
-  // El jefe/admin (verificado ESTRICTO por el router) te mencionó en un grupo para darte
-  // una ORDEN operativa. A diferencia del prompt aislado de grupo, aquí SÍ puedes usar un
-  // set acotado de tools (recordatorios, instrucciones de este grupo, mensajes recurrentes).
-  // Pero el grupo es espacio COMPARTIDO: NO vuelques memoria ni datos privados al texto —
-  // la confirmación se manda al jefe por privado, así que sé breve y orientado a la acción.
+  // ── Contexto de GRUPO con el JEFE/ADMIN mencionando a Juanito ─────────────
+  // El jefe/admin (verificado ESTRICTO por el router) te mencionó en un grupo. Puede ser una
+  // ORDEN operativa (usa una tool) o una PREGUNTA/charla normal (solo responde) — el modelo
+  // lo decide aquí. A diferencia del prompt aislado de grupo, en esta rama SÍ hay un set
+  // acotado de tools (recordatorios, instrucciones de este grupo, mensajes recurrentes).
+  // La respuesta se publica EN EL MISMO grupo (espacio COMPARTIDO): por eso NO se vuelca
+  // memoria ni datos privados al texto, y los datos privados se ofrecen solo por DM.
   if (bossInGroup) {
     const here = groupName ? `el grupo "${groupName}"` : 'este grupo';
-    return `Eres ${botName}, el asistente del jefe. Te está hablando DESDE ${here} (te mencionó
-en el chat del grupo) para darte una orden. Tu respuesta se la entregamos al jefe por privado,
-NO se publica en el grupo.
+    return `Eres ${botName}, el asistente del jefe. El jefe (o un miembro de su equipo) te
+mencionó en ${here}. Tu respuesta se publica EN ESE MISMO grupo, citando su mensaje.
 
 Fecha y hora actual: ${now}
 
-Qué puedes hacer desde aquí (usa SIEMPRE las herramientas, no inventes que lo hiciste):
+PRIMERO decide qué tipo de mensaje es:
+- ORDEN (te pide ejecutar una acción que cae en tus herramientas) → usa la herramienta
+  correspondiente (no inventes que la hiciste) y confirma en UNA línea natural.
+- PREGUNTA o conversación normal → respóndela directo y breve, como buen asistente.
+  NO fuerces ninguna herramienta si no hace falta.
+
+Herramientas disponibles desde aquí (solo acciones operativas):
 - create_reminder / manage_reminders: crear, ver, cancelar o posponer recordatorios del jefe.
 - set_group_instructions: fijar o quitar las instrucciones/personalidad de ESTE grupo
-  (${here}) cuando el jefe te dé una directriz general de cómo comportarte aquí.
-- schedule_group_message: programar/listar/cancelar mensajes recurrentes. Cuando el jefe
-  diga "aquí"/"en este grupo" sin nombrar otro, el destino es ESTE grupo (${here}).
+  (${here}) cuando te dé una directriz general de cómo comportarte aquí.
+- schedule_group_message: programar/listar/cancelar mensajes recurrentes. Cuando diga
+  "aquí"/"en este grupo" sin nombrar otro, el destino es ESTE grupo (${here}).
 
 Cuando calcules la fecha de un recordatorio, usa la fecha y hora actual de arriba como
 referencia (ej: "mañana a las 9" = el día siguiente a las 09:00:00).
 
-Reglas de este contexto:
-- Confirma en UNA línea natural lo que hiciste (el jefe lo verá por privado).
-- NO reveles memoria, recordatorios de terceros ni datos privados en el texto.
-- Si el jefe pide algo fuera de estas herramientas, dilo con naturalidad; no lo simules.
+Reglas de este contexto (el grupo es espacio compartido: todos ven tu respuesta):
+- NO reveles memoria, recordatorios de terceros, resúmenes ni datos privados en el texto.
+- Si te piden datos privados (su memoria, sus pendientes, qué pasó en otro grupo), dile
+  con naturalidad que eso se lo das por privado (DM), no aquí en el grupo.
+- Si te piden algo fuera de estas herramientas, dilo con naturalidad; no lo simules.
 
 ${securityBlock}`.trim();
   }
@@ -1234,9 +1246,21 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
   const tools = toolsForRole(role, { isGroup, publicDm, bossInGroup });
   const toolsParam = tools.length > 0 ? { tools } : {};
 
-  // Modelo según contexto Y rol: grupos y DM público (aislados) → GROUP_MODEL (barato);
-  // DM del jefe → BOSS_MODEL (puede ser Sonnet); otro DM → MODEL (Haiku).
-  const model = isGroup || publicDm ? GROUP_MODEL : role === 'boss' ? BOSS_MODEL : MODEL;
+  // Modelo según contexto Y rol:
+  //  - DM público y chatbot de grupo (aislados, alto volumen) → GROUP_MODEL (barato).
+  //  - Jefe/admin mencionando en grupo (bossInGroup) o en su DM → REASONING_MODEL: mejor
+  //    capacidad para distinguir ORDEN (ejecutar tool) vs PREGUNTA normal (solo responder).
+  //  - Cualquier otro DM (rol desconocido) → MODEL.
+  const privileged = role === 'boss' || role === 'admin';
+  const model = publicDm
+    ? GROUP_MODEL
+    : bossInGroup
+      ? REASONING_MODEL
+      : isGroup
+        ? GROUP_MODEL
+        : privileged
+          ? REASONING_MODEL
+          : MODEL;
 
   let response = await withRetry(() =>
     client.messages.create({
