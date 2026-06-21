@@ -2072,17 +2072,30 @@ pueden aprobar **jefe + admins** (`isStrictPrivileged`).
   entrega a su grupo/DM original por los crons de siempre (entrega ya desacoplada).
 - Env en `.env.example` **y** `docker-compose.yml`: `APPROVALS_GROUP`.
 
-**Tests:** `approval-routing` (4: @g.us, nombre→fallback, vacío, trim) + `prompt-context` (2: tools de
-consola acotadas; prompt con pendientes y SIN datos privados). 120/120 en los archivos afectados.
+**Fix anti-loop (2026-06-21, mismo día):** en la prueba en vivo el modelo interpretaba una aprobación
+clara ("aprobado", "envíalo así") como una *corrección* y re-generaba sin fin (feedback acumulado, el
+pendiente nunca se aprobaba). **Solución:** fast-path DETERMINISTA en `handleApprovalConsole` —
+`src/common/approval-intent.js` (`parseApproval`, PURO, anclado `^...$` para no confundir "envíame la
+versión revisada" con un envío) aprueba el único pendiente o el `#id` indicado SIN pasar por el LLM;
+sólo cae al LLM si es ambiguo (varios pendientes sin id) o es corrección/descarte/pregunta. Además el
+prompt de la consola ahora exige pegar el TEXTO NUEVO completo al corregir y NUNCA tratar una
+aprobación como corrección.
 
-**✅ DESPLEGADO LIVE (2026-06-21 ~21:52 UTC).** `APPROVALS_GROUP=120363428888847612@g.us`
+**Tests:** `approval-routing` (4) + `prompt-context` (2: tools de consola acotadas; prompt con
+pendientes y SIN datos privados) + `approval-intent` (4: aprobaciones claras, id explícito, no-aprobaciones,
+sin id). Verde en los archivos afectados.
+
+**✅ DESPLEGADO LIVE (2026-06-21 ~22:11 UTC).** `APPROVALS_GROUP=120363428888847612@g.us`
 ("Aprobaciones Juanito", autorizado por presencia de Dani). `pscp src test docker-compose.yml` +
-`docker compose up -d --build`. Verificado: env en el contenedor, WA reconectó **sin QR**
-(`Transitioning to Online`), jobs activos, barrido de 11 grupos OK.
+`docker compose up -d --build`. ⚠️ Un primer deploy crasheó por una declaración duplicada de
+`localDateStr` (ya existía a nivel de módulo) → corregido y re-desplegado. Verificado: WA reconectó
+**sin QR** (`Transitioning to Online`), jobs activos.
 
-**🟡 PENDIENTE — round-trip real:** forzar un borrador/respuesta pendiente y aprobarlo desde el grupo
-("apruebo" sin mención) para confirmar end-to-end. Gotcha de deploy de env nueva aplicó (se copió
-`docker-compose.yml`).
+**✅ ROUND-TRIP REAL CONFIRMADO (2026-06-21):** DM de desconocido → solicitud llega al **grupo**
+"Aprobaciones Juanito" (no al DM del jefe) → "Haz que sea más corto" revisó vía LLM → "Así está bien"
+aprobó por el fast-path determinista (`[Bot] Aprobación determinista: respuesta #3`) → la respuesta
+salió a su destino original (DM de Ange). **Sin loop.** Pendiente menor: validar el flujo de
+**respuestas de grupo** (grupo con `require_approval` ON) y borradores recurrentes (§18.F) end-to-end.
 
 ### 🟢 Baja prioridad / Nice-to-have
 
