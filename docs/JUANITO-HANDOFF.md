@@ -2028,8 +2028,18 @@ DM (jefe/admin) — *"en el grupo X recuérdales a las 5 que…"*. Es distinto d
   **cola anti-ban** como cualquier envío. `manage_reminders` (list/cancel/snooze) cubre también los de grupo.
 - Disponible desde DM del jefe/admin y desde `BOSS_IN_GROUP_TOOLS` (órdenes en grupo, §18.O).
 
-**Tests:** +N `brain.tools` (grupo por nombre, "aquí" → grupo actual, grupo no resuelto, grupo no autorizado,
-personal intacto). **🟡 PENDIENTE:** deploy al VPS + round-trip real.
+**Tests:** +4 `brain.tools` (grupo por nombre, "aquí" → grupo actual, grupo no resuelto, grupo no autorizado,
+personal intacto). 49/49 en el suite puro; roles/commands/prompt-context/group-replies verdes.
+
+**✅ DESPLEGADO LIVE (2026-06-21 ~19:07 UTC).** Commit `c3723f3` en `main` (pusheado). `pscp src test` +
+`docker compose up -d --build`. Verificado: container `Up`, código nuevo dentro del contenedor
+(`to_group_id` en `migrate.js` y `reminders.js`), migración aplicada (`+ reminders.to_group_id añadida`
+/ `+ reminders.to_group_name añadida`), WA reconectó **sin QR** (`Reconnection with existing sync data
+… Transitioning to Online`), `[Calendly] Jobs activos ✅ (DRY-RUN: false)` intacto. Sin env nuevas →
+no hizo falta copiar `docker-compose.yml`.
+
+**🟡 PENDIENTE — round-trip real:** probar en WhatsApp: (a) por DM "en el grupo X recuérdales el …" →
+llega al grupo a la hora; (b) dentro de un grupo "@Juanito a las 5 recuérdanos …" → se publica ahí.
 
 ### 🟢 Baja prioridad / Nice-to-have
 
