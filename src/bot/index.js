@@ -11,10 +11,15 @@ import {
   getGroupApproval,
   isDmApprovalOn,
   createPendingReply,
+  listPendingReplies,
+  approvePendingReply,
+  listPendingDrafts,
+  approveDraft,
 } from '../db/index.js';
 import { phonesMatch, isWithinQuietHours } from '../common/utils.js';
 import { roleOf, isStrictPrivileged } from '../common/roles.js';
 import { approvalsTarget, approvalsGroupId } from '../common/approval-routing.js';
+import { parseApproval } from '../common/approval-intent.js';
 
 const BOSS_PHONE = () => process.env.BOSS_PHONE;
 const BOT_NAME = () => process.env.BOT_NAME || 'Juanito';
@@ -164,8 +169,16 @@ export async function handlePublicDm({ from, text, messageId, pushName, rawMsg }
 // Si APPROVALS_GROUP está configurado, las solicitudes de aprobación se publican EN ese
 // grupo (no en el DM del jefe). Acá el jefe/admin las gestionan SIN mención: cualquier
 // mensaje suyo en ese grupo se interpreta como decisión sobre lo pendiente (aprobar/
-// corregir/descartar), con el set acotado de tools (manage_drafts/manage_replies). Lo
-// aprobado sale a su grupo/DM original (cron de entrega), no acá. Devuelve true si manejó.
+// corregir/descartar). Lo aprobado sale a su grupo/DM original (cron de entrega), no acá.
+
+// Una aprobación CLARA ("apruebo", "aprobado", "envíalo así", "dale", "ok", "#3")
+// se resuelve de forma DETERMINISTA (parseApproval), sin pasar por el LLM. Esto evita el
+// loop en que el modelo interpretaba la aprobación como una corrección y re-generaba sin fin.
+
+function localDateStr() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/Bogota' });
+}
+
 export async function handleApprovalConsole({ chatId, text, sender, messageId, rawMsg }) {
   if (!text) return false;
   const approvalsId = await approvalsGroupId();
@@ -176,8 +189,35 @@ export async function handleApprovalConsole({ chatId, text, sender, messageId, r
 
   console.log(`[Bot] Consola de aprobaciones: ${text.slice(0, 60)}`);
   try {
-    // Hilo dedicado (`approvals:<grupo>`) para aislar el historial de la consola. Se trata
-    // como un DM (no isGroup) → prompt con el contexto de pendientes; tools acotadas a aprobar.
+    // 1) Fast-path DETERMINISTA para aprobaciones claras (anti-loop): aprueba sin LLM.
+    const { isApprove, id } = parseApproval(text);
+    if (isApprove) {
+      const candidates = [
+        ...(listPendingReplies() || []).map((r) => ({ type: 'reply', id: r.id, name: r.group_name })),
+        ...(listPendingDrafts(localDateStr()) || []).map((d) => ({ type: 'draft', id: d.id, name: d.group_name })),
+      ];
+      if (!candidates.length) {
+        await sendMessage(chatId, 'No hay nada pendiente de aprobar ahora 👍', { quoted: rawMsg });
+        return true;
+      }
+      // id explícito → ese; sin id y un solo pendiente → ese; si es ambiguo, lo decide el LLM.
+      const matches = id != null ? candidates.filter((c) => c.id === id) : candidates;
+      if (matches.length === 1) {
+        const t = matches[0];
+        const changes = t.type === 'reply' ? approvePendingReply(t.id) : approveDraft(t.id);
+        const label = t.type === 'reply' ? 'respuesta' : 'borrador';
+        const msg = changes
+          ? `Aprobado ✅ — la ${label} #${t.id} para *${t.name}* sale a su destino en breve.`
+          : `La ${label} #${t.id} ya no está pendiente.`;
+        await sendMessage(chatId, msg, { quoted: rawMsg });
+        console.log(`[Bot] Aprobación determinista: ${label} #${t.id} (changes=${changes})`);
+        return true;
+      }
+      // 0 coincidencias por id, o varias y ambiguo → cae al LLM para que pregunte cuál.
+    }
+
+    // 2) Resto (correcciones, descartes, ambigüedad, preguntas) → LLM con contexto de pendientes.
+    // Hilo dedicado (`approvals:<grupo>`) para aislar el historial; se trata como DM (no isGroup).
     const { text: reply } = await chat(text, `approvals:${chatId}`, {
       role: roleOf(sender),
       approvalsConsole: true,
