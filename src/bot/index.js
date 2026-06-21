@@ -174,11 +174,6 @@ export async function handlePublicDm({ from, text, messageId, pushName, rawMsg }
 // Una aprobación CLARA ("apruebo", "aprobado", "envíalo así", "dale", "ok", "#3")
 // se resuelve de forma DETERMINISTA (parseApproval), sin pasar por el LLM. Esto evita el
 // loop en que el modelo interpretaba la aprobación como una corrección y re-generaba sin fin.
-
-function localDateStr() {
-  return new Date().toLocaleDateString('en-CA', { timeZone: process.env.TZ || 'America/Bogota' });
-}
-
 export async function handleApprovalConsole({ chatId, text, sender, messageId, rawMsg }) {
   if (!text) return false;
   const approvalsId = await approvalsGroupId();
