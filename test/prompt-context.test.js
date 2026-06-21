@@ -232,3 +232,38 @@ test('toolsForRole: en DM público NO expone ninguna herramienta', () => {
   assert.deepEqual(toolsForRole('unknown', { publicDm: true }), []);
   assert.deepEqual(toolsForRole('admin', { publicDm: true }), [], 'ni siquiera para admin');
 });
+
+// ─── Consola de aprobaciones (grupo dedicado "Aprobaciones Juanito") ──────────
+
+test('toolsForRole: consola de aprobaciones SOLO expone manage_drafts y manage_replies', () => {
+  const names = toolsForRole('boss', { approvalsConsole: true }).map((t) => t.name).sort();
+  assert.deepEqual(names, ['manage_drafts', 'manage_replies']);
+  // No filtra recordatorios/memoria/etc. aunque sea el jefe.
+  assert.ok(!names.includes('create_reminder'));
+  assert.ok(!names.includes('save_memory'));
+});
+
+test('consola de aprobaciones: inyecta los pendientes (borradores + respuestas) y SIN datos privados', async () => {
+  const deps = spyDeps();
+  deps.listPendingDrafts = async () => [
+    { id: 3, group_name: 'Patah', time_hm: '09:00', draft: 'BORRADOR-MARCA' },
+  ];
+  deps.listPendingReplies = async () => [
+    { id: 7, group_name: 'Ventas', trigger_sender: 'Ana', trigger_text: 'precio?', draft: 'RESP-MARCA' },
+  ];
+  const prompt = await buildSystemPrompt(deps, { approvalsConsole: true, role: 'boss', chatId: 'approvals:g@g.us' });
+
+  // Contexto de lo pendiente, para entender "apruebo"/"cámbialo"/"no".
+  assert.ok(prompt.includes('BORRADOR-MARCA'), 'incluye el borrador pendiente');
+  assert.ok(prompt.includes('RESP-MARCA'), 'incluye la respuesta pendiente');
+  assert.ok(/GRUPO DE APROBACIONES/i.test(prompt), 'se presenta como la consola de aprobaciones');
+  assert.ok(/manage_drafts/.test(prompt) && /manage_replies/.test(prompt), 'instruye usar las tools de aprobación');
+
+  // Espacio COMPARTIDO: NO se vuelca memoria/notas/recordatorios privados al grupo.
+  assert.equal(deps.calls.getAllMemory, 0, 'no lee memoria en la consola');
+  assert.equal(deps.calls.getUpcomingReminders, 0, 'no lee recordatorios en la consola');
+  for (const secret of ['SECRETO-NUCLEO-123', 'SECRETO-NOTA-JEFE', 'SECRETO-RECORDATORIO']) {
+    assert.ok(!prompt.includes(secret), `la consola no debe filtrar ${secret}`);
+  }
+  assert.ok(/Reglas de seguridad/i.test(prompt), 'conserva el bloque de seguridad');
+});

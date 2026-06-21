@@ -3,7 +3,7 @@
 
 import 'dotenv/config';
 import { connect, sendMessage, isConnected, leaveGroup, listGroups } from './whatsapp/index.js';
-import { handleBossMessage, handleGroupMessage, handlePublicDm } from './bot/index.js';
+import { handleBossMessage, handleGroupMessage, handlePublicDm, handleApprovalConsole } from './bot/index.js';
 import { handleCommand, isReportCommand, wantsMetrics } from './bot/commands.js';
 import { handleCloserOptin } from './calendly/optin.js';
 import { startAllJobs } from './scheduler/index.js';
@@ -227,6 +227,10 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
   // adds que el evento `group-participants.update` no capturó, p.ej. si agregaron al
   // bot mientras reiniciaba). Si aplica auto-leave, salimos sin procesar.
   if ((await enforceGroup(chatId, groupName)) === 'left') return;
+
+  // Consola de aprobaciones: si este es el grupo APPROVALS_GROUP y quien escribe es jefe/admin,
+  // se interpreta como decisión sobre lo pendiente (sin mención). Si lo manejó, cortamos.
+  if (await handleApprovalConsole({ chatId, text, sender, messageId, rawMsg })) return;
 
   // pushName viaja hasta el aviso de rate-limit (saluda por nombre al avisar).
   // rawMsg permite responder CITANDO el mensaje que mencionó al bot.

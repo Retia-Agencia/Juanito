@@ -27,9 +27,10 @@ export function __resetDeps() {
 
 async function resolveDeps() {
   if (_injectedDeps) return _injectedDeps;
-  const [db, whatsapp] = await Promise.all([
+  const [db, whatsapp, routing] = await Promise.all([
     import('../db/index.js'),
     import('../whatsapp/index.js'),
+    import('../common/approval-routing.js'),
   ]);
   return {
     listApprovedPendingReplies: db.listApprovedPendingReplies,
@@ -41,6 +42,7 @@ async function resolveDeps() {
     releaseHeldPendingReply: db.releaseHeldPendingReply,
     isGroupAuthorized: db.isGroupAuthorized,
     sendMessage: whatsapp.sendMessage,
+    approvalsTarget: routing.approvalsTarget,
   };
 }
 
@@ -73,7 +75,7 @@ export async function runPendingRepliesCycle(deps) {
   if (!isWithinQuietHours()) {
     const held = (d.listHeldPendingReplies?.() || []);
     if (held.length) {
-      const boss = bossDmTarget();
+      const boss = d.approvalsTarget ? await d.approvalsTarget() : bossDmTarget();
       if (boss) {
         const lines = held
           .map(
@@ -148,7 +150,7 @@ export async function runPendingRepliesCycle(deps) {
     }
 
     // b) Re-aviso al jefe, con el borrador y cómo rescatarla.
-    const boss = bossDmTarget();
+    const boss = d.approvalsTarget ? await d.approvalsTarget() : bossDmTarget();
     if (boss) {
       const dest = r.kind === 'dm' ? r.group_name : `"${r.group_name || r.group_id}"`;
       await d

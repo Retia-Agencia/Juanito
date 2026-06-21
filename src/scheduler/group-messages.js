@@ -30,10 +30,11 @@ export function __resetDeps() {
 
 async function resolveDeps() {
   if (_injectedDeps) return _injectedDeps;
-  const [db, whatsapp, claude] = await Promise.all([
+  const [db, whatsapp, claude, routing] = await Promise.all([
     import('../db/index.js'),
     import('../whatsapp/index.js'),
     import('../claude/index.js'),
+    import('../common/approval-routing.js'),
   ]);
   return {
     listScheduledMessages: db.listScheduledMessages,
@@ -47,6 +48,7 @@ async function resolveDeps() {
     getSetting: db.getSetting,
     sendMessage: whatsapp.sendMessage,
     generateScheduledDraft: claude.generateScheduledDraft,
+    approvalsTarget: routing.approvalsTarget,
   };
 }
 
@@ -74,7 +76,7 @@ async function processGenerated(d, row, nowParts) {
   // 1) Fase de borrador: aún no existe y ya estamos dentro del lead → generar + DM al jefe.
   if (!draft && isDraftDue({ days: row.days, timeHm: row.time_hm, nowParts, leadMin: DRAFT_LEAD_MIN() })) {
     if (row.last_sent_date === nowParts.date) return false; // ya publicado hoy
-    const boss = bossDmTarget();
+    const boss = d.approvalsTarget ? await d.approvalsTarget() : bossDmTarget();
     if (!boss) {
       console.error(`[Scheduler] Borrador #${row.id}: sin BOSS_LID/BOSS_PHONE para aprobar — omitido`);
       return false;
@@ -117,7 +119,7 @@ async function processGenerated(d, row, nowParts) {
     // Pendiente a la hora de publicar → recordarle al jefe UNA vez. No se publica.
     if (draft.status === 'pending' && !draft.reminded) {
       d.markDraftReminded(draft.id);
-      const boss = bossDmTarget();
+      const boss = d.approvalsTarget ? await d.approvalsTarget() : bossDmTarget();
       if (boss) {
         await d.sendMessage(
           boss,

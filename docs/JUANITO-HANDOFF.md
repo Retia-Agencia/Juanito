@@ -2047,6 +2047,43 @@ recuérdales …" llega al grupo a la hora. 🟡 Faltan las variantes F2–F4 (m
 `manage_reminders` con "(en grupo X)", default-deny). Checklist en
 [docs/SMOKE-TEST.md](SMOKE-TEST.md) Bloque F.
 
+### 18.R 🔵 Aprobaciones en un grupo dedicado en vez del DM del jefe (2026-06-21)
+
+**Qué pidió el jefe:** que las solicitudes de aprobación NO lleguen al DM de Dani sino a un grupo
+dedicado **"Aprobaciones Juanito"** (Juanito ya es miembro), y que ahí el jefe/admin las gestionen.
+
+**Decisiones (acordadas):** mover **los 3 flujos** (borradores recurrentes §18.F + respuestas de
+grupo §18.O + respuestas a DMs de desconocidos §18.J) · aprobar **sin mención** en el grupo ·
+pueden aprobar **jefe + admins** (`isStrictPrivileged`).
+
+**Implementación:**
+- `src/common/approval-routing.js` (NUEVO): `approvalsTarget()` (a dónde mandar las solicitudes;
+  fallback al DM del jefe si `APPROVALS_GROUP` está vacío) + `approvalsGroupId()` (para que el router
+  detecte mensajes EN ese grupo). `APPROVALS_GROUP` admite group_id (…@g.us, O(1)) o nombre.
+- **Envío:** `bot/index.js` (DM público + respuesta de grupo), `scheduler/group-messages.js`
+  (borrador + recordatorio), `scheduler/group-replies.js` (digest quiet-hours + rescate) usan
+  `approvalsTarget()` en vez de `bossDmTarget()` (inyectable en los schedulers; fallback al DM si no).
+- **Lectura (consola):** nuevo modo `approvalsConsole` en `chat()` (`claude/index.js`): tools acotadas
+  a `manage_drafts`/`manage_replies` (`APPROVALS_CONSOLE_TOOLS`), prompt dedicado **early-return** que
+  NO vuelca memoria/notas/recordatorios al grupo (espacio compartido), pero SÍ inyecta el contexto de
+  lo pendiente vía el helper `pendingApprovalBlocks()`. Handler `handleApprovalConsole()` en `bot/index.js`,
+  cableado en el router (`src/index.js`) tras `enforceGroup`: si el chat es `APPROVALS_GROUP` y el
+  remitente es jefe/admin, interpreta SIN mención y publica la respuesta en el grupo. Lo aprobado se
+  entrega a su grupo/DM original por los crons de siempre (entrega ya desacoplada).
+- Env en `.env.example` **y** `docker-compose.yml`: `APPROVALS_GROUP`.
+
+**Tests:** `approval-routing` (4: @g.us, nombre→fallback, vacío, trim) + `prompt-context` (2: tools de
+consola acotadas; prompt con pendientes y SIN datos privados). 120/120 en los archivos afectados.
+
+**✅ DESPLEGADO LIVE (2026-06-21 ~21:52 UTC).** `APPROVALS_GROUP=120363428888847612@g.us`
+("Aprobaciones Juanito", autorizado por presencia de Dani). `pscp src test docker-compose.yml` +
+`docker compose up -d --build`. Verificado: env en el contenedor, WA reconectó **sin QR**
+(`Transitioning to Online`), jobs activos, barrido de 11 grupos OK.
+
+**🟡 PENDIENTE — round-trip real:** forzar un borrador/respuesta pendiente y aprobarlo desde el grupo
+("apruebo" sin mención) para confirmar end-to-end. Gotcha de deploy de env nueva aplicó (se copió
+`docker-compose.yml`).
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Comando `/recuerda` en grupos (admins):** `@Juanito /recuerda [texto]` → memoria núcleo sin ir a DM.

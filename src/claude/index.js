@@ -410,13 +410,20 @@ const BOSS_IN_GROUP_TOOLS = new Set([
   'set_group_instructions',
 ]);
 
+// Set para la CONSOLA DE APROBACIONES (grupo dedicado "Aprobaciones Juanito"): el jefe/admin
+// solo aprueban / corrigen / descartan lo pendiente. Nada más — ni memoria, ni recordatorios,
+// ni lectura de datos privados (es un espacio compartido). Ver handleApprovalConsole.
+const APPROVALS_CONSOLE_TOOLS = new Set(['manage_drafts', 'manage_replies']);
+
 // Devuelve el subconjunto de tools que se le expone a Claude según el rol y el contexto.
 // Gatear acá (a nivel de API) es más fuerte que pedirlo en el prompt: lo que no está
 // en el array, el modelo NO lo puede invocar pase lo que pase.
-export function toolsForRole(role, { isGroup = false, publicDm = false, bossInGroup = false } = {}) {
+export function toolsForRole(role, { isGroup = false, publicDm = false, bossInGroup = false, approvalsConsole = false } = {}) {
   // DM de un desconocido: asistente general aislado, SIN herramientas (igual de
   // sandboxed que un grupo — no toca memoria, recordatorios ni datos del jefe).
   if (publicDm) return [];
+  // Consola de aprobaciones: solo las tools para decidir lo pendiente (aprobar/corregir/descartar).
+  if (approvalsConsole) return TOOLS.filter((t) => APPROVALS_CONSOLE_TOOLS.has(t.name));
   // Jefe/admin dando órdenes DESDE un grupo: set acotado (ya verificado estrictamente
   // por el router con isStrictPrivileged). El resto del grupo NO entra por esta rama.
   if (isGroup && bossInGroup) return TOOLS.filter((t) => BOSS_IN_GROUP_TOOLS.has(t.name));
@@ -441,9 +448,61 @@ export function splitMemory(memory = []) {
 
 // ─── Prompt de sistema ────────────────────────────────────────────────────────
 
+// Bloques de CONTEXTO de lo pendiente de aprobación (borradores generados §18.F +
+// respuestas de grupo/DM §18.O/J). Le dan a Claude el contexto para entender
+// "apruebo"/"cámbialo"/"no" sin citar ids. Se usan tanto en el DM del jefe como en la
+// consola de aprobaciones. Devuelve { draftsBlock, repliesBlock } (cada uno '' si no hay).
+async function pendingApprovalBlocks(deps) {
+  let draftsBlock = '';
+  try {
+    const today = zonedNowParts().date;
+    const pending = (await deps.listPendingDrafts?.(today)) || [];
+    if (pending.length) {
+      draftsBlock = `## Borradores PENDIENTES de aprobación (hoy) — CONTEXTO PRIORITARIO
+Hay un mensaje generado esperando el visto bueno del jefe para publicarse en su grupo a la
+hora programada. MIENTRAS exista un borrador pendiente, interpreta lo que diga el jefe en
+ESTE contexto y actúa SIEMPRE con la tool manage_drafts:
+- Si aprueba ("apruebo", "envíalo", "dale", "así está bien", "perfecto") → action=approve.
+- Si pide CUALQUIER cambio de redacción ("más corto", "una sola línea", "sin emoji",
+  "cámbialo", "otro tono", "agrégale X", "así no me gusta") → SE REFIERE AL BORRADOR →
+  action=revise con su corrección textual. NUNCA reformatees sus tareas, notas, recordatorios
+  ni su memoria: la corrección es SIEMPRE al borrador.
+- Si lo rechaza o no lo quiere ("no", "no lo mandes", "descártalo", "cancélalo", "bórralo") →
+  action=discard.
+Si hay varios borradores y no es obvio a cuál se refiere, pregúntale cuál.
+${pending
+  .map((d) => `- Borrador #${d.id} → "${d.group_name}" a las ${d.time_hm}:\n${d.draft}`)
+  .join('\n')}`;
+    }
+  } catch {
+    /* sin borradores: bloque vacío */
+  }
+
+  let repliesBlock = '';
+  try {
+    const replies = (await deps.listPendingReplies?.()) || [];
+    if (replies.length) {
+      repliesBlock = `## Respuestas PENDIENTES de tu aprobación — CONTEXTO PRIORITARIO
+En estos grupos/DMs Juanito NO responde sin tu visto bueno. Cada ítem es una respuesta que
+propongo enviar. MIENTRAS haya respuestas pendientes, actúa SIEMPRE con la tool manage_replies:
+- Si apruebas ("apruebo", "envíala", "dale", "está bien") → action=approve.
+- Si pides un cambio ("cámbiala", "más corto", "dile que…", "así no") → action=revise con tu corrección.
+- Si la rechazas ("no", "no respondas", "descártala") → action=discard.
+Si hay varias y no es obvio a cuál te refieres, pregúntale cuál.
+${replies
+  .map((r) => `- Respuesta #${r.id} en "${r.group_name}" (${r.trigger_sender} dijo: "${(r.trigger_text || '').slice(0, 80)}"):\n${r.draft}`)
+  .join('\n')}`;
+    }
+  } catch {
+    /* sin respuestas pendientes: bloque vacío */
+  }
+
+  return { draftsBlock, repliesBlock };
+}
+
 // Exportado para tests: permite verificar el aislamiento del prompt de grupo
 // (que NO toca memoria/recordatorios/resúmenes ni inyecta datos privados).
-export async function buildSystemPrompt(deps, { isGroup = false, role = 'boss', chatId = null, publicDm = false, bossInGroup = false, groupName = null } = {}) {
+export async function buildSystemPrompt(deps, { isGroup = false, role = 'boss', chatId = null, publicDm = false, bossInGroup = false, groupName = null, approvalsConsole = false } = {}) {
   const now = new Date().toLocaleString('es-CO', {
     timeZone: process.env.TZ || 'America/Bogota',
     dateStyle: 'full',
@@ -526,6 +585,30 @@ Reglas de este contexto (el grupo es espacio compartido: todos ven tu respuesta)
 ${securityBlock}`.trim();
   }
 
+  // ── Consola de aprobaciones: grupo dedicado donde el jefe/admin deciden lo pendiente ──
+  // Prompt AISLADO (early-return como bossInGroup): NO carga ni vuelca memoria/notas/
+  // recordatorios al grupo (espacio compartido). Solo el contexto de lo pendiente
+  // (borradores + respuestas) y cómo decidir. Lo aprobado lo entrega su cron al destino real.
+  if (approvalsConsole) {
+    const { draftsBlock, repliesBlock } = await pendingApprovalBlocks(deps);
+    return `Eres ${botName}, en el GRUPO DE APROBACIONES del equipo.
+Aquí el jefe y su equipo deciden lo que ${botName} propone enviar. Lo que aprueben sale a SU
+grupo o DM original — NO a este grupo. Tus mensajes acá son SOLO para gestionar lo pendiente.
+
+Fecha y hora actual: ${now}
+
+Cómo actuar (usa SIEMPRE la tool manage_drafts para borradores y manage_replies para respuestas):
+- Aprobar ("apruebo", "apruebo #id", "envíalo", "dale", "así está bien") → action=approve.
+- Corregir ("más corto", "cámbialo", "dile que…", "sin emoji") → action=revise con la corrección textual.
+- Rechazar ("no", "no #id", "descártalo", "bórralo") → action=discard.
+Si hay varios pendientes y no es obvio a cuál se refieren, pregunta a cuál.
+Si NO hay nada pendiente, dilo en una línea y no inventes acciones.
+
+${securityBlock}
+${draftsBlock}
+${repliesBlock}`.trim();
+  }
+
   // ── Contexto de GRUPO: chatbot general AISLADO ────────────────────────────
   // Prompt limpio construido desde cero. A propósito NO carga ni inyecta memoria
   // núcleo, notas del jefe, recordatorios ni resúmenes de grupos: cualquiera puede
@@ -600,54 +683,9 @@ ${bossNotes.map((m) => `- ${m.value}`).join('\n')}`
         .join('\n')}`
     : '';
 
-  // Borradores pendientes de aprobación (mensajes generados para grupos). Le da a
-  // Claude el contexto para entender "apruebo" / "cámbiale X" sin que el jefe tenga
-  // que citar ids — pero la acción siempre pasa por la tool manage_drafts.
-  let draftsBlock = '';
-  try {
-    const today = zonedNowParts().date;
-    const pending = (await deps.listPendingDrafts?.(today)) || [];
-    if (pending.length) {
-      draftsBlock = `## Borradores PENDIENTES de aprobación (hoy) — CONTEXTO PRIORITARIO
-Hay un mensaje generado esperando el visto bueno del jefe para publicarse en su grupo a la
-hora programada. MIENTRAS exista un borrador pendiente, interpreta lo que diga el jefe en
-ESTE contexto y actúa SIEMPRE con la tool manage_drafts:
-- Si aprueba ("apruebo", "envíalo", "dale", "así está bien", "perfecto") → action=approve.
-- Si pide CUALQUIER cambio de redacción ("más corto", "una sola línea", "sin emoji",
-  "cámbialo", "otro tono", "agrégale X", "así no me gusta") → SE REFIERE AL BORRADOR →
-  action=revise con su corrección textual. NUNCA reformatees sus tareas, notas, recordatorios
-  ni su memoria: la corrección es SIEMPRE al borrador.
-- Si lo rechaza o no lo quiere ("no", "no lo mandes", "descártalo", "cancélalo", "bórralo") →
-  action=discard.
-Si hay varios borradores y no es obvio a cuál se refiere, pregúntale cuál.
-${pending
-  .map((d) => `- Borrador #${d.id} → "${d.group_name}" a las ${d.time_hm}:\n${d.draft}`)
-  .join('\n')}`;
-    }
-  } catch {
-    /* sin borradores: bloque vacío */
-  }
-
-  // Respuestas de grupo pendientes de aprobación (grupos con require_approval). Mismo
-  // patrón que los borradores: contexto para "apruebo"/"cámbiala"/"no" → tool manage_replies.
-  let repliesBlock = '';
-  try {
-    const replies = (await deps.listPendingReplies?.()) || [];
-    if (replies.length) {
-      repliesBlock = `## Respuestas PENDIENTES de tu aprobación — CONTEXTO PRIORITARIO
-En estos grupos/DMs Juanito NO responde sin tu visto bueno. Cada ítem es una respuesta que
-propongo enviar. MIENTRAS haya respuestas pendientes, actúa SIEMPRE con la tool manage_replies:
-- Si apruebas ("apruebo", "envíala", "dale", "está bien") → action=approve.
-- Si pides un cambio ("cámbiala", "más corto", "dile que…", "así no") → action=revise con tu corrección.
-- Si la rechazas ("no", "no respondas", "descártala") → action=discard.
-Si hay varias y no es obvio a cuál te refieres, pregúntale cuál.
-${replies
-  .map((r) => `- Respuesta #${r.id} en "${r.group_name}" (${r.trigger_sender} dijo: "${(r.trigger_text || '').slice(0, 80)}"):\n${r.draft}`)
-  .join('\n')}`;
-    }
-  } catch {
-    /* sin respuestas pendientes: bloque vacío */
-  }
+  // Contexto de lo pendiente de aprobación (borradores generados + respuestas de grupo/DM):
+  // le da a Claude con qué interpretar "apruebo"/"cámbialo"/"no" en el DM del jefe.
+  const { draftsBlock, repliesBlock } = await pendingApprovalBlocks(deps);
 
   // Bloque según el rol del interlocutor.
   const roleBlock =
@@ -1254,7 +1292,7 @@ async function withRetry(fn, { retries = 3, baseDelay = 1000 } = {}) {
 
 // ─── Función principal ────────────────────────────────────────────────────────
 
-export async function chat(userMessage, chatId = null, { isGroup = false, role = 'boss', publicDm = false, bossInGroup = false, groupName = null, groupId = null, createdBy = null } = {}) {
+export async function chat(userMessage, chatId = null, { isGroup = false, role = 'boss', publicDm = false, bossInGroup = false, groupName = null, groupId = null, createdBy = null, approvalsConsole = false } = {}) {
   const deps = await resolveDeps();
   // currentGroupId/currentGroupName: para que las tools del jefe-en-grupo apunten a ESTE
   // grupo cuando dice "aquí"/"en este grupo" sin nombrarlo (set_group_instructions,
@@ -1294,10 +1332,10 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
     messages.push({ role: 'user', content: userMessage });
   }
 
-  const system = await buildSystemPrompt(deps, { isGroup, role, chatId, publicDm, bossInGroup, groupName });
+  const system = await buildSystemPrompt(deps, { isGroup, role, chatId, publicDm, bossInGroup, groupName, approvalsConsole });
   // Tools gateadas por rol/contexto. En grupos y en DM público devuelve [] → no se
   // pasa a la API (la API rechaza tools:[]).
-  const tools = toolsForRole(role, { isGroup, publicDm, bossInGroup });
+  const tools = toolsForRole(role, { isGroup, publicDm, bossInGroup, approvalsConsole });
   const toolsParam = tools.length > 0 ? { tools } : {};
 
   // Modelo según contexto Y rol:
@@ -1308,7 +1346,7 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
   const privileged = role === 'boss' || role === 'admin';
   const model = publicDm
     ? GROUP_MODEL
-    : bossInGroup
+    : bossInGroup || approvalsConsole
       ? REASONING_MODEL
       : isGroup
         ? GROUP_MODEL

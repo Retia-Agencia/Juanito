@@ -13,7 +13,8 @@ import {
   createPendingReply,
 } from '../db/index.js';
 import { phonesMatch, isWithinQuietHours } from '../common/utils.js';
-import { roleOf, bossDmTarget, isStrictPrivileged } from '../common/roles.js';
+import { roleOf, isStrictPrivileged } from '../common/roles.js';
+import { approvalsTarget, approvalsGroupId } from '../common/approval-routing.js';
 
 const BOSS_PHONE = () => process.env.BOSS_PHONE;
 const BOT_NAME = () => process.env.BOT_NAME || 'Juanito';
@@ -138,7 +139,7 @@ export async function handlePublicDm({ from, text, messageId, pushName, rawMsg }
         return;
       }
 
-      const boss = bossDmTarget();
+      const boss = await approvalsTarget();
       if (boss) {
         await sendMessage(
           boss,
@@ -157,6 +158,35 @@ export async function handlePublicDm({ from, text, messageId, pushName, rawMsg }
     console.error('[Bot] Error en DM público:', err.message);
     await sendMessage(from, 'Perdón, algo falló de mi lado. Intentá de nuevo 🙏').catch(() => {});
   }
+}
+
+// ─── Consola de aprobaciones (grupo dedicado "Aprobaciones Juanito") ───────────
+// Si APPROVALS_GROUP está configurado, las solicitudes de aprobación se publican EN ese
+// grupo (no en el DM del jefe). Acá el jefe/admin las gestionan SIN mención: cualquier
+// mensaje suyo en ese grupo se interpreta como decisión sobre lo pendiente (aprobar/
+// corregir/descartar), con el set acotado de tools (manage_drafts/manage_replies). Lo
+// aprobado sale a su grupo/DM original (cron de entrega), no acá. Devuelve true si manejó.
+export async function handleApprovalConsole({ chatId, text, sender, messageId, rawMsg }) {
+  if (!text) return false;
+  const approvalsId = await approvalsGroupId();
+  if (!approvalsId || chatId !== approvalsId) return false;
+  // Solo jefe/admin (verificado ESTRICTO) deciden aquí; el resto del grupo se ignora.
+  if (!isStrictPrivileged(sender)) return false;
+  if (!markIfNew(messageId || `${chatId}:${text}`)) return true;
+
+  console.log(`[Bot] Consola de aprobaciones: ${text.slice(0, 60)}`);
+  try {
+    // Hilo dedicado (`approvals:<grupo>`) para aislar el historial de la consola. Se trata
+    // como un DM (no isGroup) → prompt con el contexto de pendientes; tools acotadas a aprobar.
+    const { text: reply } = await chat(text, `approvals:${chatId}`, {
+      role: roleOf(sender),
+      approvalsConsole: true,
+    });
+    await sendMessage(chatId, reply, { quoted: rawMsg });
+  } catch (err) {
+    console.error('[Bot] Error en consola de aprobaciones:', err.message);
+  }
+  return true;
 }
 
 // ─── Mención en grupo ─────────────────────────────────────────────────────────
@@ -274,7 +304,7 @@ export async function handleGroupMessage(msg) {
         return;
       }
 
-      const boss = bossDmTarget();
+      const boss = await approvalsTarget();
       if (boss) {
         await sendMessage(
           boss,

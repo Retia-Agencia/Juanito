@@ -50,6 +50,9 @@ services:
       # Mensajes generados con aprobación (§18.F): minutos de anticipación con que
       # se genera el borrador y se le manda al jefe antes de la hora de publicar.
       - DRAFT_LEAD_MIN=${DRAFT_LEAD_MIN:-60}
+      # Grupo dedicado al que se mandan las solicitudes de aprobación (borradores §18.F +
+      # respuestas §18.O/J). Vacío = van al DM del jefe. group_id (…@g.us) o nombre del grupo.
+      - APPROVALS_GROUP=${APPROVALS_GROUP:-}
       # Aprobación de respuestas en grupos: minutos que una respuesta retenida espera
       # el visto bueno del jefe antes de RESCATARSE (avisa al remitente + el jefe puede
       # aún aprobarla con "apruebo #id"). §18.O
