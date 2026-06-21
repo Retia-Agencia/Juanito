@@ -42,6 +42,7 @@ jefe le devuelven una deflexión cálida.
 | **Aprobar/rechazar** un mensaje generado del día | igual: "apruebo" / "no, hoy no" |
 | **Programar** un mensaje recurrente a un grupo | "en el grupo Patah todos los jueves a las 8pm manda…" |
 | **Crear** un recordatorio (para él o para otro) | "recuérdame pagar el arriendo el viernes a las 9am" |
+| **Crear** un recordatorio único que se publique **en un grupo** | por DM: "en el grupo Patah recuérdales el domingo a las 8am la reunión"; o dentro del grupo (mencionándolo): "@Juanito a las 5 recuérdanos que tenemos misa" |
 | **Ver/cancelar/posponer** sus recordatorios | "¿qué tengo pendiente?", "cancela el de las 3", "recuérdamelo mañana mejor" |
 | **Pedir/recordar/consultar** cosas | le habla normal: tiene memoria, notas y recordatorios |
 

@@ -16,7 +16,9 @@ const TZ = () => process.env.TZ || 'America/Bogota';
 // ─── Envío de un recordatorio ─────────────────────────────────────────────────
 
 async function deliverReminder(reminder) {
-  const to = reminder.to_phone || bossDmTarget();
+  // to_group_id (§18.Q) → se publica EN el grupo; si no, a la persona (to_phone) o al jefe.
+  // Cualquiera de los tres sale por la cola anti-ban de sendMessage.
+  const to = reminder.to_group_id || reminder.to_phone || bossDmTarget();
   if (!to) throw new Error('sin destinatario ni BOSS_LID/BOSS_PHONE configurado');
 
   await sendMessage(to, `⏰ Recordatorio: ${reminder.text}`);

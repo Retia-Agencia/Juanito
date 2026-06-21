@@ -72,13 +72,20 @@ export function searchMessages(query, sinceDays = 90) {
 
 // ─── Recordatorios ───────────────────────────────────────────────────────────
 
-export function saveReminder({ text, dueAt, toPhone = null, createdBy = null }) {
+export function saveReminder({
+  text,
+  dueAt,
+  toPhone = null,
+  toGroup = null,
+  toGroupName = null,
+  createdBy = null,
+}) {
   return db
     .prepare(`
-      INSERT INTO reminders (text, due_at, to_phone, created_by, status)
-      VALUES (?, ?, ?, ?, 'pending')
+      INSERT INTO reminders (text, due_at, to_phone, to_group_id, to_group_name, created_by, status)
+      VALUES (?, ?, ?, ?, ?, ?, 'pending')
     `)
-    .run(text, dueAt, toPhone, createdBy);
+    .run(text, dueAt, toPhone, toGroup, toGroupName, createdBy);
 }
 
 // Hora local como string YYYY-MM-DD HH:MM:SS comparable con due_at.
@@ -138,7 +145,7 @@ export function getUpcomingReminders(hours = 24) {
 export function listReminders(createdBy) {
   return db
     .prepare(`
-      SELECT id, text, due_at, to_phone FROM reminders
+      SELECT id, text, due_at, to_phone, to_group_id, to_group_name FROM reminders
       WHERE status = 'pending' AND created_by = ?
       ORDER BY due_at ASC
     `)

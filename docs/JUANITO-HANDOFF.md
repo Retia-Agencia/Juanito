@@ -1970,6 +1970,67 @@ decisión, `runPendingRepliesCycle` ya **no la descarta en silencio**:
 `bot/index.js`, `scheduler/group-replies.js`, `.env.example`. **Env nuevas:** `CLAUDE_GROUP_HISTORY_MINUTES`,
 `CLAUDE_GROUP_HISTORY` (=100), `QUIET_HOURS_START/END/NOTICE`, `REPLY_EXPIRY_NOTICE`.
 
+### 18.P 🔵 Checkup con el jefe (2026-06-21) — pendientes y validaciones
+
+Revisión de la transcripción del checkup de Dani (`docs/CheckUp - Juanito.md`) contra el estado real
+del repo. La mayoría de lo que pidió YA está implementado (confirmaciones por grupo §18.K, anti-secuestro,
+`/grupos off` para sacarlo de un grupo, personalidad por grupo §18.E, mensajes recurrentes §18.E,
+órdenes desde el grupo §18.O, contexto por tiempo §18.O, quiet hours + rescate §18.O, reply citado §18.J,
+límite de DMs §18.J, modelo bueno para el jefe). Lo que queda:
+
+**A) Validación en vivo (round-trip real) — desplegado pero SIN probar end-to-end:**
+- DMs de desconocidos (§18.J), confirmaciones (§18.K), `manage_reminders` (§18.L), órdenes en grupo +
+  quiet hours + rescate (§18.O — del 2026-06-19, **no marcado como verificado live**), respuestas citadas +
+  anti-ráfaga (§18.J).
+
+**B) Pedido en el checkup que NO está implementado:**
+- **Aviso PROACTIVO del límite de mensajes** a desconocidos: hoy solo avisa cuando ya se agotaron los 5;
+  Dani pidió que avise al inicio ("háblame claro, solo respondo X mensajes"). Textual: *"Nos faltó eso."*
+- **Reporte de costo/consumo de Claude**: que Juanito reporte cuánta plata lleva y avise cada umbral (~$20).
+  **No hay token/usage tracking en el código.** Pendiente nuevo.
+- **Modo "observador"** (presente en el grupo pero sin responder nunca): no existe un modo distinto a
+  `require_approval`. Confirmar si se quiere como feature separada.
+- **Subir memoria de grupo a ~60 msgs**: hoy es por tiempo (default 30 min / tope 100). Solo tunear
+  `CLAUDE_GROUP_HISTORY_MINUTES` / `CLAUDE_GROUP_HISTORY` en el VPS según costo. Decidir valor.
+
+**C) Decisiones pendientes (definir antes de codear):**
+- Responder a "Juanito" **sin @tag** en grupos internos — Dani lo pidió pero acordaron dejarlo tag-only
+  por ahora y abrirlo después. Parqueado.
+- Instrucción tipo "avísale a todo el mundo…" desde el DM del jefe — NO se hace sin acotar el "todo el
+  mundo" (riesgo de cold-message). Falta definir alcance.
+- Verificar que el reset diario del límite de DMs use `TZ America/Bogota` (no UTC del contenedor).
+
+**D) Operativo / infra (no código):**
+- Agregar a Juanito a los grupos "Closers Second Brain" y "Closers IA para Abogados" + autorizarlo
+  (el reporte de métricas 8pm §18.N corre pero no entrega hasta entonces).
+- Crear el grupo de gestión/instrucciones de Juanito (acordado en el checkup).
+- Mover pagos a la tarjeta de Dani: DigitalOcean + el servidor del pipeline ($7/mes, 42 días free trial).
+- Invite de calendario a Dani ~3 días antes de que venza el free trial del pipeline (pedido explícito).
+
+### 18.Q 🔵 Recordatorios ÚNICOS a un grupo (create_reminder → grupo) (2026-06-21)
+
+**Qué pidió el jefe:** poder pedir un recordatorio de **una sola vez** que Juanito publique **en un grupo**.
+Dos vías: (a) DESDE el grupo mencionándolo — *"@Juanito a las 5 recuérdanos que tenemos misa"*; (b) por
+DM (jefe/admin) — *"en el grupo X recuérdales a las 5 que…"*. Es distinto de los **mensajes recurrentes**
+(`schedule_group_message`, §18.E) y de los recordatorios personales del jefe (a su propio DM).
+
+**Implementación (extensión de `create_reminder`, sin tool nueva):**
+- Nuevo parámetro opcional `group_name` en `create_reminder`. Si viene → el recordatorio se publica EN ese
+  grupo (no a una persona). Desde un grupo, "aquí"/"este grupo"/"acá" → el grupo actual (`ctx.currentGroupId`),
+  igual que `schedule_group_message`. Sin `group_name` el comportamiento es idéntico al anterior (jefe o
+  `recipient`).
+- **Default-deny:** un recordatorio a grupo exige `isGroupAuthorized(group.id)` (coherente con anti-secuestro
+  y con `schedule_group_message`). Grupo no resuelto / no autorizado → no se crea y se explica.
+- DB: columnas nuevas `reminders.to_group_id` + `reminders.to_group_name` (migración idempotente).
+  `saveReminder` acepta `{ toGroup, toGroupName }`. `listReminders` las devuelve (para `manage_reminders`,
+  que muestra "(en grupo X)"; cancel/snooze por id ya funcionan igual).
+- Entrega (`src/scheduler/reminders.js`): `to = to_group_id || to_phone || bossDmTarget()` → sale por la
+  **cola anti-ban** como cualquier envío. `manage_reminders` (list/cancel/snooze) cubre también los de grupo.
+- Disponible desde DM del jefe/admin y desde `BOSS_IN_GROUP_TOOLS` (órdenes en grupo, §18.O).
+
+**Tests:** +N `brain.tools` (grupo por nombre, "aquí" → grupo actual, grupo no resuelto, grupo no autorizado,
+personal intacto). **🟡 PENDIENTE:** deploy al VPS + round-trip real.
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Comando `/recuerda` en grupos (admins):** `@Juanito /recuerda [texto]` → memoria núcleo sin ir a DM.

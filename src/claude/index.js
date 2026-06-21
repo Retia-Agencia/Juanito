@@ -105,7 +105,9 @@ const TOOLS = [
   {
     name: 'create_reminder',
     description:
-      'Crea un recordatorio. Úsalo cuando el jefe pida que le recuerdes algo, o que le recuerdes algo a otra persona, en una fecha/hora específica.',
+      'Crea un recordatorio de UNA SOLA VEZ. Úsalo cuando el jefe pida que le recuerdes algo, ' +
+      'que le recuerdes algo a otra persona, o que recuerdes algo EN UN GRUPO, en una fecha/hora ' +
+      'específica. Para mensajes RECURRENTES (todos los lunes, cada jueves…) usa schedule_group_message.',
     input_schema: {
       type: 'object',
       properties: {
@@ -118,7 +120,14 @@ const TOOLS = [
           type: 'string',
           description:
             'Opcional. Nombre o número de la persona a la que va dirigido el recordatorio. ' +
-            'Si se omite, el recordatorio es para el propio jefe.',
+            'Si se omite (y tampoco hay group_name), el recordatorio es para el propio jefe.',
+        },
+        group_name: {
+          type: 'string',
+          description:
+            'Opcional. Nombre del grupo donde se PUBLICARÁ el recordatorio (ej: "recuérdanos en el ' +
+            'grupo X que…"). Si te lo piden DENTRO de un grupo refiriéndose a ese mismo grupo ' +
+            '("recuérdanos", "aquí", "en este grupo"), pon "aquí". No combines group_name con recipient.',
         },
       },
       required: ['text', 'due_at'],
@@ -497,7 +506,9 @@ PRIMERO decide qué tipo de mensaje es:
   NO fuerces ninguna herramienta si no hace falta.
 
 Herramientas disponibles desde aquí (solo acciones operativas):
-- create_reminder / manage_reminders: crear, ver, cancelar o posponer recordatorios del jefe.
+- create_reminder / manage_reminders: crear, ver, cancelar o posponer recordatorios. Si pide
+  recordar algo PARA ESTE grupo ("recuérdanos a las 5 que…", "recuérdanos aquí"), crea el
+  recordatorio con group_name="aquí" → se publicará en ${here} a la hora indicada.
 - set_group_instructions: fijar o quitar las instrucciones/personalidad de ESTE grupo
   (${here}) cuando te dé una directriz general de cómo comportarte aquí.
 - schedule_group_message: programar/listar/cancelar mensajes recurrentes. Cuando diga
@@ -672,10 +683,11 @@ Personalidad:
 
 Tienes estas herramientas; úsalas en vez de inventar formatos de texto, y luego
 confirma al jefe en una línea natural:
-- create_reminder: crea recordatorios. Si el jefe quiere recordarle algo a OTRA
-  persona, pasa su nombre o número en "recipient". Si no logro identificar a esa
-  persona, te lo diré por el resultado de la herramienta: en ese caso pídele al
-  jefe que aclare el contacto en vez de inventar.
+- create_reminder: crea recordatorios de UNA sola vez. Si el jefe quiere recordarle algo a OTRA
+  persona, pasa su nombre o número en "recipient". Si quiere que el recordatorio se publique EN UN
+  GRUPO ("en el grupo X recuérdales…"), pasa el nombre del grupo en "group_name". Si no logro
+  identificar al contacto o al grupo, te lo diré por el resultado de la herramienta: en ese caso
+  pídele al jefe que aclare en vez de inventar.
 - summarize_group: lee y resume un grupo por nombre cuando pregunte qué pasó ahí.
 - schedule_group_message: programa/lista/cancela mensajes RECURRENTES a un grupo.
   Dos tipos: texto FIJO (se guarda EXACTO; si el jefe no dio el literal, pídeselo) o
@@ -745,12 +757,48 @@ function parsePeriod(period) {
 // Validar acá convierte ese fallo en una re-pregunta útil.
 const DUE_AT_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 
+// "aquí"/"este grupo"/etc. → cuando el recordatorio/mensaje se pide DENTRO de un grupo
+// y se refiere a ese mismo grupo (sin nombrarlo). Mismo criterio que schedule_group_message.
+const HERE_RE = /^(aqu[ií]( mismo)?|ac[aá]|este grupo|este chat|el grupo)$/i;
+
 export async function dispatchTool({ name, input }, deps, ctx = {}) {
   switch (name) {
     case 'create_reminder': {
       if (!DUE_AT_RE.test(String(input.due_at || '').trim())) {
         return 'Necesito la fecha y hora exactas (formato YYYY-MM-DD HH:MM:SS) para crear el recordatorio. ¿Para cuándo es?';
       }
+
+      // Recordatorio ÚNICO dirigido A UN GRUPO (se publica EN el grupo, no a una persona).
+      // "aquí"/"este grupo" → el grupo actual (orden dentro del grupo). Default-deny: solo
+      // grupos autorizados, coherente con el anti-secuestro y con schedule_group_message.
+      const groupRef = input.group_name?.trim();
+      if (groupRef) {
+        const group =
+          ctx.currentGroupId && HERE_RE.test(groupRef)
+            ? { id: ctx.currentGroupId, name: ctx.currentGroupName || ctx.currentGroupId }
+            : await deps.resolveGroupByName?.(groupRef);
+        if (!group) {
+          return (
+            `No encontré ningún grupo que coincida con "${groupRef}". ` +
+            `Pídele al jefe el nombre exacto del grupo.`
+          );
+        }
+        if (!(await deps.isGroupAuthorized?.(group.id))) {
+          return (
+            `El grupo "${group.name || group.id}" no está autorizado para Juanito. ` +
+            `Un admin debe habilitarlo primero (Juanito debe estar dentro y autorizado).`
+          );
+        }
+        await deps.saveReminder({
+          text: input.text,
+          dueAt: input.due_at,
+          toGroup: group.id,
+          toGroupName: group.name || group.id,
+          createdBy: ctx.createdBy,
+        });
+        return `Recordatorio creado para el grupo "${group.name || group.id}" el ${input.due_at}: "${input.text}".`;
+      }
+
       const recipient = input.recipient?.trim();
       let toPhone = ctx.createdBy; // por defecto, el recordatorio es para el jefe
       let forName = null;
@@ -789,7 +837,11 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
           .map(
             (r) =>
               `#${r.id} → ${r.due_at}: "${r.text}"` +
-              (r.to_phone && r.to_phone !== ctx.createdBy ? ` (para ${r.to_phone})` : '')
+              (r.to_group_id
+                ? ` (en grupo ${r.to_group_name || r.to_group_id})`
+                : r.to_phone && r.to_phone !== ctx.createdBy
+                  ? ` (para ${r.to_phone})`
+                  : '')
           )
           .join('\n');
       }

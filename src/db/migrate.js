@@ -213,6 +213,10 @@ addColumnIfMissing('reminders', 'created_by', 'TEXT');
 addColumnIfMissing('reminders', 'status', "TEXT NOT NULL DEFAULT 'pending'");
 addColumnIfMissing('reminders', 'sent_at', 'DATETIME');
 addColumnIfMissing('reminders', 'attempts', 'INTEGER NOT NULL DEFAULT 0');
+// Recordatorios ÚNICOS dirigidos a un grupo (§18.Q): si to_group_id está, el scheduler
+// publica el recordatorio EN ese grupo (vía la cola anti-ban) en vez de a una persona.
+addColumnIfMissing('reminders', 'to_group_id', 'TEXT');
+addColumnIfMissing('reminders', 'to_group_name', 'TEXT');
 
 addColumnIfMissing('group_context', 'period_start', 'DATETIME');
 addColumnIfMissing('group_context', 'period_end', 'DATETIME');

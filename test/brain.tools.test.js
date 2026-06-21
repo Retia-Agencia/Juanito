@@ -22,6 +22,7 @@ function makeDeps(overrides = {}) {
     saveReminder: rec('saveReminder'),
     setMemory: rec('setMemory'),
     resolveGroupByName: overrides.resolveGroupByName || rec('resolveGroupByName'),
+    isGroupAuthorized: overrides.isGroupAuthorized || (async () => true),
     getRecentMessages: overrides.getRecentMessages || rec('getRecentMessages'),
     summarizeGroupMessages: overrides.summarizeGroupMessages || rec('summarizeGroupMessages'),
     saveSummary: rec('saveSummary'),
@@ -99,6 +100,86 @@ test('create_reminder sin recipient usa al jefe (createdBy) como destino', async
   assert.equal(arg.toPhone, BOSS);
   assert.equal(arg.createdBy, BOSS);
   assert.equal(deps.calls.resolveContact, undefined); // no se intentó resolver contacto
+});
+
+// ─── create_reminder → grupo (recordatorios únicos a un grupo, §18.Q) ──────────
+
+test('create_reminder con group_name resuelto y autorizado guarda con toGroup', async () => {
+  const deps = makeDeps({
+    resolveGroupByName: async () => ({ id: '12345@g.us', name: 'Patah' }),
+  });
+
+  const result = await dispatchTool(
+    {
+      name: 'create_reminder',
+      input: { text: 'tenemos misa', due_at: '2026-06-21 17:00:00', group_name: 'Patah' },
+    },
+    deps,
+    ctx
+  );
+
+  assert.equal(deps.calls.saveReminder.length, 1);
+  const arg = deps.calls.saveReminder[0][0];
+  assert.equal(arg.toGroup, '12345@g.us');
+  assert.equal(arg.toGroupName, 'Patah');
+  assert.equal(arg.createdBy, BOSS);
+  assert.equal(arg.toPhone, undefined); // no es a una persona
+  assert.match(result, /Patah/);
+});
+
+test('create_reminder con "aquí" dentro de un grupo usa el grupo actual', async () => {
+  const deps = makeDeps({
+    // si cayera en resolveGroupByName fallaría el test (debe usar ctx.currentGroupId)
+    resolveGroupByName: async () => null,
+  });
+
+  await dispatchTool(
+    {
+      name: 'create_reminder',
+      input: { text: 'reunión 6:30pm', due_at: '2026-06-21 18:00:00', group_name: 'aquí' },
+    },
+    deps,
+    { createdBy: BOSS, currentGroupId: '999@g.us', currentGroupName: 'Closers' }
+  );
+
+  const arg = deps.calls.saveReminder[0][0];
+  assert.equal(arg.toGroup, '999@g.us');
+  assert.equal(arg.toGroupName, 'Closers');
+});
+
+test('create_reminder a grupo NO autorizado no guarda y pide habilitarlo', async () => {
+  const deps = makeDeps({
+    resolveGroupByName: async () => ({ id: '12345@g.us', name: 'Random' }),
+    isGroupAuthorized: async () => false,
+  });
+
+  const result = await dispatchTool(
+    {
+      name: 'create_reminder',
+      input: { text: 'algo', due_at: '2026-06-21 17:00:00', group_name: 'Random' },
+    },
+    deps,
+    ctx
+  );
+
+  assert.equal(deps.calls.saveReminder, undefined); // no se guardó
+  assert.match(result, /no está autorizado|habilit/i);
+});
+
+test('create_reminder a grupo NO resuelto no guarda y pide el nombre exacto', async () => {
+  const deps = makeDeps({ resolveGroupByName: async () => null });
+
+  const result = await dispatchTool(
+    {
+      name: 'create_reminder',
+      input: { text: 'algo', due_at: '2026-06-21 17:00:00', group_name: 'Zzz' },
+    },
+    deps,
+    ctx
+  );
+
+  assert.equal(deps.calls.saveReminder, undefined); // no se guardó
+  assert.match(result, /no encontré|exacto/i);
 });
 
 // ─── summarize_group ──────────────────────────────────────────────────────────
