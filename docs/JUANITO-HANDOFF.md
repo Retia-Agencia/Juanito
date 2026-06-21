@@ -1970,6 +1970,10 @@ decisión, `runPendingRepliesCycle` ya **no la descarta en silencio**:
 `bot/index.js`, `scheduler/group-replies.js`, `.env.example`. **Env nuevas:** `CLAUDE_GROUP_HISTORY_MINUTES`,
 `CLAUDE_GROUP_HISTORY` (=100), `QUIET_HOURS_START/END/NOTICE`, `REPLY_EXPIRY_NOTICE`.
 
+**🟡 PENDIENTE — round-trip real:** desplegado pero **nunca probado con mensajes reales**. Checklist en
+[docs/SMOKE-TEST.md](SMOKE-TEST.md) Bloque G (órdenes del jefe desde el grupo) y Bloque H (aprobaciones
+en quiet hours + rescate al vencer).
+
 ### 18.P 🔵 Checkup con el jefe (2026-06-21) — pendientes y validaciones
 
 Revisión de la transcripción del checkup de Dani (`docs/CheckUp - Juanito.md`) contra el estado real
@@ -2038,8 +2042,10 @@ personal intacto). 49/49 en el suite puro; roles/commands/prompt-context/group-r
 … Transitioning to Online`), `[Calendly] Jobs activos ✅ (DRY-RUN: false)` intacto. Sin env nuevas →
 no hizo falta copiar `docker-compose.yml`.
 
-**🟡 PENDIENTE — round-trip real:** probar en WhatsApp: (a) por DM "en el grupo X recuérdales el …" →
-llega al grupo a la hora; (b) dentro de un grupo "@Juanito a las 5 recuérdanos …" → se publica ahí.
+**Round-trip real:** ✅ **F1 confirmado funcionando en vivo (2026-06-21)** — por DM "en el grupo X
+recuérdales …" llega al grupo a la hora. 🟡 Faltan las variantes F2–F4 (mención dentro del grupo,
+`manage_reminders` con "(en grupo X)", default-deny). Checklist en
+[docs/SMOKE-TEST.md](SMOKE-TEST.md) Bloque F.
 
 ### 🟢 Baja prioridad / Nice-to-have
 
