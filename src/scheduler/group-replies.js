@@ -66,7 +66,26 @@ const HOLDING_NOTICE = () =>
   process.env.REPLY_EXPIRY_NOTICE ||
   '¡Hola! Vi tu mensaje 🙏 lo estoy validando con el equipo y te respondo apenas pueda.';
 
+// Guarda de re-entrada: el cron corre cada minuto, pero un ciclo con muchas aprobadas puede
+// tardar > 60s (la cola anti-ban espacia 8-10s por grupo y `sendMessage` resuelve cuando el
+// envío REALMENTE salió). Sin esta guarda, un 2º ciclo entraría mientras el 1º sigue enviando,
+// volvería a leer las MISMAS filas aún no marcadas 'sent' y las re-enviaría → DOBLE ENVÍO.
+let _running = false;
+
 export async function runPendingRepliesCycle(deps) {
+  if (_running) {
+    console.log('[Scheduler] group-replies: ciclo anterior aún en curso — salto este minuto');
+    return;
+  }
+  _running = true;
+  try {
+    await _runPendingRepliesCycle(deps);
+  } finally {
+    _running = false;
+  }
+}
+
+async function _runPendingRepliesCycle(deps) {
   const d = deps || (await resolveDeps());
 
   // 0) Salir del horario de descanso: informar al jefe (UN solo digest) de las respuestas

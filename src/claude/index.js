@@ -1281,7 +1281,10 @@ async function withRetry(fn, { retries = 3, baseDelay = 1000 } = {}) {
     } catch (err) {
       lastErr = err;
       const status = err?.status;
-      if (status && ![429, 500, 502, 503, 529].includes(status)) throw err;
+      // Reintenta en rate-limit y errores transitorios del servidor, incluidos los timeouts
+      // HTTP: 408 (request timeout) y 504 (gateway timeout). Los errores SIN status (conexión
+      // caída, "Premature close", socket hang up) ya reintentan aquí porque `status` es falsy.
+      if (status && ![408, 429, 500, 502, 503, 504, 529].includes(status)) throw err;
       if (attempt === retries) break;
       const delay = baseDelay * 2 ** attempt + Math.random() * 500;
       console.warn(
