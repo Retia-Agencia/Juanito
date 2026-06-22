@@ -289,6 +289,18 @@ export async function handleGroupMessage(msg) {
       }
       return;
     }
+
+    // Aviso proactivo: al consumir el penúltimo permitido (queda exactamente 1) se avisa UNA
+    // sola vez. `count` cuenta intentos e incrementa por mensaje, así que count === limit-1
+    // ocurre justo en ese mensaje. "después de esta" encaja aunque el aviso salga junto al reply.
+    if (count === limit - 1) {
+      const quien = pushName ? `${pushName}, ` : '';
+      await sendMessage(
+        chatId,
+        `${quien}ℹ️ después de esta, te queda *1 pregunta más por hoy* (límite ${limit}/día). Se reinicia mañana 🙂`,
+        { quoted: rawMsg }
+      ).catch(() => {});
+    }
   }
 
   console.log(`[Bot] Mencionado en "${groupName}": ${text.slice(0, 60)}`);
