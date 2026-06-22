@@ -8,6 +8,7 @@ import { handleCommand, isReportCommand, wantsMetrics } from './bot/commands.js'
 import { handleCloserOptin } from './calendly/optin.js';
 import { startAllJobs } from './scheduler/index.js';
 import { roleOf, isPrivileged } from './common/roles.js';
+import { maskJid } from './common/utils.js';
 import {
   listOptins,
   markIfNew,
@@ -187,7 +188,7 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
 
     if (isPrivileged(role)) {
       if (sender?.endsWith('@lid')) {
-        console.log(`[Main] DM de LID del ${role}: ${sender}`);
+        console.log(`[Main] DM de LID del ${role}: ${maskJid(sender)}`);
       }
       await handleBossMessage({ from: sender, text, messageId, role }).catch((e) =>
         console.error('[Main] handleBossMessage:', e.message)

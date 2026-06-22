@@ -23,6 +23,21 @@ export function phonesMatch(a, b) {
   return na === nb || na.endsWith(nb) || nb.endsWith(na);
 }
 
+// ─── Enmascarar JID/LID/número para logs ──────────────────────────────────────
+// Evita derramar PII (números o LIDs completos) en logs que puedan centralizarse.
+// Conserva el sufijo (@lid / @s.whatsapp.net) para distinguir tipo, y los últimos 4
+// dígitos del cuerpo para poder correlacionar sin exponer la identidad completa.
+//   '573105643297@s.whatsapp.net' -> '…3297@s.whatsapp.net'
+//   '144268136038585@lid'         -> '…8585@lid'
+export function maskJid(raw) {
+  if (!raw) return '';
+  const s = String(raw);
+  const at = s.indexOf('@');
+  const local = at >= 0 ? s.slice(0, at) : s;
+  const suffix = at >= 0 ? s.slice(at) : '';
+  return `…${local.slice(-4)}${suffix}`;
+}
+
 // ─── Ventana de descanso / sueño (quiet hours) ────────────────────────────────
 // Cuando las aprobaciones están ON, Juanito NO molesta al jefe con solicitudes de
 // aprobación dentro de esta ventana: quedan en cola y se le informan al volver el

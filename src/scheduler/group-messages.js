@@ -135,7 +135,26 @@ async function processGenerated(d, row, nowParts) {
 
 // ─── Una pasada (exportada para tests / disparo manual) ───────────────────────
 
+// Guarda de re-entrada: el cron corre cada minuto, pero generar un borrador es una llamada a
+// Claude (segundos). Sin esto, un 2º ciclo entraría mientras el 1º genera, vería getDraftFor()
+// aún en null y volvería a generar el MISMO borrador → doble gasto de tokens (el ON CONFLICT de
+// createDraft evita el duplicado en DB, pero no la 2ª generación, que es lo caro).
+let _running = false;
+
 export async function runScheduledMessagesCycle(now = new Date()) {
+  if (_running) {
+    console.log('[Scheduler] group-messages: ciclo anterior aún en curso — salto este minuto');
+    return 0;
+  }
+  _running = true;
+  try {
+    return await _runScheduledMessagesCycle(now);
+  } finally {
+    _running = false;
+  }
+}
+
+async function _runScheduledMessagesCycle(now = new Date()) {
   const d = await resolveDeps();
   const nowParts = zonedNowParts(now, TZ());
   let sent = 0;

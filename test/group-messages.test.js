@@ -155,6 +155,22 @@ test('generated: grupo no autorizado NO recibe ni aprobado', async () => {
   assert.equal(world.sent.length, 0);
 });
 
+test('re-entrancy: dos ciclos solapados NO generan el borrador dos veces', async () => {
+  const { world, deps } = makeWorld({ rows: [{ ...GENERATED }] });
+  deps.generateScheduledDraft = async ({ brief }) => {
+    world.generated++;
+    await new Promise((r) => setTimeout(r, 20)); // generación "lenta": el 1º ciclo sigue en curso
+    return `GENERADO[${brief}]#${world.generated}`;
+  };
+  __setDeps(deps);
+  const p1 = runScheduledMessagesCycle(bogota('08:00')); // arranca y queda generando
+  const p2 = runScheduledMessagesCycle(bogota('08:00')); // entra mientras p1 corre → guarda lo salta
+  const [, s2] = await Promise.all([p1, p2]);
+  assert.equal(world.generated, 1, 'una sola generación pese a dos ciclos solapados');
+  assert.equal(world.drafts.length, 1, 'un solo borrador creado');
+  assert.equal(s2, 0, 'el ciclo saltado devuelve 0');
+});
+
 test('un fallo en una fila no rompe el resto del ciclo', async () => {
   const { world, deps } = makeWorld({ rows: [{ ...FIXED, id: 9, text: 'boom' }, { ...FIXED, id: 10, text: 'ok' }] });
   const origSend = deps.sendMessage;
