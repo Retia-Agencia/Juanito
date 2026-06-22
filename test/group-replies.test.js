@@ -166,6 +166,24 @@ test('respuesta pre-migración (sin trigger_msg_id) → envía SIN cita', async 
   assert.equal(calls[0].opts?.quoted, undefined, 'sin trigger_msg_id no debe citar');
 });
 
+test('re-entrancy: dos ciclos solapados NO re-envían las mismas filas (anti doble-envío)', async () => {
+  // makeDeps NO quita las filas de `approved` al marcarlas sent (markPendingReplySent solo
+  // registra el id), así que si el 2º ciclo llegara a correr volvería a tomar la #20 → doble
+  // envío. La guarda de re-entrada debe hacer que el 2º ciclo salga temprano.
+  const deps = makeDeps({
+    approved: [{ id: 20, group_id: 'g@g.us', group_name: 'X', draft: 'hola' }],
+  });
+  deps.sendMessage = async (to, text) => {
+    deps._sent.push({ to, text });
+    await new Promise((r) => setTimeout(r, 20)); // envío "lento": el 1º ciclo sigue en curso
+  };
+  const p1 = runPendingRepliesCycle(deps); // arranca y queda awaiting en sendMessage
+  const p2 = runPendingRepliesCycle(deps); // entra mientras p1 corre → guarda lo salta
+  await Promise.all([p1, p2]);
+  assert.equal(deps._sent.length, 1, 'un solo envío pese a dos ciclos solapados');
+  assert.deepEqual(deps._state.marks.sent, [20]);
+});
+
 test('un fallo de envío no rompe el ciclo (sigue con las demás)', async () => {
   const deps = makeDeps({
     approved: [

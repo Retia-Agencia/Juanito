@@ -246,8 +246,17 @@ async function bootstrap() {
   console.log('\n🚀 Juanito corriendo — escuchando WhatsApp\n');
 }
 
+// Una promesa sin catch NO deja el proceso en estado indefinido → se loguea y se sigue
+// (el bot tiene muchos .catch(() => {}) defensivos; matar el proceso por una rejection suelta
+// sería demasiado agresivo).
 process.on('unhandledRejection', (reason) => console.error('[Fatal] Unhandled rejection:', reason));
-process.on('uncaughtException', (err) => console.error('[Fatal] Uncaught exception:', err));
+// Una excepción NO capturada sí deja el proceso en estado indefinido (recomendación de Node):
+// logueamos y SALIMOS para que entrypoint.sh reinicie con su backoff exponencial, en vez de
+// quedar como proceso zombie (vivo pero roto, sin reconectar). Ver historia del softban en CLAUDE.md.
+process.on('uncaughtException', (err) => {
+  console.error('[Fatal] Uncaught exception:', err);
+  process.exit(1);
+});
 
 bootstrap().catch((err) => {
   console.error('Error fatal al arrancar:', err);
