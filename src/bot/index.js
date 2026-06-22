@@ -16,7 +16,7 @@ import {
   listPendingDrafts,
   approveDraft,
 } from '../db/index.js';
-import { phonesMatch, isWithinQuietHours } from '../common/utils.js';
+import { phonesMatch, isWithinQuietHours, maskJid } from '../common/utils.js';
 import { roleOf, isStrictPrivileged } from '../common/roles.js';
 import { approvalsTarget, approvalsGroupId } from '../common/approval-routing.js';
 import { parseApproval } from '../common/approval-intent.js';
@@ -69,7 +69,7 @@ export async function handleBossMessage(msg) {
   if (!markIfNew(messageId)) return;
 
   if (!phonesMatch(from, BOSS_PHONE()) && !from?.endsWith('@lid')) {
-    console.log(`[Bot] DM de número no autorizado: ${from}`);
+    console.log(`[Bot] DM de número no autorizado: ${maskJid(from)}`);
     return;
   }
 
@@ -101,7 +101,7 @@ export async function handlePublicDm({ from, text, messageId, pushName, rawMsg }
   const limit = GROUP_DAILY_LIMIT();
   const { allowed, count } = checkAndIncrementGroupUsage(`dm:${from}`, limit);
   if (!allowed) {
-    console.log(`[Bot] Rate limit DM para ${from} — ignorando (intento ${count})`);
+    console.log(`[Bot] Rate limit DM para ${maskJid(from)} — ignorando (intento ${count})`);
     if (count === limit + 1) {
       const quien = pushName ? `${pushName}, ya` : 'Ya';
       await sendMessage(
@@ -112,7 +112,7 @@ export async function handlePublicDm({ from, text, messageId, pushName, rawMsg }
     return;
   }
 
-  console.log(`[Bot] DM público de ${pushName || from}: ${text.slice(0, 60)}`);
+  console.log(`[Bot] DM público de ${pushName || maskJid(from)}: ${text.slice(0, 60)}`);
 
   try {
     const { text: reply } = await chat(text, from, { publicDm: true, role: 'unknown' });
