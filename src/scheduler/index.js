@@ -11,6 +11,7 @@ import { startSheetsReportJob } from './sheets-report.js';
 import { startSheetsMetricsJob } from './sheets-metrics.js';
 import { startGroupMessagesJob } from './group-messages.js';
 import { startGroupRepliesJob } from './group-replies.js';
+import { startOutreachJob } from './outreach.js';
 import { cleanup } from '../db/index.js';
 
 const TZ = () => process.env.TZ || 'America/Bogota';
@@ -42,6 +43,7 @@ export async function startAllJobs() {
   startCleanupJob();
   startGroupMessagesJob();
   startGroupRepliesJob();
+  startOutreachJob();
 
   // Recordatorios precall de Calendly (se autodesactiva si falta CALENDLY_TOKEN)
   try {

@@ -58,7 +58,8 @@ Regla clave: **todo envío sale del proceso principal y pasa por la cola anti-ba
 Cron jobs centralizados en `src/scheduler/index.js` (`startAllJobs()`) — ahí está el listado
 completo con horarios. Cada job **se autodesactiva si le falta su token/destino**, para no romper
 el arranque. Cubren: recordatorios, limpieza diaria, resúmenes de grupos, Calendly (Push 0-3),
-reporte de Sheets, mensajes recurrentes a grupos y respuestas con aprobación.
+reporte de Sheets, mensajes recurrentes a grupos, mensajes a terceros por orden del jefe
+(`schedule_outreach`) y respuestas con aprobación.
 
 ## Sistema de roles
 

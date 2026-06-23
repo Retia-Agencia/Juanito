@@ -204,6 +204,34 @@ db.exec(`
     created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
     decided_at     DATETIME
   );
+
+  -- Mensajes/recordatorios a TERCEROS por instrucción del jefe (tool schedule_outreach).
+  -- A diferencia de scheduled_messages (a GRUPOS) y reminders (texto seco), aquí Juanito
+  -- redacta un mensaje NATURAL de parte del jefe y lo manda a una persona, una sola vez,
+  -- por intervalo ('cada 40 min') o a diario/semanal a hora fija. Solo el jefe los crea.
+  -- recur_kind: 'once' (due_at) | 'interval' (interval_min + next_due_at) | 'daily' (days + time_hm).
+  -- Paradas (interval): until_at (hora/fecha límite) y/o max_count; pausa en quiet hours si respect_quiet.
+  CREATE TABLE IF NOT EXISTS outreach_schedules (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    to_phone      TEXT NOT NULL,      -- destino normalizado
+    to_name       TEXT,               -- nombre del contacto (redacción + avisos al jefe)
+    intent        TEXT NOT NULL,      -- qué quiere el jefe que le diga (instrucción, no texto literal)
+    recur_kind    TEXT NOT NULL,      -- 'once' | 'interval' | 'daily'
+    due_at        DATETIME,           -- once: 'YYYY-MM-DD HH:MM:SS' local
+    interval_min  INTEGER,            -- interval: cada N minutos
+    next_due_at   DATETIME,           -- interval: próxima ejecución 'YYYY-MM-DD HH:MM:SS' local
+    days          TEXT,               -- daily: CSV de días 0-6 (0=domingo)
+    time_hm       TEXT,               -- daily: 'HH:MM' hora local
+    until_at      DATETIME,           -- parada por fecha/hora 'YYYY-MM-DD HH:MM:SS' local (interval)
+    max_count     INTEGER,            -- parada por nº de veces
+    sent_count    INTEGER NOT NULL DEFAULT 0,
+    respect_quiet INTEGER NOT NULL DEFAULT 1,  -- 1 = no escribe dentro de quiet hours (pausa)
+    last_sent_date TEXT,              -- daily: 'YYYY-MM-DD' local del último envío (anti doble-envío)
+    created_by    TEXT,
+    status        TEXT NOT NULL DEFAULT 'active',  -- active | done | cancelled
+    active        INTEGER NOT NULL DEFAULT 1,
+    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // ─── 2. Migración de bases existentes (esquema viejo) ─────────────────────────
@@ -290,6 +318,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name);
   CREATE INDEX IF NOT EXISTS idx_group_context_created ON group_context(created_at);
   CREATE INDEX IF NOT EXISTS idx_calendly_pushes_due ON calendly_pushes(status, due_at);
+  CREATE INDEX IF NOT EXISTS idx_outreach_active ON outreach_schedules(active, status);
 `);
 
 console.log('✅ Base de datos lista en', DB_PATH);

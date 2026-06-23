@@ -630,6 +630,82 @@ export function markScheduledMessageSent(id, dateStr) {
   db.prepare(`UPDATE scheduled_messages SET last_sent_date = ? WHERE id = ?`).run(dateStr, id);
 }
 
+// ─── Mensajes/recordatorios a TERCEROS (tool schedule_outreach) ───────────────
+// Los crea el jefe por DM; el scheduler (outreach.js) redacta y entrega según recur_kind.
+// Solo se listan/entregan los activos (active=1 AND status='active').
+
+export function createOutreach({
+  toPhone,
+  toName = null,
+  intent,
+  recurKind,
+  dueAt = null,
+  intervalMin = null,
+  nextDueAt = null,
+  days = null,
+  timeHm = null,
+  untilAt = null,
+  maxCount = null,
+  respectQuiet = 1,
+  createdBy = null,
+}) {
+  const info = db.prepare(`
+    INSERT INTO outreach_schedules
+      (to_phone, to_name, intent, recur_kind, due_at, interval_min, next_due_at,
+       days, time_hm, until_at, max_count, respect_quiet, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    toPhone,
+    toName,
+    intent,
+    recurKind,
+    dueAt,
+    intervalMin,
+    nextDueAt,
+    days,
+    timeHm,
+    untilAt,
+    maxCount,
+    respectQuiet ? 1 : 0,
+    createdBy
+  );
+  return info.lastInsertRowid;
+}
+
+// Para el scheduler: todos los outreach vivos.
+export function listActiveOutreach() {
+  return db
+    .prepare(`SELECT * FROM outreach_schedules WHERE active = 1 AND status = 'active' ORDER BY id`)
+    .all();
+}
+
+// Para la tool (action=list): los del creador, vivos.
+export function listOutreachByCreator(createdBy) {
+  return db
+    .prepare(`SELECT * FROM outreach_schedules
+              WHERE active = 1 AND status = 'active' AND created_by = ? ORDER BY id`)
+    .all(createdBy);
+}
+
+// Marca un envío hecho: incrementa el contador y, según el tipo, fija la próxima
+// ejecución (interval) o el último día enviado (daily).
+export function markOutreachSent(id, { nextDueAt = null, lastSentDate = null } = {}) {
+  db.prepare(`
+    UPDATE outreach_schedules
+    SET sent_count = sent_count + 1,
+        next_due_at = COALESCE(?, next_due_at),
+        last_sent_date = COALESCE(?, last_sent_date)
+    WHERE id = ?
+  `).run(nextDueAt, lastSentDate, id);
+}
+
+// Cierra un outreach: 'done' (cumplió su parada) o 'cancelled' (el jefe lo paró).
+export function finishOutreach(id, status = 'done') {
+  return db
+    .prepare(`UPDATE outreach_schedules SET status = ?, active = 0 WHERE id = ? AND active = 1`)
+    .run(status, id).changes;
+}
+
 // ─── Borradores con aprobación (kind='generated') ─────────────────────────────
 // Un borrador por (scheduled_id, publish_date). El flujo: el scheduler lo genera
 // → 'pending' → el jefe aprueba ('approved') → el scheduler publica ('published').
@@ -842,6 +918,7 @@ export function cleanup() {
     `DELETE FROM calendly_pushes WHERE status != 'scheduled' AND created_at < datetime('now', '-30 days')`,
     `DELETE FROM group_usage WHERE date < date('now', 'localtime', '-7 days')`,
     `DELETE FROM group_reply_usage WHERE hour_bucket < strftime('%Y-%m-%d-%H', datetime('now', 'localtime', '-2 days'))`,
+    `DELETE FROM outreach_schedules WHERE status != 'active' AND created_at < datetime('now', '-30 days')`,
   ];
   let total = 0;
   for (const sql of stmts) total += db.prepare(sql).run().changes;

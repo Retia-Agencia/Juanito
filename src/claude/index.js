@@ -3,7 +3,7 @@
 // La ejecución de las herramientas vive aquí dentro (handlers internos), no en el bot.
 
 import Anthropic from '@anthropic-ai/sdk';
-import { daysToCsv, normalizeTimeHm, csvToDayLabels, zonedNowParts } from '../scheduler/recurring-logic.js';
+import { daysToCsv, normalizeTimeHm, csvToDayLabels, zonedNowParts, zonedStamp } from '../scheduler/recurring-logic.js';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -72,6 +72,10 @@ async function resolveDeps() {
     listScheduledMessages: db.listScheduledMessages,
     cancelScheduledMessage: db.cancelScheduledMessage,
     isGroupAuthorized: db.isGroupAuthorized,
+    // mensajes/recordatorios a terceros (tool schedule_outreach)
+    createOutreach: db.createOutreach,
+    listOutreachByCreator: db.listOutreachByCreator,
+    finishOutreach: db.finishOutreach,
     // borradores con aprobación (tool manage_drafts)
     listPendingDrafts: db.listPendingDrafts,
     getDraft: db.getDraft,
@@ -91,6 +95,7 @@ async function resolveDeps() {
     generateGroupReply,
     // contacts
     resolveContact: contacts.resolveContact,
+    upsertContact: contacts.upsertContact,
     // whatsapp
     resolveGroupByName: whatsapp.resolveGroupByName,
     getRecentMessages: whatsapp.getRecentMessages,
@@ -275,6 +280,87 @@ const TOOLS = [
     },
   },
   {
+    name: 'schedule_outreach',
+    description:
+      'Hace que Juanito le ESCRIBA A UN TERCERO (una persona, no un grupo) de parte del jefe, ' +
+      'redactando un mensaje natural según lo que el jefe quiere transmitir. Úsalo SOLO cuando el ' +
+      'jefe lo ordene explícitamente: "escríbele a Sebastián que…", "recuérdale a Juan a las 5pm ' +
+      'que…", "cada 40 minutos dile a María que…". Soporta tres modalidades (recurrence): "once" ' +
+      '(una sola vez a una hora), "interval" (cada N minutos) y "daily" (a una hora fija ciertos ' +
+      'días). Para recordatorios DEL PROPIO jefe o mensajes a GRUPOS NO uses esta tool ' +
+      '(usa create_reminder o schedule_group_message). También lista (action=list) y cancela ' +
+      '(action=cancel) los envíos a terceros activos.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['create', 'list', 'cancel'],
+          description: 'create = programar uno nuevo · list = ver los activos · cancel = cancelar por id',
+        },
+        recipient: {
+          type: 'string',
+          description:
+            'Nombre o número del tercero. Si el jefe te pasa un número nuevo junto a un nombre ' +
+            '(ej: "Sebastián, 300 123 4567"), pon el nombre aquí y el número en recipient_phone ' +
+            'para guardarlo como contacto. Requerido para create.',
+        },
+        recipient_phone: {
+          type: 'string',
+          description:
+            'Opcional. Número del tercero cuando el jefe lo da explícitamente junto al nombre, ' +
+            'para guardarlo como contacto nuevo. Si el contacto ya existe, omítelo.',
+        },
+        intent: {
+          type: 'string',
+          description:
+            'QUÉ debe transmitirle Juanito al tercero, en lenguaje natural (la intención, no el ' +
+            'texto literal). Ej: "que confirme si va a la reunión de mañana". Requerido para create.',
+        },
+        recurrence: {
+          type: 'string',
+          enum: ['once', 'interval', 'daily'],
+          description: 'once = una vez · interval = cada N minutos · daily = días + hora fija. Requerido para create.',
+        },
+        due_at: {
+          type: 'string',
+          description: 'Solo recurrence=once: fecha y hora YYYY-MM-DD HH:MM:SS en la zona del jefe.',
+        },
+        interval_min: {
+          type: 'number',
+          description: 'Solo recurrence=interval: cada cuántos minutos escribir (ej: 40). Mínimo configurado.',
+        },
+        until: {
+          type: 'string',
+          description:
+            'Solo recurrence=interval: hora/fecha límite para dejar de escribir, YYYY-MM-DD HH:MM:SS. ' +
+            'Si no se da until ni count, por defecto se detiene al empezar las horas de descanso.',
+        },
+        count: {
+          type: 'number',
+          description: 'Solo recurrence=interval: número máximo de veces a escribir y luego parar.',
+        },
+        days: {
+          type: 'array',
+          items: {
+            type: 'string',
+            enum: ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'],
+          },
+          description: 'Solo recurrence=daily: días de la semana en que se escribe.',
+        },
+        time: {
+          type: 'string',
+          description: 'Solo recurrence=daily: hora local en formato 24h HH:MM (ej: "17:00" para las 5pm).',
+        },
+        id: {
+          type: 'number',
+          description: 'Id del envío a terceros a cancelar. Requerido para cancel.',
+        },
+      },
+      required: ['action'],
+    },
+  },
+  {
     name: 'manage_drafts',
     description:
       'Gestiona los BORRADORES pendientes de aprobación de los mensajes generados para grupos. ' +
@@ -390,6 +476,7 @@ const GROUP_DENIED_TOOLS = new Set([
   'summarize_group',
   'search_knowledge',
   'schedule_group_message',
+  'schedule_outreach',
   'set_group_instructions',
   'manage_drafts',
   'manage_replies',
@@ -398,6 +485,10 @@ const GROUP_DENIED_TOOLS = new Set([
 // memoria NÚCLEO que alimenta el comportamiento del bot para TODOS → solo admin.
 // (El jefe sí tiene remember_note: sus notas quedan sandboxed.)
 const BOSS_DENIED_TOOLS = new Set(['save_memory']);
+
+// Tools que SOLO el jefe (role='boss') puede ejecutar — ni siquiera el admin. Escribirle a
+// terceros de parte del jefe es una acción suya: queda restringida a su DM por decisión explícita.
+const BOSS_ONLY_TOOLS = new Set(['schedule_outreach']);
 
 // Set ACOTADO de tools para el jefe/admin cuando da órdenes DESDE un grupo (mención en el
 // chat del grupo, verificado por isStrictPrivileged). NO incluye lectura de datos privados
@@ -432,6 +523,8 @@ export function toolsForRole(role, { isGroup = false, publicDm = false, bossInGr
   if (isGroup) tools = tools.filter((t) => !GROUP_DENIED_TOOLS.has(t.name));
   // El jefe (no-admin) no recibe las tools sensibles.
   if (role !== 'admin') tools = tools.filter((t) => !BOSS_DENIED_TOOLS.has(t.name));
+  // Tools exclusivas del jefe: cualquier otro rol (admin incluido) no las ve.
+  if (role !== 'boss') tools = tools.filter((t) => !BOSS_ONLY_TOOLS.has(t.name));
   return tools;
 }
 
@@ -802,6 +895,40 @@ const DUE_AT_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 // y se refiere a ese mismo grupo (sin nombrarlo). Mismo criterio que schedule_group_message.
 const HERE_RE = /^(aqu[ií]( mismo)?|ac[aá]|este grupo|este chat|el grupo)$/i;
 
+// Piso anti-spam para outreach por intervalo: no escribirle a un tercero más seguido que esto.
+const OUTREACH_MIN_INTERVAL_MIN = () => Number(process.env.OUTREACH_MIN_INTERVAL_MIN || 5);
+
+// Parada por defecto de un outreach por intervalo SIN until/count: el próximo inicio de las
+// horas de descanso (QUIET_HOURS_START). Devuelve 'YYYY-MM-DD HH:MM:SS' local, o null si no
+// hay quiet hours configuradas (en ese caso la tool exige until o count explícito).
+export function defaultOutreachUntil(now = new Date()) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(process.env.QUIET_HOURS_START || '').trim());
+  if (!m) return null;
+  const hm = `${m[1].padStart(2, '0')}:${m[2]}`;
+  const nowStamp = zonedStamp(now);
+  let candidate = `${zonedNowParts(now).date} ${hm}:00`;
+  if (candidate <= nowStamp) {
+    candidate = `${zonedNowParts(new Date(now.getTime() + 24 * 3600000)).date} ${hm}:00`;
+  }
+  return candidate;
+}
+
+// Resumen legible de una fila de outreach para action=list.
+function formatOutreachRow(r) {
+  const who = r.to_name || r.to_phone;
+  if (r.recur_kind === 'once') return `${who}: una vez el ${r.due_at}`;
+  if (r.recur_kind === 'interval') {
+    const stop = r.max_count
+      ? ` (${r.sent_count}/${r.max_count})`
+      : r.until_at
+        ? ` hasta ${r.until_at}`
+        : '';
+    return `${who}: cada ${r.interval_min} min${stop}`;
+  }
+  if (r.recur_kind === 'daily') return `${who}: cada ${csvToDayLabels(r.days)} a las ${r.time_hm}`;
+  return who;
+}
+
 export async function dispatchTool({ name, input }, deps, ctx = {}) {
   switch (name) {
     case 'create_reminder': {
@@ -1075,6 +1202,132 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
         `Listo ✅ Mensaje programado #${id}: se enviará a "${group.name || group.id}" ` +
         `cada ${csvToDayLabels(days)} a las ${timeHm}.\nTexto: "${text}"`
       );
+    }
+
+    case 'schedule_outreach': {
+      const action = input.action;
+
+      if (action === 'list') {
+        const rows = (await deps.listOutreachByCreator?.(ctx.createdBy)) || [];
+        if (!rows.length) return 'No tienes mensajes a terceros activos.';
+        return rows.map((r) => `#${r.id} → ${formatOutreachRow(r)}\n   «${r.intent}»`).join('\n');
+      }
+
+      if (action === 'cancel') {
+        if (!Number.isInteger(input.id)) {
+          return 'Para cancelar necesito el id (míralos con "¿a qué terceros les estás escribiendo?").';
+        }
+        const changes = (await deps.finishOutreach?.(input.id, 'cancelled')) || 0;
+        return changes
+          ? `Listo ✅ Ya no le escribiré más (envío #${input.id} cancelado).`
+          : `No encontré un envío a terceros activo con id ${input.id}.`;
+      }
+
+      if (action !== 'create') return 'Acción no reconocida. Usa create, list o cancel.';
+
+      // create — resolver el destinatario primero (guardándolo si el jefe da número + nombre).
+      const recipient = input.recipient?.trim();
+      if (!recipient) return 'Me falta a quién escribirle. Dame el nombre o el número del contacto.';
+      const intent = (input.intent || '').trim();
+      if (!intent) return 'Me falta qué quieres que le diga. Dime el mensaje o la intención.';
+
+      const phoneGiven = input.recipient_phone?.trim();
+      if (phoneGiven) {
+        try {
+          await deps.upsertContact?.({ name: recipient, phone: phoneGiven });
+        } catch {
+          /* nombre o número inválido: seguimos e intentamos resolver de todas formas */
+        }
+      }
+      const contact = await deps.resolveContact(phoneGiven || recipient);
+      if (!contact) {
+        return (
+          `No encontré ningún contacto que coincida con "${recipient}". ` +
+          `Pásame su número (ej: "${recipient}, 300 123 4567") y lo guardo.`
+        );
+      }
+      const toPhone = contact.phone;
+      const toName = contact.name || recipient;
+
+      const recurrence = input.recurrence;
+
+      if (recurrence === 'once') {
+        if (!DUE_AT_RE.test(String(input.due_at || '').trim())) {
+          return 'Necesito la fecha y hora exactas (formato YYYY-MM-DD HH:MM:SS). ¿Para cuándo le escribo?';
+        }
+        await deps.createOutreach({
+          toPhone,
+          toName,
+          intent,
+          recurKind: 'once',
+          dueAt: input.due_at.trim(),
+          createdBy: ctx.createdBy,
+        });
+        return `Listo ✅ Le escribiré a ${toName} el ${input.due_at.trim()}: «${intent}». Te aviso cuando lo haga.`;
+      }
+
+      if (recurrence === 'interval') {
+        const floor = OUTREACH_MIN_INTERVAL_MIN();
+        const min = Number(input.interval_min);
+        if (!Number.isFinite(min) || min < floor) {
+          return `Para no spamear al contacto, el intervalo mínimo es ${floor} minutos. ¿Cada cuántos minutos le escribo?`;
+        }
+        let untilAt = null;
+        let maxCount = null;
+        if (input.until?.trim()) {
+          if (!DUE_AT_RE.test(input.until.trim())) {
+            return 'La hora límite debe ir en formato YYYY-MM-DD HH:MM:SS. ¿Hasta cuándo le escribo?';
+          }
+          untilAt = input.until.trim();
+        }
+        if (Number.isInteger(input.count) && input.count > 0) maxCount = input.count;
+        // Sin parada explícita: por defecto se detiene al empezar las horas de descanso.
+        if (!untilAt && !maxCount) {
+          untilAt = defaultOutreachUntil();
+          if (!untilAt) {
+            return 'Para escribirle cada cierto tiempo necesito una parada: dime hasta qué hora o cuántas veces.';
+          }
+        }
+        const nextDueAt = zonedStamp(new Date(Date.now() + min * 60000));
+        await deps.createOutreach({
+          toPhone,
+          toName,
+          intent,
+          recurKind: 'interval',
+          intervalMin: min,
+          nextDueAt,
+          untilAt,
+          maxCount,
+          createdBy: ctx.createdBy,
+        });
+        const stop = maxCount ? `${maxCount} ${maxCount === 1 ? 'vez' : 'veces'}` : `hasta ${untilAt}`;
+        return (
+          `Listo ✅ Le escribiré a ${toName} cada ${min} min (${stop}): «${intent}». ` +
+          `No le escribo en horas de descanso y te aviso cada vez.`
+        );
+      }
+
+      if (recurrence === 'daily') {
+        const days = daysToCsv(input.days);
+        if (!days) return 'No entendí los días. Dímelos como días de la semana (ej: lunes y miércoles).';
+        const timeHm = normalizeTimeHm(input.time);
+        if (!timeHm) return 'No entendí la hora. Necesito la hora en formato 24h, ej: 17:00 para las 5pm.';
+        await deps.createOutreach({
+          toPhone,
+          toName,
+          intent,
+          recurKind: 'daily',
+          days,
+          timeHm,
+          createdBy: ctx.createdBy,
+        });
+        return (
+          `Listo ✅ Le escribiré a ${toName} cada ${csvToDayLabels(days)} a las ${timeHm}: ` +
+          `«${intent}». Te aviso cada vez.`
+        );
+      }
+
+      return 'Dime si es una sola vez (once), cada cierto tiempo (interval) o a una hora fija ciertos días (daily).';
     }
 
     case 'set_group_instructions': {
@@ -1463,6 +1716,41 @@ export async function generateScheduledDraft({ brief, groupName, feedback = '', 
     })
   );
 
+  return response.content
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n')
+    .trim();
+}
+
+// ─── Generador de mensajes a TERCEROS (tool schedule_outreach) ────────────────
+// Redacta un mensaje natural y cordial para enviarle a una persona DE PARTE del jefe,
+// a partir de la intención que el jefe dictó. Se presenta de parte del jefe (BOSS_NAME si
+// está) y firma como el bot (BOT_NAME). El texto se envía directo (no pasa por aprobación):
+// el jefe ya dio la orden y recibe copia de cada envío.
+export async function generateOutreachMessage({ intent, toName = null, bossName = null, botName = null }) {
+  const boss = (bossName || process.env.BOSS_NAME || '').trim();
+  const bot = (botName || process.env.BOT_NAME || 'Juanito').trim();
+  const fromPart = boss ? `de parte de ${boss}` : 'de parte de mi jefe';
+  const toPart = toName ? ` La persona se llama ${toName}.` : '';
+  const response = await withRetry(() =>
+    client.messages.create({
+      model: BOSS_MODEL,
+      max_tokens: 400,
+      system:
+        `Eres ${bot}, el asistente personal que escribe por WhatsApp ${fromPart}. Redactas un ` +
+        `mensaje BREVE, natural y cordial para enviárselo a un tercero ${fromPart}.${toPart} ` +
+        `Preséntate brevemente la primera vez (ej: "Hola, soy ${bot}, le escribo ${fromPart}"). ` +
+        `Tutea, tono amable y directo. Responde ÚNICAMENTE con el mensaje final listo para enviar — ` +
+        `sin comillas, sin título, sin explicaciones. Formato WhatsApp (emojis con moderación).`,
+      messages: [
+        {
+          role: 'user',
+          content: `Esto es lo que mi jefe quiere transmitirle:\n\n${intent}`,
+        },
+      ],
+    })
+  );
   return response.content
     .filter((b) => b.type === 'text')
     .map((b) => b.text)

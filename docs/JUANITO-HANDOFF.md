@@ -251,6 +251,7 @@ invocar pase lo que pase.
 | Tool | Admin | Boss | Grupo | Qué hace |
 |------|:-----:|:----:|:-----:|---------|
 | `create_reminder` | ✅ | ✅ | ❌ | Crea recordatorio con fecha/hora y destinatario opcional |
+| `schedule_outreach` | ❌ | ✅ | ❌ | Escribe a un TERCERO de parte del jefe (única/intervalo/diaria); solo jefe (§18.S) |
 | `save_memory` | ✅ | ❌ | ❌ | Escribe en la memoria núcleo del sistema (key/value) |
 | `remember_note` | ✅ | ✅ | ❌ | Guarda nota personal del jefe (sandboxed, no afecta comportamiento) |
 | `summarize_group` | ✅ | ✅ | ❌ | Lee y resume un grupo por nombre |
@@ -2096,6 +2097,35 @@ sin id). Verde en los archivos afectados.
 aprobó por el fast-path determinista (`[Bot] Aprobación determinista: respuesta #3`) → la respuesta
 salió a su destino original (DM de Ange). **Sin loop.** Pendiente menor: validar el flujo de
 **respuestas de grupo** (grupo con `require_approval` ON) y borradores recurrentes (§18.F) end-to-end.
+
+### 18.S 🔵 Mensajes/recordatorios a TERCEROS por orden del jefe (tool `schedule_outreach`) (2026-06-23)
+
+**Qué pidió el jefe:** poder ordenarle a Juanito que le escriba a un **tercero** (no a un grupo, no a
+sí mismo) — "escríbele a Sebastián que…", "recuérdale a Juan a las 5pm que…", "cada 40 min dile a
+María que…". **Solo por instrucción suya.** Juanito **redacta el mensaje natural** de su parte y le
+**avisa al jefe** de cada salida.
+
+**Decisiones (confirmadas con el jefe):** 3 modalidades (única / por intervalo / diaria a hora fija) ·
+paradas del intervalo: hora/fecha límite, nº de veces, manual, y **pausa en horas muertas**
+(`isWithinQuietHours`); sin until/count el intervalo **para al iniciar el descanso** · **envío
+automático + aviso al jefe** (sin aprobación por mensaje) · tono **redactado natural** de parte del
+jefe · **solo rol `boss`** (ni admin), solo por DM.
+
+**Implementación:**
+- **Tabla** `outreach_schedules` (`db/migrate.js`) + ops en `db/index.js` (`createOutreach`,
+  `listActiveOutreach`, `listOutreachByCreator`, `markOutreachSent`, `finishOutreach`) + limpieza.
+- **Tool** `schedule_outreach` (`claude/index.js`): `action create|list|cancel`; en create
+  `recipient`(+`recipient_phone` para guardar contacto nuevo), `intent`, `recurrence once|interval|daily`
+  y campos por tipo. Gateada por `BOSS_ONLY_TOOLS` (solo `role='boss'`) y en `GROUP_DENIED_TOOLS`.
+  Validaciones: `DUE_AT_RE`, piso `OUTREACH_MIN_INTERVAL_MIN` (default 5), parada obligatoria del
+  intervalo (default = `defaultOutreachUntil()` = próximo `QUIET_HOURS_START`).
+- **Redacción:** `generateOutreachMessage({intent,toName})` (BOSS_MODEL) — se presenta de parte del
+  jefe (`BOSS_NAME`) y firma como `BOT_NAME`.
+- **Job** `scheduler/outreach.js` cada minuto (registrado en `startAllJobs`): lógica de vencimiento
+  PURA `isOutreachDue` + `zonedStamp` en `recurring-logic.js`; respeta quiet hours; envía por la cola
+  anti-ban; avisa al jefe (`bossDmTarget`); avanza/cierra según parada. Reintenta al minuto si falla.
+- **No toca** `create_reminder` (sigue para recordatorios del propio jefe / a grupos).
+- Env documentada: `OUTREACH_MIN_INTERVAL_MIN` en `.env.example`.
 
 ### 🟢 Baja prioridad / Nice-to-have
 

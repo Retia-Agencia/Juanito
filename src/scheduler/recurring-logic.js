@@ -75,6 +75,45 @@ export function zonedNowParts(date = new Date(), tz = process.env.TZ || 'America
   };
 }
 
+// 'YYYY-MM-DD HH:MM:SS' de un instante en la TZ del bot (comparable como string con
+// due_at/next_due_at/until_at, que se guardan en el mismo formato y zona). Mismo enfoque
+// que zonedNowParts (Intl, sin tzdata del SO).
+export function zonedStamp(date = new Date(), tz = process.env.TZ || 'America/Bogota') {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+  const p = Object.fromEntries(fmt.formatToParts(date).map((x) => [x.type, x.value]));
+  const hour = p.hour === '24' ? '00' : p.hour;
+  return `${p.year}-${p.month}-${p.day} ${hour}:${p.minute}:${p.second}`;
+}
+
+// ¿Toca enviar AHORA este outreach a un tercero? Decisión PURA (sin DB/red).
+//  - 'once':     due_at ya pasó (<= ahora).
+//  - 'interval': next_due_at ya pasó (<= ahora). El catch-up es natural: si quedó atrás
+//                (bot caído o pausa por quiet hours) dispara al reanudar.
+//  - 'daily':    reusa isRecurringDue (día + ventana de hora + anti doble-envío).
+export function isOutreachDue(row, { nowStamp, nowParts, windowMin = 30 }) {
+  if (row.recur_kind === 'once') return !!row.due_at && row.due_at <= nowStamp;
+  if (row.recur_kind === 'interval') return !!row.next_due_at && row.next_due_at <= nowStamp;
+  if (row.recur_kind === 'daily') {
+    return isRecurringDue({
+      days: row.days,
+      timeHm: row.time_hm,
+      lastSentDate: row.last_sent_date,
+      nowParts,
+      windowMin,
+    });
+  }
+  return false;
+}
+
 const toMinutes = (hm) => {
   const [h, m] = hm.split(':').map(Number);
   return h * 60 + m;

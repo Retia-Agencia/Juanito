@@ -706,6 +706,160 @@ test('manage_replies: gateo — DM sí (boss/admin), grupos NUNCA', async () => 
   assert.ok(!names(toolsForRole('boss', { isGroup: true })).includes('manage_replies'));
 });
 
+// ─── schedule_outreach (mensajes a terceros por orden del jefe, §18.S) ────────
+
+function outreachDeps({ contact = { name: 'Sebastián', phone: '573001234567' } } = {}) {
+  const state = { created: [], upserts: [], canceled: [] };
+  return {
+    _state: state,
+    resolveContact: async () => contact,
+    upsertContact: ({ name, phone }) => state.upserts.push({ name, phone }),
+    createOutreach: (row) => {
+      state.created.push(row);
+      return 11;
+    },
+    listOutreachByCreator: () => [
+      { id: 11, to_name: 'Sebastián', to_phone: '573001234567', intent: 'que confirme', recur_kind: 'interval', interval_min: 40, until_at: '2026-06-23 18:00:00', sent_count: 2 },
+    ],
+    finishOutreach: (id) => (id === 11 ? 1 : 0),
+  };
+}
+
+test('schedule_outreach once: resuelve contacto y guarda recurKind=once con dueAt', async () => {
+  const deps = outreachDeps();
+  const out = await dispatchTool(
+    { name: 'schedule_outreach', input: { action: 'create', recipient: 'Sebastián', intent: 'que confirme la reunión', recurrence: 'once', due_at: '2026-06-23 17:00:00' } },
+    deps,
+    ctx
+  );
+  assert.equal(deps._state.created.length, 1);
+  const row = deps._state.created[0];
+  assert.equal(row.recurKind, 'once');
+  assert.equal(row.dueAt, '2026-06-23 17:00:00');
+  assert.equal(row.toPhone, '573001234567');
+  assert.equal(row.toName, 'Sebastián');
+  assert.equal(row.createdBy, BOSS);
+  assert.match(out, /Sebastián/);
+});
+
+test('schedule_outreach interval con count: guarda intervalMin, nextDueAt y maxCount', async () => {
+  const deps = outreachDeps();
+  await dispatchTool(
+    { name: 'schedule_outreach', input: { action: 'create', recipient: 'Sebastián', intent: 'que llame', recurrence: 'interval', interval_min: 40, count: 3 } },
+    deps,
+    ctx
+  );
+  const row = deps._state.created[0];
+  assert.equal(row.recurKind, 'interval');
+  assert.equal(row.intervalMin, 40);
+  assert.equal(row.maxCount, 3);
+  assert.ok(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(row.nextDueAt), 'nextDueAt con formato válido');
+});
+
+test('schedule_outreach interval por debajo del piso → rechaza, no guarda', async () => {
+  const deps = outreachDeps();
+  const out = await dispatchTool(
+    { name: 'schedule_outreach', input: { action: 'create', recipient: 'Sebastián', intent: 'x', recurrence: 'interval', interval_min: 1, count: 2 } },
+    deps,
+    ctx
+  );
+  assert.equal(deps._state.created.length, 0);
+  assert.match(out, /m[ií]nimo/i);
+});
+
+test('schedule_outreach interval sin until/count usa el inicio de quiet hours como parada', async () => {
+  const saved = { q: process.env.QUIET_HOURS_START, tz: process.env.TZ };
+  process.env.QUIET_HOURS_START = '21:00';
+  process.env.TZ = 'America/Bogota';
+  try {
+    const deps = outreachDeps();
+    await dispatchTool(
+      { name: 'schedule_outreach', input: { action: 'create', recipient: 'Sebastián', intent: 'x', recurrence: 'interval', interval_min: 40 } },
+      deps,
+      ctx
+    );
+    assert.equal(deps._state.created.length, 1);
+    const row = deps._state.created[0];
+    assert.match(row.untilAt, /21:00:00$/, 'until por defecto = inicio del descanso');
+    assert.equal(row.maxCount, null);
+  } finally {
+    if (saved.q === undefined) delete process.env.QUIET_HOURS_START; else process.env.QUIET_HOURS_START = saved.q;
+    if (saved.tz === undefined) delete process.env.TZ; else process.env.TZ = saved.tz;
+  }
+});
+
+test('schedule_outreach interval sin parada y SIN quiet hours → pide una parada', async () => {
+  const saved = process.env.QUIET_HOURS_START;
+  delete process.env.QUIET_HOURS_START;
+  try {
+    const deps = outreachDeps();
+    const out = await dispatchTool(
+      { name: 'schedule_outreach', input: { action: 'create', recipient: 'Sebastián', intent: 'x', recurrence: 'interval', interval_min: 40 } },
+      deps,
+      ctx
+    );
+    assert.equal(deps._state.created.length, 0);
+    assert.match(out, /parada|hasta qu[eé]|cu[aá]ntas veces/i);
+  } finally {
+    if (saved === undefined) delete process.env.QUIET_HOURS_START; else process.env.QUIET_HOURS_START = saved;
+  }
+});
+
+test('schedule_outreach daily: normaliza días y hora', async () => {
+  const deps = outreachDeps();
+  await dispatchTool(
+    { name: 'schedule_outreach', input: { action: 'create', recipient: 'Sebastián', intent: 'buenos días', recurrence: 'daily', days: ['lunes', 'miercoles'], time: '9:00' } },
+    deps,
+    ctx
+  );
+  const row = deps._state.created[0];
+  assert.equal(row.recurKind, 'daily');
+  assert.equal(row.days, '1,3');
+  assert.equal(row.timeHm, '09:00');
+});
+
+test('schedule_outreach con número nuevo + nombre lo guarda como contacto', async () => {
+  const deps = outreachDeps({ contact: { name: null, phone: '573009990000' } });
+  await dispatchTool(
+    { name: 'schedule_outreach', input: { action: 'create', recipient: 'Carlos', recipient_phone: '300 999 0000', intent: 'salúdalo', recurrence: 'once', due_at: '2026-06-23 17:00:00' } },
+    deps,
+    ctx
+  );
+  assert.equal(deps._state.upserts.length, 1);
+  assert.equal(deps._state.upserts[0].name, 'Carlos');
+});
+
+test('schedule_outreach contacto no resuelto → pide el número, no guarda', async () => {
+  const deps = outreachDeps({ contact: null });
+  const out = await dispatchTool(
+    { name: 'schedule_outreach', input: { action: 'create', recipient: 'Fulano', intent: 'x', recurrence: 'once', due_at: '2026-06-23 17:00:00' } },
+    deps,
+    ctx
+  );
+  assert.equal(deps._state.created.length, 0);
+  assert.match(out, /n[uú]mero|no encontr[eé]/i);
+});
+
+test('schedule_outreach list y cancel', async () => {
+  const deps = outreachDeps();
+  const list = await dispatchTool({ name: 'schedule_outreach', input: { action: 'list' } }, deps, ctx);
+  assert.match(list, /#11/);
+  assert.match(list, /cada 40 min/);
+  const ok = await dispatchTool({ name: 'schedule_outreach', input: { action: 'cancel', id: 11 } }, deps, ctx);
+  assert.match(ok, /#11 cancelado/);
+  const noId = await dispatchTool({ name: 'schedule_outreach', input: { action: 'cancel' } }, deps, ctx);
+  assert.match(noId, /necesito el id/i);
+});
+
+test('schedule_outreach: gateo — SOLO el jefe (boss); admin NO, grupos NUNCA', async () => {
+  const { toolsForRole } = await import('../src/claude/index.js');
+  const names = (tools) => tools.map((t) => t.name);
+  assert.ok(names(toolsForRole('boss')).includes('schedule_outreach'), 'boss en DM sí');
+  assert.ok(!names(toolsForRole('admin')).includes('schedule_outreach'), 'admin NO');
+  assert.ok(!names(toolsForRole('boss', { isGroup: true })).includes('schedule_outreach'), 'en grupo no');
+  assert.ok(!names(toolsForRole('boss', { isGroup: true, bossInGroup: true })).includes('schedule_outreach'), 'jefe-en-grupo no');
+});
+
 // ─── manage_reminders (ver/cancelar/posponer recordatorios del jefe) ──────────
 
 function reminderDeps() {
