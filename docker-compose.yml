@@ -32,6 +32,9 @@ services:
       - MAX_GROUPS_PER_CYCLE=${MAX_GROUPS_PER_CYCLE:-10}
       - SUMMARY_CRON=${SUMMARY_CRON:-0 */4 * * *}
       - SUMMARY_CYCLE_HOURS=${SUMMARY_CYCLE_HOURS:-4}
+      # Extracción de contexto de negocio (Fase 2B): propone hechos desde los resúmenes.
+      - BIZ_EXTRACT_CRON=${BIZ_EXTRACT_CRON:-0 3 * * *}
+      - BIZ_EXTRACT_SUMMARIES=${BIZ_EXTRACT_SUMMARIES:-20}
       # Hardening grupos grandes (§18.D): tope de mensajes por resumen, throttle
       # global de envío (anti-ban) y ventana de historial de grupo.
       - SUMMARY_MAX_MSGS=${SUMMARY_MAX_MSGS:-400}

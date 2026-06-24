@@ -1982,3 +1982,80 @@ export async function summarizeGroupMessages(groupName, messages) {
     .join('\n')
     .trim();
 }
+
+// ─── Extracción de contexto de negocio desde resúmenes de grupos (Fase 2B) ────
+// El job de scheduler/business-extraction.js usa esto: lee resúmenes recientes, propone hechos
+// DURADEROS del negocio (status='proposed') y un admin los confirma con /negocio ok. Conservador
+// y seguro: nada se activa solo, y ante cualquier fallo del modelo no se propone nada.
+
+const BIZ_TOPICS = ['proceso', 'closers', 'productos', 'terminologia', 'clientes', 'metas', 'otro'];
+
+// Parseo PURO (exportado para tests) de la respuesta del modelo a [{topic, fact}]: tolera que el
+// JSON venga envuelto en ```json … ``` o texto, valida el topic (cae en 'otro'), descarta vacíos y
+// DEDUP contra los hechos ya conocidos (normalizando el texto). Nunca lanza.
+export function parseBusinessFacts(raw, existingFacts = []) {
+  let arr;
+  try {
+    const m = String(raw || '').match(/\[[\s\S]*\]/);
+    arr = JSON.parse(m ? m[0] : raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(arr)) return [];
+
+  const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const seen = new Set(existingFacts.map((f) => norm(f.fact)));
+  const out = [];
+  for (const item of arr) {
+    const fact = String(item?.fact || '').trim();
+    if (!fact) continue;
+    const key = norm(fact);
+    if (seen.has(key)) continue; // ya conocido o duplicado dentro del mismo lote
+    seen.add(key);
+    const topic = BIZ_TOPICS.includes(item?.topic) ? item.topic : 'otro';
+    out.push({ topic, fact });
+  }
+  return out;
+}
+
+// Llama a Claude con los resúmenes recientes + lo que YA se sabe, y devuelve hechos NUEVOS del
+// negocio. Nunca lanza: si el modelo falla o no hay resúmenes, devuelve [].
+export async function extractBusinessFacts(summaries = [], existingFacts = []) {
+  if (!summaries.length) return [];
+
+  const sumText = summaries
+    .map((s) => `[${s.chat_name || s.chatName || '?'}] ${s.summary}`)
+    .filter((l) => l.trim())
+    .join('\n');
+  if (!sumText.trim()) return [];
+
+  const known = existingFacts.map((f) => `- ${f.fact}`).join('\n') || '(nada aún)';
+
+  let raw;
+  try {
+    const response = await withRetry(() =>
+      client.messages.create({
+        model: GROUP_MODEL,
+        max_tokens: 600,
+        system:
+          'Extraes SOLO hechos DURADEROS sobre el negocio: proceso de ventas, closers y qué hace ' +
+          'cada uno, productos/ofertas, jerga interna, clientes clave, metas. NO extraigas chismes, ' +
+          'eventos puntuales, tareas, estados de ánimo ni nada efímero. NO repitas hechos ya conocidos. ' +
+          'Si no hay nada nuevo y duradero, devuelve []. Responde SOLO con un array JSON de objetos ' +
+          '{"topic","fact"}: topic uno de [proceso, closers, productos, terminologia, clientes, metas, otro]; ' +
+          'fact = una frase corta, clara y autocontenida.',
+        messages: [
+          {
+            role: 'user',
+            content: `Hechos que YA conozco del negocio:\n${known}\n\nResúmenes recientes de grupos:\n${sumText}\n\nDevuelve SOLO los hechos NUEVOS y duraderos como array JSON.`,
+          },
+        ],
+      })
+    );
+    raw = response.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+  } catch {
+    return [];
+  }
+
+  return parseBusinessFacts(raw, existingFacts);
+}

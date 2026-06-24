@@ -4,7 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dispatchTool } from '../src/claude/index.js';
+import { dispatchTool, parseBusinessFacts } from '../src/claude/index.js';
 
 const BOSS = '573001112233';
 const ctx = { createdBy: BOSS };
@@ -1162,4 +1162,43 @@ test('manage_reminders: gateo — DM sí (boss/admin), grupos NUNCA', async () =
   assert.ok(names(toolsForRole('admin')).includes('manage_reminders'), 'admin en DM sí');
   assert.ok(!names(toolsForRole('boss', { isGroup: true })).includes('manage_reminders'), 'en grupo no');
   assert.ok(!names(toolsForRole('boss', { publicDm: true })).includes('manage_reminders'), 'en DM público no');
+});
+
+// ─── parseBusinessFacts (extracción de negocio, Fase 2B) ──────────────────────
+
+test('parseBusinessFacts: array JSON válido → hechos con topic+fact', () => {
+  const out = parseBusinessFacts('[{"topic":"closers","fact":"Marin cierra LinkedIn Sales"}]');
+  assert.equal(out.length, 1);
+  assert.deepEqual(out[0], { topic: 'closers', fact: 'Marin cierra LinkedIn Sales' });
+});
+
+test('parseBusinessFacts: JSON envuelto en ```json … ``` o texto → lo extrae', () => {
+  const raw = 'Claro, aquí tienes:\n```json\n[{"topic":"metas","fact":"meta Q3 100 cupos"}]\n```';
+  const out = parseBusinessFacts(raw);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].fact, 'meta Q3 100 cupos');
+});
+
+test('parseBusinessFacts: topic inválido → "otro"; fact vacío → descartado', () => {
+  const out = parseBusinessFacts('[{"topic":"xyz","fact":"algo"},{"topic":"metas","fact":"   "}]');
+  assert.equal(out.length, 1);
+  assert.equal(out[0].topic, 'otro');
+});
+
+test('parseBusinessFacts: dedup contra hechos ya conocidos (normalizado)', () => {
+  const existing = [{ fact: 'Marin cierra LinkedIn Sales' }];
+  const out = parseBusinessFacts('[{"topic":"closers","fact":"  marin   cierra LINKEDIN sales "}]', existing);
+  assert.equal(out.length, 0); // mismo hecho con otro espaciado/caso → no se repropone
+});
+
+test('parseBusinessFacts: dedup dentro del mismo lote', () => {
+  const out = parseBusinessFacts('[{"topic":"metas","fact":"vender cupos"},{"topic":"otro","fact":"Vender Cupos"}]');
+  assert.equal(out.length, 1);
+});
+
+test('parseBusinessFacts: JSON inválido / no-array / vacío → []', () => {
+  assert.deepEqual(parseBusinessFacts('no soy json'), []);
+  assert.deepEqual(parseBusinessFacts('{"topic":"metas","fact":"x"}'), []); // objeto, no array
+  assert.deepEqual(parseBusinessFacts(''), []);
+  assert.deepEqual(parseBusinessFacts(null), []);
 });
