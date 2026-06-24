@@ -54,10 +54,12 @@ test('prospectPhoneOf usa text_reminder_number (null si vacío)', () => {
   assert.equal(prospectPhoneOf({}), null);
 });
 
-test('resolveCloser mapea closers y enruta Equipo EstadoX a Mateo', () => {
+test('resolveCloser mapea closers por email (case-insensitive)', () => {
   assert.equal(resolveCloser('sebastian.salazar@30x.com').phone, '+573054312905');
-  assert.equal(resolveCloser('EQUIPO@estadox.com').phone, '+573003558574'); // case-insensitive
-  assert.equal(resolveCloser('mateo.leon@30x.com').phone, '+573003558574');
+  assert.equal(resolveCloser('SEBASTIAN.MARIN@30x.com').phone, '+573212100048'); // case-insensitive
+  assert.equal(resolveCloser('lucas.mendoza@30x.com').name, 'Lucas Mendoza');
+  assert.equal(resolveCloser('mateo.leon@30x.com'), null);      // salió del equipo
+  assert.equal(resolveCloser('equipo@estadox.com'), null);      // EstadoX en standby
   assert.equal(resolveCloser('desconocido@x.com'), null);
   assert.equal(resolveCloser(null), null);
 });
@@ -66,7 +68,9 @@ test('resolveCloserByPhone identifica al closer por su número entrante', () => 
   // con sufijo de WhatsApp y formato distinto
   assert.equal(resolveCloserByPhone('573054312905@s.whatsapp.net').email, 'sebastian.salazar@30x.com');
   assert.equal(resolveCloserByPhone('+57 310 306 2287').name, 'Daniela Camacho');
-  assert.equal(resolveCloserByPhone('573003558574').email, 'mateo.leon@30x.com');
+  assert.equal(resolveCloserByPhone('573212100048').email, 'sebastian.marin@30x.com'); // closer nuevo
+  assert.equal(resolveCloserByPhone('573014477044').name, 'Lucas Mendoza');
+  assert.equal(resolveCloserByPhone('573003558574'), null); // Mateo salió → ya no resuelve
   assert.equal(resolveCloserByPhone('573999999999'), null);
   assert.equal(resolveCloserByPhone(''), null);
 });
@@ -74,16 +78,17 @@ test('resolveCloserByPhone identifica al closer por su número entrante', () => 
 test('resolveCloserByPushName resuelve por nombre completo e ignora ambigüedades', () => {
   // Nombres exactos
   assert.equal(resolveCloserByPushName('Pablo Lozano').email, 'pablo.lozano@30x.com');
-  assert.equal(resolveCloserByPushName('Daniela Camacho').name, 'Daniela Camacho');
+  assert.equal(resolveCloserByPushName('Lucas Mendoza').email, 'lucas.mendoza@30x.com');
   // Case insensitive y con emojis
   assert.equal(resolveCloserByPushName('pablo lozano 📞').phone, '+573046131437');
-  // Mateo Leon (dedup con Equipo EstadoX, mismo teléfono)
-  assert.equal(resolveCloserByPushName('Mateo Leon').phone, '+573003558574');
-  // Dos Sebastians — "Sebastian" solo es ambiguo → null
+  // Tres Sebastians (Rodriguez, Salazar, Marin) — "Sebastian" solo es ambiguo → null
   assert.equal(resolveCloserByPushName('Sebastian'), null);
   // Con apellido → resuelve unívocamente
   assert.equal(resolveCloserByPushName('Sebastian Salazar').email, 'sebastian.salazar@30x.com');
   assert.equal(resolveCloserByPushName('Sebastian Rodriguez').email, 'sebastian@30x.com');
+  assert.equal(resolveCloserByPushName('Sebastian Marin').email, 'sebastian.marin@30x.com');
+  // Mateo salió → ya no se reconoce
+  assert.equal(resolveCloserByPushName('Mateo Leon'), null);
   // No reconocido → null
   assert.equal(resolveCloserByPushName('Juan Desconocido'), null);
   assert.equal(resolveCloserByPushName(''), null);

@@ -3,20 +3,18 @@
 //
 // Notas de la validación contra la cuenta real (grupo "Negociación"):
 //  - El "organizado por" del evento (event_memberships[0].user_email) ES el closer.
-//  - La cuenta compartida "Equipo EstadoX" (equipo@estadox.com) la maneja Mateo
-//    Leon → se enruta a su mismo número.
 //
-// Para cambiar un número, editar este mapa (8 entradas, estables).
-
+// Para cambiar un número o un closer, editar este mapa. (2026-06-24: salieron Mateo León y
+// Natalia González; la cuenta de EstadoX `equipo@estadox.com` quedó en standby — sin enrutar;
+// entraron Sebastián Marín y Lucas Mendoza, ambos de LinkedIn Sales.)
 export const CLOSERS = {
   'daniela.camacho@30x.com':  { name: 'Daniela Camacho',     phone: '+573103062287' },
-  'mateo.leon@30x.com':       { name: 'Mateo Leon',          phone: '+573003558574' },
-  'equipo@estadox.com':       { name: 'Mateo Leon (EstadoX)', phone: '+573003558574' },
-  'natalia.gonzalez@30x.com': { name: 'Natalia Gonzalez',    phone: '+573124889508' },
   'sebastian@30x.com':        { name: 'Sebastian Rodriguez', phone: '+573102212005' },
   'sebastian.salazar@30x.com':{ name: 'Sebastian Salazar',   phone: '+573054312905' },
   'pablo.lozano@30x.com':     { name: 'Pablo Lozano',        phone: '+573046131437' },
   'maca.celis@30x.com':       { name: 'Maca Celis',          phone: '+573246345899' },
+  'sebastian.marin@30x.com':  { name: 'Sebastian Marin',     phone: '+573212100048' },
+  'lucas.mendoza@30x.com':    { name: 'Lucas Mendoza',       phone: '+573014477044' },
 };
 
 // LIDs de TRABAJO conocidos de closers cuyo número/nombre de WhatsApp NO permite el match por las
@@ -70,7 +68,7 @@ export function resolveCloserByPushName(pushName) {
   const words = pushName.toLowerCase().replace(/[^\w\s]/g, '').trim().split(/\s+/).filter(Boolean);
   if (!words.length) return null;
 
-  const seen = new Map(); // phone → entry, para deduplicar (ej: Mateo Leon / Equipo EstadoX)
+  const seen = new Map(); // phone → entry, para deduplicar si dos emails apuntan al mismo número
   for (const [email, c] of Object.entries(CLOSERS)) {
     // Normalizar nombre del closer: quitar "(EstadoX)" y similares
     const closerWords = c.name.toLowerCase().replace(/\s*\(.*\)/, '').trim().split(/\s+/).filter(Boolean);
