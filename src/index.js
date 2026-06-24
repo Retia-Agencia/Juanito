@@ -37,6 +37,9 @@ import {
   getPendingReply,
   approvePendingReply,
   discardPendingReply,
+  listPendingTasks,
+  getTask,
+  setTaskStatus,
 } from './db/index.js';
 import { resolveCloserByPushName } from './calendly/closers.js';
 import { getHealth } from './calendly/health.js';
@@ -175,6 +178,11 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
         getPendingReply,
         approvePendingReply,
         discardPendingReply,
+        // /tareas — órdenes del jefe capturadas (capture_task); sendMessage avisa al solicitante
+        listPendingTasks,
+        getTask,
+        setTaskStatus,
+        sendMessage,
       }
     );
     if (cmdReply !== null) {

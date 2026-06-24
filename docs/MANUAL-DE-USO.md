@@ -119,6 +119,22 @@ Esto aplica **igual** a respuestas de grupo y a DMs.
 
 ---
 
+## Órdenes del jefe para el equipo — `/tareas` *(admin)*
+
+Cuando el jefe le pide a Juanito algo que **ninguna de sus herramientas puede hacer** (subir algo a
+una hoja nueva, una gestión manual, etc.), Juanito **no se niega**: anota la orden y avisa al equipo
+(al grupo de aprobaciones si está configurado, o al DM del jefe). El jefe recibe un "se lo paso al
+equipo y te confirmo en cuanto esté".
+
+| Comando | Qué hace |
+|---|---|
+| `/tareas` | Lista las órdenes pendientes del jefe (id + texto) |
+| `/tareas ver <id>` | Detalle completo (orden + contexto + quién la pidió) |
+| `/tareas hecha <id>` | La cierra y **avisa al jefe** ("✅ Listo lo que pediste…") |
+| `/tareas descartar <id>` | La descarta (sin avisar a nadie) |
+
+---
+
 ## Grupos — `/grupos` y `/grupo`
 
 Juanito **solo responde en grupos autorizados** (anti-secuestro, default-deny).
@@ -218,6 +234,7 @@ Botón de pánico de los pushes a closers.
 /confirmaciones dm on|off                ← confirmar TODOS los DMs (global)
 /confirmaciones grupo <n|nombre> on|off  ← confirmar un grupo
 /respuestas [ver|aprobar|rechazar <id>]  ← pendientes (grupo + DM)
+/tareas [ver|hecha|descartar <id>]       ← órdenes del jefe por hacer
 /grupos [on|off <n|nombre>]              ← autorizar/listar grupos
 /grupo [on|off]                          ← (dentro del grupo)
 /persona <n|nombre> | <texto>            ← tono por grupo

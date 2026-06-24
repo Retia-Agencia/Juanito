@@ -29,6 +29,9 @@ function makeDeps(overrides = {}) {
     searchMessages: overrides.searchMessages || rec('searchMessages'),
     searchMemory: overrides.searchMemory || rec('searchMemory'),
     searchSummaries: overrides.searchSummaries || rec('searchSummaries'),
+    createTask: rec('createTask'),
+    approvalsTarget: overrides.approvalsTarget || (async () => 'team@g.us'),
+    sendMessage: rec('sendMessage'),
   };
   return deps;
 }
@@ -360,6 +363,75 @@ test('search_knowledge pasa el LID del que habla a searchMemory (no ve notas aje
 
   assert.equal(seen.length, 1);
   assert.deepEqual(seen[0], ['cuenta', BOSS]); // filtra por el LID del interlocutor
+});
+
+// ─── capture_task (órdenes libres del jefe que ninguna tool ejecuta) ──────────
+
+test('capture_task (jefe) guarda la orden y avisa al equipo', async () => {
+  const deps = makeDeps();
+
+  const result = await dispatchTool(
+    { name: 'capture_task', input: { request: 'súbeme esto a una hoja nueva', detail: 'col A: fechas' } },
+    deps,
+    { createdBy: BOSS, role: 'boss' }
+  );
+
+  assert.equal(deps.calls.createTask.length, 1);
+  assert.deepEqual(deps.calls.createTask[0][0], {
+    request: 'súbeme esto a una hoja nueva',
+    detail: 'col A: fechas',
+    createdBy: BOSS,
+  });
+  // avisó al destino de aprobaciones (no al jefe)
+  assert.equal(deps.calls.sendMessage.length, 1);
+  assert.equal(deps.calls.sendMessage[0][0], 'team@g.us');
+  assert.match(deps.calls.sendMessage[0][1], /El jefe pidió|\/tareas/);
+  assert.match(result, /equipo/i); // confirma al jefe con naturalidad
+});
+
+test('capture_task (admin) también guarda la orden', async () => {
+  const deps = makeDeps();
+  await dispatchTool(
+    { name: 'capture_task', input: { request: 'algo nuevo' } },
+    deps,
+    { createdBy: BOSS, role: 'admin' }
+  );
+  assert.equal(deps.calls.createTask.length, 1);
+  assert.equal(deps.calls.createTask[0][0].detail, null); // sin detail → null
+});
+
+test('capture_task con rol no privilegiado NO guarda ni avisa (defensa en profundidad)', async () => {
+  const deps = makeDeps();
+
+  const result = await dispatchTool(
+    { name: 'capture_task', input: { request: 'hazme algo' } },
+    deps,
+    { createdBy: 'intruso@s.whatsapp.net', role: 'unknown' }
+  );
+
+  assert.equal(deps.calls.createTask, undefined); // nunca creó la tarea
+  assert.equal(deps.calls.sendMessage, undefined); // ni avisó al equipo
+  assert.doesNotMatch(result, /equipo/i);
+});
+
+test('capture_task sin request no guarda y pide aclaración', async () => {
+  const deps = makeDeps();
+  const result = await dispatchTool(
+    { name: 'capture_task', input: { request: '   ' } },
+    deps,
+    { createdBy: BOSS, role: 'boss' }
+  );
+  assert.equal(deps.calls.createTask, undefined);
+  assert.match(result, /\?|qué/i);
+});
+
+test('capture_task: gateo — en DM (boss y admin) sí, en grupo y publicDm NUNCA', async () => {
+  const { toolsForRole } = await import('../src/claude/index.js');
+  const names = (tools) => tools.map((t) => t.name);
+  assert.ok(names(toolsForRole('boss')).includes('capture_task'), 'boss en DM sí');
+  assert.ok(names(toolsForRole('admin')).includes('capture_task'), 'admin en DM sí');
+  assert.ok(!names(toolsForRole('boss', { isGroup: true })).includes('capture_task'), 'en grupo no');
+  assert.equal(toolsForRole('unknown', { publicDm: true }).length, 0, 'publicDm sin tools');
 });
 
 // ─── schedule_group_message (mensajes recurrentes a grupos) ───────────────────

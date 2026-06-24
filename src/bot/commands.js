@@ -121,6 +121,13 @@ export async function handleCommand({ text, sender, role }, deps = {}) {
     return handleRespuestas(text, deps);
   }
 
+  // /tareas — órdenes del jefe capturadas (tool capture_task) que el equipo debe ejecutar.
+  // Al marcarlas hechas se le avisa al solicitante. SOLO admins.
+  if (cmd === '/tareas' || cmd.startsWith('/tareas ')) {
+    if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
+    return handleTareas({ text, sender }, deps);
+  }
+
   return null;
 }
 
@@ -336,6 +343,60 @@ function handleRespuestas(text, deps = {}) {
   return lines.join('\n');
 }
 
+// /tareas                  → órdenes del jefe pendientes (capturadas con capture_task)
+// /tareas ver <id>         → detalle completo (request + contexto + quién la pidió)
+// /tareas hecha <id>       → la cierra y avisa al solicitante ("✅ Listo lo que pediste…")
+// /tareas descartar <id>   → la descarta (no se avisa a nadie)
+async function handleTareas({ text, sender }, deps = {}) {
+  const { listPendingTasks, getTask, setTaskStatus, sendMessage } = deps;
+  const parts = (text || '').trim().split(/\s+/);
+  const action = (parts[1] || 'list').toLowerCase();
+
+  if (action === 'ver' || action === 'hecha' || action === 'descartar') {
+    const id = Number(parts[2]);
+    if (!Number.isInteger(id)) return `Uso: /tareas ${action} <id>`;
+    const t = getTask ? getTask(id) : null;
+    if (!t) return `No encontré ninguna tarea con id ${id}.`;
+
+    if (action === 'ver') {
+      return (
+        `Tarea #${id} — ${t.status}\n` +
+        `Pidió: ${t.created_by || '?'}\n\n${t.request}` +
+        (t.detail ? `\n\nContexto: ${t.detail}` : '')
+      );
+    }
+
+    if (action === 'hecha') {
+      const changes = setTaskStatus ? setTaskStatus(id, 'done', sender) : 0;
+      if (!changes) return `La tarea #${id} ya no está pendiente (estado: ${t.status}).`;
+      // Avisar al solicitante que su orden quedó hecha (best-effort, no rompe el comando).
+      if (sendMessage && t.created_by) {
+        await sendMessage(t.created_by, `✅ Listo lo que pediste: ${t.request}`).catch(() => {});
+      }
+      return `Tarea #${id} marcada como hecha ✅ — le avisé al jefe.`;
+    }
+
+    const changes = setTaskStatus ? setTaskStatus(id, 'dismissed', sender) : 0;
+    return changes
+      ? `Tarea #${id} descartada 🗑️`
+      : `La tarea #${id} ya no está pendiente (estado: ${t.status}).`;
+  }
+
+  let rows = [];
+  try {
+    rows = listPendingTasks ? listPendingTasks() : [];
+  } catch {
+    /* DB puede no estar lista */
+  }
+  if (!rows.length) return '📭 No hay tareas pendientes del jefe.';
+  const lines = [`📌 Tareas pendientes (${rows.length})`, ''];
+  for (const t of rows) {
+    lines.push(`#${t.id} → ${truncate(t.request, 90)}`);
+  }
+  lines.push('', 'Acciones: /tareas ver <id> · hecha <id> · descartar <id>');
+  return lines.join('\n');
+}
+
 // /persona                        → lista las personas configuradas
 // /persona <n|nombre>             → muestra la persona de ese grupo
 // /persona <n|nombre> | <texto>   → setea la persona (el texto queda EXACTO)
@@ -465,6 +526,7 @@ function buildHelp(role) {
       '• /aprobaciones [ver|aprobar|rechazar <id>] — borradores generados',
       '',
       'Operación:',
+      '• /tareas [ver|hecha|descartar <id>] — órdenes del jefe por hacer',
       '• /calendly [on|off] [closer] — pushes precall',
       '• /reportes [leads|metricas] — preview (en grupo lo publica; jefe/admin)',
       '• /status — estado del sistema',
