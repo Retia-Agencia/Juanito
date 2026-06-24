@@ -5,7 +5,7 @@
 //
 // Esto se dispara desde src/index.js para DMs que NO son del jefe.
 
-import { resolveCloserByPhone, resolveCloserByPushName, isNonCanonicalOptinJid } from './closers.js';
+import { resolveCloserByPhone, resolveCloserByLid, resolveCloserByPushName, isNonCanonicalOptinJid } from './closers.js';
 import { registerOptin, isOptedIn, markIfNew } from '../db/index.js';
 import { sendMessage } from '../whatsapp/index.js';
 import { normalizePhone, maskJid } from '../common/utils.js';
@@ -18,6 +18,12 @@ import { approvalsTarget } from '../common/approval-routing.js';
 // del closer (no por el @lid) para que delivery funcione correctamente.
 export async function handleCloserOptin({ from, pushName, messageId }) {
   let closer = resolveCloserByPhone(from);
+  // LID de trabajo conocido (CLOSER_LIDS): recupera a quien escribe desde un @lid que no mapea a su
+  // teléfono y cuyo pushName no permite el match (ej: Sebas). Reconocerlo aquí AUTOCORRIGE su opt-in.
+  if (!closer) {
+    closer = resolveCloserByLid(from);
+    if (closer) console.log(`[Calendly] Closer resuelto por LID conocido → ${closer.name}`);
+  }
   if (!closer && pushName) {
     closer = resolveCloserByPushName(pushName);
     if (closer) console.log(`[Calendly] Closer resuelto por pushName "${pushName}" → ${closer.name}`);

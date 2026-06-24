@@ -19,6 +19,16 @@ export const CLOSERS = {
   'maca.celis@30x.com':       { name: 'Maca Celis',          phone: '+573246345899' },
 };
 
+// LIDs de TRABAJO conocidos de closers cuyo número/nombre de WhatsApp NO permite el match por las
+// otras vías (ej: Sebas Rodriguez escribe desde un @lid que no mapea a su teléfono canónico y su
+// pushName no incluye "Rodriguez"). Mapear aquí su LID de trabajo hace que el bot lo reconozca y
+// que su contact_jid se AUTOCORRIJA al hilo correcto en vez de driftear al número equivocado.
+// REGLA: solo LIDs de TRABAJO confirmados. NUNCA poner un LID personal — recrearía el bug de
+// pushes al número equivocado. Clave = solo los dígitos del LID (sin @lid). Valor = email del closer.
+export const CLOSER_LIDS = {
+  '158025419608301': 'sebastian@30x.com', // Sebastian Rodriguez (su pushName de trabajo no trae "Rodriguez")
+};
+
 import { phonesMatch } from '../common/utils.js';
 
 // Devuelve { name, phone } | null
@@ -35,6 +45,19 @@ export function resolveCloserByPhone(phone) {
     if (phonesMatch(c.phone, phone)) return { email, name: c.name, phone: c.phone };
   }
   return null;
+}
+
+// Resuelve un closer por el LID desde el que escribe (CLOSER_LIDS). Para cuentas cuyo @lid no
+// mapea al teléfono canónico y cuyo pushName no permite el match. Acepta el JID completo
+// (158025419608301@lid) o solo los dígitos. Devuelve { email, name, phone } | null.
+export function resolveCloserByLid(jid) {
+  if (!jid) return null;
+  const lid = String(jid).split('@')[0].replace(/\D/g, '');
+  if (!lid) return null;
+  const email = CLOSER_LIDS[lid];
+  if (!email) return null;
+  const c = CLOSERS[email];
+  return c ? { email, name: c.name, phone: c.phone } : null;
 }
 
 // Resuelve un closer por su nombre de WhatsApp (pushName), fallback cuando el LID
