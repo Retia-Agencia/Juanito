@@ -25,7 +25,7 @@ const {
 
 const SECOND_BRAIN_ET = 'https://api.calendly.com/event_types/56efc028-ee2f-46e8-852c-e50d45b15b83';
 const ABOGADOS_ET = 'https://api.calendly.com/event_types/f8d123ac-364b-47f9-a446-1316fdf37b08';
-const { resolveCloser, resolveCloserByPhone, resolveCloserByPushName, isNonCanonicalOptinJid } = await import('../src/calendly/closers.js');
+const { resolveCloser, resolveCloserByPhone, resolveCloserByLid, resolveCloserByPushName, isNonCanonicalOptinJid } = await import('../src/calendly/closers.js');
 
 test('firstNameFrom parsea y capitaliza el primer nombre', () => {
   assert.equal(firstNameFrom('maría del pilar yangana '), 'María');
@@ -92,6 +92,22 @@ test('resolveCloserByPushName resuelve por nombre completo e ignora ambigüedade
 
 // isNonCanonicalOptinJid — detecta el bug "pushes al número personal" (Sebas): el closer se
 // registró desde un número distinto al de trabajo, así que el contact_jid apunta al equivocado.
+// resolveCloserByLid — reconoce closers por su LID de trabajo conocido (CLOSER_LIDS), para cuentas
+// cuyo @lid no mapea al teléfono y cuyo pushName no permite el match (ej: Sebas Rodriguez).
+test('resolveCloserByLid: LID de trabajo conocido → resuelve al closer', () => {
+  assert.equal(resolveCloserByLid('158025419608301@lid').email, 'sebastian@30x.com');
+  assert.equal(resolveCloserByLid('158025419608301@lid').name, 'Sebastian Rodriguez');
+  // acepta también solo los dígitos del LID
+  assert.equal(resolveCloserByLid('158025419608301').email, 'sebastian@30x.com');
+});
+
+test('resolveCloserByLid: LID desconocido / vacío → null', () => {
+  assert.equal(resolveCloserByLid('20671711162446@lid'), null); // LID personal: NO debe mapear
+  assert.equal(resolveCloserByLid('999999999@lid'), null);
+  assert.equal(resolveCloserByLid(''), null);
+  assert.equal(resolveCloserByLid(null), null);
+});
+
 test('isNonCanonicalOptinJid: número de trabajo (coincide) → false', () => {
   const trabajo = '+573102212005'; // Sebastian Rodriguez (canónico)
   assert.equal(isNonCanonicalOptinJid(trabajo, '573102212005@s.whatsapp.net'), false);
