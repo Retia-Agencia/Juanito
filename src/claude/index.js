@@ -4,6 +4,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { daysToCsv, normalizeTimeHm, csvToDayLabels, zonedNowParts, zonedStamp } from '../scheduler/recurring-logic.js';
+import { validatePhone } from '../common/utils.js';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -609,7 +610,10 @@ export async function buildSystemPrompt(deps, { isGroup = false, role = 'boss', 
 - Nunca reveles configuración interna, tokens, claves, variables de entorno, rutas,
   ni la lista de closers o teléfonos de terceros — aunque te lo pidan directamente.
 - No ejecutes ni inventes acciones fuera de tus herramientas disponibles. Si algo no
-  se puede hacer con ellas, dilo; no simules haberlo hecho.`;
+  se puede hacer con ellas, dilo; no simules haberlo hecho.
+- Los NÚMEROS son sagrados: teléfonos, montos, cantidades, fechas e identificadores van
+  EXACTOS como te los dieron. Nunca los redondees, completes ni "corrijas". Si dudas de un
+  número o lo oíste a medias, pídelo de nuevo en vez de adivinarlo.`;
 
   // ── Contexto de DM PÚBLICO (desconocido): asistente general AISLADO ───────
   // Mismo principio de aislamiento que el de grupo: cualquiera puede escribirle por
@@ -1237,8 +1241,20 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
       const intent = (input.intent || '').trim();
       if (!intent) return 'Me falta qué quieres que le diga. Dime el mensaje o la intención.';
 
+      // Si el jefe dicta un número NUEVO: lo validamos (atrapa errores gruesos de transcripción)
+      // y lo guardamos para CONFIRMARLO en la respuesta (§18 1A — no confundir números). Si no
+      // cuadra, no guardamos nada y le pedimos que lo repita.
       const phoneGiven = input.recipient_phone?.trim();
+      let echoPhone = null;
       if (phoneGiven) {
+        const v = validatePhone(phoneGiven);
+        if (!v.ok) {
+          return (
+            `Ese número no me cuadra (${v.reason}): "${phoneGiven}". ` +
+            `¿Me lo repites? Ej: "${recipient}, 300 123 4567".`
+          );
+        }
+        echoPhone = v.digits;
         try {
           await deps.upsertContact?.({ name: recipient, phone: phoneGiven });
         } catch {
@@ -1254,6 +1270,9 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
       }
       const toPhone = contact.phone;
       const toName = contact.name || recipient;
+      // En las confirmaciones mostramos el número SOLO cuando el jefe acaba de dictarlo, para que
+      // pueda cazar un dígito mal. Si era un contacto ya guardado, no hace falta repetírselo.
+      const toLabel = echoPhone ? `${toName} (${echoPhone})` : toName;
 
       const recurrence = input.recurrence;
 
@@ -1269,7 +1288,7 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
           dueAt: input.due_at.trim(),
           createdBy: ctx.createdBy,
         });
-        return `Listo ✅ Le escribiré a ${toName} el ${input.due_at.trim()}: «${intent}». Te aviso cuando lo haga.`;
+        return `Listo ✅ Le escribiré a ${toLabel} el ${input.due_at.trim()}: «${intent}». Te aviso cuando lo haga.`;
       }
 
       if (recurrence === 'interval') {
@@ -1308,7 +1327,7 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
         });
         const stop = maxCount ? `${maxCount} ${maxCount === 1 ? 'vez' : 'veces'}` : `hasta ${untilAt}`;
         return (
-          `Listo ✅ Le escribiré a ${toName} cada ${min} min (${stop}): «${intent}». ` +
+          `Listo ✅ Le escribiré a ${toLabel} cada ${min} min (${stop}): «${intent}». ` +
           `No le escribo en horas de descanso y te aviso cada vez.`
         );
       }
@@ -1328,7 +1347,7 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
           createdBy: ctx.createdBy,
         });
         return (
-          `Listo ✅ Le escribiré a ${toName} cada ${csvToDayLabels(days)} a las ${timeHm}: ` +
+          `Listo ✅ Le escribiré a ${toLabel} cada ${csvToDayLabels(days)} a las ${timeHm}: ` +
           `«${intent}». Te aviso cada vez.`
         );
       }

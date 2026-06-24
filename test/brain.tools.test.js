@@ -854,15 +854,39 @@ test('schedule_outreach daily: normaliza días y hora', async () => {
   assert.equal(row.timeHm, '09:00');
 });
 
-test('schedule_outreach con número nuevo + nombre lo guarda como contacto', async () => {
+test('schedule_outreach con número nuevo + nombre lo guarda y ECHA el número en la confirmación', async () => {
   const deps = outreachDeps({ contact: { name: null, phone: '573009990000' } });
-  await dispatchTool(
+  const out = await dispatchTool(
     { name: 'schedule_outreach', input: { action: 'create', recipient: 'Carlos', recipient_phone: '300 999 0000', intent: 'salúdalo', recurrence: 'once', due_at: '2026-06-23 17:00:00' } },
     deps,
     ctx
   );
   assert.equal(deps._state.upserts.length, 1);
   assert.equal(deps._state.upserts[0].name, 'Carlos');
+  // §18 1A: el número dictado se repite en la confirmación para que el jefe cace un dígito mal.
+  assert.match(out, /3009990000/);
+});
+
+test('schedule_outreach con número inválido (muy corto) NO guarda y pide repetirlo (§18 1A)', async () => {
+  const deps = outreachDeps();
+  const out = await dispatchTool(
+    { name: 'schedule_outreach', input: { action: 'create', recipient: 'Carlos', recipient_phone: '123', intent: 'x', recurrence: 'once', due_at: '2026-06-23 17:00:00' } },
+    deps,
+    ctx
+  );
+  assert.equal(deps._state.upserts.length, 0); // no guardó un número basura
+  assert.equal(deps._state.created.length, 0); // ni programó nada
+  assert.match(out, /repites|no me cuadra|corto/i);
+});
+
+test('schedule_outreach a contacto YA guardado (sin número dictado) no repite número', async () => {
+  const deps = outreachDeps(); // contact por defecto: { name: 'Sebastián', phone: '573001234567' }
+  const out = await dispatchTool(
+    { name: 'schedule_outreach', input: { action: 'create', recipient: 'Sebastián', intent: 'que confirme', recurrence: 'once', due_at: '2026-06-23 17:00:00' } },
+    deps,
+    ctx
+  );
+  assert.doesNotMatch(out, /573001234567/); // no echa el número de un contacto ya conocido
 });
 
 test('schedule_outreach contacto no resuelto → pide el número, no guarda', async () => {
