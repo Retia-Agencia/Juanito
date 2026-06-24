@@ -32,6 +32,7 @@ function makeDeps(overrides = {}) {
     createTask: rec('createTask'),
     approvalsTarget: overrides.approvalsTarget || (async () => 'team@g.us'),
     sendMessage: rec('sendMessage'),
+    createBusinessFact: rec('createBusinessFact'),
   };
   return deps;
 }
@@ -432,6 +433,76 @@ test('capture_task: gateo — en DM (boss y admin) sí, en grupo y publicDm NUNC
   assert.ok(names(toolsForRole('admin')).includes('capture_task'), 'admin en DM sí');
   assert.ok(!names(toolsForRole('boss', { isGroup: true })).includes('capture_task'), 'en grupo no');
   assert.equal(toolsForRole('unknown', { publicDm: true }).length, 0, 'publicDm sin tools');
+});
+
+// ─── remember_business (contexto del negocio, Fase 2) ─────────────────────────
+
+test('remember_business (jefe) guarda hecho activo del negocio con topic+source', async () => {
+  const deps = makeDeps();
+  const result = await dispatchTool(
+    { name: 'remember_business', input: { topic: 'closers', fact: 'Sebas cierra los planes anuales' } },
+    deps,
+    { createdBy: BOSS, role: 'boss' }
+  );
+  assert.equal(deps.calls.createBusinessFact.length, 1);
+  assert.deepEqual(deps.calls.createBusinessFact[0][0], {
+    topic: 'closers',
+    fact: 'Sebas cierra los planes anuales',
+    status: 'active',
+    source: 'taught',
+    createdBy: BOSS,
+  });
+  assert.match(result, /negocio/i);
+});
+
+test('remember_business (admin) también guarda', async () => {
+  const deps = makeDeps();
+  await dispatchTool(
+    { name: 'remember_business', input: { topic: 'proceso', fact: 'el cierre es a 1 llamada' } },
+    deps,
+    { createdBy: BOSS, role: 'admin' }
+  );
+  assert.equal(deps.calls.createBusinessFact.length, 1);
+});
+
+test('remember_business: topic inválido cae en "otro"', async () => {
+  const deps = makeDeps();
+  await dispatchTool(
+    { name: 'remember_business', input: { topic: 'xyz', fact: 'algo' } },
+    deps,
+    { createdBy: BOSS, role: 'boss' }
+  );
+  assert.equal(deps.calls.createBusinessFact[0][0].topic, 'otro');
+});
+
+test('remember_business con rol no privilegiado NO guarda (defensa en profundidad)', async () => {
+  const deps = makeDeps();
+  const result = await dispatchTool(
+    { name: 'remember_business', input: { topic: 'closers', fact: 'x' } },
+    deps,
+    { createdBy: 'intruso@s.whatsapp.net', role: 'unknown' }
+  );
+  assert.equal(deps.calls.createBusinessFact, undefined);
+  assert.doesNotMatch(result, /negocio/i);
+});
+
+test('remember_business sin fact no guarda y pide aclaración', async () => {
+  const deps = makeDeps();
+  const result = await dispatchTool(
+    { name: 'remember_business', input: { topic: 'closers', fact: '  ' } },
+    deps,
+    { createdBy: BOSS, role: 'boss' }
+  );
+  assert.equal(deps.calls.createBusinessFact, undefined);
+  assert.match(result, /\?|qué/i);
+});
+
+test('remember_business: gateo — DM (boss/admin) sí, grupo y publicDm NO', async () => {
+  const { toolsForRole } = await import('../src/claude/index.js');
+  const names = (tools) => tools.map((t) => t.name);
+  assert.ok(names(toolsForRole('boss')).includes('remember_business'), 'boss DM sí');
+  assert.ok(names(toolsForRole('admin')).includes('remember_business'), 'admin DM sí');
+  assert.ok(!names(toolsForRole('boss', { isGroup: true })).includes('remember_business'), 'grupo no');
 });
 
 // ─── schedule_group_message (mensajes recurrentes a grupos) ───────────────────

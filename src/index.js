@@ -40,6 +40,10 @@ import {
   listPendingTasks,
   getTask,
   setTaskStatus,
+  listBusinessContext,
+  listProposedBusinessFacts,
+  getBusinessFact,
+  setBusinessFactStatus,
 } from './db/index.js';
 import { resolveCloserByPushName } from './calendly/closers.js';
 import { getHealth } from './calendly/health.js';
@@ -183,6 +187,11 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
         getTask,
         setTaskStatus,
         sendMessage,
+        // /negocio — gestión del contexto del negocio (Fase 2)
+        listBusinessContext,
+        listProposedBusinessFacts,
+        getBusinessFact,
+        setBusinessFactStatus,
       }
     );
     if (cmdReply !== null) {

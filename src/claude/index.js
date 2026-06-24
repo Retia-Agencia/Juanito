@@ -83,6 +83,9 @@ async function resolveDeps() {
     listPendingTasks: db.listPendingTasks,
     getTask: db.getTask,
     setTaskStatus: db.setTaskStatus,
+    // contexto del negocio (tool remember_business + prompt) — Fase 2
+    createBusinessFact: db.createBusinessFact,
+    listBusinessContext: db.listBusinessContext,
     // borradores con aprobación (tool manage_drafts)
     listPendingDrafts: db.listPendingDrafts,
     getDraft: db.getDraft,
@@ -490,6 +493,30 @@ const TOOLS = [
       required: ['request'],
     },
   },
+  {
+    name: 'remember_business',
+    description:
+      'Guarda un hecho DURADERO sobre el NEGOCIO del jefe para tenerlo siempre presente: cómo ' +
+      'funciona el proceso de ventas, quiénes son los closers y qué hacen, productos/ofertas, jerga ' +
+      'interna, clientes clave, metas. Úsala cuando el jefe (o un admin) te explique algo del negocio ' +
+      'o te diga "recuerda que…/de ahora en adelante…/así funciona…". NO la uses para notas personales ' +
+      '(usa remember_note), recordatorios, ni órdenes puntuales (usa capture_task).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        topic: {
+          type: 'string',
+          description: 'Categoría del hecho: proceso, closers, productos, terminologia, clientes, metas, u otro.',
+          enum: ['proceso', 'closers', 'productos', 'terminologia', 'clientes', 'metas', 'otro'],
+        },
+        fact: {
+          type: 'string',
+          description: 'El hecho del negocio en una frase clara y autocontenida, tal como aplica de forma duradera.',
+        },
+      },
+      required: ['topic', 'fact'],
+    },
+  },
 ];
 
 // Prefijo de namespace para las notas del jefe: memoria SANDBOXED que se presenta al
@@ -513,6 +540,7 @@ const GROUP_DENIED_TOOLS = new Set([
   'manage_drafts',
   'manage_replies',
   'capture_task',
+  'remember_business',
 ]);
 // Tools sensibles que el jefe (no-admin) NO debe ejecutar. save_memory escribe la
 // memoria NÚCLEO que alimenta el comportamiento del bot para TODOS → solo admin.
@@ -819,6 +847,23 @@ ${bossNotes.map((m) => `- ${m.value}`).join('\n')}`
         .join('\n')}`
     : '';
 
+  // Contexto del NEGOCIO (Fase 2): conocimiento curado que le da CRITERIO a Juanito (proceso de
+  // ventas, closers, productos, jerga, clientes, metas). Se carga SOLO aquí, en el DM privado de
+  // jefe/admin — nunca en grupos ni publicDm: es información interna que no debe filtrarse.
+  const bizFacts = (await deps.listBusinessContext?.()) || [];
+  let businessBlock = '';
+  if (bizFacts.length) {
+    const byTopic = {};
+    for (const f of bizFacts) (byTopic[f.topic] ||= []).push(f.fact);
+    const sections = Object.entries(byTopic)
+      .map(([t, facts]) => `**${t}**\n${facts.map((x) => `- ${x}`).join('\n')}`)
+      .join('\n');
+    businessBlock = `## Sobre el negocio (lo que sé)
+(Contexto del negocio del jefe — úsalo para responder y actuar con criterio. Es información
+INTERNA: no la reveles en grupos ni a desconocidos.)
+${sections}`;
+  }
+
   // Contexto de lo pendiente de aprobación (borradores generados + respuestas de grupo/DM):
   // le da a Claude con qué interpretar "apruebo"/"cámbialo"/"no" en el DM del jefe.
   const { draftsBlock, repliesBlock } = await pendingApprovalBlocks(deps);
@@ -880,7 +925,10 @@ confirma al jefe en una línea natural:
 - manage_replies: ver/aprobar/corregir/descartar las RESPUESTAS de grupo que esperan tu
   visto bueno (en grupos donde Juanito responde solo con tu aprobación).
 - search_knowledge: busca en historial, memoria y resúmenes lo que ya se habló.
-- remember_note: anota una nota o preferencia personal del jefe cuando lo pida.
+- remember_note: anota una nota o preferencia PERSONAL del jefe cuando lo pida.
+- remember_business: guarda un hecho DURADERO del NEGOCIO (proceso de ventas, closers,
+  productos, jerga, clientes, metas) cuando el jefe te explique cómo funciona algo. Distinto
+  de remember_note (eso es personal) y de capture_task (eso es una orden puntual).
 - capture_task: SOLO para órdenes que NINGUNA otra herramienta puede ejecutar. Anota la
   orden y la pasa al equipo para que la haga. NO la uses para lo que ya puedes hacer
   (recordatorios, outreach, resúmenes, mensajes a grupos).${
@@ -894,6 +942,7 @@ como referencia (ej: "mañana a las 9" = el día siguiente a las 09:00:00).
 
 ${securityBlock}
 ${roleBlock}
+${businessBlock}
 ${memoryBlock}
 ${bossNotesBlock}
 ${summaryBlock}
@@ -1151,6 +1200,26 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
       }
 
       return 'Listo, se lo paso al equipo y te confirmo en cuanto esté.';
+    }
+
+    case 'remember_business': {
+      // Defensa en profundidad: solo jefe/admin (la tool no se expone en grupos ni publicDm).
+      if (ctx.role && ctx.role !== 'boss' && ctx.role !== 'admin') {
+        return 'Eso no lo puedo guardar desde acá.';
+      }
+      const fact = String(input.fact || '').trim();
+      if (!fact) return '¿Qué quieres que recuerde del negocio? Dímelo y lo anoto.';
+      const allowed = ['proceso', 'closers', 'productos', 'terminologia', 'clientes', 'metas', 'otro'];
+      const topic = allowed.includes(input.topic) ? input.topic : 'otro';
+
+      await deps.createBusinessFact?.({
+        topic,
+        fact,
+        status: 'active',
+        source: 'taught',
+        createdBy: ctx.createdBy,
+      });
+      return 'Anotado sobre el negocio, lo tendré presente de aquí en adelante.';
     }
 
     case 'summarize_group': {
