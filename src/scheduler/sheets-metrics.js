@@ -1,5 +1,5 @@
 // src/scheduler/sheets-metrics.js
-// Cron del reporte diario de "métricas de desempeño" (§18.N). A las 20:00 lee la
+// Cron del reporte diario de "métricas de desempeño" (§18.N). A las 22:00 lee la
 // pestaña con las métricas YA CALCULADAS (otro spreadsheet) y publica CADA SECCIÓN en
 // su grupo de WhatsApp: la sección 30X en un grupo y la de ESTADOX en otro (ya NO va
 // por DM). Corre en paralelo al reporte de leads del grupo "Ventas EstadoX" (job aparte).
@@ -15,7 +15,7 @@ import { formatMetrics } from '../sheets/metrics.js';
 import { sectionTargets } from './metrics-targets.js';
 
 const TZ = () => process.env.TZ || 'America/Bogota';
-const CRON = () => process.env.SHEETS_METRICS_CRON || '0 20 * * *';
+const CRON = () => process.env.SHEETS_METRICS_CRON || '0 22 * * *';
 const METRICS_ID = () => (process.env.SHEETS_METRICS_ID || '').trim();
 const METRICS_TAB = () => (process.env.SHEETS_METRICS_TAB || '').trim();
 
