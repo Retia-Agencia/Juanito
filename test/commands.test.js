@@ -614,3 +614,75 @@ test('/respuestas aprobar/rechazar; ya-enviada no se descarta', async () => {
   assert.match(await handleCommand({ text: '/respuestas rechazar 10', sender: 'a@lid', role: 'admin' }, deps), /no se puede descartar/);
   assert.match(await handleCommand({ text: '/respuestas aprobar abc', sender: 'a@lid', role: 'admin' }, deps), /Uso:/);
 });
+
+// ─── /tareas (órdenes del jefe capturadas, admin-only) ────────────────────────
+
+function tareasDeps() {
+  const state = {
+    tasks: [
+      { id: 1, request: 'súbeme esto a una hoja nueva', detail: 'col A: fechas', created_by: 'jefe@lid', status: 'pending' },
+      { id: 2, request: 'ya hecha', detail: null, created_by: 'jefe@lid', status: 'done' },
+    ],
+    sent: [],
+  };
+  return {
+    _state: state,
+    listPendingTasks: () => state.tasks.filter((t) => t.status === 'pending'),
+    getTask: (id) => state.tasks.find((t) => t.id === id) || null,
+    setTaskStatus: (id, status) => {
+      const t = state.tasks.find((x) => x.id === id && x.status === 'pending');
+      if (!t) return 0;
+      t.status = status;
+      return 1;
+    },
+    sendMessage: async (to, text) => { state.sent.push([to, text]); },
+  };
+}
+
+test('/tareas para no-admin → deflexión', async () => {
+  assert.match(await handleCommand({ text: '/tareas', sender: 'b@lid', role: 'boss' }, tareasDeps()), /equipo técnico/);
+  assert.match(await handleCommand({ text: '/tareas', sender: 'u@lid', role: 'unknown' }, tareasDeps()), /equipo técnico/);
+});
+
+test('/tareas (admin) lista solo las pendientes', async () => {
+  const out = await handleCommand({ text: '/tareas', sender: 'a@lid', role: 'admin' }, tareasDeps());
+  assert.match(out, /#1 →/);
+  assert.match(out, /hoja nueva/);
+  assert.doesNotMatch(out, /#2/); // la 'done' no aparece
+});
+
+test('/tareas ver <id> muestra el detalle', async () => {
+  const out = await handleCommand({ text: '/tareas ver 1', sender: 'a@lid', role: 'admin' }, tareasDeps());
+  assert.match(out, /Tarea #1/);
+  assert.match(out, /col A: fechas/);
+  assert.match(out, /jefe@lid/);
+});
+
+test('/tareas hecha <id> cierra y avisa al solicitante', async () => {
+  const deps = tareasDeps();
+  const out = await handleCommand({ text: '/tareas hecha 1', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /hecha ✅/);
+  assert.equal(deps._state.tasks[0].status, 'done');
+  assert.equal(deps._state.sent.length, 1);
+  assert.equal(deps._state.sent[0][0], 'jefe@lid'); // avisó al que la pidió
+  assert.match(deps._state.sent[0][1], /Listo lo que pediste/);
+});
+
+test('/tareas hecha sobre una ya cerrada no reavisa', async () => {
+  const deps = tareasDeps();
+  const out = await handleCommand({ text: '/tareas hecha 2', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /ya no está pendiente/);
+  assert.equal(deps._state.sent.length, 0);
+});
+
+test('/tareas descartar <id> cierra sin avisar', async () => {
+  const deps = tareasDeps();
+  const out = await handleCommand({ text: '/tareas descartar 1', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /descartada 🗑️/);
+  assert.equal(deps._state.tasks[0].status, 'dismissed');
+  assert.equal(deps._state.sent.length, 0);
+});
+
+test('/tareas ver con id inválido → uso', async () => {
+  assert.match(await handleCommand({ text: '/tareas ver abc', sender: 'a@lid', role: 'admin' }, tareasDeps()), /Uso:/);
+});

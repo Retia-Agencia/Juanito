@@ -256,6 +256,7 @@ invocar pase lo que pase.
 | `remember_note` | ✅ | ✅ | ❌ | Guarda nota personal del jefe (sandboxed, no afecta comportamiento) |
 | `summarize_group` | ✅ | ✅ | ❌ | Lee y resume un grupo por nombre |
 | `search_knowledge` | ✅ | ✅ | ❌ | Busca en historial, memoria núcleo y resúmenes de grupos |
+| `capture_task` | ✅ | ✅ | ❌ | Anota una orden del jefe que NINGUNA tool ejecuta y avisa al equipo (§18.T) |
 
 **Por qué el jefe no puede usar `save_memory`:** la memoria núcleo alimenta el
 comportamiento del bot para todos. Solo el equipo técnico (admins) debe modificarla.
@@ -2126,6 +2127,38 @@ jefe · **solo rol `boss`** (ni admin), solo por DM.
   anti-ban; avisa al jefe (`bossDmTarget`); avanza/cierra según parada. Reintenta al minuto si falla.
 - **No toca** `create_reminder` (sigue para recordatorios del propio jefe / a grupos).
 - Env documentada: `OUTREACH_MIN_INTERVAL_MIN` en `.env.example`.
+
+### 18.T 🔵 "Inteligencia": ejecutar órdenes libres del jefe (tool `capture_task` + `/tareas`) (2026-06-24)
+
+**Problema:** el jefe le pedía cosas a Juanito y recibía "eso no está dentro de mis funciones". Dos
+causas distintas:
+1. **Falso negativo por prompt.** El caso reportado ("mándale a un contacto un recordatorio cada 40
+   min hasta que confirme") **ya lo cubría `schedule_outreach`** (modo `interval`, §18.S), pero la
+   tool **no aparecía en la lista del prompt del jefe** y el `roleBlock` lo empujaba a deflectar
+   ("eso lo coordina su equipo"). Se negaba a algo que sí sabía hacer.
+2. **Sin vía para lo genuinamente nuevo.** Cuando la orden no mapea a ninguna tool, antes solo podía
+   negarse.
+
+**Solución (dos partes):**
+- **Parte A (solo prompt, `claude/index.js`):** se añadió `schedule_outreach` a la lista de
+  herramientas del prompt del jefe (con el ejemplo del `interval`); se reformuló el `roleBlock` del
+  jefe (primero intenta con una tool; si ninguna aplica, captura con `capture_task` — nunca se niega
+  en seco); y se matizó el `securityBlock` (dejar una orden anotada para el equipo SÍ es acción válida).
+- **Parte B (captura con aprobación):**
+  - **Tabla** `pending_tasks` (`db/migrate.js`, idempotente) + ops en `db/index.js` (`createTask`,
+    `listPendingTasks`, `getTask`, `setTaskStatus`).
+  - **Tool** `capture_task` (`{request, detail?}`): guarda la orden y avisa al equipo vía
+    `approvalsTarget()` (grupo de aprobaciones §18.R o DM del jefe). Gateada en `GROUP_DENIED_TOOLS`
+    (no en grupos); **no** está en `BOSS_ONLY`/`BOSS_DENIED` → disponible en el DM de **jefe y admin**,
+    nunca en `publicDm`/grupos. Defensa en profundidad en el handler (rechaza si `ctx.role` no es
+    boss/admin). El aviso al equipo es best-effort (un fallo de envío no pierde la tarea).
+  - **Comando** `/tareas` (admin, `bot/commands.js`): `list` · `ver <id>` · `hecha <id>` (cierra y
+    **avisa al solicitante** "✅ Listo lo que pediste…" a `created_by`) · `descartar <id>`.
+- **Fuera de v1 (anotado):** auto-stop del outreach al detectar la confirmación del contacto (requiere
+  matching de contacto y definir "qué cuenta como confirmación"). El "hasta que confirme" se modela
+  hoy con `until`/`count` + un "para" manual.
+- **Tests:** `test/brain.tools.test.js` (capture_task: éxito jefe/admin, rechazo por rol, sin request,
+  gateo) y `test/commands.test.js` (`/tareas` list/ver/hecha/descartar + deflexión no-admin).
 
 ### 🟢 Baja prioridad / Nice-to-have
 

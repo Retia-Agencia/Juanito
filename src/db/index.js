@@ -706,6 +706,38 @@ export function finishOutreach(id, status = 'done') {
     .run(status, id).changes;
 }
 
+// ─── Tareas capturadas (tool capture_task) ────────────────────────────────────
+// Órdenes del jefe que ninguna herramienta puede ejecutar: se anotan aquí y el equipo
+// las gestiona con /tareas. createdBy = LID/jid de quien la pidió (destino del aviso "hecha").
+
+export function createTask({ request, detail = null, createdBy = null }) {
+  const info = db
+    .prepare(`INSERT INTO pending_tasks (request, detail, created_by) VALUES (?, ?, ?)`)
+    .run(request, detail, createdBy);
+  return info.lastInsertRowid;
+}
+
+// Para /tareas (list): las pendientes, más antiguas primero.
+export function listPendingTasks() {
+  return db
+    .prepare(`SELECT * FROM pending_tasks WHERE status = 'pending' ORDER BY id`)
+    .all();
+}
+
+export function getTask(id) {
+  return db.prepare(`SELECT * FROM pending_tasks WHERE id = ?`).get(id) || null;
+}
+
+// Cierra una tarea: 'done' (el equipo la cumplió) o 'dismissed' (se descartó). Solo si
+// sigue 'pending' (idempotente: una segunda llamada devuelve 0 cambios).
+export function setTaskStatus(id, status, decidedBy = null) {
+  return db
+    .prepare(`UPDATE pending_tasks
+              SET status = ?, decided_by = ?, decided_at = CURRENT_TIMESTAMP
+              WHERE id = ? AND status = 'pending'`)
+    .run(status, decidedBy, id).changes;
+}
+
 // ─── Borradores con aprobación (kind='generated') ─────────────────────────────
 // Un borrador por (scheduled_id, publish_date). El flujo: el scheduler lo genera
 // → 'pending' → el jefe aprueba ('approved') → el scheduler publica ('published').
