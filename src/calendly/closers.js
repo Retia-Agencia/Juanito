@@ -58,3 +58,14 @@ export function resolveCloserByPushName(pushName) {
   }
   return seen.size === 1 ? [...seen.values()][0] : null;
 }
+
+// ¿El JID desde el que un closer se registró apunta a un número DISTINTO al canónico de
+// trabajo? Es la señal del bug "pushes al número personal": el closer escribió desde otro
+// número y el contact_jid del opt-in (a donde se entregan los pushes) quedó apuntando ahí.
+// Solo se puede juzgar para JIDs de TELÉFONO (@s.whatsapp.net / @c.us): los @lid de
+// multi-device son opacos y no mapean a un número, así que ahí devolvemos false (no alarmar).
+export function isNonCanonicalOptinJid(canonicalPhone, fromJid) {
+  if (!canonicalPhone || !fromJid) return false;
+  if (String(fromJid).includes('@lid')) return false; // opaco: no se puede comparar con un número
+  return !phonesMatch(canonicalPhone, fromJid);
+}

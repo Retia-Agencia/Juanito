@@ -5,9 +5,11 @@
 //
 // Esto se dispara desde src/index.js para DMs que NO son del jefe.
 
-import { resolveCloserByPhone, resolveCloserByPushName } from './closers.js';
+import { resolveCloserByPhone, resolveCloserByPushName, isNonCanonicalOptinJid } from './closers.js';
 import { registerOptin, isOptedIn, markIfNew } from '../db/index.js';
 import { sendMessage } from '../whatsapp/index.js';
+import { normalizePhone, maskJid } from '../common/utils.js';
+import { approvalsTarget } from '../common/approval-routing.js';
 
 // Devuelve true si manejó el mensaje (era un closer), false si no.
 // `pushName` es el nombre WA del remitente: fallback para cuando `from` es un @lid
@@ -29,6 +31,32 @@ export async function handleCloserOptin({ from, pushName, messageId }) {
   // source:'self' → opt-in GANADO (el closer escribió): habilita el envío. Guardamos
   // el JID desde el que escribió (auditoría; puede ser un @lid sin resolver).
   registerOptin({ phone: closer.phone, closerEmail: closer.email, name: closer.name, source: 'self', contactJid: from });
+
+  // Hardening anti "pushes al número equivocado" (bug Sebas): si el closer se registró desde un
+  // número de TELÉFONO distinto al canónico de trabajo, el contact_jid (destino de los pushes)
+  // apunta al número incorrecto. No sabemos cuál es el bueno, así que lo dejamos pasar pero lo
+  // marcamos en logs y avisamos al equipo una vez (en el primer registro) para que lo corrija.
+  if (isNonCanonicalOptinJid(closer.phone, from)) {
+    console.warn(
+      `[Calendly] ⚠️ ${closer.name} se registró desde un número NO canónico ${maskJid(from)} ` +
+      `(trabajo: …${normalizePhone(closer.phone).slice(-4)}). Los pushes irán ahí hasta corregir el opt-in.`
+    );
+    if (!yaEstaba) {
+      try {
+        const target = await approvalsTarget();
+        if (target) {
+          await sendMessage(
+            target,
+            `⚠️ ${closer.name} se registró para los pushes precall desde un número que NO es el de ` +
+            `trabajo (…${normalizePhone(from).slice(-4)}). Los recordatorios le llegarán ahí. Si no es ` +
+            `el correcto, que escriba a Juanito desde su número de trabajo.`
+          );
+        }
+      } catch {
+        /* aviso best-effort: no rompe el opt-in */
+      }
+    }
+  }
 
   if (!yaEstaba) {
     const nombre = closer.name.split(' ')[0];
