@@ -25,7 +25,7 @@ const {
 
 const SECOND_BRAIN_ET = 'https://api.calendly.com/event_types/56efc028-ee2f-46e8-852c-e50d45b15b83';
 const ABOGADOS_ET = 'https://api.calendly.com/event_types/f8d123ac-364b-47f9-a446-1316fdf37b08';
-const { resolveCloser, resolveCloserByPhone, resolveCloserByPushName } = await import('../src/calendly/closers.js');
+const { resolveCloser, resolveCloserByPhone, resolveCloserByPushName, isNonCanonicalOptinJid } = await import('../src/calendly/closers.js');
 
 test('firstNameFrom parsea y capitaliza el primer nombre', () => {
   assert.equal(firstNameFrom('maría del pilar yangana '), 'María');
@@ -88,6 +88,30 @@ test('resolveCloserByPushName resuelve por nombre completo e ignora ambigüedade
   assert.equal(resolveCloserByPushName('Juan Desconocido'), null);
   assert.equal(resolveCloserByPushName(''), null);
   assert.equal(resolveCloserByPushName(null), null);
+});
+
+// isNonCanonicalOptinJid — detecta el bug "pushes al número personal" (Sebas): el closer se
+// registró desde un número distinto al de trabajo, así que el contact_jid apunta al equivocado.
+test('isNonCanonicalOptinJid: número de trabajo (coincide) → false', () => {
+  const trabajo = '+573102212005'; // Sebastian Rodriguez (canónico)
+  assert.equal(isNonCanonicalOptinJid(trabajo, '573102212005@s.whatsapp.net'), false);
+  assert.equal(isNonCanonicalOptinJid(trabajo, '+57 310 221 2005'), false);
+});
+
+test('isNonCanonicalOptinJid: número de TELÉFONO distinto al canónico → true (el bug)', () => {
+  const trabajo = '+573102212005';
+  assert.equal(isNonCanonicalOptinJid(trabajo, '573009998877@s.whatsapp.net'), true);
+});
+
+test('isNonCanonicalOptinJid: @lid opaco (multi-device) → false (no se puede juzgar)', () => {
+  const trabajo = '+573102212005';
+  assert.equal(isNonCanonicalOptinJid(trabajo, '158025419608301@lid'), false);
+});
+
+test('isNonCanonicalOptinJid: entradas vacías → false (no alarmar sin datos)', () => {
+  assert.equal(isNonCanonicalOptinJid('', '573009998877@s.whatsapp.net'), false);
+  assert.equal(isNonCanonicalOptinJid('+573102212005', ''), false);
+  assert.equal(isNonCanonicalOptinJid(null, null), false);
 });
 
 test('push3DueUtc resta el lead time y toSqliteUtc formatea UTC', () => {
