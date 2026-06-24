@@ -229,33 +229,43 @@ export function getRecentGroupContext(limit = 10) {
 
 // ─── Memoria de largo plazo ───────────────────────────────────────────────────
 
-export function setMemory(key, value) {
+// owner_lid = null → memoria del SISTEMA (núcleo, compartida; la escribe un admin con
+// save_memory y alimenta el comportamiento del bot para todos). owner_lid = <LID> → memoria
+// PERSONAL de ese contacto (remember_note): solo se carga cuando ESE mismo LID está hablando.
+// Aísla la memoria del jefe de la de cada admin (§18 1B) — antes era global y se filtraba.
+export function setMemory(key, value, ownerLid = null) {
   return db
     .prepare(`
-      INSERT INTO memory (key, value, updated_at)
-      VALUES (?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+      INSERT INTO memory (key, value, owner_lid, updated_at)
+      VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value, owner_lid = excluded.owner_lid, updated_at = CURRENT_TIMESTAMP
     `)
-    .run(key, value);
+    .run(key, value, ownerLid);
 }
 
 export function getMemory(key) {
   return db.prepare(`SELECT value FROM memory WHERE key = ?`).get(key)?.value;
 }
 
-export function getAllMemory() {
-  return db.prepare(`SELECT key, value FROM memory`).all();
+// Devuelve la memoria del SISTEMA (owner_lid IS NULL) MÁS la PERSONAL del LID dado. Sin ownerLid
+// (grupos/desconocidos) devuelve solo la del sistema — nunca las notas personales de nadie.
+export function getAllMemory(ownerLid = null) {
+  return db
+    .prepare(`SELECT key, value, owner_lid FROM memory WHERE owner_lid IS NULL OR owner_lid = ?`)
+    .all(ownerLid);
 }
 
-export function searchMemory(query) {
+export function searchMemory(query, ownerLid = null) {
   return db
     .prepare(`
       SELECT key, value, updated_at FROM memory
-      WHERE key LIKE ? OR value LIKE ?
+      WHERE (key LIKE ? OR value LIKE ?)
+        AND (owner_lid IS NULL OR owner_lid = ?)
       ORDER BY updated_at DESC
       LIMIT 20
     `)
-    .all(`%${query}%`, `%${query}%`);
+    .all(`%${query}%`, `%${query}%`, ownerLid);
 }
 
 // ─── Deduplicación de webhooks ────────────────────────────────────────────────

@@ -15,6 +15,19 @@ export function normalizePhone(raw) {
   return withoutSuffix.replace(/\D/g, '');
 }
 
+// Sanity-check de un teléfono DICTADO por el jefe: lo reduce a dígitos y verifica un largo
+// plausible (7–15, el rango de E.164). NO comprueba que el número exista ni a quién pertenece;
+// solo atrapa errores GRUESOS de transcripción (dígitos de más/de menos). La defensa principal
+// contra "confundir números" es ECHARLO de vuelta al jefe para que lo confirme antes de enviar
+// (ver schedule_outreach). Devuelve { ok, digits, reason }. §18 1A.
+export function validatePhone(raw) {
+  const digits = normalizePhone(raw);
+  if (!digits) return { ok: false, digits: '', reason: 'vacío' };
+  if (digits.length < 7) return { ok: false, digits, reason: 'muy corto' };
+  if (digits.length > 15) return { ok: false, digits, reason: 'muy largo' };
+  return { ok: true, digits, reason: null };
+}
+
 export function phonesMatch(a, b) {
   const na = normalizePhone(a);
   const nb = normalizePhone(b);

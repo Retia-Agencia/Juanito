@@ -272,7 +272,8 @@ test('save_memory persiste key/value', async () => {
     ctx
   );
 
-  assert.deepEqual(deps.calls.setMemory[0], ['numero_cuenta', '1234567']);
+  // save_memory → memoria del SISTEMA: owner_lid = null (3er arg) para que la vean todos.
+  assert.deepEqual(deps.calls.setMemory[0], ['numero_cuenta', '1234567', null]);
 });
 
 test('save_memory con rol jefe (no admin) NO persiste (baby-proofing)', async () => {
@@ -297,10 +298,10 @@ test('save_memory con rol admin sí persiste', async () => {
     { createdBy: BOSS, role: 'admin' }
   );
 
-  assert.deepEqual(deps.calls.setMemory[0], ['k', 'v']);
+  assert.deepEqual(deps.calls.setMemory[0], ['k', 'v', null]);
 });
 
-test('remember_note (jefe) guarda en namespace sandboxed boss_note:<label>', async () => {
+test('remember_note (jefe) guarda nota PERSONAL: key namespaced por LID + owner_lid', async () => {
   const deps = makeDeps();
 
   const result = await dispatchTool(
@@ -309,13 +310,14 @@ test('remember_note (jefe) guarda en namespace sandboxed boss_note:<label>', asy
     { createdBy: BOSS, role: 'boss' }
   );
 
-  const [key, value] = deps.calls.setMemory[0];
-  assert.equal(key, 'boss_note:cafe_favorito'); // slug del label
+  const [key, value, ownerLid] = deps.calls.setMemory[0];
+  assert.equal(key, `boss_note:${BOSS}:cafe_favorito`); // LID + slug del label
   assert.equal(value, 'café sin azúcar');
+  assert.equal(ownerLid, BOSS); // dueño = quien la pidió → filtro de carga (§18 1B)
   assert.match(result, /anotado/i);
 });
 
-test('remember_note sin label usa una key con prefijo boss_note:', async () => {
+test('remember_note sin label usa una key con prefijo boss_note:<lid>:', async () => {
   const deps = makeDeps();
 
   await dispatchTool(
@@ -324,9 +326,43 @@ test('remember_note sin label usa una key con prefijo boss_note:', async () => {
     { createdBy: BOSS, role: 'boss' }
   );
 
-  const [key, value] = deps.calls.setMemory[0];
-  assert.ok(key.startsWith('boss_note:'));
+  const [key, value, ownerLid] = deps.calls.setMemory[0];
+  assert.ok(key.startsWith(`boss_note:${BOSS}:`));
   assert.equal(value, 'odia los lunes');
+  assert.equal(ownerLid, BOSS);
+});
+
+// ─── Aislamiento de memoria personal por LID (§18 1B) ─────────────────────────
+// El bug que originó esto: un admin dijo "me llamo Alejandro" y se filtró al contexto del jefe.
+
+test('memoria personal: la nota de un admin queda con SU LID, no el del jefe', async () => {
+  const ADMIN = '573009998877';
+  const deps = makeDeps();
+
+  await dispatchTool(
+    { name: 'remember_note', input: { note: 'me llamo Alejandro', label: 'nombre' } },
+    deps,
+    { createdBy: ADMIN, role: 'admin' }
+  );
+
+  const [key, , ownerLid] = deps.calls.setMemory[0];
+  assert.equal(ownerLid, ADMIN); // dueño = el admin, NO el jefe
+  assert.ok(key.startsWith(`boss_note:${ADMIN}:`));
+  assert.notEqual(ownerLid, BOSS); // nunca se atribuye al jefe
+});
+
+test('search_knowledge pasa el LID del que habla a searchMemory (no ve notas ajenas)', async () => {
+  const seen = [];
+  const deps = makeDeps({ searchMemory: (q, owner) => { seen.push([q, owner]); return []; } });
+
+  await dispatchTool(
+    { name: 'search_knowledge', input: { query: 'cuenta' } },
+    deps,
+    { createdBy: BOSS, role: 'boss' }
+  );
+
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0], ['cuenta', BOSS]); // filtra por el LID del interlocutor
 });
 
 // ─── capture_task (órdenes libres del jefe que ninguna tool ejecuta) ──────────
@@ -890,15 +926,39 @@ test('schedule_outreach daily: normaliza días y hora', async () => {
   assert.equal(row.timeHm, '09:00');
 });
 
-test('schedule_outreach con número nuevo + nombre lo guarda como contacto', async () => {
+test('schedule_outreach con número nuevo + nombre lo guarda y ECHA el número en la confirmación', async () => {
   const deps = outreachDeps({ contact: { name: null, phone: '573009990000' } });
-  await dispatchTool(
+  const out = await dispatchTool(
     { name: 'schedule_outreach', input: { action: 'create', recipient: 'Carlos', recipient_phone: '300 999 0000', intent: 'salúdalo', recurrence: 'once', due_at: '2026-06-23 17:00:00' } },
     deps,
     ctx
   );
   assert.equal(deps._state.upserts.length, 1);
   assert.equal(deps._state.upserts[0].name, 'Carlos');
+  // §18 1A: el número dictado se repite en la confirmación para que el jefe cace un dígito mal.
+  assert.match(out, /3009990000/);
+});
+
+test('schedule_outreach con número inválido (muy corto) NO guarda y pide repetirlo (§18 1A)', async () => {
+  const deps = outreachDeps();
+  const out = await dispatchTool(
+    { name: 'schedule_outreach', input: { action: 'create', recipient: 'Carlos', recipient_phone: '123', intent: 'x', recurrence: 'once', due_at: '2026-06-23 17:00:00' } },
+    deps,
+    ctx
+  );
+  assert.equal(deps._state.upserts.length, 0); // no guardó un número basura
+  assert.equal(deps._state.created.length, 0); // ni programó nada
+  assert.match(out, /repites|no me cuadra|corto/i);
+});
+
+test('schedule_outreach a contacto YA guardado (sin número dictado) no repite número', async () => {
+  const deps = outreachDeps(); // contact por defecto: { name: 'Sebastián', phone: '573001234567' }
+  const out = await dispatchTool(
+    { name: 'schedule_outreach', input: { action: 'create', recipient: 'Sebastián', intent: 'que confirme', recurrence: 'once', due_at: '2026-06-23 17:00:00' } },
+    deps,
+    ctx
+  );
+  assert.doesNotMatch(out, /573001234567/); // no echa el número de un contacto ya conocido
 });
 
 test('schedule_outreach contacto no resuelto → pide el número, no guarda', async () => {

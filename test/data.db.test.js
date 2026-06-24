@@ -142,6 +142,35 @@ test('memoria: set/get/getAll/search', () => {
   assert.ok(db.searchMemory('cuenta').length >= 1);
 });
 
+// §18 1B — aislamiento de memoria personal por LID (el bug "me llamo Alejandro" se filtraba).
+test('memoria por LID: la personal de un dueño no aparece para otro ni en el contexto global', () => {
+  const JEFE = '111@lid';
+  const ADMIN = '222@lid';
+  db.setMemory('sistema:banco', 'Bancolombia', null);        // sistema (la ven todos)
+  db.setMemory(`boss_note:${JEFE}:gusto`, 'café sin azúcar', JEFE);
+  db.setMemory(`boss_note:${ADMIN}:nombre`, 'me llamo Alejandro', ADMIN);
+
+  // El jefe ve: sistema + SU nota, nunca la del admin.
+  const delJefe = db.getAllMemory(JEFE);
+  assert.ok(delJefe.some((m) => m.key === 'sistema:banco'));
+  assert.ok(delJefe.some((m) => m.value === 'café sin azúcar'));
+  assert.ok(!delJefe.some((m) => m.value === 'me llamo Alejandro'), 'no debe ver la del admin');
+
+  // El admin ve: sistema + SU nota, nunca la del jefe.
+  const delAdmin = db.getAllMemory(ADMIN);
+  assert.ok(delAdmin.some((m) => m.value === 'me llamo Alejandro'));
+  assert.ok(!delAdmin.some((m) => m.value === 'café sin azúcar'), 'no debe ver la del jefe');
+
+  // Sin dueño (grupos/desconocidos): SOLO sistema, ninguna nota personal.
+  const sinDuenio = db.getAllMemory();
+  assert.ok(sinDuenio.some((m) => m.key === 'sistema:banco'));
+  assert.ok(!sinDuenio.some((m) => m.key.startsWith('boss_note:')), 'cero notas personales');
+
+  // search también respeta el aislamiento.
+  assert.ok(db.searchMemory('Alejandro', ADMIN).length >= 1);
+  assert.equal(db.searchMemory('Alejandro', JEFE).length, 0);
+});
+
 test('resúmenes: save y recuperación', () => {
   db.saveSummary({
     chatId: '123@g.us',

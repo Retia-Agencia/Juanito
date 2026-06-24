@@ -79,6 +79,7 @@ db.exec(`
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     key         TEXT UNIQUE NOT NULL,
     value       TEXT NOT NULL,
+    owner_lid   TEXT,               -- NULL = memoria del sistema; <LID> = personal de ese contacto (§18 1B)
     updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -250,6 +251,15 @@ db.exec(`
 `);
 
 // ─── 2. Migración de bases existentes (esquema viejo) ─────────────────────────
+
+// Memoria por identidad (§18 1B): owner_lid separa la memoria del sistema (NULL, la escribe un
+// admin con save_memory) de la PERSONAL de cada contacto (<LID>, vía remember_note). Antes la
+// memoria era global y las notas de un admin se filtraban al contexto del jefe (y viceversa).
+addColumnIfMissing('memory', 'owner_lid', 'TEXT');
+// "Empezar limpio": las notas personales VIEJAS no tienen dueño fiable (y al menos una estaba
+// envenenada), así que se descartan. Solo afecta filas legacy (boss_note:* sin owner_lid); las
+// notas nuevas ya se guardan con owner_lid, así que esto nunca las toca. Idempotente.
+db.prepare(`DELETE FROM memory WHERE key LIKE 'boss_note:%' AND owner_lid IS NULL`).run();
 
 addColumnIfMissing('reminders', 'to_phone', 'TEXT');
 addColumnIfMissing('reminders', 'created_by', 'TEXT');
