@@ -12,6 +12,7 @@ import { startSheetsMetricsJob } from './sheets-metrics.js';
 import { startGroupMessagesJob } from './group-messages.js';
 import { startGroupRepliesJob } from './group-replies.js';
 import { startOutreachJob } from './outreach.js';
+import { startBusinessExtractionJob } from './business-extraction.js';
 import { cleanup } from '../db/index.js';
 
 const TZ = () => process.env.TZ || 'America/Bogota';
@@ -74,5 +75,13 @@ export async function startAllJobs() {
     startGroupSummaryJob();
   } catch (err) {
     console.warn('[Scheduler] summaries.js no disponible todavía, omitiendo resúmenes');
+  }
+
+  // Extracción de contexto de negocio desde los resúmenes (Fase 2B). Se autodesactiva sin
+  // ANTHROPIC_API_KEY. Propone hechos (status='proposed') → admin confirma con /negocio ok.
+  try {
+    startBusinessExtractionJob();
+  } catch (err) {
+    console.warn('[Scheduler] Extracción de negocio no disponible:', err.message);
   }
 }
