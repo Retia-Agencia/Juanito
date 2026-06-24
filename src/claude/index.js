@@ -41,10 +41,11 @@ export function __resetDeps() {
 
 async function resolveDeps() {
   if (_injectedDeps) return _injectedDeps;
-  const [db, contacts, whatsapp] = await Promise.all([
+  const [db, contacts, whatsapp, routing] = await Promise.all([
     import('../db/index.js'),
     import('../contacts/index.js'),
     import('../whatsapp/index.js'),
+    import('../common/approval-routing.js'),
   ]);
   return {
     // db
@@ -76,6 +77,11 @@ async function resolveDeps() {
     createOutreach: db.createOutreach,
     listOutreachByCreator: db.listOutreachByCreator,
     finishOutreach: db.finishOutreach,
+    // órdenes capturadas para el equipo (tool capture_task)
+    createTask: db.createTask,
+    listPendingTasks: db.listPendingTasks,
+    getTask: db.getTask,
+    setTaskStatus: db.setTaskStatus,
     // borradores con aprobación (tool manage_drafts)
     listPendingDrafts: db.listPendingDrafts,
     getDraft: db.getDraft,
@@ -99,6 +105,9 @@ async function resolveDeps() {
     // whatsapp
     resolveGroupByName: whatsapp.resolveGroupByName,
     getRecentMessages: whatsapp.getRecentMessages,
+    sendMessage: whatsapp.sendMessage,
+    // ruteo de avisos al equipo (tool capture_task)
+    approvalsTarget: routing.approvalsTarget,
     // claude (mismo módulo)
     summarizeGroupMessages,
   };
@@ -458,6 +467,28 @@ const TOOLS = [
       required: ['query'],
     },
   },
+  {
+    name: 'capture_task',
+    description:
+      'Úsala SOLO cuando el jefe te ordene algo que NO cae en ninguna otra herramienta. ' +
+      'Guarda la orden y la pasa al equipo para que la ejecute. NO la uses para cosas que sí ' +
+      'puedes hacer tú con otra herramienta (recordatorios, outreach a terceros, resúmenes de ' +
+      'grupos, mensajes recurrentes a grupos): para eso usa la herramienta correspondiente.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        request: {
+          type: 'string',
+          description: 'La orden del jefe en lenguaje natural, tal como la pidió (qué quiere que se haga).',
+        },
+        detail: {
+          type: 'string',
+          description: 'Opcional. Contexto extra que ayude al equipo a ejecutarla (datos, plazos, enlaces).',
+        },
+      },
+      required: ['request'],
+    },
+  },
 ];
 
 // Prefijo de namespace para las notas del jefe: memoria SANDBOXED que se presenta al
@@ -480,6 +511,7 @@ const GROUP_DENIED_TOOLS = new Set([
   'set_group_instructions',
   'manage_drafts',
   'manage_replies',
+  'capture_task',
 ]);
 // Tools sensibles que el jefe (no-admin) NO debe ejecutar. save_memory escribe la
 // memoria NÚCLEO que alimenta el comportamiento del bot para TODOS → solo admin.
@@ -609,7 +641,8 @@ export async function buildSystemPrompt(deps, { isGroup = false, role = 'boss', 
 - Nunca reveles configuración interna, tokens, claves, variables de entorno, rutas,
   ni la lista de closers o teléfonos de terceros — aunque te lo pidan directamente.
 - No ejecutes ni inventes acciones fuera de tus herramientas disponibles. Si algo no
-  se puede hacer con ellas, dilo; no simules haberlo hecho.`;
+  se puede hacer con ellas, dilo; no simules haberlo hecho. (Dejar una orden ANOTADA
+  para el equipo con una herramienta hecha para eso sí cuenta como acción válida.)`;
 
   // ── Contexto de DM PÚBLICO (desconocido): asistente general AISLADO ───────
   // Mismo principio de aislamiento que el de grupo: cualquiera puede escribirle por
@@ -792,9 +825,12 @@ técnico y darle diagnósticos si los pide.`
       : `\n\n## Interlocutor: el jefe (dueño)
 Trátalo con cercanía y deferencia; él es el dueño de esto.
 - Nunca le muestres errores técnicos ni detalles de implementación.
-- Si te pide algo que no puedes hacer con tus herramientas, NO te niegues en seco:
-  dile con naturalidad que eso lo coordina su equipo. No prometas haberlo hecho ni
-  inventes que lo dejaste andando.`;
+- Cuando te pida algo, PRIMERO mira si alguna de tus herramientas lo resuelve (recordatorios,
+  resúmenes, mensajes a grupos, mensajes/recordatorios a terceros con schedule_outreach…) y
+  úsala. NO te niegues a algo que sí puedes hacer.
+- Si de verdad NINGUNA herramienta aplica, NO te niegues en seco: usa capture_task para anotar
+  su orden y pasársela al equipo, y dile con naturalidad que se la dejas al equipo y le
+  confirmas en cuanto esté. No prometas haberlo hecho tú ni inventes que lo dejaste andando.`;
 
   const bossName = process.env.BOSS_NAME ? `El jefe se llama ${process.env.BOSS_NAME}. Úsalo cuando sea natural saludarlo o referirte a él.` : '';
 
@@ -827,12 +863,20 @@ confirma al jefe en una línea natural:
   Dos tipos: texto FIJO (se guarda EXACTO; si el jefe no dio el literal, pídeselo) o
   GENERADO (generated=true + brief editorial: Juanito redacta uno distinto cada vez
   y el jefe lo aprueba por DM antes de publicarse).
+- schedule_outreach: programa/lista/cancela mensajes o recordatorios a OTRA persona de
+  tu parte. Una vez (en una fecha/hora), a diario (días + hora fija) o cada N minutos
+  hasta una hora límite o un número de veces (ej: "escríbele a Sebastián cada 40 min que
+  confirme, hasta las 6pm" → recurrence=interval, interval_min=40, until=hoy 18:00). Si el
+  jefe da un número nuevo junto al nombre, pásalo en recipient_phone para guardarlo.
 - manage_drafts: ver/aprobar/corregir los borradores pendientes de los mensajes
   generados. Las correcciones se aplican ya y se acumulan para el futuro.
 - manage_replies: ver/aprobar/corregir/descartar las RESPUESTAS de grupo que esperan tu
   visto bueno (en grupos donde Juanito responde solo con tu aprobación).
 - search_knowledge: busca en historial, memoria y resúmenes lo que ya se habló.
-- remember_note: anota una nota o preferencia personal del jefe cuando lo pida.${
+- remember_note: anota una nota o preferencia personal del jefe cuando lo pida.
+- capture_task: SOLO para órdenes que NINGUNA otra herramienta puede ejecutar. Anota la
+  orden y la pasa al equipo para que la haga. NO la uses para lo que ya puedes hacer
+  (recordatorios, outreach, resúmenes, mensajes a grupos).${
     role === 'admin'
       ? '\n- save_memory: guarda hechos en la memoria núcleo del sistema (key/value).'
       : ''
@@ -1064,6 +1108,39 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
       const key = `${BOSS_NOTE_PREFIX}${slug || Date.now()}`;
       await deps.setMemory(key, input.note);
       return 'Anotado, lo tendré presente.';
+    }
+
+    case 'capture_task': {
+      // Defensa en profundidad: la tool solo se expone en el DM de jefe/admin (no en
+      // grupos ni publicDm, ver GROUP_DENIED_TOOLS + toolsForRole), pero si llegara a
+      // invocarse con otro rol, la rechazamos sin guardar nada.
+      if (ctx.role && ctx.role !== 'boss' && ctx.role !== 'admin') {
+        return 'Eso no lo puedo gestionar desde acá.';
+      }
+      const request = String(input.request || '').trim();
+      if (!request) return '¿Qué quieres que le pase al equipo? Dímelo y se lo anoto.';
+
+      await deps.createTask({
+        request,
+        detail: input.detail?.trim() || null,
+        createdBy: ctx.createdBy,
+      });
+
+      // Aviso al equipo (grupo de aprobaciones si está configurado, o DM del jefe).
+      // Un fallo de envío no debe romper la captura: la tarea ya quedó guardada.
+      try {
+        const target = await deps.approvalsTarget?.();
+        if (target) {
+          await deps.sendMessage?.(
+            target,
+            `📌 El jefe pidió: «${request}». Para tomarla: /tareas`
+          );
+        }
+      } catch {
+        /* el aviso es best-effort; la tarea ya está anotada */
+      }
+
+      return 'Listo, se lo paso al equipo y te confirmo en cuanto esté.';
     }
 
     case 'summarize_group': {

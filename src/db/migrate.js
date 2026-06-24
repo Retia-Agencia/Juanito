@@ -232,6 +232,21 @@ db.exec(`
     active        INTEGER NOT NULL DEFAULT 1,
     created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  -- Órdenes libres del jefe que NO caen en ninguna herramienta (tool capture_task §18).
+  -- Juanito las anota aquí en vez de negarse, y avisa al equipo (approvalsTarget). Un admin
+  -- las gestiona con /tareas: al marcarlas 'done' se le avisa al solicitante. created_by es
+  -- el LID/jid de quien la pidió (jefe/admin) — destino del aviso de "hecha".
+  CREATE TABLE IF NOT EXISTS pending_tasks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    request     TEXT NOT NULL,      -- la orden en lenguaje natural
+    detail      TEXT,               -- contexto opcional
+    created_by  TEXT,               -- LID/jid de quien la pidió (jefe/admin)
+    status      TEXT NOT NULL DEFAULT 'pending',  -- pending | done | dismissed
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    decided_by  TEXT,
+    decided_at  DATETIME
+  );
 `);
 
 // ─── 2. Migración de bases existentes (esquema viejo) ─────────────────────────
