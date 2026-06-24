@@ -128,6 +128,13 @@ export async function handleCommand({ text, sender, role }, deps = {}) {
     return handleTareas({ text, sender }, deps);
   }
 
+  // /negocio — gestión del contexto del negocio (Fase 2). list activos · pendientes (propuestos
+  // de chats) · ok/no <id> (confirma/descarta propuesto) · olvida <id> (archiva activo). SOLO admins.
+  if (cmd === '/negocio' || cmd.startsWith('/negocio ')) {
+    if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
+    return handleNegocio({ text, sender }, deps);
+  }
+
   return null;
 }
 
@@ -397,6 +404,54 @@ async function handleTareas({ text, sender }, deps = {}) {
   return lines.join('\n');
 }
 
+// /negocio                 → contexto del negocio ACTIVO (lo que Juanito sabe), por categoría
+// /negocio pendientes      → hechos PROPUESTOS (extraídos de chats, Fase 2B) esperando confirmación
+// /negocio ok <id>         → confirma un propuesto → pasa a activo (Juanito lo usa)
+// /negocio no <id>         → descarta un propuesto (no se activa)
+// /negocio olvida <id>     → archiva un hecho activo (Juanito deja de usarlo)
+function handleNegocio({ text }, deps = {}) {
+  const { listBusinessContext, listProposedBusinessFacts, getBusinessFact, setBusinessFactStatus } = deps;
+  const parts = (text || '').trim().split(/\s+/);
+  const action = (parts[1] || 'list').toLowerCase();
+
+  if (action === 'ok' || action === 'no' || action === 'olvida') {
+    const id = Number(parts[2]);
+    if (!Number.isInteger(id)) return `Uso: /negocio ${action} <id>`;
+    const f = getBusinessFact ? getBusinessFact(id) : null;
+    if (!f) return `No encontré ningún hecho con id ${id}.`;
+
+    // ok: proposed→active · no: proposed→archived · olvida: active→archived
+    const target = action === 'ok' ? 'active' : 'archived';
+    const changes = setBusinessFactStatus ? setBusinessFactStatus(id, target) : 0;
+    if (!changes) return `El hecho #${id} ya estaba en ese estado (${f.status}).`;
+    if (action === 'ok') return `Hecho #${id} confirmado ✅ — Juanito ya lo usa.`;
+    if (action === 'no') return `Hecho #${id} descartado 🗑️`;
+    return `Hecho #${id} archivado — Juanito deja de usarlo.`;
+  }
+
+  if (action === 'pendientes') {
+    let rows = [];
+    try { rows = listProposedBusinessFacts ? listProposedBusinessFacts() : []; } catch { /* DB */ }
+    if (!rows.length) return '📭 No hay hechos del negocio propuestos por confirmar.';
+    const lines = [`🧠 Propuestos del negocio (${rows.length})`, ''];
+    for (const f of rows) lines.push(`#${f.id} [${f.topic}] ${truncate(f.fact, 90)}`);
+    lines.push('', 'Acciones: /negocio ok <id> (confirmar) · no <id> (descartar)');
+    return lines.join('\n');
+  }
+
+  let rows = [];
+  try { rows = listBusinessContext ? listBusinessContext() : []; } catch { /* DB */ }
+  if (!rows.length) return '📭 Aún no sé nada del negocio. El jefe me lo puede ir contando, o reviso /negocio pendientes.';
+  const lines = [`🧠 Lo que sé del negocio (${rows.length})`, ''];
+  let lastTopic = null;
+  for (const f of rows) {
+    if (f.topic !== lastTopic) { lines.push(`*${f.topic}*`); lastTopic = f.topic; }
+    lines.push(`  #${f.id} ${truncate(f.fact, 85)}`);
+  }
+  lines.push('', 'Acciones: /negocio pendientes · ok/no <id> · olvida <id>');
+  return lines.join('\n');
+}
+
 // /persona                        → lista las personas configuradas
 // /persona <n|nombre>             → muestra la persona de ese grupo
 // /persona <n|nombre> | <texto>   → setea la persona (el texto queda EXACTO)
@@ -527,6 +582,7 @@ function buildHelp(role) {
       '',
       'Operación:',
       '• /tareas [ver|hecha|descartar <id>] — órdenes del jefe por hacer',
+      '• /negocio [pendientes|ok|no|olvida <id>] — contexto del negocio',
       '• /calendly [on|off] [closer] — pushes precall',
       '• /reportes [leads|metricas] — preview (en grupo lo publica; jefe/admin)',
       '• /status — estado del sistema',

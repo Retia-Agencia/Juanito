@@ -686,3 +686,75 @@ test('/tareas descartar <id> cierra sin avisar', async () => {
 test('/tareas ver con id inválido → uso', async () => {
   assert.match(await handleCommand({ text: '/tareas ver abc', sender: 'a@lid', role: 'admin' }, tareasDeps()), /Uso:/);
 });
+
+// ─── /negocio (contexto del negocio, Fase 2, admin-only) ──────────────────────
+
+function negocioDeps() {
+  const state = {
+    facts: [
+      { id: 1, topic: 'closers', fact: 'Sebas cierra anuales', status: 'active' },
+      { id: 2, topic: 'proceso', fact: 'cierre a 1 llamada', status: 'active' },
+      { id: 3, topic: 'productos', fact: 'plan PRO extraído de un chat', status: 'proposed' },
+    ],
+  };
+  return {
+    _state: state,
+    listBusinessContext: () => state.facts.filter((f) => f.status === 'active'),
+    listProposedBusinessFacts: () => state.facts.filter((f) => f.status === 'proposed'),
+    getBusinessFact: (id) => state.facts.find((f) => f.id === id) || null,
+    setBusinessFactStatus: (id, status) => {
+      const f = state.facts.find((x) => x.id === id);
+      if (!f || f.status === status) return 0;
+      f.status = status;
+      return 1;
+    },
+  };
+}
+
+test('/negocio para no-admin → deflexión', async () => {
+  assert.match(await handleCommand({ text: '/negocio', sender: 'b@lid', role: 'boss' }, negocioDeps()), /equipo técnico/);
+});
+
+test('/negocio (admin) lista los hechos activos por categoría', async () => {
+  const out = await handleCommand({ text: '/negocio', sender: 'a@lid', role: 'admin' }, negocioDeps());
+  assert.match(out, /Sebas cierra anuales/);
+  assert.match(out, /cierre a 1 llamada/);
+  assert.doesNotMatch(out, /extraído de un chat/); // los proposed no salen en el list activo
+});
+
+test('/negocio pendientes lista los propuestos', async () => {
+  const out = await handleCommand({ text: '/negocio pendientes', sender: 'a@lid', role: 'admin' }, negocioDeps());
+  assert.match(out, /plan PRO extraído de un chat/);
+  assert.doesNotMatch(out, /Sebas cierra anuales/); // los activos no salen en pendientes
+});
+
+test('/negocio ok <id> confirma un propuesto → activo', async () => {
+  const deps = negocioDeps();
+  const out = await handleCommand({ text: '/negocio ok 3', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /confirmado ✅/);
+  assert.equal(deps._state.facts.find((f) => f.id === 3).status, 'active');
+});
+
+test('/negocio no <id> descarta un propuesto', async () => {
+  const deps = negocioDeps();
+  const out = await handleCommand({ text: '/negocio no 3', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /descartado 🗑️/);
+  assert.equal(deps._state.facts.find((f) => f.id === 3).status, 'archived');
+});
+
+test('/negocio olvida <id> archiva un activo', async () => {
+  const deps = negocioDeps();
+  const out = await handleCommand({ text: '/negocio olvida 1', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /archivado/);
+  assert.equal(deps._state.facts.find((f) => f.id === 1).status, 'archived');
+});
+
+test('/negocio ok sobre un id ya activo no cambia nada', async () => {
+  const deps = negocioDeps();
+  const out = await handleCommand({ text: '/negocio ok 1', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /ya estaba en ese estado/);
+});
+
+test('/negocio ok con id inválido → uso', async () => {
+  assert.match(await handleCommand({ text: '/negocio ok abc', sender: 'a@lid', role: 'admin' }, negocioDeps()), /Uso:/);
+});

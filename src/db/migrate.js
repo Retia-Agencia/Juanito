@@ -248,6 +248,23 @@ db.exec(`
     decided_by  TEXT,
     decided_at  DATETIME
   );
+
+  -- Contexto del NEGOCIO (Fase 2): conocimiento curado sobre el negocio del jefe (proceso de
+  -- ventas, closers, productos, jerga, clientes, metas) que se carga en el prompt para que
+  -- Juanito responda informado. status: 'active' (se carga en el prompt) | 'proposed' (extraído
+  -- de chats, espera confirmación de jefe/admin antes de activarse — Fase 2B). topic categoriza
+  -- para renderizar ordenado. source: 'taught' (enseñado con la acción dedicada) | 'chat' (extraído).
+  CREATE TABLE IF NOT EXISTS business_context (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic       TEXT NOT NULL,      -- proceso | closers | productos | terminologia | clientes | metas | otro
+    fact        TEXT NOT NULL,      -- el hecho del negocio en lenguaje natural
+    status      TEXT NOT NULL DEFAULT 'active',  -- active | proposed | archived
+    source      TEXT,               -- taught | chat (+ contexto de origen)
+    created_by  TEXT,               -- LID/jid de quien lo enseñó/propuso
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    decided_by  TEXT,
+    decided_at  DATETIME
+  );
 `);
 
 // ─── 2. Migración de bases existentes (esquema viejo) ─────────────────────────

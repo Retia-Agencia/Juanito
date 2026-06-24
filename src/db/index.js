@@ -748,6 +748,46 @@ export function setTaskStatus(id, status, decidedBy = null) {
     .run(status, decidedBy, id).changes;
 }
 
+// ─── Contexto del negocio (Fase 2) ────────────────────────────────────────────
+// Conocimiento curado del negocio del jefe que se carga en el prompt. status 'active' se
+// muestra; 'proposed' (extraído de chats) espera confirmación; 'archived' se olvidó.
+
+export function createBusinessFact({ topic, fact, status = 'active', source = 'taught', createdBy = null }) {
+  const info = db
+    .prepare(`INSERT INTO business_context (topic, fact, status, source, created_by) VALUES (?, ?, ?, ?, ?)`)
+    .run(topic, fact, status, source, createdBy);
+  return info.lastInsertRowid;
+}
+
+// Hechos ACTIVOS (los que se cargan en el prompt), agrupables por topic. Orden estable por topic+id.
+export function listBusinessContext() {
+  return db
+    .prepare(`SELECT * FROM business_context WHERE status = 'active' ORDER BY topic, id`)
+    .all();
+}
+
+// Hechos PROPUESTOS (extraídos de chats, Fase 2B) esperando confirmación. Más antiguos primero.
+export function listProposedBusinessFacts() {
+  return db
+    .prepare(`SELECT * FROM business_context WHERE status = 'proposed' ORDER BY id`)
+    .all();
+}
+
+export function getBusinessFact(id) {
+  return db.prepare(`SELECT * FROM business_context WHERE id = ?`).get(id) || null;
+}
+
+// Cambia el estado de un hecho (active | proposed | archived). Para confirmar un propuesto
+// ('proposed'→'active'), descartarlo ('proposed'→'archived') u olvidar uno activo
+// ('active'→'archived'). Idempotente respecto al estado destino: solo cambia si difiere.
+export function setBusinessFactStatus(id, status, decidedBy = null) {
+  return db
+    .prepare(`UPDATE business_context
+              SET status = ?, decided_by = ?, decided_at = CURRENT_TIMESTAMP
+              WHERE id = ? AND status != ?`)
+    .run(status, decidedBy, id, status).changes;
+}
+
 // ─── Borradores con aprobación (kind='generated') ─────────────────────────────
 // Un borrador por (scheduled_id, publish_date). El flujo: el scheduler lo genera
 // → 'pending' → el jefe aprueba ('approved') → el scheduler publica ('published').
