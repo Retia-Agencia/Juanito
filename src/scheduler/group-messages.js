@@ -95,7 +95,7 @@ async function processGenerated(d, row, nowParts) {
       boss,
       `📝 *Borrador #${draftId}* para *${row.group_name || row.group_id}* (sale hoy a las ${row.time_hm} si lo apruebas):\n\n` +
         `${text}\n\n` +
-        `Respóndeme *"apruebo"* para publicarlo, o dime qué corregir y te muestro la nueva versión. Sin tu visto bueno NO se publica.`
+        `Respóndeme *"apruebo"* para publicarlo, o dime qué corregir y te muestro la nueva versión. Sin tu visto bueno NO se publica.\n_Tip: cítame este mensaje (reply) para decidir sobre este borrador exacto._`
     );
     console.log(`[Scheduler] Borrador #${draftId} (programado #${row.id}) generado y enviado al jefe`);
     return false;

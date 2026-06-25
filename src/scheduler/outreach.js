@@ -53,13 +53,14 @@ async function resolveDeps() {
 // ─── Entrega de una fila ──────────────────────────────────────────────────────
 
 async function deliverOutreach(d, row, { now, nowStamp, nowParts }) {
-  const text = await d.generateOutreachMessage({ intent: row.intent, toName: row.to_name });
+  const text = await d.generateOutreachMessage({ intent: row.intent, toName: row.to_name, fromName: row.sender_name });
   await d.sendMessage(row.to_phone, text);
 
-  // Aviso al jefe (FYI, no aprobación): ya dio la orden, pero ve cada salida.
-  const boss = d.bossTarget ? await d.bossTarget() : bossDmTarget();
-  if (boss) {
-    await d.sendMessage(boss, `✅ Le escribí a ${row.to_name || row.to_phone}:\n«${text}»`);
+  // Aviso al QUIEN dio la orden (FYI, no aprobación): el jefe O el admin que la creó ven cada
+  // salida. created_by es el JID/LID del creador (DM-able); fallback al jefe para filas viejas.
+  const notify = row.created_by || (d.bossTarget ? await d.bossTarget() : bossDmTarget());
+  if (notify) {
+    await d.sendMessage(notify, `✅ Le escribí a ${row.to_name || row.to_phone}:\n«${text}»`);
   }
 
   // Avanzar estado + evaluar parada según el tipo.

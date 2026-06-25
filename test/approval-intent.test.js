@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { parseApproval } = await import('../src/common/approval-intent.js');
+const { parseApproval, parseDiscard, parseApprovalTarget } = await import('../src/common/approval-intent.js');
 
 test('aprobaciones claras → isApprove true', () => {
   for (const t of [
@@ -54,4 +54,33 @@ test('NO son aprobaciones (correcciones / pedidos / rechazos)', () => {
 
 test('sin id → id null', () => {
   assert.deepEqual(parseApproval('apruebo'), { isApprove: true, id: null });
+});
+
+test('descartes claros → isDiscard true', () => {
+  for (const t of ['no', 'No', 'descártalo', 'descartala', 'cancela', 'bórralo', 'elimínala', 'no lo mandes', 'no la envíes']) {
+    assert.equal(parseDiscard(t).isDiscard, true, `debería descartar: "${t}"`);
+  }
+});
+
+test('NO son descartes (aprobaciones / correcciones)', () => {
+  for (const t of ['apruebo', 'dale', 'hazlo más corto', 'cámbialo', 'no me mostraste la versión']) {
+    assert.equal(parseDiscard(t).isDiscard, false, `NO debería descartar: "${t}"`);
+  }
+});
+
+test('parseApprovalTarget extrae tipo+id de la notificación citada', () => {
+  assert.deepEqual(
+    parseApprovalTarget('📨 *Respuesta pendiente #5* para el grupo *Patah*'),
+    { type: 'reply', id: 5 }
+  );
+  assert.deepEqual(
+    parseApprovalTarget('📝 *Borrador #12* para *Patah* (sale hoy a las 09:00 si lo apruebas):'),
+    { type: 'draft', id: 12 }
+  );
+});
+
+test('parseApprovalTarget → null si no hay notificación reconocible', () => {
+  assert.equal(parseApprovalTarget(''), null);
+  assert.equal(parseApprovalTarget(null), null);
+  assert.equal(parseApprovalTarget('hola, cómo estás'), null);
 });

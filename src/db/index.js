@@ -658,12 +658,13 @@ export function createOutreach({
   maxCount = null,
   respectQuiet = 1,
   createdBy = null,
+  senderName = null,
 }) {
   const info = db.prepare(`
     INSERT INTO outreach_schedules
       (to_phone, to_name, intent, recur_kind, due_at, interval_min, next_due_at,
-       days, time_hm, until_at, max_count, respect_quiet, created_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       days, time_hm, until_at, max_count, respect_quiet, created_by, sender_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     toPhone,
     toName,
@@ -677,7 +678,8 @@ export function createOutreach({
     untilAt,
     maxCount,
     respectQuiet ? 1 : 0,
-    createdBy
+    createdBy,
+    senderName
   );
   return info.lastInsertRowid;
 }

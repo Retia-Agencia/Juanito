@@ -88,6 +88,95 @@ export function isWithinQuietHours(now = new Date()) {
   return start < end ? local >= start && local < end : local >= start || local < end;
 }
 
+// ─── Mensaje citado (reply nativo de WhatsApp) ────────────────────────────────
+// Extrae el TEXTO del mensaje al que el remitente respondió (reply/cita). WhatsApp lo
+// guarda en `contextInfo.quotedMessage`, anidado dentro del tipo del mensaje entrante
+// (texto, caption de imagen/video, etc.). PURO (recibe `msg.message`, sin Baileys) para
+// poder testearlo. Devuelve el texto citado o null si el mensaje no es un reply.
+//
+// El texto citado puede vivir en varias formas según el tipo del mensaje original:
+// conversation (texto simple), extendedTextMessage.text (texto con formato/links),
+// o el caption de un media. Cubrimos las comunes; el resto devuelve null sin romper.
+export function extractQuotedText(message) {
+  if (!message || typeof message !== 'object') return null;
+  // contextInfo viaja dentro del tipo concreto del mensaje entrante. El reply de texto
+  // es el caso central, pero un reply puede llegar como caption de un media también.
+  const ctx =
+    message.extendedTextMessage?.contextInfo ||
+    message.imageMessage?.contextInfo ||
+    message.videoMessage?.contextInfo ||
+    message.documentMessage?.contextInfo ||
+    null;
+  const q = ctx?.quotedMessage;
+  if (!q) return null;
+  const text =
+    q.conversation ||
+    q.extendedTextMessage?.text ||
+    q.imageMessage?.caption ||
+    q.videoMessage?.caption ||
+    q.documentMessage?.caption ||
+    null;
+  return text ? String(text) : null;
+}
+
+// ─── Tarjetas de contacto compartidas (vCard) ─────────────────────────────────
+// Cuando el jefe COMPARTE un contacto de WhatsApp (en vez de dictar el número), llega como
+// un contactMessage/contactsArrayMessage con un vCard crudo. Leer el número de ahí elimina el
+// riesgo de transcripción ("los números son sagrados", §18 1A): el número viene EXACTO de la
+// tarjeta. PUROS (sin Baileys) para testear.
+
+// Parsea un vCard crudo → { name, phones }. Prefiere `waid=` (el WhatsApp ID: dígitos ya
+// canónicos y garantizados con WhatsApp); si no hay waid, normaliza el valor del campo TEL.
+export function parseVcard(vcard) {
+  const raw = String(vcard || '');
+  if (!raw) return { name: null, phones: [] };
+  const fn = raw.match(/^FN:(.+)$/im);
+  const name = fn ? fn[1].trim() : null;
+  const phones = [];
+  const telRe = /^TEL[^:\n]*:(.+)$/gim;
+  let m;
+  while ((m = telRe.exec(raw)) !== null) {
+    const waid = m[0].match(/waid=(\d+)/i);
+    const digits = waid ? waid[1] : normalizePhone(m[1]);
+    if (digits) phones.push(digits);
+  }
+  return { name, phones: [...new Set(phones)] };
+}
+
+// Extrae los contactos compartidos de un msg.message de Baileys (uno o varios). Devuelve
+// [{ name, phone, phones }] (phone = el primero/mejor). [] si el mensaje no comparte contactos.
+export function extractSharedContacts(message) {
+  if (!message || typeof message !== 'object') return [];
+  const items = [];
+  if (message.contactMessage) items.push(message.contactMessage);
+  const arr = message.contactsArrayMessage?.contacts;
+  if (Array.isArray(arr)) items.push(...arr);
+  const out = [];
+  for (const c of items) {
+    const parsed = parseVcard(c?.vcard);
+    const phone = parsed.phones[0] || null;
+    if (phone) out.push({ name: c?.displayName || parsed.name || null, phone, phones: parsed.phones });
+  }
+  return out;
+}
+
+// Texto sintético legible de los contactos compartidos, para inyectarlo en la conversación
+// (un contactMessage no trae texto). Marca el número como CONFIABLE (no dictado) para que el
+// modelo lo use directo sin pedir confirmar dígitos. null si no hay contactos.
+export function describeSharedContacts(contacts) {
+  if (!contacts || !contacts.length) return null;
+  const parts = contacts.map((c) => {
+    const name = c.name || 'sin nombre';
+    const nums = (c.phones && c.phones.length ? c.phones : [c.phone]).map((p) => `+${p}`).join(' / ');
+    return `"${name}" · ${nums}`;
+  });
+  const head =
+    contacts.length === 1
+      ? '[El usuario compartió una tarjeta de contacto de WhatsApp'
+      : `[El usuario compartió ${contacts.length} tarjetas de contacto de WhatsApp`;
+  return `${head} — datos CONFIABLES tomados de la tarjeta, no dictados]: ${parts.join('; ')}`;
+}
+
 // ─── Verificar firma HMAC de un webhook ───────────────────────────────────────
 // OpenWA firma el payload con HMAC-SHA256 usando el secret configurado.
 

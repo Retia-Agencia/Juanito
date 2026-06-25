@@ -305,6 +305,11 @@ addColumnIfMissing('calendly_optins', 'paused', 'INTEGER DEFAULT 0');
 addColumnIfMissing('scheduled_messages', 'kind', "TEXT NOT NULL DEFAULT 'fixed'");
 addColumnIfMissing('scheduled_messages', 'brief', 'TEXT');
 
+// Nombre de QUIEN ordena el outreach (jefe o admin) → el mensaje al tercero va "de parte de"
+// esa persona, no siempre del jefe. Se resuelve al crear (BOSS_NAME para el jefe, pushName para
+// admins, o un from_name explícito) y se guarda porque la entrega es asíncrona. Ver §18.Y.
+addColumnIfMissing('outreach_schedules', 'sender_name', 'TEXT');
+
 // Aprobación de respuestas en grupos (solo grupos con el flag en ON): cuando mencionan a
 // Juanito, su respuesta pasa por el jefe antes de publicarse. Flag por grupo.
 addColumnIfMissing('authorized_groups', 'require_approval', 'INTEGER NOT NULL DEFAULT 0');

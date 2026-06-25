@@ -13,13 +13,15 @@ import {
   createPendingReply,
   listPendingReplies,
   approvePendingReply,
+  discardPendingReply,
   listPendingDrafts,
   approveDraft,
+  discardDraft,
 } from '../db/index.js';
 import { phonesMatch, isWithinQuietHours, maskJid } from '../common/utils.js';
 import { roleOf, isStrictPrivileged } from '../common/roles.js';
 import { approvalsTarget, approvalsGroupId } from '../common/approval-routing.js';
-import { parseApproval } from '../common/approval-intent.js';
+import { parseApproval, parseDiscard, parseApprovalTarget } from '../common/approval-intent.js';
 
 const BOSS_PHONE = () => process.env.BOSS_PHONE;
 const BOT_NAME = () => process.env.BOT_NAME || 'Juanito';
@@ -64,7 +66,7 @@ function isUnlimitedSender(sender) {
 // ─── DM del jefe ──────────────────────────────────────────────────────────────
 
 export async function handleBossMessage(msg) {
-  const { from, text, messageId, role = 'boss' } = msg;
+  const { from, text, messageId, role = 'boss', quotedText, pushName } = msg;
 
   if (!markIfNew(messageId)) return;
 
@@ -78,7 +80,7 @@ export async function handleBossMessage(msg) {
   console.log(`[Bot] ${role === 'admin' ? 'Admin' : 'Jefe'}: ${text.slice(0, 60)}`);
 
   try {
-    const { text: reply } = await chat(text, from, { role });
+    const { text: reply } = await chat(text, from, { role, quotedText, senderName: pushName });
     await sendMessage(from, reply);
   } catch (err) {
     console.error('[Bot] Error en DM del jefe:', err.message);
@@ -92,7 +94,7 @@ export async function handleBossMessage(msg) {
 // respuesta a un mensaje entrante: nunca escribe primero (regla anti-ban). Volumen
 // acotado por un rate-limit por remitente (mismo tope diario que en grupos).
 
-export async function handlePublicDm({ from, text, messageId, pushName, rawMsg }) {
+export async function handlePublicDm({ from, text, messageId, pushName, rawMsg, quotedText }) {
   if (!from || !text) return;
   if (!markIfNew(messageId)) return;
 
@@ -115,7 +117,7 @@ export async function handlePublicDm({ from, text, messageId, pushName, rawMsg }
   console.log(`[Bot] DM público de ${pushName || maskJid(from)}: ${text.slice(0, 60)}`);
 
   try {
-    const { text: reply } = await chat(text, from, { publicDm: true, role: 'unknown' });
+    const { text: reply } = await chat(text, from, { publicDm: true, role: 'unknown', quotedText });
 
     // Toggle global de aprobación de DMs (admin: /confirmaciones dm on). Si está ON, NO se
     // responde directo: la respuesta se retiene como pendiente (kind='dm') y se le manda al
@@ -151,7 +153,7 @@ export async function handlePublicDm({ from, text, messageId, pushName, rawMsg }
           `📨 *Respuesta pendiente #${id}* para el *DM de ${pushName || from}*\n\n` +
             `${pushName || 'Alguien'} escribió: "${text.slice(0, 200)}"\n\n` +
             `Propongo responder:\n${reply}\n\n` +
-            `Responde *"apruebo"* para que salga, dime los cambios, o *"no"* para descartarla.`
+            `Responde *"apruebo"* para que salga, dime los cambios, o *"no"* para descartarla.\n_Tip: cítame este mensaje (reply) para decidir sobre esta pendiente exacta._`
         ).catch(() => {});
       }
       console.log(`[Bot] DM de ${pushName || from} RETENIDO para aprobación (pendiente #${id})`);
@@ -174,7 +176,7 @@ export async function handlePublicDm({ from, text, messageId, pushName, rawMsg }
 // Una aprobación CLARA ("apruebo", "aprobado", "envíalo así", "dale", "ok", "#3")
 // se resuelve de forma DETERMINISTA (parseApproval), sin pasar por el LLM. Esto evita el
 // loop en que el modelo interpretaba la aprobación como una corrección y re-generaba sin fin.
-export async function handleApprovalConsole({ chatId, text, sender, messageId, rawMsg }) {
+export async function handleApprovalConsole({ chatId, text, sender, messageId, rawMsg, quotedText }) {
   if (!text) return false;
   const approvalsId = await approvalsGroupId();
   if (!approvalsId || chatId !== approvalsId) return false;
@@ -184,6 +186,54 @@ export async function handleApprovalConsole({ chatId, text, sender, messageId, r
 
   console.log(`[Bot] Consola de aprobaciones: ${text.slice(0, 60)}`);
   try {
+    // 0) Fast-path por REPLY: si el jefe CITÓ una notificación concreta ("Respuesta pendiente
+    // #N" / "Borrador #N"), el pendiente queda resuelto SIN ambigüedad (resuelve el caso de
+    // 2+ pendientes donde "apruebo" sin id no sabía cuál). Aprobar/descartar se hacen sin LLM;
+    // una corrección cae al LLM pero CON el contexto del reply (sabe exactamente cuál corregir).
+    const target = parseApprovalTarget(quotedText);
+    if (target) {
+      const exists = target.type === 'reply'
+        ? (listPendingReplies() || []).some((r) => r.id === target.id)
+        : (listPendingDrafts(localDateStr()) || []).some((d) => d.id === target.id);
+      const label = target.type === 'reply' ? 'respuesta' : 'borrador';
+      if (!exists) {
+        await sendMessage(chatId, `La ${label} #${target.id} ya no está pendiente.`, { quoted: rawMsg });
+        return true;
+      }
+      if (parseApproval(text).isApprove) {
+        const changes = target.type === 'reply' ? approvePendingReply(target.id) : approveDraft(target.id);
+        await sendMessage(
+          chatId,
+          changes
+            ? `Aprobado ✅ — la ${label} #${target.id} sale a su destino en breve.`
+            : `La ${label} #${target.id} ya no está pendiente.`,
+          { quoted: rawMsg }
+        );
+        console.log(`[Bot] Aprobación por reply: ${label} #${target.id} (changes=${changes})`);
+        return true;
+      }
+      if (parseDiscard(text).isDiscard) {
+        const changes = target.type === 'reply' ? discardPendingReply(target.id) : discardDraft(target.id);
+        await sendMessage(
+          chatId,
+          changes
+            ? `Descartado 🗑️ — la ${label} #${target.id} no se enviará.`
+            : `La ${label} #${target.id} ya no está pendiente.`,
+          { quoted: rawMsg }
+        );
+        console.log(`[Bot] Descarte por reply: ${label} #${target.id} (changes=${changes})`);
+        return true;
+      }
+      // Texto libre citando un pendiente → corrección de ESE pendiente: al LLM con el contexto.
+      const { text: reply } = await chat(text, `approvals:${chatId}`, {
+        role: roleOf(sender),
+        approvalsConsole: true,
+        quotedText,
+      });
+      await sendMessage(chatId, reply, { quoted: rawMsg });
+      return true;
+    }
+
     // 1) Fast-path DETERMINISTA para aprobaciones claras (anti-loop): aprueba sin LLM.
     const { isApprove, id } = parseApproval(text);
     if (isApprove) {
@@ -229,7 +279,7 @@ export async function handleApprovalConsole({ chatId, text, sender, messageId, r
 // Aplica rate limit a remitentes no registrados como ilimitados.
 
 export async function handleGroupMessage(msg) {
-  const { chatId, groupName, text, sender, isGroup, messageId, isBotMentioned, pushName, rawMsg } = msg;
+  const { chatId, groupName, text, sender, isGroup, messageId, isBotMentioned, pushName, rawMsg, quotedText } = msg;
 
   if (!isGroup || !text) return;
   if (!markIfNew(messageId || `${chatId}:${text}`)) return;
@@ -263,6 +313,7 @@ export async function handleGroupMessage(msg) {
         groupId: chatId,
         groupName,
         createdBy: sender,
+        quotedText,
       });
       await sendMessage(chatId, reply, { quoted: rawMsg });
     } catch (err) {
@@ -323,7 +374,7 @@ export async function handleGroupMessage(msg) {
     // El prompt de grupo es aislado e ignora el rol para la persona, pero pasamos el
     // rol real (no el default 'boss') para no tratar a cualquiera como el dueño.
     const role = roleOf(sender);
-    const { text: reply } = await chat(text, chatId, { isGroup: true, role });
+    const { text: reply } = await chat(text, chatId, { isGroup: true, role, quotedText });
 
     // Si el grupo exige aprobación, NO se publica: se guarda como pendiente y se le
     // manda al jefe por DM para que apruebe/corrija/descarte (caduca por cron).
@@ -358,7 +409,7 @@ export async function handleGroupMessage(msg) {
           `📨 *Respuesta pendiente #${id}* para el grupo *${groupName || chatId}*\n\n` +
             `${pushName || 'Alguien'} escribió: "${text.slice(0, 200)}"\n\n` +
             `Propongo responder:\n${reply}\n\n` +
-            `Responde *"apruebo"* para que salga, dime los cambios, o *"no"* para descartarla.`
+            `Responde *"apruebo"* para que salga, dime los cambios, o *"no"* para descartarla.\n_Tip: cítame este mensaje (reply) para decidir sobre esta pendiente exacta._`
         ).catch(() => {});
       }
       console.log(`[Bot] Respuesta en "${groupName}" RETENIDA para aprobación (pendiente #${id})`);

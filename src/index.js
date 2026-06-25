@@ -130,7 +130,7 @@ async function handleGroupReportCommand({ chatId, text, sender, messageId }) {
   return true;
 }
 
-async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, isBotMentioned, pushName, rawMsg }) {
+async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, isBotMentioned, pushName, rawMsg, quotedText }) {
   if (!text) return;
 
   if (!isGroup) {
@@ -207,7 +207,7 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
       if (sender?.endsWith('@lid')) {
         console.log(`[Main] DM de LID del ${role}: ${maskJid(sender)}`);
       }
-      await handleBossMessage({ from: sender, text, messageId, role }).catch((e) =>
+      await handleBossMessage({ from: sender, text, messageId, role, quotedText, pushName }).catch((e) =>
         console.error('[Main] handleBossMessage:', e.message)
       );
       return;
@@ -228,7 +228,7 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
 
     // Cualquier otro DM (desconocido) → asistente general aislado. SIEMPRE es una
     // respuesta a un mensaje entrante: Juanito nunca escribe primero (regla anti-ban).
-    await handlePublicDm({ from: sender, text, messageId, pushName, rawMsg }).catch((e) =>
+    await handlePublicDm({ from: sender, text, messageId, pushName, rawMsg, quotedText }).catch((e) =>
       console.error('[Main] handlePublicDm:', e.message)
     );
     return;
@@ -248,11 +248,11 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
 
   // Consola de aprobaciones: si este es el grupo APPROVALS_GROUP y quien escribe es jefe/admin,
   // se interpreta como decisión sobre lo pendiente (sin mención). Si lo manejó, cortamos.
-  if (await handleApprovalConsole({ chatId, text, sender, messageId, rawMsg })) return;
+  if (await handleApprovalConsole({ chatId, text, sender, messageId, rawMsg, quotedText })) return;
 
   // pushName viaja hasta el aviso de rate-limit (saluda por nombre al avisar).
   // rawMsg permite responder CITANDO el mensaje que mencionó al bot.
-  await handleGroupMessage({ chatId, groupName, text, sender, isGroup, messageId, isBotMentioned, pushName, rawMsg }).catch((e) =>
+  await handleGroupMessage({ chatId, groupName, text, sender, isGroup, messageId, isBotMentioned, pushName, rawMsg, quotedText }).catch((e) =>
     console.error('[Main] handleGroupMessage:', e.message)
   );
 }

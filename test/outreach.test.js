@@ -35,7 +35,7 @@ function makeWorld({ rows = [], quiet = false } = {}) {
       return 1;
     },
     sendMessage: async (to, text) => world.sent.push({ to, text }),
-    generateOutreachMessage: async ({ intent }) => `MSG[${intent}]`,
+    generateOutreachMessage: async ({ intent, fromName = null }) => `MSG[${intent}${fromName ? ` de ${fromName}` : ''}]`,
     bossTarget: async () => BOSS,
     isWithinQuietHours: () => quiet,
   };
@@ -59,6 +59,18 @@ test('once: envía al tercero, avisa al jefe y cierra (done)', async () => {
   world.sent = [];
   assert.equal(await runOutreachCycle(bogota('09:05')), 0);
   assert.equal(world.sent.length, 0);
+});
+
+test('le avisa al CREADOR (created_by) y el mensaje va de parte del sender_name (admin)', async () => {
+  const ADMIN = '573009998877@lid';
+  const { world, deps } = makeWorld({
+    rows: [{ id: 9, to_phone: '57300', to_name: 'Sebas', intent: 'que confirme', recur_kind: 'once', due_at: '2026-06-11 09:00:00', respect_quiet: 1, active: 1, created_by: ADMIN, sender_name: 'Alejandro' }],
+  });
+  __setDeps(deps);
+  await runOutreachCycle(bogota('09:00'));
+  assert.equal(world.sent[0].to, '57300', 'le escribe al tercero');
+  assert.match(world.sent[0].text, /de Alejandro/, 'el mensaje va de parte del creador (admin), no del jefe');
+  assert.equal(world.sent[1].to, ADMIN, 'el aviso va al admin creador, no al jefe');
 });
 
 test('interval: envía y avanza next_due_at (+interval_min)', async () => {

@@ -33,6 +33,13 @@ function makeDeps(overrides = {}) {
     approvalsTarget: overrides.approvalsTarget || (async () => 'team@g.us'),
     sendMessage: rec('sendMessage'),
     createBusinessFact: rec('createBusinessFact'),
+    sendDocument: rec('sendDocument'),
+    buildDocument:
+      overrides.buildDocument ||
+      (async ({ title, content, format }) => {
+        (calls.buildDocument ||= []).push([{ title, content, format }]);
+        return { buffer: Buffer.from('PDFDATA'), fileName: `${title || 'documento'}.${format || 'pdf'}`, mimetype: 'application/pdf' };
+      }),
   };
   return deps;
 }
@@ -424,6 +431,66 @@ test('capture_task sin request no guarda y pide aclaración', async () => {
   );
   assert.equal(deps.calls.createTask, undefined);
   assert.match(result, /\?|qué/i);
+});
+
+// ─── generate_document (Fase 3A: archivo adjunto al jefe) ─────────────────────
+
+test('generate_document (jefe) construye el archivo y lo envía al propio jefe', async () => {
+  const deps = makeDeps();
+  const result = await dispatchTool(
+    { name: 'generate_document', input: { title: 'Propuesta', content: 'Cuerpo del documento', format: 'pdf' } },
+    deps,
+    { createdBy: BOSS, role: 'boss' }
+  );
+  assert.equal(deps.calls.buildDocument.length, 1);
+  assert.deepEqual(deps.calls.buildDocument[0][0], { title: 'Propuesta', content: 'Cuerpo del documento', format: 'pdf' });
+  assert.equal(deps.calls.sendDocument.length, 1);
+  assert.equal(deps.calls.sendDocument[0][0], BOSS); // se lo manda al jefe (createdBy)
+  assert.equal(deps.calls.sendDocument[0][1].fileName, 'Propuesta.pdf');
+  assert.match(result, /Propuesta\.pdf/);
+});
+
+test('generate_document (admin) también puede', async () => {
+  const deps = makeDeps();
+  await dispatchTool(
+    { name: 'generate_document', input: { title: 'Informe', content: 'x', format: 'docx' } },
+    deps,
+    { createdBy: BOSS, role: 'admin' }
+  );
+  assert.equal(deps.calls.sendDocument.length, 1);
+});
+
+test('generate_document sin contenido no construye ni envía', async () => {
+  const deps = makeDeps();
+  const result = await dispatchTool(
+    { name: 'generate_document', input: { title: 'X', content: '   ' } },
+    deps,
+    { createdBy: BOSS, role: 'boss' }
+  );
+  assert.equal(deps.calls.buildDocument, undefined);
+  assert.equal(deps.calls.sendDocument, undefined);
+  assert.match(result, /contenido/i);
+});
+
+test('generate_document con rol no privilegiado NO construye ni envía', async () => {
+  const deps = makeDeps();
+  const result = await dispatchTool(
+    { name: 'generate_document', input: { title: 'X', content: 'y' } },
+    deps,
+    { createdBy: 'intruso@s.whatsapp.net', role: 'unknown' }
+  );
+  assert.equal(deps.calls.buildDocument, undefined);
+  assert.equal(deps.calls.sendDocument, undefined);
+  assert.match(result, /jefe|equipo/i);
+});
+
+test('generate_document: gateo — en DM (boss y admin) sí, en grupo y publicDm NUNCA', async () => {
+  const { toolsForRole } = await import('../src/claude/index.js');
+  const names = (tools) => tools.map((t) => t.name);
+  assert.ok(names(toolsForRole('boss')).includes('generate_document'), 'boss en DM sí');
+  assert.ok(names(toolsForRole('admin')).includes('generate_document'), 'admin en DM sí');
+  assert.ok(!names(toolsForRole('boss', { isGroup: true })).includes('generate_document'), 'en grupo no');
+  assert.equal(toolsForRole('unknown', { publicDm: true }).length, 0, 'publicDm sin tools');
 });
 
 test('capture_task: gateo — en DM (boss y admin) sí, en grupo y publicDm NUNCA', async () => {
@@ -1054,11 +1121,48 @@ test('schedule_outreach list y cancel', async () => {
   assert.match(noId, /necesito el id/i);
 });
 
-test('schedule_outreach: gateo — SOLO el jefe (boss); admin NO, grupos NUNCA', async () => {
+test('schedule_outreach: el remitente (sender_name) sale de quien ordena (§18.Y)', async () => {
+  const prev = process.env.BOSS_NAME;
+  process.env.BOSS_NAME = 'Daniel';
+  try {
+    // Jefe → BOSS_NAME.
+    let deps = outreachDeps();
+    await dispatchTool(
+      { name: 'schedule_outreach', input: { action: 'create', recipient: 'Sebastián', intent: 'x', recurrence: 'once', due_at: '2026-06-23 17:00:00' } },
+      deps,
+      { createdBy: BOSS, role: 'boss', senderName: 'Dani (WA)' }
+    );
+    assert.equal(deps._state.created[0].senderName, 'Daniel', 'jefe → BOSS_NAME');
+
+    // Admin → su propio pushName, NO el jefe.
+    deps = outreachDeps();
+    await dispatchTool(
+      { name: 'schedule_outreach', input: { action: 'create', recipient: 'Sebastián', intent: 'x', recurrence: 'once', due_at: '2026-06-23 17:00:00' } },
+      deps,
+      { createdBy: 'admin@lid', role: 'admin', senderName: 'Alejandro' }
+    );
+    assert.equal(deps._state.created[0].senderName, 'Alejandro', 'admin → su nombre');
+
+    // from_name explícito gana sobre todo.
+    deps = outreachDeps();
+    await dispatchTool(
+      { name: 'schedule_outreach', input: { action: 'create', recipient: 'Sebastián', intent: 'x', recurrence: 'once', due_at: '2026-06-23 17:00:00', from_name: 'María' } },
+      deps,
+      { createdBy: 'admin@lid', role: 'admin', senderName: 'Alejandro' }
+    );
+    assert.equal(deps._state.created[0].senderName, 'María', 'from_name override');
+  } finally {
+    if (prev === undefined) delete process.env.BOSS_NAME;
+    else process.env.BOSS_NAME = prev;
+  }
+});
+
+test('schedule_outreach: gateo — DM de jefe Y admin sí; desconocido y grupos NUNCA', async () => {
   const { toolsForRole } = await import('../src/claude/index.js');
   const names = (tools) => tools.map((t) => t.name);
   assert.ok(names(toolsForRole('boss')).includes('schedule_outreach'), 'boss en DM sí');
-  assert.ok(!names(toolsForRole('admin')).includes('schedule_outreach'), 'admin NO');
+  assert.ok(names(toolsForRole('admin')).includes('schedule_outreach'), 'admin en DM sí (§18.X)');
+  assert.ok(!names(toolsForRole('unknown')).includes('schedule_outreach'), 'desconocido no');
   assert.ok(!names(toolsForRole('boss', { isGroup: true })).includes('schedule_outreach'), 'en grupo no');
   assert.ok(!names(toolsForRole('boss', { isGroup: true, bossInGroup: true })).includes('schedule_outreach'), 'jefe-en-grupo no');
 });

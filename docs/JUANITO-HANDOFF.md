@@ -251,7 +251,7 @@ invocar pase lo que pase.
 | Tool | Admin | Boss | Grupo | Qué hace |
 |------|:-----:|:----:|:-----:|---------|
 | `create_reminder` | ✅ | ✅ | ❌ | Crea recordatorio con fecha/hora y destinatario opcional |
-| `schedule_outreach` | ❌ | ✅ | ❌ | Escribe a un TERCERO de parte del jefe (única/intervalo/diaria); solo jefe (§18.S) |
+| `schedule_outreach` | ✅ | ✅ | ❌ | Escribe a un TERCERO de parte del jefe (única/intervalo/diaria). Jefe **y admin** (§18.S; admin habilitado §18.X) |
 | `save_memory` | ✅ | ❌ | ❌ | Escribe en la memoria núcleo del sistema (key/value) |
 | `remember_note` | ✅ | ✅ | ❌ | Guarda nota personal del jefe (sandboxed, no afecta comportamiento) |
 | `summarize_group` | ✅ | ✅ | ❌ | Lee y resume un grupo por nombre |
@@ -2160,8 +2160,158 @@ causas distintas:
 - **Tests:** `test/brain.tools.test.js` (capture_task: éxito jefe/admin, rechazo por rol, sin request,
   gateo) y `test/commands.test.js` (`/tareas` list/ver/hecha/descartar + deflexión no-admin).
 
+### 18.U 🔵 Reply-awareness transversal: entender y actuar sobre mensajes citados (2026-06-24)
+
+**Pedido del jefe:** que Juanito entienda y responda **basado en un reply (cita de WhatsApp)** —
+y que sea una capacidad **general**, no solo para aprobaciones. El ejemplo motivador: Juanito manda
+2 borradores a aprobación; el jefe le hace *reply* a uno con "apruebo" → debe aprobar **ese**, sin
+tener que escribir el `#id` y sin que el reply sea obligatorio (si no cita, el flujo de siempre).
+
+**Solución (dos capas):**
+- **Capa general (universal, todos los flujos):**
+  - Helper PURO `extractQuotedText(message)` en `src/common/utils.js`: lee el texto del mensaje
+    citado desde el `contextInfo` de Baileys (texto simple, texto con formato, o caption de media).
+    Testeable sin Baileys.
+  - `src/whatsapp/index.js` extrae `quotedText` para **todos** los mensajes (grupo y DM) y lo pasa
+    por `onMessage`; `src/index.js` lo enruta a todos los handlers.
+  - `chat()` (`src/claude/index.js`) acepta `quotedText` y, si viene, antepone un bloque
+    `[El usuario está respondiendo a este mensaje]: "…"` al mensaje del usuario (persistido en el
+    hilo, tope 600 chars). Así **cualquier** respuesta (DM jefe, DM público, chatbot de grupo,
+    jefe-en-grupo, consola de aprobaciones) entiende a qué se refiere el reply, sin tocar cada tool.
+- **Especialización determinista para aprobaciones (el ejemplo):**
+  - `parseApprovalTarget(quotedText)` (`src/common/approval-intent.js`): lee el encabezado fijo de
+    la notificación citada ("📨 *Respuesta pendiente #N*" / "📝 *Borrador #N*") → `{type, id}` sin
+    ambigüedad (resuelve el caso de 2+ pendientes donde "apruebo" sin id no sabía cuál). Más
+    `parseDiscard(text)` (descarte claro anclado, no se traga correcciones).
+  - `handleApprovalConsole` (grupo "Aprobaciones Juanito"): si el jefe **cita** una notificación →
+    **aprobar** / **descartar** ESE pendiente exacto sin LLM, o si es texto libre, **corregir** ESE
+    pendiente pasando el `quotedText` al LLM (sabe cuál). Si no hay cita: comportamiento previo intacto
+    (parseApproval por id-en-texto / único pendiente / LLM).
+  - En el **DM del jefe** el reply también funciona "gratis": el LLM recibe el `quotedText` y puede
+    aprobar el correcto con sus tools `manage_drafts`/`manage_pending_replies`.
+  - Las notificaciones ahora traen un tip: *"cítame este mensaje (reply) para decidir sobre este
+    pendiente exacto"* (en `bot/index.js` y `scheduler/group-messages.js`).
+- **Tests (puros, corren nativo en Windows):** `test/quoted-text.test.js` (extractQuotedText, 6 casos)
+  y ampliación de `test/approval-intent.test.js` (parseDiscard + parseApprovalTarget). Suite afectada
+  verde: 14 + 198 + 38 (group/quiet/recurring) + 19 (group-messages/replies).
+- **✅ DESPLEGADO AL VPS (LIVE 2026-06-25):** backup `src.bak-20260625-002828` + `brain.sqlite.bak-20260625-002828`,
+  `pscp -r src` + `docker compose up -d --build`. Verificado: código dentro del contenedor (`extractQuotedText`),
+  WA reconectó sin QR, schedulers activos, sin crash-loop. **Falta solo validación funcional en vivo:** hacer
+  reply a una notificación de borrador en el grupo de aprobaciones y confirmar que aprueba/descarta ESE pendiente.
+
+### 18.V 🔵 Fase 3B — Mensaje/recordatorio a un contacto COMPARTIDO (vCard) (2026-06-25)
+
+**Roadmap agéntico Fase 3 (bajo riesgo):** 3A generar documentos · **3B contacto compartido (vCard)**.
+Se hizo 3B primero (mejor definida + cierra el riesgo de "números sagrados" de la Fase 1A). 3A queda
+pendiente; el jefe definió que será **archivo adjunto (PDF/.txt/.docx)** por WhatsApp.
+
+**Qué resuelve:** `schedule_outreach` (§18.S) y los recordatorios a terceros dependían de un número
+**dictado** (riesgo de transcripción). Ahora el jefe puede **compartir la tarjeta de contacto** de
+WhatsApp y Juanito lee el número EXACTO del vCard → cero error, sin tener que confirmar dígitos.
+
+**Implementación (mínima, reusa todo):**
+- **Helpers PUROS** en `src/common/utils.js` (testeables sin Baileys): `parseVcard(vcard)` (prefiere
+  `waid=`, el WhatsApp ID ya canónico; fallback: normaliza el TEL) · `extractSharedContacts(message)`
+  (contactMessage + contactsArrayMessage → `[{name, phone, phones}]`) · `describeSharedContacts(...)`
+  (texto sintético que marca el número como CONFIABLE).
+- **Capa WA** (`src/whatsapp/index.js`): un contactMessage no trae texto; cuando llega, se sintetiza
+  ese texto y entra al pipeline normal → se guarda en el historial del DM. El jefe luego dice
+  "mándale que…/recuérdale…" y el LLM ve el contacto en el historial reciente y llama
+  `schedule_outreach`/`create_reminder` con ese número. (Instrucción y tarjeta suelen ser 2 mensajes
+  separados; el historial los une.)
+- **Prompt** (`src/claude/index.js`): la guía de `schedule_outreach` y la regla "los números son
+  sagrados" ahora dicen que un número COMPARTIDO por tarjeta es confiable y se usa directo sin pedir
+  confirmación de dígitos.
+- **Sin tabla nueva ni tool nueva:** el número fluye por `recipient_phone` de `schedule_outreach`
+  (que ya valida + guarda contacto) o por el destinatario de `create_reminder`.
+- **Tests (puros, nativos en Windows):** `test/vcard.test.js` (8) — parseVcard waid/no-waid/vacío,
+  extractSharedContacts único/array/ninguno, describeSharedContacts. Suite relacionada verde: 116
+  (outreach/brain.tools/quoted/approval-intent/recurring).
+- **✅ DESPLEGADO AL VPS (LIVE 2026-06-25, junto con 3A):** backup `src.bak-/package*.bak-/brain.sqlite.bak-20260625-005227`.
+  Validación en vivo pendiente: compartir un contacto y pedir un outreach a ese número.
+
+### 18.W 🔵 Fase 3A — Generar documentos como ARCHIVO adjunto (PDF/.docx/.txt) (2026-06-25)
+
+**Decisión del jefe (2026-06-25):** "generar documentos" = un **archivo adjunto** (PDF / Word .docx /
+texto) que Juanito redacta y le **manda a él** por WhatsApp para revisar o reenviar.
+
+**Implementación:**
+- **Módulo nuevo** `src/documents/index.js`: `buildDocument({title, content, format})` →
+  `{buffer, fileName, mimetype}`. txt/md sin deps; **PDF** vía `pdfkit`; **.docx** vía `docx`. Render en
+  memoria (Buffer) → sin archivos temporales. `safeFileName` quita acentos/caracteres raros.
+- **Deps nuevas (justificadas por la feature):** `pdfkit` + `docx` (ambas PURO JS, sin compilación
+  nativa → OK en Alpine). Añadidas con `npm install --ignore-scripts` (no dispara el build de
+  better-sqlite3 en Windows); el lock quedó en sync para el `npm ci` de la imagen.
+- **Capa WA** (`src/whatsapp/index.js`): `sendDocument(to, {buffer, fileName, mimetype, caption})` por
+  la MISMA cola anti-ban que el texto.
+- **Tool** `generate_document` (`title`, `content`, `format` pdf|docx|txt|md): el modelo redacta el
+  contenido completo en `content`; el handler construye + envía a `ctx.createdBy` (el propio jefe).
+  Gateada en `GROUP_DENIED_TOOLS` (no grupos/publicDm); disponible en DM de **jefe y admin**; defensa
+  en profundidad en el handler (rechaza si rol ≠ boss/admin). **No envía a terceros** (sería hacia
+  afuera → iría por aprobación; queda como ampliación futura).
+- **Tests:** `test/documents.test.js` (7: txt/pdf/docx con magic bytes %PDF/PK, safeFileName, sin
+  contenido lanza) + `test/brain.tools.test.js` (dispatch jefe/admin/sin-contenido/rol-no-priv +
+  gateo). Batería pura: **306 verde** (1 fallo PREEXISTENTE y ajeno: `calendly.helpers.test.js` espera
+  una URL de brochure vieja distinta del `MATERIAL_LINKS` actual del `.env` — no tocar aquí).
+- **✅ DESPLEGADO AL VPS (LIVE 2026-06-25):** `pscp src + package.json + package-lock.json` (deps nuevas)
+  + `docker compose up -d --build` (npm ci instaló pdfkit+docx en Alpine). Verificado DENTRO del contenedor:
+  `buildDocument` renderiza un PDF real (1458 bytes, header %PDF), WA reconectó sin QR, schedulers activos,
+  sin crash-loop. Validación funcional en vivo pendiente: pedir "hazme una propuesta en PDF" por DM.
+
+### 18.X 🔵 Admin = mismas capacidades que el jefe (schedule_outreach) (2026-06-25)
+
+**Pedido:** un admin intentó escribirle a un contacto desde Juanito y recibió "no puedo". `schedule_outreach`
+estaba gateada como **solo jefe** (`BOSS_ONLY_TOOLS`, decisión original §18.S "ni admin"). El admin (equipo)
+quiere las MISMAS capacidades del jefe **además** de las suyas (`save_memory`).
+
+**Diagnóstico:** la ÚNICA tool que le faltaba al admin respecto al jefe era `schedule_outreach` (el admin ya
+tenía todo lo demás + `save_memory`). El bloqueo era puro gating; el prompt ya describía la tool.
+
+**Cambios:**
+- `BOSS_ONLY_TOOLS` → renombrada `PRIVILEGED_ONLY_TOOLS` (jefe **+** admin, no desconocidos/grupos). El
+  filtro de `toolsForRole` ahora excluye la tool solo para roles no privilegiados → admin la recibe en su DM.
+- `roleBlock` del admin: añadida la guía "tienes las mismas capacidades que el jefe; usa tus herramientas,
+  no te niegues" (antes solo el jefe la tenía → el modelo a veces deflectaba al admin).
+- `scheduler/outreach.js`: el aviso "✅ Le escribí a…" ahora va al **creador** (`row.created_by`), no siempre
+  al jefe. Así un outreach que ordena un admin le llega al admin; los del jefe siguen llegándole al jefe.
+  Fallback a `bossDmTarget()` para filas viejas sin `created_by`. NOTA: el mensaje al tercero se sigue
+  redactando "de parte del jefe" (`BOSS_NAME`) — misma capacidad que el jefe; cambiar el remitente por
+  creador sería otra decisión.
+- Tests: `brain.tools` (gateo: jefe y admin sí, desconocido/grupos no) + `outreach.test.js` (aviso al
+  creador admin). Suites verdes: 104 (prompt-context+brain.tools) + 111 (con outreach/roles).
+- **✅ DESPLEGADO AL VPS (LIVE 2026-06-25):** backup `src.bak-/brain.sqlite.bak-20260625-010827`, `pscp src` +
+  `docker compose up -d --build`. Código confirmado dentro del contenedor, WA reconectó sin QR, sin crash-loop.
+- **Seguimiento (§18.Y):** lo de "el mensaje sigue saliendo de parte del jefe" YA se resolvió — ahora va de
+  parte de quien da la orden.
+
+### 18.Y 🔵 Outreach: "de parte de" quien lo ORDENA, no siempre del jefe (2026-06-25)
+
+**Pedido (admin):** tras habilitar `schedule_outreach` para admins (§18.X), el mensaje al tercero seguía
+diciendo "de parte de [BOSS_NAME]". Un admin: "yo no soy el jefe". Quiere que el remitente **dependa de
+quién da la instrucción**.
+
+**Solución:**
+- Columna nueva `outreach_schedules.sender_name` (migración idempotente en `migrate.js`; el entrypoint
+  corre `migrate.js` en cada arranque → se crea sola. Verificada presente en el VPS).
+- El nombre del que habla viaja como `pushName` → `handleBossMessage` → `chat({senderName})` → `ctx.senderName`.
+- La tool `schedule_outreach` resuelve el remitente al crear y lo guarda: `from_name` explícito (param nuevo,
+  "de parte de Ale") gana; si no, **jefe → BOSS_NAME**, **admin → su pushName de WhatsApp**. Se guarda en la
+  fila porque la entrega es asíncrona.
+- `generateOutreachMessage({…, fromName})` (antes `bossName`): el mensaje sale "de parte de `fromName`";
+  fallback a BOSS_NAME para filas viejas; si no hay ninguno, queda neutro ("de su parte"). Se quitó el
+  hardcode "mi jefe" del prompt interno.
+- `scheduler/outreach.js` pasa `fromName: row.sender_name`.
+- Tests: `brain.tools` (jefe→BOSS_NAME, admin→pushName, from_name override) + `outreach.test.js` (mensaje
+  "de Alejandro" + aviso al creador). Suites verdes: 131.
+- **✅ DESPLEGADO AL VPS (LIVE 2026-06-25):** backup `*.bak-20260625-014959`, `pscp src` + rebuild; migración
+  corrió (columna `sender_name` confirmada en la DB del contenedor), WA reconectó, sin crash-loop.
+
 ### 🟢 Baja prioridad / Nice-to-have
 
+- **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):
+  sería envío hacia afuera → debería pasar por la cola de aprobación.
+- **Test `calendly.helpers.test.js` desactualizado:** la URL de brochure hardcodeada (línea 267) no
+  coincide con el `MATERIAL_LINKS` de producción. Actualizar el test al valor vigente.
 - **Comando `/recuerda` en grupos (admins):** `@Juanito /recuerda [texto]` → memoria núcleo sin ir a DM.
 - **Resumen on-demand explícito:** exponer `summarize_group` en el prompt del jefe.
 - **✅ Personalización del tono por grupo — SHIPPED (2026-06-12)** vía `/persona` (§18.E).

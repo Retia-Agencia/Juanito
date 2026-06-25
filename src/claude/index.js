@@ -42,11 +42,12 @@ export function __resetDeps() {
 
 async function resolveDeps() {
   if (_injectedDeps) return _injectedDeps;
-  const [db, contacts, whatsapp, routing] = await Promise.all([
+  const [db, contacts, whatsapp, routing, documents] = await Promise.all([
     import('../db/index.js'),
     import('../contacts/index.js'),
     import('../whatsapp/index.js'),
     import('../common/approval-routing.js'),
+    import('../documents/index.js'),
   ]);
   return {
     // db
@@ -110,6 +111,9 @@ async function resolveDeps() {
     resolveGroupByName: whatsapp.resolveGroupByName,
     getRecentMessages: whatsapp.getRecentMessages,
     sendMessage: whatsapp.sendMessage,
+    sendDocument: whatsapp.sendDocument,
+    // generación de documentos (tool generate_document) — Fase 3A
+    buildDocument: documents.buildDocument,
     // ruteo de avisos al equipo (tool capture_task)
     approvalsTarget: routing.approvalsTarget,
     // claude (mismo módulo)
@@ -324,6 +328,13 @@ const TOOLS = [
             'Opcional. Número del tercero cuando el jefe lo da explícitamente junto al nombre, ' +
             'para guardarlo como contacto nuevo. Si el contacto ya existe, omítelo.',
         },
+        from_name: {
+          type: 'string',
+          description:
+            'Opcional. De parte de QUIÉN va el mensaje, si lo dicen explícitamente ("de parte de ' +
+            'Ale", "diles que les escribe María"). Si se omite, va de parte de quien te está dando ' +
+            'la orden ahora. NO lo inventes: solo si lo mencionan.',
+        },
         intent: {
           type: 'string',
           description:
@@ -371,6 +382,38 @@ const TOOLS = [
         },
       },
       required: ['action'],
+    },
+  },
+  {
+    name: 'generate_document',
+    description:
+      'Genera un DOCUMENTO como ARCHIVO adjunto (PDF, Word .docx o texto) y se lo envía al jefe ' +
+      'por WhatsApp. Úsalo cuando pida "hazme/genérame/redáctame un documento/propuesta/carta/ ' +
+      'resumen/informe/contrato/guion… en PDF/Word". TÚ redactas el contenido completo y lo pones ' +
+      'en "content" (texto corrido; separa secciones con líneas en blanco). El archivo se le manda ' +
+      'al PROPIO jefe para que lo revise o lo reenvíe (no se manda a terceros desde aquí). Si no ' +
+      'especifica formato, usa pdf.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: {
+          type: 'string',
+          description: 'Título del documento (encabezado y base del nombre de archivo). Ej: "Propuesta comercial — Cliente X".',
+        },
+        content: {
+          type: 'string',
+          description:
+            'El CONTENIDO COMPLETO del documento, ya redactado por ti en lenguaje natural. Separa ' +
+            'párrafos/secciones con una línea en blanco. No pongas marcadores tipo "[insertar aquí]": ' +
+            'redáctalo de verdad con lo que el jefe pidió.',
+        },
+        format: {
+          type: 'string',
+          enum: ['pdf', 'docx', 'txt', 'md'],
+          description: 'Formato del archivo. Default pdf. docx = Word editable; txt/md = texto plano.',
+        },
+      },
+      required: ['title', 'content'],
     },
   },
   {
@@ -541,15 +584,18 @@ const GROUP_DENIED_TOOLS = new Set([
   'manage_replies',
   'capture_task',
   'remember_business',
+  'generate_document',
 ]);
 // Tools sensibles que el jefe (no-admin) NO debe ejecutar. save_memory escribe la
 // memoria NÚCLEO que alimenta el comportamiento del bot para TODOS → solo admin.
 // (El jefe sí tiene remember_note: sus notas quedan sandboxed.)
 const BOSS_DENIED_TOOLS = new Set(['save_memory']);
 
-// Tools que SOLO el jefe (role='boss') puede ejecutar — ni siquiera el admin. Escribirle a
-// terceros de parte del jefe es una acción suya: queda restringida a su DM por decisión explícita.
-const BOSS_ONLY_TOOLS = new Set(['schedule_outreach']);
+// Tools PRIVILEGIADAS: disponibles para el jefe Y el equipo técnico (admin) en su DM, pero no
+// para desconocidos ni en grupos. schedule_outreach (escribirle a terceros) entra acá: el admin
+// tiene las MISMAS capacidades que el jefe además de las suyas propias (decisión 2026-06-25, §18.X;
+// antes era solo-jefe). Un outreach creado por un admin le avisa a ÉL, no al jefe (scheduler/outreach).
+const PRIVILEGED_ONLY_TOOLS = new Set(['schedule_outreach']);
 
 // Set ACOTADO de tools para el jefe/admin cuando da órdenes DESDE un grupo (mención en el
 // chat del grupo, verificado por isStrictPrivileged). NO incluye lectura de datos privados
@@ -584,8 +630,8 @@ export function toolsForRole(role, { isGroup = false, publicDm = false, bossInGr
   if (isGroup) tools = tools.filter((t) => !GROUP_DENIED_TOOLS.has(t.name));
   // El jefe (no-admin) no recibe las tools sensibles.
   if (role !== 'admin') tools = tools.filter((t) => !BOSS_DENIED_TOOLS.has(t.name));
-  // Tools exclusivas del jefe: cualquier otro rol (admin incluido) no las ve.
-  if (role !== 'boss') tools = tools.filter((t) => !BOSS_ONLY_TOOLS.has(t.name));
+  // Tools privilegiadas (jefe + admin): solo los roles no privilegiados (desconocido) no las ven.
+  if (role !== 'boss' && role !== 'admin') tools = tools.filter((t) => !PRIVILEGED_ONLY_TOOLS.has(t.name));
   return tools;
 }
 
@@ -674,7 +720,9 @@ export async function buildSystemPrompt(deps, { isGroup = false, role = 'boss', 
   para el equipo con una herramienta hecha para eso sí cuenta como acción válida.)
 - Los NÚMEROS son sagrados: teléfonos, montos, cantidades, fechas e identificadores van
   EXACTOS como te los dieron. Nunca los redondees, completes ni "corrijas". Si dudas de un
-  número o lo oíste a medias, pídelo de nuevo en vez de adivinarlo.`;
+  número o lo oíste a medias, pídelo de nuevo en vez de adivinarlo. La forma MÁS segura de
+  darte un número es COMPARTIR la tarjeta de contacto: si el jefe la comparte, ese número es
+  confiable y lo usas directo.`;
 
   // ── Contexto de DM PÚBLICO (desconocido): asistente general AISLADO ───────
   // Mismo principio de aislamiento que el de grupo: cualquiera puede escribirle por
@@ -873,7 +921,12 @@ ${sections}`;
     role === 'admin'
       ? `\n\n## Interlocutor: equipo técnico (admin)
 Hablas con un miembro del equipo que mantiene el sistema. Puedes ser directo y
-técnico y darle diagnósticos si los pide.`
+técnico y darle diagnósticos si los pide.
+- Tiene las MISMAS capacidades que el jefe (más las suyas de admin): cuando te pida algo,
+  PRIMERO mira si alguna herramienta lo resuelve —incluido escribirle a un tercero con
+  schedule_outreach— y úsala. NO te niegues a algo que sí puedes hacer.
+- Si de verdad NINGUNA herramienta aplica, usa capture_task para anotar la orden y pasarla
+  al equipo, en vez de negarte en seco.`
       : `\n\n## Interlocutor: el jefe (dueño)
 Trátalo con cercanía y deferencia; él es el dueño de esto.
 - Nunca le muestres errores técnicos ni detalles de implementación.
@@ -920,6 +973,13 @@ confirma al jefe en una línea natural:
   hasta una hora límite o un número de veces (ej: "escríbele a Sebastián cada 40 min que
   confirme, hasta las 6pm" → recurrence=interval, interval_min=40, until=hoy 18:00). Si el
   jefe da un número nuevo junto al nombre, pásalo en recipient_phone para guardarlo.
+  Si COMPARTIÓ una tarjeta de contacto (verás "compartió una tarjeta de contacto…
+  datos CONFIABLES" en el chat), usa ESE número en recipient_phone tal cual: es exacto, NO
+  le pidas que confirme los dígitos. El mensaje sale "de parte de" quien te da la orden; si
+  dicen explícitamente de parte de otra persona ("de parte de Ale"), pásalo en from_name.
+- generate_document: redacta TÚ el contenido y genera un ARCHIVO (PDF, Word .docx o texto)
+  que se le manda al jefe por WhatsApp ("hazme una propuesta/carta/resumen en PDF/Word").
+  El archivo es para el propio jefe (lo revisa o lo reenvía); no se manda a terceros desde aquí.
 - manage_drafts: ver/aprobar/corregir los borradores pendientes de los mensajes
   generados. Las correcciones se aplican ya y se acumulan para el futuro.
 - manage_replies: ver/aprobar/corregir/descartar las RESPUESTAS de grupo que esperan tu
@@ -1420,6 +1480,15 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
       // pueda cazar un dígito mal. Si era un contacto ya guardado, no hace falta repetírselo.
       const toLabel = echoPhone ? `${toName} (${echoPhone})` : toName;
 
+      // De parte de QUIÉN va el mensaje (§18.Y): un from_name explícito gana; si no, el jefe usa
+      // BOSS_NAME y un admin su propio nombre de WhatsApp (ctx.senderName). Se guarda en la fila
+      // porque la entrega es asíncrona (el scheduler ya no asume "del jefe").
+      const senderName =
+        input.from_name?.trim() ||
+        (ctx.role === 'boss'
+          ? process.env.BOSS_NAME?.trim() || ctx.senderName?.trim() || null
+          : ctx.senderName?.trim() || null);
+
       const recurrence = input.recurrence;
 
       if (recurrence === 'once') {
@@ -1433,6 +1502,7 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
           recurKind: 'once',
           dueAt: input.due_at.trim(),
           createdBy: ctx.createdBy,
+          senderName,
         });
         return `Listo ✅ Le escribiré a ${toLabel} el ${input.due_at.trim()}: «${intent}». Te aviso cuando lo haga.`;
       }
@@ -1470,6 +1540,7 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
           untilAt,
           maxCount,
           createdBy: ctx.createdBy,
+          senderName,
         });
         const stop = maxCount ? `${maxCount} ${maxCount === 1 ? 'vez' : 'veces'}` : `hasta ${untilAt}`;
         return (
@@ -1491,6 +1562,7 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
           days,
           timeHm,
           createdBy: ctx.createdBy,
+          senderName,
         });
         return (
           `Listo ✅ Le escribiré a ${toLabel} cada ${csvToDayLabels(days)} a las ${timeHm}: ` +
@@ -1499,6 +1571,33 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
       }
 
       return 'Dime si es una sola vez (once), cada cierto tiempo (interval) o a una hora fija ciertos días (daily).';
+    }
+
+    case 'generate_document': {
+      // Defensa en profundidad: solo jefe/admin (el gateo de tools ya lo restringe a su DM).
+      if (ctx.role !== 'boss' && ctx.role !== 'admin') {
+        return 'Esta función es solo para el jefe y el equipo.';
+      }
+      const title = String(input.title || '').trim();
+      const content = String(input.content || '').trim();
+      if (!content) return 'Me falta el contenido del documento. Dime qué debe decir y lo genero.';
+      let doc;
+      try {
+        doc = await deps.buildDocument({ title, content, format: input.format || 'pdf' });
+      } catch (e) {
+        return `No pude generar el documento: ${e.message}`;
+      }
+      try {
+        await deps.sendDocument(ctx.createdBy, {
+          buffer: doc.buffer,
+          fileName: doc.fileName,
+          mimetype: doc.mimetype,
+          caption: title ? `📄 ${title}` : '📄 Tu documento',
+        });
+      } catch (e) {
+        return `Generé el documento pero no pude enviártelo: ${e.message}`;
+      }
+      return `Listo ✅ Te envié "${doc.fileName}". Revísalo y si quieres algún cambio me dices.`;
     }
 
     case 'set_group_instructions': {
@@ -1722,7 +1821,7 @@ async function withRetry(fn, { retries = 3, baseDelay = 1000 } = {}) {
 
 // ─── Función principal ────────────────────────────────────────────────────────
 
-export async function chat(userMessage, chatId = null, { isGroup = false, role = 'boss', publicDm = false, bossInGroup = false, groupName = null, groupId = null, createdBy = null, approvalsConsole = false } = {}) {
+export async function chat(userMessage, chatId = null, { isGroup = false, role = 'boss', publicDm = false, bossInGroup = false, groupName = null, groupId = null, createdBy = null, approvalsConsole = false, quotedText = null, senderName = null } = {}) {
   const deps = await resolveDeps();
   // currentGroupId/currentGroupName: para que las tools del jefe-en-grupo apunten a ESTE
   // grupo cuando dice "aquí"/"en este grupo" sin nombrarlo (set_group_instructions,
@@ -1738,9 +1837,20 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
     role,
     currentGroupId: groupId || (isGroup ? chatId : null),
     currentGroupName: groupName,
+    // Nombre de quien habla (su pushName de WhatsApp) → para que un outreach que ordena un admin
+    // salga "de parte de" él, no del jefe (schedule_outreach). Ver §18.Y.
+    senderName,
   };
 
-  await deps.saveMessage({ role: 'user', content: userMessage, chatId });
+  // Reply-awareness universal: si el usuario respondió CITANDO un mensaje, anteponemos su
+  // texto como contexto explícito para que el modelo entienda a qué se refiere ("apruébalo",
+  // "este no", "cámbialo así"…) sin depender del historial. Se persiste así para que el hilo
+  // conserve a qué se respondía. Tope para no inflar tokens con citas largas.
+  const effectiveMessage = quotedText
+    ? `[El usuario está respondiendo a este mensaje]:\n"${String(quotedText).slice(0, 600)}"\n\n[Su respuesta]:\n${userMessage}`
+    : userMessage;
+
+  await deps.saveMessage({ role: 'user', content: effectiveMessage, chatId });
 
   // getRecentHistory ya incluye el mensaje recién guardado como último 'user'.
   // Filtramos por chatId para AISLAR contextos: el historial de un grupo no debe
@@ -1759,7 +1869,7 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
       : await deps.getRecentHistory(20, chatId)
   );
   if (!messages.length || messages[messages.length - 1].role !== 'user') {
-    messages.push({ role: 'user', content: userMessage });
+    messages.push({ role: 'user', content: effectiveMessage });
   }
 
   // ownerLid: solo jefe/admin tienen memoria PERSONAL, y se carga la de QUIEN habla (ctx.createdBy).
@@ -1902,10 +2012,12 @@ export async function generateScheduledDraft({ brief, groupName, feedback = '', 
 // a partir de la intención que el jefe dictó. Se presenta de parte del jefe (BOSS_NAME si
 // está) y firma como el bot (BOT_NAME). El texto se envía directo (no pasa por aprobación):
 // el jefe ya dio la orden y recibe copia de cada envío.
-export async function generateOutreachMessage({ intent, toName = null, bossName = null, botName = null }) {
-  const boss = (bossName || process.env.BOSS_NAME || '').trim();
+export async function generateOutreachMessage({ intent, toName = null, fromName = null, botName = null }) {
+  // fromName: de parte de quién va (el creador del outreach — jefe o admin). Fallback a BOSS_NAME
+  // para filas viejas sin sender_name; si tampoco hay, queda neutro (no asume "el jefe").
+  const from = (fromName || process.env.BOSS_NAME || '').trim();
   const bot = (botName || process.env.BOT_NAME || 'Juanito').trim();
-  const fromPart = boss ? `de parte de ${boss}` : 'de parte de mi jefe';
+  const fromPart = from ? `de parte de ${from}` : 'de su parte';
   const toPart = toName ? ` La persona se llama ${toName}.` : '';
   const response = await withRetry(() =>
     client.messages.create({
@@ -1920,7 +2032,7 @@ export async function generateOutreachMessage({ intent, toName = null, bossName 
       messages: [
         {
           role: 'user',
-          content: `Esto es lo que mi jefe quiere transmitirle:\n\n${intent}`,
+          content: `Esto es lo que se quiere transmitir ${fromPart}:\n\n${intent}`,
         },
       ],
     })

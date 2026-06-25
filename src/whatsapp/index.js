@@ -16,7 +16,7 @@ import QRCode from 'qrcode';
 import { updateQR, markConnected, startQRServer } from './qr-server.js';
 import { saveMessage } from '../db/index.js';
 import db from '../db/index.js';
-import { phonesMatch } from '../common/utils.js';
+import { phonesMatch, extractQuotedText, extractSharedContacts, describeSharedContacts } from '../common/utils.js';
 import { createSendQueue } from './send-queue.js';
 import { createTtlCache } from './subject-cache.js';
 
@@ -269,10 +269,19 @@ export async function connect({ onMessage, onGroupJoin, onGroupChange }) {
           if (msg.key.fromMe) continue;
           if (!msg.message) continue;
 
-          const text =
+          // Tarjeta(s) de contacto compartida(s): un contactMessage no trae texto, así que lo
+          // representamos como texto sintético (con el número CONFIABLE del vCard) para que fluya
+          // por el pipeline normal y el modelo pueda actuar (escribirle/recordarle a ese número
+          // sin que el jefe lo dicte). Ver utils.extractSharedContacts (§18.V / Fase 3B).
+          const sharedContacts = extractSharedContacts(msg.message);
+          let text =
             msg.message?.conversation ||
             msg.message?.extendedTextMessage?.text ||
             null;
+          if (!text && sharedContacts.length) {
+            text = describeSharedContacts(sharedContacts);
+            console.log(`[Debug] contacto(s) compartido(s): ${sharedContacts.map((c) => c.name || '?').join(', ')}`);
+          }
 
           console.log(`[Debug] text="${text?.slice(0, 40)}" isGroup=${isGroup}`);
           if (!text) continue;
@@ -312,7 +321,15 @@ export async function connect({ onMessage, onGroupJoin, onGroupChange }) {
           // rawMsg (solo grupos): mínimo para CITAR el mensaje al responder (reply nativo).
           const rawMsg = isGroup ? { key: msg.key, message: msg.message } : null;
 
-          await onMessage({ chatId, isGroup, text, sender, groupName, messageId, isBotMentioned, pushName: msg.pushName || null, rawMsg }).catch((e) =>
+          // quotedText: si este mensaje es un REPLY (cita) a otro, su texto. Universal
+          // (grupo y DM) — habilita que Juanito entienda a qué se responde y que la consola
+          // de aprobaciones resuelva el pendiente exacto por reply (ver handleApprovalConsole).
+          const quotedText = extractQuotedText(msg.message);
+          if (quotedText) {
+            console.log(`[Debug] reply a: "${quotedText.slice(0, 40)}"`);
+          }
+
+          await onMessage({ chatId, isGroup, text, sender, groupName, messageId, isBotMentioned, pushName: msg.pushName || null, rawMsg, quotedText }).catch((e) =>
             console.error('[WhatsApp] Error en onMessage:', e.message)
           );
         }
@@ -345,6 +362,21 @@ export async function sendMessage(to, text, { quoted } = {}) {
     { key }
   );
   console.log(`[WhatsApp] → ${to} (cola: ${sendQueue.size()} pendientes)`);
+}
+
+// Envía un DOCUMENTO (archivo adjunto) por WhatsApp. buffer = contenido en memoria,
+// fileName/mimetype para que WA lo muestre bien, caption opcional. Pasa por la MISMA cola
+// anti-ban que el texto (§18.D P1-a). Usado por la tool generate_document (Fase 3A).
+export async function sendDocument(to, { buffer, fileName, mimetype, caption } = {}) {
+  if (!sock) throw new Error('sendDocument: WhatsApp no conectado aún');
+  if (!buffer || !buffer.length) throw new Error('sendDocument: documento vacío');
+  const jid = toJid(to);
+  const key = jid.endsWith('@g.us') ? jid : null;
+  await sendQueue.enqueue(
+    () => sock.sendMessage(jid, { document: buffer, fileName, mimetype, caption: caption || undefined }),
+    { key }
+  );
+  console.log(`[WhatsApp] → ${to} documento "${fileName}" (${buffer.length} bytes, cola: ${sendQueue.size()})`);
 }
 
 // ─── Salir de un grupo (add no autorizado) ────────────────────────────────────
