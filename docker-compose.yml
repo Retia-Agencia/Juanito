@@ -96,6 +96,7 @@ services:
       # Cada sección a su grupo (ya no por DM). Sin estos el job se autodesactiva.
       - SHEETS_METRICS_30X_GROUP=${SHEETS_METRICS_30X_GROUP:-}
       - SHEETS_METRICS_ESTADOX_GROUP=${SHEETS_METRICS_ESTADOX_GROUP:-}
+      - SHEETS_METRICS_LINKEDIN_GROUP=${SHEETS_METRICS_LINKEDIN_GROUP:-}
       - SHEETS_METRICS_CRON=${SHEETS_METRICS_CRON:-0 20 * * *}
       # QR web server — solo durante la vinculación inicial.
       # Descomentar la línea de abajo y agregar QR_PORT=3001 al .env.

@@ -3,15 +3,24 @@
 // que vive en una pestaña de otro spreadsheet con las métricas YA CALCULADAS.
 //
 // Soporta dos modos:
-//   - completo (sin `company`): ambas secciones (30X + ESTADOX) → preview /reportes metricas.
-//   - por empresa (`company: '30X'|'ESTADOX'`): SOLO esa sección → se enruta a su grupo.
+//   - completo (sin `company`): todas las secciones (ver COMPANIES) → preview /reportes metricas.
+//   - por programa (`company`, p.ej. 'AI SECOND BRAIN'|'ESTADOX'|'LINKEDIN SALES'): SOLO esa
+//     sección → se enruta a su grupo.
 //
-// Layout de la pestaña: filas = arreglos de celdas. Secciones por empresa (fila con
-// sólo "30X"/"ESTADOX" en col A), encabezado de tabla (col A = "#"), filas de closer
-// (col A = rank numérico). Columnas: 0 # · 1 Closer · 2 Agendados · 3 Shows ·
+// Layout de la pestaña: filas = arreglos de celdas. Secciones por programa (fila con
+// sólo el nombre del programa en col A), encabezado de tabla (col A = "#"), filas de
+// closer (col A = rank numérico). Columnas: 0 # · 1 Closer · 2 Agendados · 3 Shows ·
 // 4 Show Rate Total · 7 Show Rate 3/3 · 9 Show Rate <4 · 10 Delta.
 
 import { zonedParts } from './window.js';
+
+// Secciones (programas) del reporte, EN EL ORDEN en que aparecen en la pestaña. El
+// texto debe coincidir EXACTO (en mayúsculas) con la celda de la col A que abre cada
+// sección. Fuente única de verdad: `metrics-targets.js` mapea cada una a su grupo.
+// Histórico: el programa "30X" se renombró a "AI SECOND BRAIN" en el sheet (2026-06-25)
+// y se sumó "LINKEDIN SALES" (3.er grupo).
+export const COMPANIES = ['AI SECOND BRAIN', 'ESTADOX', 'LINKEDIN SALES'];
+const COMPANY_SET = new Set(COMPANIES);
 
 function dayLabel(now, tz) {
   const { y, m, d } = zonedParts(now, tz);
@@ -20,7 +29,6 @@ function dayLabel(now, tz) {
 }
 
 const cellsOf = (row) => (Array.isArray(row) ? row.map((c) => String(c ?? '').trim()) : []);
-const COMPANIES = new Set(['30X', 'ESTADOX']);
 
 // Línea de un closer a partir de su fila de celdas.
 function closerLine(c) {
@@ -53,7 +61,7 @@ function parse(data) {
   for (const r of data) {
     const c = cellsOf(r);
     const first = (c[0] || '').trim();
-    if (COMPANIES.has(first.toUpperCase()) && c.slice(1).every((x) => x === '')) {
+    if (COMPANY_SET.has(first.toUpperCase()) && c.slice(1).every((x) => x === '')) {
       cur = { company: first.toUpperCase(), rows: [] };
       sections.push(cur);
       continue;

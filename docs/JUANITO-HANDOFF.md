@@ -1911,6 +1911,24 @@ por closer), con entrega por sección a cada grupo.
 "Closers IA para Abogados" (no es miembro aún — verificado en DB 2026-06-18) y autorizarlo. Hasta
 entonces el job corre pero loguea "no pude resolver el grupo …" y no envía.
 
+**🔧 Cambio 2026-06-25 — tercer programa "LinkedIn Sales" + rename de sección.** El sheet `Resumen
+Diario` ahora trae **tres** secciones: **`AI SECOND BRAIN`** (la celda col A que antes decía `30X` se
+renombró → el match literal viejo ya no la encontraba y ese grupo recibía "No hay métricas"),
+**`ESTADOX`** (igual) y la nueva **`LINKEDIN SALES`**. Las columnas NO se movieron, sólo los rótulos
+de sección. Fix:
+- `src/sheets/metrics.js` → `export const COMPANIES = ['AI SECOND BRAIN','ESTADOX','LINKEDIN SALES']`
+  como **fuente única de verdad** (orden = orden en el mensaje); `parse()` usa ese Set.
+- `src/scheduler/metrics-targets.js` deriva los targets de `COMPANIES` vía `GROUP_ENV` (mapa
+  programa→env). La env de AI SECOND BRAIN sigue siendo `SHEETS_METRICS_30X_GROUP` (retrocompat VPS).
+- Nueva env **`SHEETS_METRICS_LINKEDIN_GROUP`** (en `.env.example`; **falta agregarla al
+  `docker-compose.yml` y al `.env` del VPS** con el nombre del grupo destino).
+- Tests `sheets-metrics` actualizados (tres secciones + por-programa + `sectionTargets` con la 3.ª env). 9/9 ✔.
+
+**⏳ PENDIENTE deploy:** (1) crear/elegir el grupo de WhatsApp de LinkedIn Sales y meter a Juanito;
+(2) setear `SHEETS_METRICS_LINKEDIN_GROUP=<nombre del grupo>` en el `.env` del VPS (y declararla en
+`docker-compose.yml`); (3) confirmar que el sheet sigue compartido con el SA. Sin la env, esa sección
+simplemente no se envía (las otras dos sí).
+
 > ⚠️ **Gotcha de deploy confirmado:** las env nuevas requieren copiar **también** `docker-compose.yml`
 > al VPS (`pscp docker-compose.yml`) + `docker compose up -d`. La receta `pscp src test` NO lo incluye;
 > si solo se copia el código, las vars nuevas quedan sin pasar al contenedor (compose corre con default).

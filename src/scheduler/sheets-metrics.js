@@ -1,8 +1,9 @@
 // src/scheduler/sheets-metrics.js
 // Cron del reporte diario de "métricas de desempeño" (§18.N). A las 22:00 lee la
 // pestaña con las métricas YA CALCULADAS (otro spreadsheet) y publica CADA SECCIÓN en
-// su grupo de WhatsApp: la sección 30X en un grupo y la de ESTADOX en otro (ya NO va
-// por DM). Corre en paralelo al reporte de leads del grupo "Ventas EstadoX" (job aparte).
+// su grupo de WhatsApp: cada programa (AI SECOND BRAIN / ESTADOX / LINKEDIN SALES) en su
+// propio grupo (ya NO va por DM). Corre en paralelo al reporte de leads del grupo
+// "Ventas EstadoX" (job aparte).
 //
 // El ENVÍO sale del proceso principal (tiene el socket de WA) y pasa por la cola
 // anti-ban. El job se autodesactiva si falta la key del SA, el ID/pestaña, o el mapeo
@@ -47,7 +48,7 @@ export function startSheetsMetricsJob() {
   }
   const targets = sectionTargets();
   if (!targets.length) {
-    console.warn('[Métricas] sin grupos por sección (SHEETS_METRICS_30X_GROUP / _ESTADOX_GROUP) → desactivado');
+    console.warn('[Métricas] sin grupos por sección (SHEETS_METRICS_30X_GROUP / _ESTADOX_GROUP / _LINKEDIN_GROUP) → desactivado');
     return;
   }
 
