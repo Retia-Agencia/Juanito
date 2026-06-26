@@ -25,7 +25,8 @@ const {
 
 const SECOND_BRAIN_ET = 'https://api.calendly.com/event_types/56efc028-ee2f-46e8-852c-e50d45b15b83';
 const ABOGADOS_ET = 'https://api.calendly.com/event_types/f8d123ac-364b-47f9-a446-1316fdf37b08';
-const { resolveCloser, resolveCloserByPhone, resolveCloserByLid, resolveCloserByPushName, isNonCanonicalOptinJid } = await import('../src/calendly/closers.js');
+const LINKEDIN_ET = 'https://api.calendly.com/event_types/96ddf036-9174-459c-be73-b248ad95be13';
+const { resolveCloser, resolveCloserByPhone, resolveCloserByLid, resolveCloserByPushName, isNonCanonicalOptinJid, isIgnoredCloser } = await import('../src/calendly/closers.js');
 
 test('firstNameFrom parsea y capitaliza el primer nombre', () => {
   assert.equal(firstNameFrom('maría del pilar yangana '), 'María');
@@ -219,12 +220,22 @@ test('buildDigestMessage elige el copy por producto en cada línea (digest mixto
 
 // ─── Producto (programa) por evento ───────────────────────────────────────────
 
-test('programKeyOf mapea los dos productos y null para desconocidos', () => {
+test('programKeyOf mapea los tres productos y null para desconocidos', () => {
   assert.equal(programKeyOf(SECOND_BRAIN_ET), 'second_brain');
   assert.equal(programKeyOf(ABOGADOS_ET), 'abogados');
-  assert.equal(programKeyOf({ event_type: ABOGADOS_ET }), 'abogados'); // acepta el evento completo
+  assert.equal(programKeyOf(LINKEDIN_ET), 'linkedin');
+  assert.equal(programKeyOf({ event_type: LINKEDIN_ET }), 'linkedin'); // acepta el evento completo
   assert.equal(programKeyOf('https://api.calendly.com/event_types/otro'), null);
   assert.equal(programKeyOf(null), null);
+});
+
+test('isIgnoredCloser: hosts conocidos no gestionados → true; mapeados/desconocidos → false', () => {
+  assert.equal(isIgnoredCloser('andrea.machado@30x.com'), true);
+  assert.equal(isIgnoredCloser('DANA@30x.com'), true); // case-insensitive
+  assert.equal(isIgnoredCloser('mateo.leon@30x.com'), true); // salió → se ignora en silencio
+  assert.equal(isIgnoredCloser('sebastian.marin@30x.com'), false); // closer activo de LinkedIn
+  assert.equal(isIgnoredCloser('desconocido@x.com'), false);
+  assert.equal(isIgnoredCloser(null), false);
 });
 
 test('eventJoinUrl saca el link de la llamada de location', () => {
@@ -264,12 +275,19 @@ test('buildPrecallText Push 1 incrusta el bloque de materiales por producto', ()
   // → el Push 1 incluye el bloque con el brochure y video del producto correcto.
   const sb = buildPrecallText({ programKey: 'second_brain', pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
   assert.match(sb, /Es MUY IMPORTANTE que puedas ver estos materiales/);
-  assert.match(sb, /drive\.google\.com\/file\/d\/1WUQftLcYWM5uCzE59Hql0B6cTpxoziO_\/view/);
+  assert.match(sb, /drive\.google\.com\/file\/d\/1Yq7cK4kJ_tjX97v1TQbjy0cmkXLNLg4d\/view/);
   assert.match(sb, /youtube\.com\/watch\?v=DGA0nf0geN0/);
 
   const ab = buildPrecallText({ programKey: 'abogados', pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
   assert.match(ab, /juanito-brochures\/ia-abogados\.html/);
   assert.match(ab, /youtube\.com\/watch\?v=88W1z_M9tCg/);
+
+  // LinkedIn Sales: intro "de 30X", nombre del programa, su brochure (Drive) y video (YouTube).
+  const li = buildPrecallText({ programKey: 'linkedin', pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
+  assert.match(li, /Por acá Sebastian de 30X/);
+  assert.match(li, /programa de LinkedIn Sales de 30X/);
+  assert.match(li, /drive\.google\.com\/file\/d\/1WUQftLcYWM5uCzE59Hql0B6cTpxoziO_\/view/);
+  assert.match(li, /youtu\.be\/J9LDlmtQeHs/);
 });
 
 test('buildPrecallText Push 2 es igual entre productos (recordatorio corto)', () => {

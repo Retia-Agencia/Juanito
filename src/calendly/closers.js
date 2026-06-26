@@ -27,6 +27,24 @@ export const CLOSER_LIDS = {
   '158025419608301': 'sebastian@30x.com', // Sebastian Rodriguez (su pushName de trabajo no trae "Rodriguez")
 };
 
+// Hosts de Calendly que aparecen en el query org-wide pero que DELIBERADAMENTE NO
+// gestionamos con pushes (todavía). Se saltan en SILENCIO — sin alerta de "closer sin
+// mapear" al admin. Mover a CLOSERS cuando se quieran activar. (2026-06-25: Andrea/Dana/
+// Yuli hostean LinkedIn Sales pero aún no entran a recordatorios; Mateo León salió del
+// equipo; la cuenta compartida de EstadoX está en standby.)
+export const IGNORED_CLOSERS = new Set([
+  'andrea.machado@30x.com',
+  'dana@30x.com',
+  'yuli@30x.com',
+  'mateo.leon@30x.com',
+  'equipo@estadox.com',
+]);
+
+export function isIgnoredCloser(email) {
+  if (!email) return false;
+  return IGNORED_CLOSERS.has(String(email).toLowerCase().trim());
+}
+
 import { phonesMatch } from '../common/utils.js';
 
 // Devuelve { name, phone } | null

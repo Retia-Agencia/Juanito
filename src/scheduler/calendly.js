@@ -39,7 +39,7 @@ import {
   push2HasRunToday,
 } from '../calendly/index.js';
 import { computePush3Schedule, decidePush0 } from '../calendly/push-logic.js';
-import { resolveCloser } from '../calendly/closers.js';
+import { resolveCloser, isIgnoredCloser } from '../calendly/closers.js';
 import {
   recordPollOk,
   recordPollError,
@@ -216,6 +216,7 @@ export async function runCalendlyPoll() {
       const email = closerEmailOf(ev);
       const closer = resolveCloser(email);
       if (!closer) {
+        if (isIgnoredCloser(email)) continue; // host conocido, no gestionado aún → silencio
         recordUnmapped(email);
         console.warn(`[Calendly] poll: sin closer mapeado para "${email}" (evento ${uuid}) — omito`);
         await notifyAdmins(d, `Closer sin mapear en Calendly: ${email}. Esa(s) cita(s) no recibirán pushes — agrégalo a src/calendly/closers.js.`, `unmapped:${email}`);
@@ -444,6 +445,7 @@ async function runDigest(pushN, offsetDays) {
     const email = closerEmailOf(ev);
     const closer = resolveCloser(email);
     if (!closer) {
+      if (isIgnoredCloser(email)) continue; // host conocido, no gestionado aún → silencio
       recordUnmapped(email);
       console.warn(`[Calendly] digest push${pushN}: sin closer para "${email}" — omito cita`);
       await notifyAdmins(d, `Closer sin mapear en Calendly: ${email}. Esa(s) cita(s) no recibirán pushes — agrégalo a src/calendly/closers.js.`, `unmapped:${email}`);

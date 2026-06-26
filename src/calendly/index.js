@@ -15,15 +15,27 @@ const API = 'https://api.calendly.com';
 const TOKEN = () => process.env.CALENDLY_TOKEN || '';
 const TZ = () => process.env.TZ || 'America/Bogota';
 
+// Grupo formal "Negociación" (legacy). Ya NO se usa para el query: el equipo de
+// LinkedIn Sales no pertenece a ningún grupo de Calendly, así que la consulta pasó a
+// ser a nivel ORGANIZACIÓN (ver ORG_URI + listProgramEvents). Se conserva por referencia.
 export const GROUP_URI = () =>
   process.env.CALENDLY_GROUP_URI ||
   'https://api.calendly.com/groups/61f57776-40d4-4feb-bdbc-654f397ba0c6';
 
-// event_types de los dos programas (resueltos contra la cuenta real):
+// Organización (cuenta real) — alcance del query de eventos. Org-wide captura a TODOS los
+// closers de los programas, sin importar a qué grupo de Calendly pertenezcan (los de
+// LinkedIn Sales no están en ninguno). Se filtra por event_type del lado del cliente.
+export const ORG_URI = () =>
+  process.env.CALENDLY_ORG_URI ||
+  'https://api.calendly.com/organizations/9ac5ab82-0c41-43c8-bede-cc9787043b28';
+
+// event_types de los tres programas (resueltos contra la cuenta real):
 //  - AI Second Brain 30X
 //  - Programa IA para Abogados | EstadoX
+//  - Postulación LinkedIn Sales 30X
 const SECOND_BRAIN_ET = 'https://api.calendly.com/event_types/56efc028-ee2f-46e8-852c-e50d45b15b83';
 const ABOGADOS_ET = 'https://api.calendly.com/event_types/f8d123ac-364b-47f9-a446-1316fdf37b08';
+const LINKEDIN_ET = 'https://api.calendly.com/event_types/96ddf036-9174-459c-be73-b248ad95be13';
 
 export const PROGRAM_EVENT_TYPES = () => {
   const fromEnv = (process.env.CALENDLY_EVENT_TYPES || '')
@@ -31,21 +43,22 @@ export const PROGRAM_EVENT_TYPES = () => {
     .map((s) => s.trim())
     .filter(Boolean);
   if (fromEnv.length) return fromEnv;
-  return [SECOND_BRAIN_ET, ABOGADOS_ET];
+  return [SECOND_BRAIN_ET, ABOGADOS_ET, LINKEDIN_ET];
 };
 
 // ─── Producto (programa) por evento ───────────────────────────────────────────
-// Cada reserva pertenece a uno de los dos productos. El copy del push precall
+// Cada reserva pertenece a uno de los tres productos. El copy del push precall
 // difiere por producto (intro + nombre del programa), así que necesitamos saber
 // cuál es para elegir la plantilla correcta — POR LLAMADA, porque un mismo closer
-// puede tener citas de los dos productos en un mismo digest.
+// puede tener citas de varios productos en un mismo digest.
 const PROGRAMS = {
   [SECOND_BRAIN_ET]: 'second_brain',
   [ABOGADOS_ET]: 'abogados',
+  [LINKEDIN_ET]: 'linkedin',
 };
 
 // Acepta el event_type (string) o el evento completo. Devuelve la clave de
-// programa | null (null si el event_type no es de los dos productos conocidos).
+// programa | null (null si el event_type no es de los productos conocidos).
 export function programKeyOf(eventTypeOrEvent) {
   const et =
     typeof eventTypeOrEvent === 'string' ? eventTypeOrEvent : eventTypeOrEvent?.event_type;
@@ -103,12 +116,14 @@ async function request(pathOrUrl, { retries = 3 } = {}) {
 
 // ─── Endpoints ────────────────────────────────────────────────────────────────
 
-// Lista eventos activos del grupo en una ventana, filtrando a los dos programas.
+// Lista eventos activos de la ORGANIZACIÓN en una ventana, filtrando a los programas
+// conocidos. Org-wide (no por grupo) porque los closers de LinkedIn Sales no están en
+// ningún grupo de Calendly; el filtro por event_type acota a nuestros productos.
 export async function listProgramEvents({ minStartIso, maxStartIso }) {
   const programs = new Set(PROGRAM_EVENT_TYPES());
   const out = [];
   const params = new URLSearchParams({
-    group: GROUP_URI(),
+    organization: ORG_URI(),
     count: '100',
     status: 'active',
     min_start_time: minStartIso,
@@ -227,6 +242,10 @@ export const MATERIAL_LINKS = {
     brochure: 'https://agencia-dani.github.io/juanito-brochures/ia-abogados.html',
     video: 'https://www.youtube.com/watch?v=88W1z_M9tCg',
   },
+  linkedin: {
+    brochure: 'https://drive.google.com/file/d/1WUQftLcYWM5uCzE59Hql0B6cTpxoziO_/view',
+    video: 'https://youtu.be/J9LDlmtQeHs',
+  },
 };
 // ▲▲▲ EDITA AQUÍ ▲▲▲
 
@@ -239,6 +258,10 @@ const PROGRAM_PITCH = {
   abogados: {
     from: 'de EstadoX',
     program: 'programa de IA para Abogados de EstadoX',
+  },
+  linkedin: {
+    from: 'de 30X',
+    program: 'programa de LinkedIn Sales de 30X',
   },
 };
 
