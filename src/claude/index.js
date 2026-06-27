@@ -25,6 +25,42 @@ const BOSS_MODEL = process.env.CLAUDE_BOSS_MODEL || MODEL;
 const REASONING_MODEL = process.env.CLAUDE_REASONING_MODEL || BOSS_MODEL;
 const MAX_TOKENS = Number(process.env.CLAUDE_MAX_TOKENS || 2048);
 
+// ─── Extended/adaptive thinking (solo camino de razonamiento del jefe/admin) ───
+// Razonar paso a paso antes de actuar mejora la clasificación ORDEN-vs-PREGUNTA y el
+// encadenado multi-tool. Va APAGADO por default → sin él el comportamiento es idéntico al
+// actual. Se prende con CLAUDE_THINKING=on SIN redeploy de código, y SOLO afecta al modelo
+// de razonamiento (REASONING_MODEL); los caminos baratos (grupos, DM público en GROUP_MODEL)
+// nunca lo llevan, así que su costo no cambia.
+//   - adaptive thinking + effort son de modelos 4.6+ (Sonnet 4.6, Opus 4.6/4.7/4.8, Fable 5).
+//     Haiku 4.5 y Sonnet 4.5 NO los soportan → con esos modelos el flag se ignora (no rompe).
+//   - El razonamiento consume tokens de SALIDA, así que necesita más headroom que MAX_TOKENS
+//     (2048 trunca). Por eso CLAUDE_REASONING_MAX_TOKENS aparte (default 8000).
+const THINKING_ON = (process.env.CLAUDE_THINKING || 'off') === 'on';
+const THINKING_EFFORT = process.env.CLAUDE_THINKING_EFFORT || 'medium'; // low | medium | high
+const REASONING_MAX_TOKENS = Number(process.env.CLAUDE_REASONING_MAX_TOKENS || 8000);
+
+// Modelos que soportan thinking adaptativo + parámetro effort (4.6+). Cualquier otro
+// (Haiku 4.5, Sonnet 4.5, modelos viejos) ignora el flag para no provocar un 400.
+export function supportsAdaptiveThinking(model) {
+  return /claude-(opus-4-[678]|sonnet-4-6|fable-5)/.test(String(model || ''));
+}
+
+// Precio aprox por millón de tokens (entrada/salida), para el log de costo por interacción
+// del jefe/admin. El razonamiento de thinking se factura como tokens de salida (no viene en
+// un campo aparte de usage). Es un ESTIMADO de observabilidad, no facturación exacta.
+const PRICE_PER_MTOK = [
+  [/claude-fable-5/, 10, 50],
+  [/claude-opus-4-[678]/, 5, 25],
+  [/claude-sonnet-4-6/, 3, 15],
+  [/claude-haiku-4-5/, 1, 5],
+];
+function estimateCostUsd(model, inTok, outTok) {
+  const row = PRICE_PER_MTOK.find(([re]) => re.test(String(model || '')));
+  if (!row) return null;
+  const [, inP, outP] = row;
+  return (inTok / 1e6) * inP + (outTok / 1e6) * outP;
+}
+
 // ─── Seam de dependencias (Track A) ───────────────────────────────────────────
 // Consumimos el contrato del Track A (db/index.js, contacts/index.js) + whatsapp.
 // Hasta SYNC 1 esos símbolos pueden no existir todavía, así que los resolvemos
@@ -1897,15 +1933,37 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
           ? REASONING_MODEL
           : MODEL;
 
+  // Thinking SOLO en el camino de razonamiento (modelo == REASONING_MODEL) y si el modelo lo
+  // soporta. Apagado por default. Con tool-use, los bloques `thinking` deben devolverse SIN
+  // modificar en cada vuelta; el loop ya empuja `response.content` completo (línea de abajo),
+  // así que se preservan. El interleaved thinking entre tools es automático en adaptive (sin beta).
+  const useThinking = THINKING_ON && model === REASONING_MODEL && supportsAdaptiveThinking(model);
+  const thinkingParam = useThinking
+    ? { thinking: { type: 'adaptive' }, output_config: { effort: THINKING_EFFORT } }
+    : {};
+  const effectiveMaxTokens = useThinking ? REASONING_MAX_TOKENS : MAX_TOKENS;
+
+  // Acumulado de tokens para el log de costo por interacción (solo se loguea para jefe/admin).
+  let usedIn = 0;
+  let usedOut = 0;
+  const accrue = (resp) => {
+    const u = resp && resp.usage;
+    if (!u) return;
+    usedIn += (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+    usedOut += u.output_tokens || 0;
+  };
+
   let response = await withRetry(() =>
     client.messages.create({
       model,
-      max_tokens: MAX_TOKENS,
+      max_tokens: effectiveMaxTokens,
       system,
+      ...thinkingParam,
       ...toolsParam,
       messages,
     })
   );
+  accrue(response);
 
   // Loop de tool use: ejecutamos las herramientas aquí dentro hasta que Claude termine
   while (response.stop_reason === 'tool_use') {
@@ -1929,11 +1987,23 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
     response = await withRetry(() =>
       client.messages.create({
         model,
-        max_tokens: MAX_TOKENS,
+        max_tokens: effectiveMaxTokens,
         system,
+        ...thinkingParam,
         ...toolsParam,
         messages,
       })
+    );
+    accrue(response);
+  }
+
+  // Log de costo por interacción del jefe/admin (observabilidad para decidir si thinking conviene).
+  if (privileged) {
+    const cost = estimateCostUsd(model, usedIn, usedOut);
+    const costStr = cost == null ? 'n/d' : `~$${cost.toFixed(4)}`;
+    console.log(
+      `[Claude][costo] role=${role} model=${model} thinking=${useThinking ? `on(${THINKING_EFFORT})` : 'off'} ` +
+        `in=${usedIn}tok out=${usedOut}tok ${costStr}`
     );
   }
 

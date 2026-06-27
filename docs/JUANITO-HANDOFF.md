@@ -11,6 +11,15 @@ un cambio relevante.
 
 ## 0. TL;DR — estado al 2026-06-12 (leer primero)
 
+> ## 🟠🟠 RECORDATORIO GRANDE: `CLAUDE_THINKING` ESTÁ **OFF** 🟠🟠
+> El código de **extended/adaptive thinking** está desplegado en el VPS (LIVE 2026-06-26) pero
+> **APAGADO por default** → Juanito se comporta IGUAL que antes. El razonamiento NO está activo.
+> **Para PRENDERLO** (solo `.env` del VPS + `docker compose up -d`, sin redeploy de código):
+> `CLAUDE_REASONING_MODEL=claude-sonnet-4-6` · `CLAUDE_THINKING=on` · `CLAUDE_THINKING_EFFORT=medium`.
+> Al prenderlo, mirar el log `[Claude][costo]` por interacción del jefe para medir el gasto real.
+> **Botón de pánico:** `CLAUDE_THINKING=off` + `up -d`. Detalle completo en §18.Z. Pendientes
+> agénticos siguientes (read-only del negocio, planificación, proactividad) en §18.AA.
+
 - **Repo:** `main` == `origin/main`, working tree limpio.
 - **VPS:** contenedor sano, WA conectado sin QR, **`CALENDLY_DRY_RUN=false` (piloto Rodriguez LIVE
   ongoing, ver §11.9)**, `GROUP_AUTOLEAVE=on`.
@@ -2323,6 +2332,129 @@ quién da la instrucción**.
   "de Alejandro" + aviso al creador). Suites verdes: 131.
 - **✅ DESPLEGADO AL VPS (LIVE 2026-06-25):** backup `*.bak-20260625-014959`, `pscp src` + rebuild; migración
   corrió (columna `sender_name` confirmada en la DB del contenedor), WA reconectó, sin crash-loop.
+
+### 18.Z 🔵 Extended/adaptive thinking en el camino de razonamiento (2026-06-26)
+
+**Objetivo:** hacer a Juanito más confiable en el camino del jefe/admin haciéndolo **razonar paso a
+paso antes de actuar** (mejor clasificación ORDEN-vs-PREGUNTA y encadenado multi-tool). Es el
+siguiente paso "agéntico" tras Fase 3, sin depender de HubSpot (Fase 4, bloqueada por API).
+
+**Cómo quedó (en `src/claude/index.js`), APAGADO por default:**
+- Env nuevas (default seguro = comportamiento idéntico al actual): `CLAUDE_THINKING=off|on`,
+  `CLAUDE_THINKING_EFFORT=low|medium|high` (default `medium`), `CLAUDE_REASONING_MAX_TOKENS` (default
+  8000 — el razonamiento factura como tokens de SALIDA y `CLAUDE_MAX_TOKENS=2048` trunca).
+- Thinking se aplica **solo** cuando el modelo elegido es `REASONING_MODEL` (camino jefe/admin: su DM,
+  `bossInGroup`, `approvalsConsole`). Los caminos baratos (grupos/DM público en `GROUP_MODEL`/Haiku)
+  **nunca** lo llevan → su costo no cambia.
+- Se usa `thinking: {type:'adaptive'}` + `output_config:{effort}` (API 4.6+). Gate
+  `supportsAdaptiveThinking(model)` (regex 4.6+: Sonnet 4.6, Opus 4.6/4.7/4.8, Fable 5): si el modelo
+  de razonamiento NO lo soporta (Haiku 4.5, Sonnet 4.5), el flag **se ignora** (no 400). El interleaved
+  thinking entre tools es automático en adaptive (sin beta header).
+- **Preservación de thinking blocks:** con tool-use los bloques `thinking` deben devolverse sin
+  modificar; el loop ya empuja `response.content` completo, así que se preservan (no hubo que tocar eso).
+- **Log de costo por interacción** del jefe/admin: `[Claude][costo] role=… model=… thinking=on(medium)|off
+  in=Xtok out=Ytok ~$Z` (estimado por `PRICE_PER_MTOK`) → para medir el impacto real antes/después de
+  prender. Acumula usage de TODAS las vueltas del loop.
+- **SDK:** `@anthropic-ai/sdk@^0.105.0` (ya soporta adaptive; el CLAUDE.md decía v0.27.0 — desactualizado).
+
+**Decisión del owner (2026-06-26):** modelo de razonamiento sugerido **Sonnet 4.6 + effort medium**
+(`$3/$15` por MTok vs Haiku `$1/$5`; ~3-4× por interacción del jefe pero en centavos; grupos sin
+cambio). Se entrega con `CLAUDE_THINKING=off` para prender y medir en vivo.
+
+**Para prenderlo (sin redeploy de código, solo `.env` del VPS + `docker compose up -d`):**
+`CLAUDE_REASONING_MODEL=claude-sonnet-4-6`, `CLAUDE_THINKING=on`, `CLAUDE_THINKING_EFFORT=medium`.
+Botón de pánico: `CLAUDE_THINKING=off`.
+
+**Tests:** `test/thinking.test.js` (gate de soporte de modelo — la barrera anti-400). Suite total verde
+(89 en el set jefe/tools). Un test del `chat()` completo con el parámetro inyectado requeriría hacer
+inyectable el cliente Anthropic module-level (refactor mayor, diferido).
+
+**✅ DESPLEGADO AL VPS (LIVE 2026-06-26, thinking OFF):** backups `src.bak-20260626-223112` +
+`brain.sqlite.bak-20260626-223112` (DB vía `docker cp` del volumen `agent-data`, NO está en
+`/root/juanito/data`); `pscp src test` + `docker compose up -d --build`; código confirmado dentro del
+contenedor (`grep -c supportsAdaptiveThinking` = 2), WA reconectó SIN QR, sin crash-loop, Calendly sigue
+`DRY-RUN:false`. `CLAUDE_THINKING` no seteada → off por default → comportamiento idéntico al previo.
+
+**Pendientes:** (1) probar en vivo con thinking on y mirar el log de costo + calidad; (2) palanca futura
+**prompt caching** del system prompt para amortiguar el costo de entrada — hoy NO cachea porque el
+prompt inyecta fecha/hora en cada llamada (cache-buster); (3) `output_config.effort` da error en Haiku/
+Sonnet-4.5, por eso el gate.
+
+### 18.AA 🔵 Roadmap agéntico — próximos frentes (sin depender de HubSpot) (2026-06-26)
+
+**Contexto:** HubSpot (Fase 4) está bloqueado por API. Estos tres frentes empujan a Juanito de
+"asistente reactivo de un solo paso" hacia "agente que razona, planea y es proactivo", **sin tocar
+HubSpot**. Mismo principio del roadmap: **confiable antes que capaz**; lo irreversible/hacia afuera
+pasa por la cola de aprobación; nada de auto-deploy ni ejecutar código sobre el propio bot. Orden de
+ataque recomendado: A (cimiento, cero riesgo) → B (columna vertebral) → C (mayor valor, mayor riesgo).
+El thinking de §18.Z es el cuarto frente (confiabilidad) y ya está implementado (OFF).
+
+---
+
+**A. Query read-only del negocio — `query_business_data` (alto valor, riesgo casi nulo). RECOMENDADO 1°.**
+- *Qué resuelve:* hoy Juanito tiene Calendly, el Sheet de leads y los resúmenes de grupos, pero NO puede
+  consultarlos a demanda. Esta tool le deja responder en caliente preguntas del jefe como *"¿cuántas
+  calls tiene Sebas mañana?"*, *"¿cuántos leads del curso de abogados esta semana?"*, *"¿qué grupos están
+  más activos?"*. Es la "inteligencia" que el jefe pidió en §18.T pero sobre datos reales, no solo
+  capturar la orden.
+- *Diseño:* una tool nueva `query_business_data` (jefe+admin, solo DM — va en `GROUP_DENIED_TOOLS`,
+  patrón igual a `remember_business`). Sub-fuentes read-only ya conectadas:
+  · **Calendly** → reusar helpers de `src/calendly/index.js` (citas por día/closer; ya existe
+    `scripts/calendly-day-check.js` como referencia de scoping por día).
+  · **Sheet de leads** → reusar el lector de `src/sheets/` (service account ya configurado, ver §18.B).
+  · **Resúmenes de grupos** → `getRecentSummaries` de la DB (lo mismo que consume el prompt del jefe y
+    el job de extracción de negocio §2B).
+- *Riesgo:* cero — solo LEE. No escribe, no manda nada hacia afuera. No necesita aprobación.
+- *Costo:* bajo (camino jefe/admin, bajo volumen). Cuidado con traer payloads grandes del Sheet → acotar
+  por rango/fecha en la tool, no volcar la hoja entera al contexto.
+- *Tests:* puros con `__setDeps()` mockeando las 3 fuentes (igual patrón que `brain.tools.test.js`).
+- *Archivos:* `src/claude/index.js` (definición + dispatch + gateo en `GROUP_DENIED_TOOLS`); helper de
+  lectura por fuente (reusar lo existente, no duplicar).
+
+---
+
+**B. Planificación multi-paso (plan → aprobar → ejecutar) — el "razonamiento" visible.**
+- *Qué resuelve:* hoy una orden compleja (*"agenda X, recuérdame Y, y mándale Z a Pedro"*) se resuelve en
+  un solo turno sin que el jefe vea el plan antes de que pase. Este modo hace que Juanito **descomponga la
+  orden, muestre el plan numerado, y ejecute paso por paso** con estado persistido.
+- *Diseño:* aprovechar lo que YA existe — `pending_tasks` (de `capture_task`, §18.T) como store de estado
+  del plan, y la **cola de aprobación** (§18.F/§18.R) como compuerta. Flujo: el LLM (mejor con thinking de
+  §18.Z prendido) genera un plan estructurado → se le muestra al jefe → el jefe aprueba/corrige en lenguaje
+  natural (ya hay reply-awareness, §18.U) → se ejecuta paso por paso, marcando cada uno. Empieza por planes
+  de **acciones que ya tienen tool** (reminder, outreach, documento) — no inventar capacidades nuevas.
+- *Riesgo:* medio. Mitigación: cada paso que sea hacia afuera/irreversible reusa la cola de aprobación
+  existente; los pasos read-only (como A) se ejecutan directo. Tope de pasos por plan para evitar loops.
+- *Pendiente de diseño:* formato del plan (¿JSON estructurado interno vs lista en texto?), cómo se
+  re-presenta tras una corrección, y dónde vive el estado (ampliar `pending_tasks` con un campo de pasos).
+- *Sinergia:* se beneficia mucho del thinking de §18.Z (planear multi-tool es justo donde el razonamiento
+  paga).
+
+---
+
+**C. Proactividad desde la lectura pasiva de grupos — el salto agéntico real (mayor valor, mayor riesgo).**
+- *Qué resuelve:* Juanito ya lee y resume TODOS los grupos (lectura pasiva → `messages` + resúmenes cada
+  4h). Hoy esa señal muere en el resumen. Este frente detecta cosas accionables y **se las PROPONE al
+  jefe** (con aprobación para actuar): un lead que preguntó algo sin respuesta, una call que pidieron
+  reagendar, un closer que no contestó. Pasa de "te respondo si me preguntas" a "te aviso de lo que
+  importa".
+- *Diseño:* un "watcher" (job cron, patrón de `src/scheduler/business-extraction.js` §2B) que corre sobre
+  los **resúmenes** (no mensajes crudos — por ruido/costo/inyección, misma decisión que 2B) y emite
+  candidatos accionables → notifica al jefe por DM como **propuestas**, NO como acciones ejecutadas. Si el
+  jefe dice "sí, hazlo", entra por la cola de aprobación/outreach existente.
+- *Riesgo:* el más alto de los tres — falsos positivos = ruido/molestia al jefe. Mitigación: arrancar en
+  modo **solo-aviso** (Juanito sugiere, nunca actúa solo), gate conservador (umbral alto de confianza),
+  y un toggle admin para apagarlo. Medir tasa de señal/ruido antes de darle más autonomía.
+- *Reglas duras a respetar:* aislamiento de contextos (no filtrar datos privados de un grupo a otro ni al
+  jefe sin que corresponda); pasar por la cola anti-ban para cualquier envío; nunca iniciar conversación
+  en frío con terceros (regla Calendly §11.2).
+- *Archivos:* nuevo `src/scheduler/<watcher>.js` + registro en `src/scheduler/index.js` (auto-desactivable
+  sin API key, como los demás jobs).
+
+---
+
+**Decisión pendiente del owner:** cuál frente aterrizar primero en código. Recomendación: **A**
+(query read-only) por mejor relación valor/riesgo y porque construye el músculo "Juanito razona sobre el
+negocio" sin nada irreversible. Luego B, luego C.
 
 ### 🟢 Baja prioridad / Nice-to-have
 
