@@ -26,7 +26,7 @@ const {
 const SECOND_BRAIN_ET = 'https://api.calendly.com/event_types/56efc028-ee2f-46e8-852c-e50d45b15b83';
 const ABOGADOS_ET = 'https://api.calendly.com/event_types/f8d123ac-364b-47f9-a446-1316fdf37b08';
 const LINKEDIN_ET = 'https://api.calendly.com/event_types/96ddf036-9174-459c-be73-b248ad95be13';
-const { resolveCloser, resolveCloserByPhone, resolveCloserByLid, resolveCloserByPushName, isNonCanonicalOptinJid, isIgnoredCloser } = await import('../src/calendly/closers.js');
+const { resolveCloser, resolveCloserByPhone, resolveCloserByLid, resolveCloserByPushName, isNonCanonicalOptinJid, isIgnoredCloser, workLidForCloser } = await import('../src/calendly/closers.js');
 
 test('firstNameFrom parsea y capitaliza el primer nombre', () => {
   assert.equal(firstNameFrom('maría del pilar yangana '), 'María');
@@ -112,6 +112,21 @@ test('resolveCloserByLid: LID desconocido / vacío → null', () => {
   assert.equal(resolveCloserByLid('999999999@lid'), null);
   assert.equal(resolveCloserByLid(''), null);
   assert.equal(resolveCloserByLid(null), null);
+});
+
+// workLidForCloser — PIN del contact_jid al LID de trabajo. Mata el bug recurrente de "pushes
+// al personal": cuando Sebas escribe desde su personal (pushName "Sebastian Rodriguez" matchea y
+// haría driftear el contact_jid), la entrega se queda pinneada a su LID de trabajo.
+test('workLidForCloser: closer mapeado en CLOSER_LIDS → devuelve su LID de trabajo', () => {
+  assert.equal(workLidForCloser('sebastian@30x.com'), '158025419608301@lid');
+  assert.equal(workLidForCloser('SEBASTIAN@30X.COM'), '158025419608301@lid'); // case-insensitive
+});
+
+test('workLidForCloser: closer sin LID mapeado / vacío → null', () => {
+  assert.equal(workLidForCloser('pablo.lozano@30x.com'), null);
+  assert.equal(workLidForCloser('desconocido@30x.com'), null);
+  assert.equal(workLidForCloser(''), null);
+  assert.equal(workLidForCloser(null), null);
 });
 
 test('isNonCanonicalOptinJid: número de trabajo (coincide) → false', () => {

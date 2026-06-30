@@ -5,7 +5,7 @@
 //
 // Esto se dispara desde src/index.js para DMs que NO son del jefe.
 
-import { resolveCloserByPhone, resolveCloserByLid, resolveCloserByPushName, isNonCanonicalOptinJid } from './closers.js';
+import { resolveCloserByPhone, resolveCloserByLid, resolveCloserByPushName, isNonCanonicalOptinJid, workLidForCloser } from './closers.js';
 import { registerOptin, isOptedIn, markIfNew } from '../db/index.js';
 import { sendMessage } from '../whatsapp/index.js';
 import { normalizePhone, maskJid } from '../common/utils.js';
@@ -34,9 +34,16 @@ export async function handleCloserOptin({ from, pushName, messageId }) {
   if (messageId && !markIfNew(messageId)) return true;
 
   const yaEstaba = isOptedIn(closer.phone);
-  // source:'self' → opt-in GANADO (el closer escribió): habilita el envío. Guardamos
-  // el JID desde el que escribió (auditoría; puede ser un @lid sin resolver).
-  registerOptin({ phone: closer.phone, closerEmail: closer.email, name: closer.name, source: 'self', contactJid: from });
+  // source:'self' → opt-in GANADO (el closer escribió): habilita el envío.
+  // contact_jid = destino REAL de los pushes. Para closers con LID de trabajo conocido
+  // (CLOSER_LIDS) PINNEAMOS la entrega a ese LID en vez de a `from`: aunque escriban desde
+  // otro dispositivo (ej: Sebas desde su personal, cuyo pushName matchea y haría driftear
+  // el contact_jid al número equivocado), los pushes se quedan en el hilo de trabajo. Esto
+  // ELIMINA de raíz el bug recurrente "pushes al personal". Sin LID de trabajo mapeado,
+  // se usa `from` como antes (mejor esfuerzo).
+  const workJid = workLidForCloser(closer.email);
+  const contactJid = workJid || from;
+  registerOptin({ phone: closer.phone, closerEmail: closer.email, name: closer.name, source: 'self', contactJid });
 
   // Hardening anti "pushes al número equivocado" (bug Sebas): si el closer se registró desde un
   // número de TELÉFONO distinto al canónico de trabajo, el contact_jid (destino de los pushes)

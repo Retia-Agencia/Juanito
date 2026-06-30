@@ -76,6 +76,20 @@ export function resolveCloserByLid(jid) {
   return c ? { email, name: c.name, phone: c.phone } : null;
 }
 
+// Devuelve el JID de TRABAJO canónico (`<lid>@lid`) de un closer si está mapeado en
+// CLOSER_LIDS, o null. Sirve para PINNEAR el contact_jid de entrega al hilo de trabajo:
+// aunque el closer escriba desde otro dispositivo (ej: Sebas desde su WhatsApp personal,
+// cuyo pushName "Sebastian Rodriguez" SÍ matchea y haría driftear el contact_jid), la
+// entrega se mantiene en el LID de trabajo. Mata el bug recurrente de "pushes al personal".
+export function workLidForCloser(email) {
+  if (!email) return null;
+  const e = String(email).toLowerCase().trim();
+  for (const [lid, mapped] of Object.entries(CLOSER_LIDS)) {
+    if (mapped === e) return `${lid}@lid`;
+  }
+  return null;
+}
+
 // Resuelve un closer por su nombre de WhatsApp (pushName), fallback cuando el LID
 // no se puede mapear a teléfono. Requiere que el pushName contenga el nombre completo
 // del closer (ej: "Pablo Lozano") para evitar ambigüedades (ej: dos Sebastians).
