@@ -239,7 +239,7 @@ export const MATERIAL_LINKS = {
     video: 'https://www.youtube.com/watch?v=DGA0nf0geN0',
   },
   abogados: {
-    brochure: 'https://agencia-dani.github.io/juanito-brochures/ia-abogados.html',
+    brochure: 'https://drive.google.com/file/d/1TN5HfX7r8ViM2JXuOmFOnvBSI3xyeLwR/view',
     video: 'https://www.youtube.com/watch?v=88W1z_M9tCg',
   },
   linkedin: {
@@ -371,6 +371,137 @@ export function buildDigestMessage({ pushLabel, whenLabel, items, pushN, closer,
     `📋 *${pushLabel}* — tienes ${n} ${plural} ${whenLabel}.\n` +
     `Toca el link de cada lead para enviarle su push precall (se abre el chat con el mensaje listo, solo dale enviar):\n\n` +
     lines.join('\n')
+  );
+}
+
+// ─── Push 4 (§18.AB): registro de outcome post-call ───────────────────────────
+// Después de la call, Juanito le pregunta al closer cómo le fue y guarda el estado.
+// Cero fricción: el closer responde un mensaje que ya recibe, no abre ninguna hoja.
+// Dos pasos: asistencia (siempre) → resultado (solo si fue Show). Respuesta por
+// número o lenguaje natural ("fue show", "no llegó", "cerró"): parsers deterministas.
+
+// Etiquetas legibles (fuente única para mensajes + reportes).
+export const ASISTENCIA_LABELS = {
+  show: 'Show',
+  no_show: 'No show',
+  reagendado: 'Reagendó',
+  cancelado: 'Cancelado',
+};
+export const RESULTADO_LABELS = {
+  venta_cerrada: 'Venta cerrada',
+  acuerdo_verbal: 'Acuerdo verbal',
+  seguimiento: 'Seguimiento',
+  no_cerro: 'No cerró',
+};
+
+// Vencimiento del Push 4: fin de la call (start + duración) + gracia.
+// Por defecto 30 min de call + 5 de gracia = start + 35 min.
+export function push4DueUtc(startIso, durationMin = 30, graceMin = 5) {
+  return new Date(new Date(startIso).getTime() + (durationMin + graceMin) * 60000);
+}
+
+// Normaliza texto del closer: minúsculas, sin acentos, sin emojis, espacios colapsados.
+// También mapea los dígitos-emoji (1️⃣) a su número ASCII para el parse por número.
+function normalizeReply(text) {
+  return String(text || '')
+    .replace(/1️?⃣/g, ' 1 ')
+    .replace(/2️?⃣/g, ' 2 ')
+    .replace(/3️?⃣/g, ' 3 ')
+    .replace(/4️?⃣/g, ' 4 ')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '') // quita acentos
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Primer dígito 1-4 suelto en el texto (token), o null. "1", "opcion 2", "3." → n.
+function leadingChoice(norm) {
+  const m = norm.match(/(?:^|\s)([1-4])(?:\s|$)/);
+  return m ? Number(m[1]) : null;
+}
+
+// Interpreta la respuesta de ASISTENCIA. Devuelve clave | null (no entendí).
+// El orden importa: "no show"/"no llego" contienen "show"/"llego" → la negación
+// se evalúa primero. Acepta número (1-4) o lenguaje natural.
+export function parseAsistenciaReply(text) {
+  const n = normalizeReply(text);
+  if (!n) return null;
+  const choice = leadingChoice(n);
+  if (choice === 1) return 'show';
+  if (choice === 2) return 'no_show';
+  if (choice === 3) return 'reagendado';
+  if (choice === 4) return 'cancelado';
+  // Lenguaje natural — negaciones y reagendado/cancelado primero. Stems SIN \b de
+  // cierre (matchean prefijos: "reagende", "cancelo"); "si" va como palabra completa.
+  if (/\b(reagend|reprogram|movi|cambio de fecha|cambio la fecha|otra fecha|para otro dia)/.test(n))
+    return 'reagendado';
+  if (/\bcancel/.test(n)) return 'cancelado';
+  if (/\b(no show|noshow|no llego|no vino|no asistio|no se presento|no se conecto|falto|fantasma|ghost)/.test(n))
+    return 'no_show';
+  if (/\b(show|asistio|vino|llego|se conecto|se presento|estuvo)/.test(n) || /\bsi\b/.test(n)) return 'show';
+  return null;
+}
+
+// Interpreta la respuesta de RESULTADO (solo aplica si fue Show). Devuelve clave | null.
+// "no cerro" contiene "cerro" → la negación primero.
+export function parseResultadoReply(text) {
+  const n = normalizeReply(text);
+  if (!n) return null;
+  const choice = leadingChoice(n);
+  if (choice === 1) return 'venta_cerrada';
+  if (choice === 2) return 'acuerdo_verbal';
+  if (choice === 3) return 'seguimiento';
+  if (choice === 4) return 'no_cerro';
+  if (/\b(no cerro|no se cerro|no vendi|no compro|no hubo venta|nada|frio|se cayo)/.test(n)) return 'no_cerro';
+  if (/\b(venta|cerro|cerrada|cerre|vendi|vendido|compro|pago)/.test(n)) return 'venta_cerrada';
+  if (/\b(acuerdo|verbal|de palabra|palabra|comprometio)/.test(n)) return 'acuerdo_verbal';
+  if (/\b(seguimiento|follow|pendiente|lo va a pensar|pensarlo|pensando|despues|mas adelante)/.test(n))
+    return 'seguimiento';
+  return null;
+}
+
+// Mensaje del Push 4 (paso 1: asistencia). Lo recibe el closer ~5 min después de la call.
+export function buildPush4Message({ name, firstName, startIso, tz = TZ() }) {
+  const who = name || firstName || 'el prospecto';
+  const time = formatCallTime(startIso, tz);
+  return (
+    `📋 *Registro de call* — *${who}* (de las ${time}).\n` +
+    `¿Cómo te fue? Respóndeme con el número:\n` +
+    `1️⃣ Show (asistió)\n` +
+    `2️⃣ No show (no llegó)\n` +
+    `3️⃣ Reagendó`
+  );
+}
+
+// Paso 2: resultado (solo si la asistencia fue Show).
+export function buildOutcomeFollowupMessage({ name, firstName }) {
+  const who = name || firstName || 'el prospecto';
+  return (
+    `🙌 *${who}* asistió. ¿Cuál fue el resultado?\n` +
+    `1️⃣ Venta cerrada\n` +
+    `2️⃣ Acuerdo verbal\n` +
+    `3️⃣ Seguimiento\n` +
+    `4️⃣ No cerró`
+  );
+}
+
+// Confirmación tras guardar (cierra el loop con el closer).
+export function buildOutcomeConfirmation({ name, firstName, asistencia, resultado }) {
+  const who = name || firstName || 'el prospecto';
+  const a = ASISTENCIA_LABELS[asistencia] || asistencia || '—';
+  const r = resultado ? ` / ${RESULTADO_LABELS[resultado] || resultado}` : '';
+  return `✅ Registrado: *${who}* → ${a}${r}. ¡Gracias! 🙌`;
+}
+
+// Recordatorio (insistencia v1): si no respondió el Push 4 en ~30 min.
+export function buildOutcomeReminder({ name, firstName, startIso, tz = TZ() }) {
+  const who = name || firstName || 'el prospecto';
+  const time = formatCallTime(startIso, tz);
+  return (
+    `👀 Recordatorio rápido: aún no me dijiste cómo te fue la call con *${who}* de las ${time}.\n` +
+    `Respóndeme: 1️⃣ Show · 2️⃣ No show · 3️⃣ Reagendó`
   );
 }
 

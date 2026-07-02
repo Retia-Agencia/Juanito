@@ -84,6 +84,16 @@ services:
       - CALENDLY_POLL_CRON=${CALENDLY_POLL_CRON:-*/5 * * * *}
       - CALENDLY_PUSH0_ENABLED=${CALENDLY_PUSH0_ENABLED:-true}
       - CALENDLY_PUSH0_RECENT_MIN=${CALENDLY_PUSH0_RECENT_MIN:-10}
+      # Registro de outcomes post-call (§18.AB): Push 4 = Juanito pregunta el estado
+      # de la call ~5 min después de terminar y lo guarda. CALENDLY_PUSH4_CLOSERS es un
+      # allowlist (CSV de emails) para rollout acotado — VACÍO = todos los closers.
+      - CALENDLY_PUSH4_ENABLED=${CALENDLY_PUSH4_ENABLED:-true}
+      - CALENDLY_PUSH4_CLOSERS=${CALENDLY_PUSH4_CLOSERS:-}
+      - CALENDLY_CALL_DURATION_MIN=${CALENDLY_CALL_DURATION_MIN:-30}
+      - CALENDLY_PUSH4_GRACE_MIN=${CALENDLY_PUSH4_GRACE_MIN:-5}
+      - CALENDLY_OUTCOME_REMIND_MIN=${CALENDLY_OUTCOME_REMIND_MIN:-30}
+      - CALENDLY_OUTCOME_EXPIRE_MIN=${CALENDLY_OUTCOME_EXPIRE_MIN:-30}
+      - CALENDLY_OUTCOME_CRON=${CALENDLY_OUTCOME_CRON:-*/10 * * * *}
       # Reporte diario de leads del Sheet (§18.B) — sin GOOGLE_SA_KEY o grupo el job se autodesactiva.
       - GOOGLE_SA_KEY=${GOOGLE_SA_KEY:-}
       - SHEETS_REPORT_GROUP=${SHEETS_REPORT_GROUP:-}
@@ -99,6 +109,10 @@ services:
       - SHEETS_METRICS_ESTADOX_GROUP=${SHEETS_METRICS_ESTADOX_GROUP:-}
       - SHEETS_METRICS_LINKEDIN_GROUP=${SHEETS_METRICS_LINKEDIN_GROUP:-}
       - SHEETS_METRICS_CRON=${SHEETS_METRICS_CRON:-0 20 * * *}
+      # Reporte diario de "Registro de calls" (§18.AB) desde call_outcomes → grupo por
+      # programa. ENABLED=false lo apaga (ej: durante un test acotado a un closer).
+      - OUTCOME_REPORT_ENABLED=${OUTCOME_REPORT_ENABLED:-true}
+      - OUTCOME_REPORT_CRON=${OUTCOME_REPORT_CRON:-0 22 * * *}
       # QR web server — solo durante la vinculación inicial.
       # Descomentar la línea de abajo y agregar QR_PORT=3001 al .env.
       # Volver a comentar una vez vinculado.

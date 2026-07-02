@@ -90,10 +90,14 @@ db.exec(`
   );
 
   -- Pushes precall de Calendly (dedup + agenda de Push 3)
+  -- push_n: 0 (aviso nueva call) | 1/2 (digests) | 3 (precall 25min antes) |
+  --         4 (POST-call: pide el outcome — §18.AB). El 4 invierte el guard de
+  --         obsolescencia: se entrega DESPUÉS de la call, no antes.
   CREATE TABLE IF NOT EXISTS calendly_pushes (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     event_uuid     TEXT NOT NULL,
     push_n         INTEGER NOT NULL DEFAULT 3,
+    program        TEXT,                            -- second_brain | abogados | linkedin (§18.AB)
     closer_email   TEXT,
     closer_phone   TEXT,
     prospect_name  TEXT,
@@ -105,6 +109,34 @@ db.exec(`
     created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
     sent_at        DATETIME,
     UNIQUE(event_uuid, push_n)
+  );
+
+  -- Outcomes de calls reportados por el closer (§18.AB). FUENTE DE VERDAD del
+  -- registro de calls: lo que el closer confirmó por WhatsApp apenas colgó, no lo
+  -- que se acordó de anotar en una hoja. Separa por programa y por closer (pedido
+  -- del owner). Una fila por call (event_uuid UNIQUE).
+  --   status: pending  → se preguntó, falta respuesta
+  --           answered → el closer respondió (asistencia [+ resultado])
+  --           no_answer→ no respondió tras insistir (queda "sin registrar")
+  --           auto     → lo derivó el sistema sin preguntar (ej: cita cancelada)
+  CREATE TABLE IF NOT EXISTS call_outcomes (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_uuid   TEXT NOT NULL UNIQUE,
+    program      TEXT,                       -- second_brain | abogados | linkedin
+    closer_email TEXT,
+    closer_phone TEXT,                       -- número canónico (clave del opt-in)
+    closer_name  TEXT,
+    lead_name    TEXT,
+    lead_phone   TEXT,
+    call_start   TEXT NOT NULL,              -- 'YYYY-MM-DD HH:MM:SS' UTC
+    asistencia   TEXT,                       -- show | no_show | reagendado | cancelado
+    resultado    TEXT,                       -- venta_cerrada | acuerdo_verbal | seguimiento | no_cerro | NULL
+    status       TEXT NOT NULL DEFAULT 'pending',
+    asked_at     DATETIME,                   -- cuándo se le preguntó al closer
+    answered_at  DATETIME,
+    reminded     INTEGER NOT NULL DEFAULT 0, -- 1 = ya se insistió una vez (cumplimiento v1)
+    raw_reply    TEXT,                        -- texto crudo del closer (auditoría)
+    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
   -- Opt-in de closers: solo se les envía si primero le escribieron a Juanito
@@ -299,6 +331,10 @@ addColumnIfMissing('calendly_optins', 'contact_jid', 'TEXT');
 // Pausa por-closer (botón de pánico fino: `/calendly off <closer>`). 0 = activo.
 addColumnIfMissing('calendly_optins', 'paused', 'INTEGER DEFAULT 0');
 
+// §18.AB: programa de la cita en el push (para no re-consultar Calendly al reportar).
+// Filas viejas quedan NULL (eran Push 0/3, no se reportan como outcome).
+addColumnIfMissing('calendly_pushes', 'program', 'TEXT');
+
 // Mensajes programados GENERADOS (§18.E fase aprobación): kind 'fixed' (texto exacto,
 // comportamiento original) | 'generated' (Claude redacta cada día según `brief` y se
 // publica solo tras aprobación del jefe).
@@ -366,6 +402,9 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_group_context_created ON group_context(created_at);
   CREATE INDEX IF NOT EXISTS idx_calendly_pushes_due ON calendly_pushes(status, due_at);
   CREATE INDEX IF NOT EXISTS idx_outreach_active ON outreach_schedules(active, status);
+  -- §18.AB: outcomes pendientes por closer (captura de respuesta) + insistencia por asked_at.
+  CREATE INDEX IF NOT EXISTS idx_call_outcomes_pending ON call_outcomes(status, closer_phone, asked_at);
+  CREATE INDEX IF NOT EXISTS idx_call_outcomes_program ON call_outcomes(program, call_start);
 `);
 
 console.log('✅ Base de datos lista en', DB_PATH);

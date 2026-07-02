@@ -294,15 +294,19 @@ export function scheduleCalendlyPush(p) {
 
   const { action, resetFromSent } = decidePushAction({ existing, incoming: p, nowMs: Date.now() });
 
+  // `program` (§18.AB) es opcional: los pushes 0/3 pueden no traerlo. Normalizamos a
+  // null para que el binding de named params no falle.
+  const row = { program: null, ...p };
+
   if (action === 'insert') {
     db.prepare(`
       INSERT INTO calendly_pushes
-        (event_uuid, push_n, closer_email, closer_phone, prospect_name,
+        (event_uuid, push_n, program, closer_email, closer_phone, prospect_name,
          prospect_phone, call_start, due_at, message)
       VALUES
-        (@event_uuid, @push_n, @closer_email, @closer_phone, @prospect_name,
+        (@event_uuid, @push_n, @program, @closer_email, @closer_phone, @prospect_name,
          @prospect_phone, @call_start, @due_at, @message)
-    `).run(p);
+    `).run(row);
     return 'new';
   }
 
@@ -312,11 +316,11 @@ export function scheduleCalendlyPush(p) {
     const statusClause = resetFromSent ? `, status = 'scheduled', sent_at = NULL` : '';
     db.prepare(`
       UPDATE calendly_pushes
-      SET closer_email = @closer_email, closer_phone = @closer_phone,
+      SET program = @program, closer_email = @closer_email, closer_phone = @closer_phone,
           prospect_name = @prospect_name, prospect_phone = @prospect_phone,
           call_start = @call_start, due_at = @due_at, message = @message${statusClause}
       WHERE id = @id
-    `).run({ ...p, id: existing.id });
+    `).run({ ...row, id: existing.id });
     return 'rescheduled';
   }
 
@@ -361,6 +365,154 @@ export function markCalendlyPushSkipped(id, reason = '') {
       `UPDATE calendly_pushes SET status = 'skipped', message = COALESCE(message,'') || ' | skip: ' || ? WHERE id = ?`
     )
     .run(reason, id);
+}
+
+// ─── Calendly: outcomes post-call (§18.AB) ────────────────────────────────────
+// Fuente de verdad del registro de calls: el estado que el closer confirmó por
+// WhatsApp tras la llamada (Show/No show/Reagendó + resultado). Una fila por call.
+
+// Crea (o ignora si ya existe) un outcome PENDIENTE: ya se le preguntó al closer y
+// se espera su respuesta. event_uuid es único → reintentos del cron no duplican.
+// Devuelve 'new' | 'exists'.
+export function createPendingOutcome(o) {
+  const row = {
+    program: null, closer_email: null, closer_phone: null, closer_name: null,
+    lead_name: null, lead_phone: null, ...o,
+  };
+  // closer_phone NORMALIZADO (igual que el opt-in) — es la clave de matcheo de la
+  // respuesta del closer (getActiveOutcomeForCloser normaliza el número entrante).
+  row.closer_phone = normalizePhone(row.closer_phone) || null;
+  const info = db
+    .prepare(`
+      INSERT OR IGNORE INTO call_outcomes
+        (event_uuid, program, closer_email, closer_phone, closer_name,
+         lead_name, lead_phone, call_start, status, asked_at)
+      VALUES
+        (@event_uuid, @program, @closer_email, @closer_phone, @closer_name,
+         @lead_name, @lead_phone, @call_start, 'pending', datetime('now'))
+    `)
+    .run(row);
+  return info.changes === 1 ? 'new' : 'exists';
+}
+
+// Registra un outcome AUTOMÁTICO (sin preguntar): ej. la cita se canceló en Calendly.
+// Si ya hay una fila pendiente para esa call, la cierra como 'auto'.
+export function recordAutoOutcome(o) {
+  const row = {
+    program: null,
+    closer_email: null,
+    closer_phone: null,
+    closer_name: null,
+    lead_name: null,
+    lead_phone: null,
+    resultado: null,
+    ...o,
+  };
+  row.closer_phone = normalizePhone(row.closer_phone) || null;
+  return db
+    .prepare(`
+      INSERT INTO call_outcomes
+        (event_uuid, program, closer_email, closer_phone, closer_name, lead_name,
+         lead_phone, call_start, asistencia, resultado, status, answered_at)
+      VALUES
+        (@event_uuid, @program, @closer_email, @closer_phone, @closer_name, @lead_name,
+         @lead_phone, @call_start, @asistencia, @resultado, 'auto', datetime('now'))
+      ON CONFLICT(event_uuid) DO UPDATE SET
+        asistencia = excluded.asistencia,
+        resultado  = excluded.resultado,
+        status     = 'auto',
+        answered_at = datetime('now')
+      WHERE call_outcomes.status = 'pending'
+    `)
+    .run(row);
+}
+
+// El outcome que el closer está respondiendo ahora. Prioriza el que ya tiene
+// asistencia (mid-flow, esperando resultado) y luego el más viejo sin responder.
+// Solo filas 'pending' (answered/auto/no_answer ya cerraron). null si no hay.
+export function getActiveOutcomeForCloser(phone) {
+  const p = normalizePhone(phone);
+  if (!p) return null;
+  return (
+    db
+      .prepare(`
+        SELECT * FROM call_outcomes
+        WHERE closer_phone = ? AND status = 'pending'
+        ORDER BY (asistencia IS NOT NULL) DESC, asked_at ASC
+        LIMIT 1
+      `)
+      .get(p) || null
+  );
+}
+
+// Guarda la asistencia. Si NO es 'show', el outcome queda cerrado ('answered').
+// Si es 'show', sigue 'pending' a la espera del resultado (segundo paso).
+export function setOutcomeAsistencia(id, asistencia, rawReply = null) {
+  const closes = asistencia !== 'show';
+  return db
+    .prepare(`
+      UPDATE call_outcomes
+      SET asistencia = ?, raw_reply = ?,
+          status = ${closes ? `'answered'` : `'pending'`},
+          answered_at = ${closes ? `datetime('now')` : `answered_at`}
+      WHERE id = ?
+    `)
+    .run(asistencia, rawReply, id);
+}
+
+// Guarda el resultado y cierra el outcome ('answered').
+export function setOutcomeResultado(id, resultado, rawReply = null) {
+  return db
+    .prepare(`
+      UPDATE call_outcomes
+      SET resultado = ?, raw_reply = COALESCE(raw_reply,'') || ' | ' || ?,
+          status = 'answered', answered_at = datetime('now')
+      WHERE id = ?
+    `)
+    .run(resultado, rawReply, id);
+}
+
+// Outcomes a los que toca insistir: pendientes, sin asistencia aún, preguntados
+// hace > `minMinutes` y a los que aún no se les recordó (insistencia v1: una vez).
+export function getDueOutcomeReminders(minMinutes = 30) {
+  return db
+    .prepare(`
+      SELECT * FROM call_outcomes
+      WHERE status = 'pending' AND asistencia IS NULL AND reminded = 0
+        AND asked_at <= datetime('now', ? )
+      ORDER BY asked_at ASC
+    `)
+    .all(`-${Number(minMinutes)} minutes`);
+}
+
+export function markOutcomeReminded(id) {
+  return db.prepare(`UPDATE call_outcomes SET reminded = 1 WHERE id = ?`).run(id);
+}
+
+// Cierra como 'no_answer' los outcomes que ya recibieron su insistencia y siguen
+// sin respuesta tras `minMinutes` más (quedan visibles como "sin registrar").
+export function expireUnansweredOutcomes(minMinutes = 30) {
+  return db
+    .prepare(`
+      UPDATE call_outcomes
+      SET status = 'no_answer'
+      WHERE status = 'pending' AND asistencia IS NULL AND reminded = 1
+        AND asked_at <= datetime('now', ?)
+    `)
+    .run(`-${Number(minMinutes)} minutes`);
+}
+
+// Filas de outcomes en una ventana UTC (para el reporte). La agregación por
+// programa/closer se hace en JS puro (outcome-report.js) para poder testearla.
+export function getOutcomesInWindow(fromUtc, toUtc) {
+  return db
+    .prepare(`
+      SELECT program, closer_name, closer_email, asistencia, resultado, status, call_start
+      FROM call_outcomes
+      WHERE call_start >= ? AND call_start < ?
+      ORDER BY program, closer_name, call_start
+    `)
+    .all(fromUtc, toUtc);
 }
 
 // ─── Calendly: opt-in de closers (anti-baneo) ─────────────────────────────────

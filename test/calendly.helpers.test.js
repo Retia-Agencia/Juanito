@@ -286,7 +286,7 @@ test('buildPrecallText Push 1 distingue producto (intro + nombre del programa)',
 });
 
 test('buildPrecallText Push 1 incrusta el bloque de materiales por producto', () => {
-  // MATERIAL_LINKS está configurado (brochure HTML en GitHub Pages + video YouTube)
+  // MATERIAL_LINKS está configurado (brochure PDF en Google Drive + video YouTube)
   // → el Push 1 incluye el bloque con el brochure y video del producto correcto.
   const sb = buildPrecallText({ programKey: 'second_brain', pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
   assert.match(sb, /Es MUY IMPORTANTE que puedas ver estos materiales/);
@@ -294,7 +294,7 @@ test('buildPrecallText Push 1 incrusta el bloque de materiales por producto', ()
   assert.match(sb, /youtube\.com\/watch\?v=DGA0nf0geN0/);
 
   const ab = buildPrecallText({ programKey: 'abogados', pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
-  assert.match(ab, /juanito-brochures\/ia-abogados\.html/);
+  assert.match(ab, /drive\.google\.com\/file\/d\/1TN5HfX7r8ViM2JXuOmFOnvBSI3xyeLwR\/view/);
   assert.match(ab, /youtube\.com\/watch\?v=88W1z_M9tCg/);
 
   // LinkedIn Sales: intro "de 30X", nombre del programa, su brochure (Drive) y video (YouTube).

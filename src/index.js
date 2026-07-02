@@ -6,6 +6,7 @@ import { connect, sendMessage, isConnected, leaveGroup, listGroups } from './wha
 import { handleBossMessage, handleGroupMessage, handlePublicDm, handleApprovalConsole } from './bot/index.js';
 import { handleCommand, isReportCommand, wantsMetrics } from './bot/commands.js';
 import { handleCloserOptin } from './calendly/optin.js';
+import { captureOutcomeReply } from './calendly/outcome-capture.js';
 import { startAllJobs } from './scheduler/index.js';
 import { roleOf, isPrivileged } from './common/roles.js';
 import { maskJid } from './common/utils.js';
@@ -217,6 +218,15 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
     if (!sender?.endsWith('@s.whatsapp.net') && !sender?.endsWith('@lid')) {
       return;
     }
+
+    // Respuesta de un closer a un Push 4 (registro de outcome §18.AB) → captúrala
+    // ANTES del opt-in (que se tragaría cualquier mensaje de un closer conocido).
+    // Solo consume si ese closer tiene un outcome pendiente; si no, sigue el flujo.
+    const outcomeCaptured = await captureOutcomeReply({ from: sender, pushName, text, messageId }).catch((e) => {
+      console.error('[Main] captureOutcomeReply:', e.message);
+      return false;
+    });
+    if (outcomeCaptured) return;
 
     // DM de un closer → registrar su opt-in (si es un closer conocido). Devuelve true
     // si lo manejó. Pasa pushName para resolver closers cuando el LID no se mapea a teléfono.

@@ -26,6 +26,10 @@ beforeEach(() => {
   process.env.CALENDLY_DRY_RUN = 'false';
   process.env.CALENDLY_REQUIRE_OPTIN = 'true';
   process.env.CALENDLY_PUSH3_LEAD_MIN = '25';
+  // Este archivo prueba los pushes PRECALL (0/1/2/3). El Push 4 (outcome post-call,
+  // §18.AB) tiene su propio archivo de escenarios; acá se desactiva para no sumar
+  // una fila extra por cita ni un envío post-call que enturbie estas aserciones.
+  process.env.CALENDLY_PUSH4_ENABLED = 'false';
   process.env.ADMIN_LID = '129446371655733@lid';
   __resetHealth();
   scheduler.__resetDeps();

@@ -2456,6 +2456,50 @@ El thinking de §18.Z es el cuarto frente (confiabilidad) y ya está implementad
 (query read-only) por mejor relación valor/riesgo y porque construye el músculo "Juanito razona sobre el
 negocio" sin nada irreversible. Luego B, luego C.
 
+### 18.AB 🔵 Registro de outcomes post-call — "Push 4" (2026-06-30)
+
+**Problema:** los closers no son juiciosos llenando el estado de cada call (Show/No show/Reagendó/
+resultado) en el sheet `Registro`, y las métricas valen lo que vale ese dato manual. **Solución:**
+Juanito —que ya vive en el WhatsApp del closer— le pregunta el outcome **apenas termina la call** y lo
+guarda solo. Cero fricción: el closer responde un mensaje que ya recibe, no abre ninguna hoja.
+
+**Cómo funciona (mismos rieles que los pushes precall):**
+- **Push 4** se agenda en `runCalendlyPoll` junto al Push 3, con `due = start + duración + gracia`
+  (default 30+5 = **start+35min**). Misma tabla `calendly_pushes` (dedup por `UNIQUE(event_uuid,push_n)`),
+  nueva columna `program` para reportar sin re-consultar Calendly.
+- La entrega (`runCalendlyDelivery`) **invierte el guard de obsolescencia** para `push_n=4` (es post-call).
+  Cita `canceled` → outcome **auto** = `cancelado` (no molesta al closer); reagendada → el poll reagenda.
+  Pasa por los mismos gates anti-ban (opt-in ganado + `contact_jid` + pausa + DRY_RUN).
+- **Pregunta en 2 pasos:** asistencia (Show/No show/Reagendó) → si Show, resultado (Venta cerrada/
+  Acuerdo verbal/Seguimiento/No cerró). Respuesta por número o lenguaje natural.
+- **Captura:** `src/calendly/outcome-capture.js` corre en `src/index.js` **ANTES** de `handleCloserOptin`
+  (que se tragaría cualquier mensaje de un closer conocido). Solo consume si ese closer tiene un outcome
+  `pending`. Decisión pura en `outcome-logic.js`; parsers en `calendly/index.js`.
+- **Fuente de verdad = tabla `call_outcomes`** (SQLite), separada por programa y por closer. NO se escribe
+  al sheet en v1 (la SA del bot es solo-lectura de Sheets; el reporte sale directo de SQL).
+- **Cumplimiento v1:** un recordatorio a los ~30 min sin respuesta (`runOutcomeReminders`, cron `*/10`);
+  otros ~30 min → `no_answer` ("sin registrar", visible en el reporte).
+- **Reporte:** `src/scheduler/outcome-report.js` lee `call_outcomes` del día y publica una sección por
+  programa en su grupo (reusa `metrics-targets.js`: AI Second Brain/EstadoX/LinkedIn) con ranking de
+  closers por % de cumplimiento, show rate y close rate.
+
+**Archivos:** `db/migrate.js` (tabla `call_outcomes` + `calendly_pushes.program`), `db/index.js`
+(CRUD outcomes), `calendly/index.js` (push4DueUtc + builders + parsers), `calendly/outcome-logic.js`,
+`calendly/outcome-capture.js`, `calendly/outcome-report.js`, `scheduler/calendly.js` (Push 4 + reminders),
+`scheduler/outcome-report.js`, `scheduler/index.js`, `src/index.js`.
+
+**Tests:** puros en Windows — `calendly.outcome.test.js`, `calendly.outcome-logic.test.js`,
+`calendly.outcome-report.test.js`, `calendly.outcome-scenarios.test.js` (harness, sin DB). Nativo en
+Docker/VPS — `data.outcomes.test.js`.
+
+**Env (todas con default sano):** `CALENDLY_PUSH4_ENABLED` (true), `CALENDLY_CALL_DURATION_MIN` (30),
+`CALENDLY_PUSH4_GRACE_MIN` (5), `CALENDLY_OUTCOME_REMIND_MIN` (30), `CALENDLY_OUTCOME_EXPIRE_MIN` (30),
+`CALENDLY_OUTCOME_CRON` (`*/10 * * * *`), `OUTCOME_REPORT_CRON` (`0 22 * * *`).
+
+**Pendiente v2:** espejo a sheet `Registro`; calls no agendadas en Calendly (walk-ins); editar un outcome
+ya registrado; desambiguar mejor cuando un closer tiene varias calls pendientes a la vez (hoy: FIFO +
+mid-flow primero).
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):

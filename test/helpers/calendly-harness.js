@@ -109,7 +109,9 @@ export function makeApi(events, opts = {}) {
 // el caso sembrado/grandfathered SIN hilo (entrega estricta lo omite).
 export function makeStore({ optins = [], nowRef } = {}) {
   const rows = [];
+  const outcomes = []; // §18.AB: call_outcomes en memoria (misma semántica que el SQL)
   let nextId = 1;
+  let nextOutcomeId = 1;
   let globalPaused = false;
   const optinMap = new Map(); // phone normalizado → { phone, contact_jid, source, paused }
   for (const o of optins) {
@@ -208,6 +210,110 @@ export function makeStore({ optins = [], nowRef } = {}) {
       if (o) o.paused = paused ? 1 : 0;
       return o ? 1 : 0;
     },
+
+    // ─── Outcomes post-call (§18.AB) ──────────────────────────────────────────
+    _outcomes: outcomes,
+    createPendingOutcome(o) {
+      if (outcomes.some((x) => x.event_uuid === o.event_uuid)) return 'exists';
+      outcomes.push({
+        id: nextOutcomeId++,
+        event_uuid: o.event_uuid,
+        program: o.program ?? null,
+        closer_email: o.closer_email ?? null,
+        closer_phone: normalizePhone(o.closer_phone) || null,
+        closer_name: o.closer_name ?? null,
+        lead_name: o.lead_name ?? null,
+        lead_phone: o.lead_phone ?? null,
+        call_start: o.call_start,
+        asistencia: null,
+        resultado: null,
+        status: 'pending',
+        asked_at: now(),
+        answered_at: null,
+        reminded: 0,
+        raw_reply: null,
+      });
+      return 'new';
+    },
+    recordAutoOutcome(o) {
+      const ex = outcomes.find((x) => x.event_uuid === o.event_uuid);
+      if (ex) {
+        if (ex.status === 'pending') {
+          ex.asistencia = o.asistencia;
+          ex.resultado = o.resultado ?? null;
+          ex.status = 'auto';
+          ex.answered_at = now();
+        }
+        return;
+      }
+      outcomes.push({
+        id: nextOutcomeId++,
+        event_uuid: o.event_uuid,
+        program: o.program ?? null,
+        closer_email: o.closer_email ?? null,
+        closer_phone: normalizePhone(o.closer_phone) || null,
+        closer_name: o.closer_name ?? null,
+        lead_name: o.lead_name ?? null,
+        lead_phone: o.lead_phone ?? null,
+        call_start: o.call_start,
+        asistencia: o.asistencia,
+        resultado: o.resultado ?? null,
+        status: 'auto',
+        asked_at: null,
+        answered_at: now(),
+        reminded: 0,
+        raw_reply: null,
+      });
+    },
+    getActiveOutcomeForCloser(phone) {
+      const p = normalizePhone(phone);
+      if (!p) return null;
+      return (
+        outcomes
+          .filter((x) => x.closer_phone === p && x.status === 'pending')
+          .sort((a, b) => (b.asistencia ? 1 : 0) - (a.asistencia ? 1 : 0) || a.asked_at - b.asked_at)[0] || null
+      );
+    },
+    setOutcomeAsistencia(id, asistencia, raw = null) {
+      const o = outcomes.find((x) => x.id === id);
+      if (!o) return;
+      o.asistencia = asistencia;
+      o.raw_reply = raw;
+      if (asistencia !== 'show') {
+        o.status = 'answered';
+        o.answered_at = now();
+      }
+    },
+    setOutcomeResultado(id, resultado, raw = null) {
+      const o = outcomes.find((x) => x.id === id);
+      if (!o) return;
+      o.resultado = resultado;
+      o.raw_reply = `${o.raw_reply || ''} | ${raw}`;
+      o.status = 'answered';
+      o.answered_at = now();
+    },
+    getDueOutcomeReminders(minMinutes = 30) {
+      const cutoff = now() - minMinutes * 60000;
+      return outcomes
+        .filter((x) => x.status === 'pending' && x.asistencia == null && x.reminded === 0 && x.asked_at <= cutoff)
+        .sort((a, b) => a.asked_at - b.asked_at)
+        .map((x) => ({ ...x }));
+    },
+    markOutcomeReminded(id) {
+      const o = outcomes.find((x) => x.id === id);
+      if (o) o.reminded = 1;
+    },
+    expireUnansweredOutcomes(minMinutes = 30) {
+      const cutoff = now() - minMinutes * 60000;
+      let changes = 0;
+      for (const o of outcomes) {
+        if (o.status === 'pending' && o.asistencia == null && o.reminded === 1 && o.asked_at <= cutoff) {
+          o.status = 'no_answer';
+          changes++;
+        }
+      }
+      return { changes };
+    },
   };
 }
 
@@ -246,6 +352,12 @@ export function installHarness(scheduler, { events = [], optins = [], nowMs = Da
     isCalendlyPaused: store.isCalendlyPaused,
     sendMessage: wa.sendMessage,
     now: () => clock.ms,
+    // §18.AB: outcomes post-call.
+    createPendingOutcome: store.createPendingOutcome,
+    recordAutoOutcome: store.recordAutoOutcome,
+    getDueOutcomeReminders: store.getDueOutcomeReminders,
+    markOutcomeReminded: store.markOutcomeReminded,
+    expireUnansweredOutcomes: store.expireUnansweredOutcomes,
   };
 
   scheduler.__setDeps(deps);

@@ -37,6 +37,9 @@ import {
   buildPush0Message,
   isSameDayInTz,
   push2HasRunToday,
+  push4DueUtc,
+  buildPush4Message,
+  buildOutcomeReminder,
 } from '../calendly/index.js';
 import { computePush3Schedule, decidePush0 } from '../calendly/push-logic.js';
 import { resolveCloser, isIgnoredCloser } from '../calendly/closers.js';
@@ -57,6 +60,28 @@ const LEAD_MIN = () => Number(process.env.CALENDLY_PUSH3_LEAD_MIN || 25);
 // ser el booking para contar como nuevo (≥ el intervalo del poll, con margen).
 const PUSH0_ENABLED = () => process.env.CALENDLY_PUSH0_ENABLED !== 'false'; // default true
 const PUSH0_RECENT_MIN = () => Number(process.env.CALENDLY_PUSH0_RECENT_MIN || 10);
+
+// Push 4 (§18.AB): registro de outcome post-call. Se entrega DESPUÉS de la call
+// (start + duración + gracia). Insistencia v1: un recordatorio si no responde.
+const PUSH4_ENABLED = () => process.env.CALENDLY_PUSH4_ENABLED !== 'false'; // default true
+// Allowlist de closers para el Push 4 (rollout acotado). Vacío = TODOS. Útil para
+// probar el registro de outcomes con un solo closer antes de abrirlo al equipo.
+// Emails separados por coma (ej: CALENDLY_PUSH4_CLOSERS=pablo.lozano@30x.com).
+const PUSH4_CLOSERS = () =>
+  (process.env.CALENDLY_PUSH4_CLOSERS || '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+function push4AllowedFor(email) {
+  const allow = PUSH4_CLOSERS();
+  if (!allow.length) return true; // sin allowlist → aplica a todos
+  return allow.includes(String(email || '').toLowerCase().trim());
+}
+const CALL_DURATION_MIN = () => Number(process.env.CALENDLY_CALL_DURATION_MIN || 30);
+const PUSH4_GRACE_MIN = () => Number(process.env.CALENDLY_PUSH4_GRACE_MIN || 5);
+const OUTCOME_REMIND_AFTER_MIN = () => Number(process.env.CALENDLY_OUTCOME_REMIND_MIN || 30);
+const OUTCOME_EXPIRE_AFTER_MIN = () => Number(process.env.CALENDLY_OUTCOME_EXPIRE_MIN || 30);
+const OUTCOME_CRON = () => process.env.CALENDLY_OUTCOME_CRON || '*/10 * * * *';
 
 const POLL_CRON = () => process.env.CALENDLY_POLL_CRON || '*/5 * * * *';
 const DELIVER_CRON = () => process.env.CALENDLY_DELIVER_CRON || '* * * * *';
@@ -98,6 +123,12 @@ async function deps() {
     revertCalendlyPush: db.revertCalendlyPush,
     markCalendlyPushSent: db.markCalendlyPushSent,
     markCalendlyPushSkipped: db.markCalendlyPushSkipped,
+    // §18.AB: outcomes post-call.
+    createPendingOutcome: db.createPendingOutcome,
+    recordAutoOutcome: db.recordAutoOutcome,
+    getDueOutcomeReminders: db.getDueOutcomeReminders,
+    markOutcomeReminded: db.markOutcomeReminded,
+    expireUnansweredOutcomes: db.expireUnansweredOutcomes,
     // Anti-ban: el gate de entrega exige opt-in GANADO (el closer escribió), no solo
     // que la fila exista. Una fila sembrada/sin verificar NO habilita envío en frío.
     isOptedIn: db.isVerifiedOptedIn,
@@ -223,6 +254,7 @@ export async function runCalendlyPoll() {
         continue;
       }
 
+      const programKey = programKeyOf(ev.event_type);
       const invitee = await d.getFirstInvitee(ev.uri);
       const firstName = firstNameFrom(invitee?.name);
       const name = fullNameFrom(invitee?.name);
@@ -232,7 +264,7 @@ export async function runCalendlyPoll() {
         firstName,
         phone,
         startIso: ev.start_time,
-        programKey: programKeyOf(ev.event_type),
+        programKey,
         closer: firstNameFrom(closer.name),
         linkLlamada: eventJoinUrl(ev),
       });
@@ -240,6 +272,7 @@ export async function runCalendlyPoll() {
       const result = d.scheduleCalendlyPush({
         event_uuid: uuid,
         push_n: 3,
+        program: programKey,
         closer_email: email,
         closer_phone: closer.phone,
         prospect_name: invitee?.name || null,
@@ -255,6 +288,31 @@ export async function runCalendlyPoll() {
         console.log(
           `[Calendly] Push 3 ${result}${tag} → ${closer.name} | ${firstName} | ${formatCallTime(ev.start_time)} (due ${toSqliteUtc(due)} UTC)`
         );
+      }
+
+      // ─── Push 4: registro de outcome post-call (§18.AB) ──────────────────────
+      // Se agenda para start + duración + gracia (default 30+5). Mismo dedup
+      // (UNIQUE event_uuid+push_n). El mensaje real se reconstruye al entregar.
+      // Gateado por allowlist (PUSH4_CLOSERS) para rollouts acotados a un closer.
+      if (PUSH4_ENABLED() && push4AllowedFor(email)) {
+        const due4 = push4DueUtc(ev.start_time, CALL_DURATION_MIN(), PUSH4_GRACE_MIN());
+        const r4 = d.scheduleCalendlyPush({
+          event_uuid: uuid,
+          push_n: 4,
+          program: programKey,
+          closer_email: email,
+          closer_phone: closer.phone,
+          prospect_name: invitee?.name || null,
+          prospect_phone: phone,
+          call_start: toSqliteUtc(new Date(ev.start_time)),
+          due_at: toSqliteUtc(due4),
+          message: buildPush4Message({ name, firstName, startIso: ev.start_time }),
+        });
+        if (r4 === 'new' || r4 === 'rescheduled') {
+          console.log(
+            `[Calendly] Push 4 ${r4} → ${closer.name} | ${firstName} | call ${formatCallTime(ev.start_time)} (pregunta ${toSqliteUtc(due4)} UTC)`
+          );
+        }
       }
 
       // ─── Push 0: aviso de "nueva call HOY" (§18.C) ───────────────────────────
@@ -275,6 +333,7 @@ export async function runCalendlyPoll() {
           const r0 = d.scheduleCalendlyPush({
             event_uuid: uuid,
             push_n: 0,
+            program: programKey,
             closer_email: email,
             closer_phone: closer.phone,
             prospect_name: invitee?.name || null,
@@ -324,6 +383,75 @@ export async function runCalendlyDelivery() {
       // Claim atómico: si otro worker ya la tomó, claim devuelve false → saltar.
       if (d.claimCalendlyPush && !d.claimCalendlyPush(p.id)) continue;
       try {
+        // ─── Push 4: registro de outcome post-call (§18.AB) ──────────────────
+        // INVIERTE el guard de obsolescencia: este push es JUSTAMENTE post-call
+        // (due = start + duración + gracia), así que NO se salta por "ya pasó".
+        if (p.push_n === 4) {
+          const uri4 = `https://api.calendly.com/scheduled_events/${p.event_uuid}`;
+          let ev4 = null;
+          try {
+            ev4 = await d.getEvent(uri4);
+          } catch {
+            /* si la verificación falla, preguntamos igual con lo guardado */
+          }
+          // Cancelada → outcome AUTOMÁTICO, sin molestar al closer.
+          if (ev4 && ev4.status === 'canceled') {
+            if (d.recordAutoOutcome)
+              d.recordAutoOutcome({
+                event_uuid: p.event_uuid,
+                program: p.program,
+                closer_email: p.closer_email,
+                closer_phone: p.closer_phone,
+                closer_name: resolveCloser(p.closer_email)?.name || null,
+                lead_name: p.prospect_name,
+                lead_phone: p.prospect_phone,
+                call_start: p.call_start,
+                asistencia: 'cancelado',
+              });
+            d.markCalendlyPushSent(p.id);
+            console.log(`[Calendly] Push 4 #${p.id}: cita cancelada → outcome auto (no se pregunta)`);
+            continue;
+          }
+          // Reagendada a otra hora → no preguntar ahora; el poll reagenda el Push 4.
+          if (ev4 && ev4.status === 'active' && toSqliteUtc(new Date(ev4.start_time)) !== p.call_start) {
+            d.markCalendlyPushSkipped(p.id, 'reagendada (el poll reagenda el push 4)');
+            console.log(`[Calendly] Push 4 #${p.id} omitido: reagendada`);
+            continue;
+          }
+
+          const startIso4 = ev4?.start_time || `${p.call_start.replace(' ', 'T')}Z`;
+          const msg4 = buildPush4Message({
+            name: fullNameFrom(p.prospect_name),
+            firstName: firstNameFrom(p.prospect_name),
+            startIso: startIso4,
+          });
+          const r4 = await deliver(d, p.closer_phone, msg4, 'push4');
+          if (r4 === 'sent' || r4 === 'dry-run') {
+            d.markCalendlyPushSent(p.id);
+            // Recién acá creamos el pendiente: el closer YA recibió la pregunta, así
+            // que su respuesta podrá matchearse (getActiveOutcomeForCloser).
+            if (d.createPendingOutcome)
+              d.createPendingOutcome({
+                event_uuid: p.event_uuid,
+                program: p.program,
+                closer_email: p.closer_email,
+                closer_phone: p.closer_phone,
+                closer_name: resolveCloser(p.closer_email)?.name || null,
+                lead_name: p.prospect_name,
+                lead_phone: p.prospect_phone,
+                call_start: p.call_start,
+              });
+          } else if (r4 === 'paused' || r4 === 'paused-closer') {
+            if (d.revertCalendlyPush) d.revertCalendlyPush(p.id); // reintentar al despausar
+          } else if (r4 === 'skipped-no-thread') {
+            d.markCalendlyPushSkipped(p.id, 'sin hilo establecido (contact_jid)');
+          } else {
+            d.markCalendlyPushSkipped(p.id, 'closer sin opt-in');
+          }
+          procesados++;
+          continue;
+        }
+
         // Guard de obsolescencia: si la llamada YA empezó, el recordatorio no sirve.
         // Cubre pushes que quedaron 'scheduled' por una pausa (botón de pánico) o una
         // caída de WhatsApp y se vaciarían en lote al reanudar. Comparación lexical de
@@ -490,6 +618,41 @@ async function runDigest(pushN, offsetDays) {
 export const runPush1 = () => runDigest(1, 1); // mañana
 export const runPush2 = () => runDigest(2, 0); // hoy
 
+// ─── Insistencia + expiración de outcomes (§18.AB, cumplimiento v1) ────────────
+// Un recordatorio a los outcomes sin responder pasados ~30 min; los que siguen sin
+// respuesta ~30 min DESPUÉS del recordatorio quedan 'no_answer' ("sin registrar").
+export async function runOutcomeReminders() {
+  const d = await deps();
+  const due = d.getDueOutcomeReminders ? d.getDueOutcomeReminders(OUTCOME_REMIND_AFTER_MIN()) : [];
+  let sent = 0;
+  for (const o of due) {
+    const startIso = `${o.call_start.replace(' ', 'T')}Z`;
+    const msg = buildOutcomeReminder({
+      name: fullNameFrom(o.lead_name),
+      firstName: firstNameFrom(o.lead_name),
+      startIso,
+    });
+    const r = await deliver(d, o.closer_phone, msg, 'outcome-remind');
+    // Solo marcamos 'reminded' si de verdad salió; si estaba pausado/sin opt-in se
+    // reintenta en el próximo tick (no se quema la única insistencia de v1).
+    if (r === 'sent' || r === 'dry-run') {
+      if (d.markOutcomeReminded) d.markOutcomeReminded(o.id);
+      sent++;
+    }
+  }
+  // Expira contra asked_at + (recordatorio + gracia) → garantiza la ventana posterior
+  // al recordatorio antes de declarar "sin registrar".
+  const expired = d.expireUnansweredOutcomes
+    ? d.expireUnansweredOutcomes(OUTCOME_REMIND_AFTER_MIN() + OUTCOME_EXPIRE_AFTER_MIN())
+    : { changes: 0 };
+  if (sent || expired.changes) {
+    console.log(
+      `[Calendly] Outcomes: ${sent} recordatorio(s), ${expired.changes || 0} marcado(s) sin registrar${DRY_RUN() ? ' [DRY-RUN]' : ''}`
+    );
+  }
+  return sent;
+}
+
 // ─── Arranque de los jobs ─────────────────────────────────────────────────────
 
 export function startCalendlyJobs() {
@@ -505,6 +668,7 @@ export function startCalendlyJobs() {
   job(DELIVER_CRON(), runCalendlyDelivery, 'deliver');
   job(PUSH1_CRON(), runPush1, 'push1');
   job(PUSH2_CRON(), runPush2, 'push2');
+  if (PUSH4_ENABLED()) job(OUTCOME_CRON(), runOutcomeReminders, 'outcomes');
 
-  console.log(`[Calendly] Jobs activos ✅  (DRY-RUN: ${DRY_RUN()})`);
+  console.log(`[Calendly] Jobs activos ✅  (DRY-RUN: ${DRY_RUN()}, Push 4: ${PUSH4_ENABLED()})`);
 }

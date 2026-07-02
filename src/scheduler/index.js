@@ -9,6 +9,7 @@ import { startReminderJob } from './reminders.js';
 import { startCalendlyJobs } from './calendly.js';
 import { startSheetsReportJob } from './sheets-report.js';
 import { startSheetsMetricsJob } from './sheets-metrics.js';
+import { startOutcomeReportJob } from './outcome-report.js';
 import { startGroupMessagesJob } from './group-messages.js';
 import { startGroupRepliesJob } from './group-replies.js';
 import { startOutreachJob } from './outreach.js';
@@ -66,6 +67,14 @@ export async function startAllJobs() {
     startSheetsMetricsJob();
   } catch (err) {
     console.warn('[Scheduler] Reporte de métricas no disponible:', err.message);
+  }
+
+  // Reporte diario de "Registro de calls" (§18.AB) desde call_outcomes → grupo por
+  // programa. Se autodesactiva si no hay grupos por sección configurados.
+  try {
+    startOutcomeReportJob();
+  } catch (err) {
+    console.warn('[Scheduler] Reporte de calls no disponible:', err.message);
   }
 
   // El job de resúmenes lo aporta el Track B. Mientras no exista en la rama,
