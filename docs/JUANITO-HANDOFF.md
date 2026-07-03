@@ -2549,8 +2549,17 @@ ni tablas nuevas.
 `commands` (+1 /tareas 🧩), `data.db` (+3 nativos para el contenedor: reschedule/override/kind).
 Suite pura en Windows verde; los `data.*` corren en Docker/VPS como siempre.
 
-**⚠️ PENDIENTE DE DESPLIEGUE AL VPS** (migración idempotente incluida; basta
-`pscp src test` + `docker compose up -d --build` según receta de §18.U).
+**✅ DESPLEGADO AL VPS (LIVE 2026-07-03 ~16:45 UTC).** Commit `d1a59eb` (rama
+`feat/reschedule-y-escalado`). Backup previo: `juanito-backup-20260703-154610.tar.gz` +
+`brain.sqlite.bak-20260703-164323` (la DB viva está en el volumen
+`/var/lib/docker/volumes/juanito_agent-data/_data/brain.sqlite`, no en `/root/juanito`).
+`pscp src test` + `docker compose up -d --build`. Verificado: migración aplicada (las 5
+columnas "añadida" en logs), WA reconectó sin QR, todos los jobs activos, sin crash-loop,
+código nuevo dentro del contenedor (`adminDmTargets`, `reschedule`), y los 46 tests nativos
+de DB verdes DENTRO de la imagen (incluidos los 3 nuevos) con el truco de montar `test/`
+(§ memoria de deploy). **Falta solo validación funcional en vivo:** pedir por DM un
+"atrasa el mensaje de hoy" (debe preguntar ¿solo hoy o siempre?) y una orden sin tool
+(el aviso debe llegar por DM a los admins, no al grupo de aprobaciones).
 
 ### 🟢 Baja prioridad / Nice-to-have
 
