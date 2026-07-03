@@ -389,12 +389,74 @@ test('capture_task (jefe) guarda la orden y avisa al equipo', async () => {
     request: 'súbeme esto a una hoja nueva',
     detail: 'col A: fechas',
     createdBy: BOSS,
+    kind: 'task',
   });
-  // avisó al destino de aprobaciones (no al jefe)
+  // sin admins configurados → avisó al destino de aprobaciones (fallback)
   assert.equal(deps.calls.sendMessage.length, 1);
   assert.equal(deps.calls.sendMessage[0][0], 'team@g.us');
   assert.match(deps.calls.sendMessage[0][1], /El jefe pidió|\/tareas/);
   assert.match(result, /equipo/i); // confirma al jefe con naturalidad
+});
+
+test('capture_task con admins configurados: DM privado a CADA admin, no al grupo de aprobaciones', async () => {
+  const deps = makeDeps();
+  deps.adminTargets = () => ['admin1@lid', 'admin2@lid'];
+
+  await dispatchTool(
+    { name: 'capture_task', input: { request: 'consígueme el contrato firmado' } },
+    deps,
+    { createdBy: BOSS, role: 'boss' }
+  );
+
+  assert.equal(deps.calls.sendMessage.length, 2);
+  assert.deepEqual(
+    deps.calls.sendMessage.map((c) => c[0]),
+    ['admin1@lid', 'admin2@lid']
+  );
+  // ninguno fue al grupo de aprobaciones (el jefe está ahí; el aviso es privado)
+  assert.ok(deps.calls.sendMessage.every((c) => c[0] !== 'team@g.us'));
+});
+
+test('capture_task kind=capability_gap: guarda el tipo y el aviso lo dice (¿a mano o se implementa?)', async () => {
+  const deps = makeDeps();
+  deps.adminTargets = () => ['admin1@lid'];
+
+  await dispatchTool(
+    { name: 'capture_task', input: { request: 'que Juanito mande audios', kind: 'capability_gap' } },
+    deps,
+    { createdBy: BOSS, role: 'boss' }
+  );
+
+  assert.equal(deps.calls.createTask[0][0].kind, 'capability_gap');
+  assert.match(deps.calls.sendMessage[0][1], /NO tiene función|se implementa/i);
+});
+
+test('capture_task con kind inválido cae a task (no se guarda basura)', async () => {
+  const deps = makeDeps();
+  await dispatchTool(
+    { name: 'capture_task', input: { request: 'algo', kind: 'hackeo' } },
+    deps,
+    { createdBy: BOSS, role: 'boss' }
+  );
+  assert.equal(deps.calls.createTask[0][0].kind, 'task');
+});
+
+test('capture_task: si el DM a un admin falla, igual intenta con los demás (best-effort)', async () => {
+  const deps = makeDeps();
+  deps.adminTargets = () => ['admin1@lid', 'admin2@lid'];
+  deps.sendMessage = async (to, text) => {
+    (deps.calls.sendMessage ||= []).push([to, text]);
+    if (to === 'admin1@lid') throw new Error('boom');
+  };
+
+  const result = await dispatchTool(
+    { name: 'capture_task', input: { request: 'algo' } },
+    deps,
+    { createdBy: BOSS, role: 'boss' }
+  );
+
+  assert.equal(deps.calls.sendMessage.length, 2, 'intentó con ambos');
+  assert.match(result, /equipo/i, 'la captura no se pierde por un aviso fallido');
 });
 
 test('capture_task (admin) también guarda la orden', async () => {
@@ -574,8 +636,8 @@ test('remember_business: gateo — DM (boss/admin) sí, grupo y publicDm NO', as
 
 // ─── schedule_group_message (mensajes recurrentes a grupos) ───────────────────
 
-function scheduleDeps({ authorized = true } = {}) {
-  const state = { created: [], canceled: [] };
+function scheduleDeps({ authorized = true, rows } = {}) {
+  const state = { created: [], canceled: [], rescheduled: [], overrides: [] };
   return {
     _state: state,
     resolveGroupByName: async (name) =>
@@ -585,12 +647,21 @@ function scheduleDeps({ authorized = true } = {}) {
       state.created.push(row);
       return 7;
     },
-    listScheduledMessages: () => [
-      { id: 7, group_id: 'patah@g.us', group_name: 'Patah San Juan de Ávila ✝️', days: '0,4', time_hm: '20:00', text: 'Muchachos, ¡reunión hoy!', last_sent_date: null },
-    ],
+    listScheduledMessages: () =>
+      rows || [
+        { id: 7, group_id: 'patah@g.us', group_name: 'Patah San Juan de Ávila ✝️', days: '0,4', time_hm: '20:00', text: 'Muchachos, ¡reunión hoy!', last_sent_date: null },
+      ],
     cancelScheduledMessage: (id) => {
       state.canceled.push(id);
       return id === 7 ? 1 : 0;
+    },
+    rescheduleScheduledMessage: (id, fields) => {
+      state.rescheduled.push([id, fields]);
+      return 1;
+    },
+    setScheduledMessageOverride: (id, fields) => {
+      state.overrides.push([id, fields]);
+      return 1;
     },
   };
 }
@@ -671,6 +742,78 @@ test('schedule_group_message list y cancel', async () => {
   assert.match(ok, /#7 cancelado/);
   const noId = await dispatchTool({ name: 'schedule_group_message', input: { action: 'cancel' } }, deps, ctx);
   assert.match(noId, /necesito el id/);
+});
+
+// ─── schedule_group_message reschedule (adelantar/atrasar, §18.AC) ─────────────
+
+test('reschedule scope=always: cambia el horario definitivo (y días si vienen)', async () => {
+  const deps = scheduleDeps();
+  const out = await dispatchTool(
+    { name: 'schedule_group_message', input: { action: 'reschedule', id: 7, scope: 'always', time: '18:30' } },
+    deps,
+    ctx
+  );
+  assert.deepEqual(deps._state.rescheduled, [[7, { timeHm: '18:30', days: null }]]);
+  assert.equal(deps._state.overrides.length, 0);
+  assert.match(out, /de ahora en adelante/i);
+  assert.match(out, /18:30/);
+
+  const out2 = await dispatchTool(
+    { name: 'schedule_group_message', input: { action: 'reschedule', id: 7, scope: 'always', time: '18:30', days: ['lunes'] } },
+    deps,
+    ctx
+  );
+  assert.deepEqual(deps._state.rescheduled[1], [7, { timeHm: '18:30', days: '1' }]);
+  assert.match(out2, /lunes/);
+});
+
+test('reschedule scope=once: pone el override de UN día y lo dice claro', async () => {
+  const deps = scheduleDeps();
+  const out = await dispatchTool(
+    { name: 'schedule_group_message', input: { action: 'reschedule', id: 7, scope: 'once', time: '18:30', override_date: '2026-07-09' } },
+    deps,
+    ctx
+  );
+  assert.deepEqual(deps._state.overrides, [[7, { date: '2026-07-09', timeHm: '18:30' }]]);
+  assert.equal(deps._state.rescheduled.length, 0);
+  assert.match(out, /SOLO el 2026-07-09/);
+  assert.match(out, /20:00/, 'recuerda la hora normal de los demás días');
+});
+
+test('reschedule SIN scope: no toca nada y manda a preguntar "¿solo ese día o para siempre?"', async () => {
+  const deps = scheduleDeps();
+  const out = await dispatchTool(
+    { name: 'schedule_group_message', input: { action: 'reschedule', id: 7, time: '18:30' } },
+    deps,
+    ctx
+  );
+  assert.equal(deps._state.rescheduled.length, 0);
+  assert.equal(deps._state.overrides.length, 0);
+  assert.match(out, /solo por ese día|de ahora en adelante/i);
+});
+
+test('reschedule scope=once sin fecha válida / día ya enviado / id inexistente → no toca nada', async () => {
+  const deps = scheduleDeps({
+    rows: [{ id: 7, group_id: 'patah@g.us', group_name: 'Patah', days: '0,4', time_hm: '20:00', text: 'x', last_sent_date: '2026-07-09' }],
+  });
+  assert.match(
+    await dispatchTool({ name: 'schedule_group_message', input: { action: 'reschedule', id: 7, scope: 'once', time: '18:30', override_date: 'mañana' } }, deps, ctx),
+    /fecha exacta/i
+  );
+  assert.match(
+    await dispatchTool({ name: 'schedule_group_message', input: { action: 'reschedule', id: 7, scope: 'once', time: '18:30', override_date: '2026-07-09' } }, deps, ctx),
+    /ya se envió/i
+  );
+  assert.match(
+    await dispatchTool({ name: 'schedule_group_message', input: { action: 'reschedule', id: 99, scope: 'once', time: '18:30', override_date: '2026-07-09' } }, deps, ctx),
+    /No encontré/i
+  );
+  assert.match(
+    await dispatchTool({ name: 'schedule_group_message', input: { action: 'reschedule', id: 7, scope: 'always', time: '8pm' } }, deps, ctx),
+    /No entendí la hora/i
+  );
+  assert.equal(deps._state.rescheduled.length, 0);
+  assert.equal(deps._state.overrides.length, 0);
 });
 
 test('schedule_group_message: gateo — disponible en DM (boss y admin), NUNCA en grupos', async () => {
@@ -954,8 +1097,8 @@ test('manage_replies: gateo — DM sí (boss/admin), grupos NUNCA', async () => 
 
 // ─── schedule_outreach (mensajes a terceros por orden del jefe, §18.S) ────────
 
-function outreachDeps({ contact = { name: 'Sebastián', phone: '573001234567' } } = {}) {
-  const state = { created: [], upserts: [], canceled: [] };
+function outreachDeps({ contact = { name: 'Sebastián', phone: '573001234567' }, rows } = {}) {
+  const state = { created: [], upserts: [], canceled: [], rescheduled: [], overrides: [] };
   return {
     _state: state,
     resolveContact: async () => contact,
@@ -964,10 +1107,19 @@ function outreachDeps({ contact = { name: 'Sebastián', phone: '573001234567' } 
       state.created.push(row);
       return 11;
     },
-    listOutreachByCreator: () => [
-      { id: 11, to_name: 'Sebastián', to_phone: '573001234567', intent: 'que confirme', recur_kind: 'interval', interval_min: 40, until_at: '2026-06-23 18:00:00', sent_count: 2 },
-    ],
+    listOutreachByCreator: () =>
+      rows || [
+        { id: 11, to_name: 'Sebastián', to_phone: '573001234567', intent: 'que confirme', recur_kind: 'interval', interval_min: 40, until_at: '2026-06-23 18:00:00', sent_count: 2 },
+      ],
     finishOutreach: (id) => (id === 11 ? 1 : 0),
+    rescheduleOutreach: (id, fields) => {
+      state.rescheduled.push([id, fields]);
+      return 1;
+    },
+    setOutreachOverride: (id, fields) => {
+      state.overrides.push([id, fields]);
+      return 1;
+    },
   };
 }
 
@@ -1062,6 +1214,91 @@ test('schedule_outreach daily: normaliza días y hora', async () => {
   assert.equal(row.recurKind, 'daily');
   assert.equal(row.days, '1,3');
   assert.equal(row.timeHm, '09:00');
+});
+
+// ─── schedule_outreach reschedule (adelantar/atrasar, §18.AC) ──────────────────
+
+test('reschedule outreach once: nueva due_at (y valida el formato)', async () => {
+  const deps = outreachDeps({
+    rows: [{ id: 3, to_name: 'Ana', to_phone: '573000000001', intent: 'saludarla', recur_kind: 'once', due_at: '2026-07-05 10:00:00', last_sent_date: null }],
+  });
+  const out = await dispatchTool(
+    { name: 'schedule_outreach', input: { action: 'reschedule', id: 3, due_at: '2026-07-06 15:00:00' } },
+    deps,
+    ctx
+  );
+  assert.deepEqual(deps._state.rescheduled, [[3, { dueAt: '2026-07-06 15:00:00' }]]);
+  assert.match(out, /2026-07-06 15:00:00/);
+
+  const bad = await dispatchTool(
+    { name: 'schedule_outreach', input: { action: 'reschedule', id: 3, due_at: 'mañana' } },
+    deps,
+    ctx
+  );
+  assert.match(bad, /YYYY-MM-DD HH:MM:SS/);
+  assert.equal(deps._state.rescheduled.length, 1);
+});
+
+test('reschedule outreach interval: nuevo intervalo (respeta el piso anti-spam) y recalcula el próximo envío', async () => {
+  const deps = outreachDeps();
+  const out = await dispatchTool(
+    { name: 'schedule_outreach', input: { action: 'reschedule', id: 11, interval_min: 60 } },
+    deps,
+    ctx
+  );
+  const [id, fields] = deps._state.rescheduled[0];
+  assert.equal(id, 11);
+  assert.equal(fields.intervalMin, 60);
+  assert.ok(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(fields.nextDueAt), 'nextDueAt recalculado');
+  assert.match(out, /cada 60 min/);
+
+  const bad = await dispatchTool(
+    { name: 'schedule_outreach', input: { action: 'reschedule', id: 11, interval_min: 1 } },
+    deps,
+    ctx
+  );
+  assert.match(bad, /m[ií]nimo/i);
+  assert.equal(deps._state.rescheduled.length, 1);
+});
+
+test('reschedule outreach daily: exige scope; once pone override y always cambia el horario', async () => {
+  const daily = { id: 5, to_name: 'Sebastián', to_phone: '573001234567', intent: 'buenos días', recur_kind: 'daily', days: '1,3', time_hm: '09:00', last_sent_date: null };
+  const deps = outreachDeps({ rows: [daily] });
+
+  const ask = await dispatchTool(
+    { name: 'schedule_outreach', input: { action: 'reschedule', id: 5, time: '07:30' } },
+    deps,
+    ctx
+  );
+  assert.match(ask, /solo por ese día|de ahora en adelante/i);
+  assert.equal(deps._state.rescheduled.length, 0);
+  assert.equal(deps._state.overrides.length, 0);
+
+  await dispatchTool(
+    { name: 'schedule_outreach', input: { action: 'reschedule', id: 5, scope: 'once', time: '07:30', override_date: '2026-07-06' } },
+    deps,
+    ctx
+  );
+  assert.deepEqual(deps._state.overrides, [[5, { date: '2026-07-06', timeHm: '07:30' }]]);
+
+  const out = await dispatchTool(
+    { name: 'schedule_outreach', input: { action: 'reschedule', id: 5, scope: 'always', time: '07:30' } },
+    deps,
+    ctx
+  );
+  assert.deepEqual(deps._state.rescheduled, [[5, { timeHm: '07:30', days: null }]]);
+  assert.match(out, /De ahora en adelante/i);
+});
+
+test('reschedule outreach: id ajeno/inexistente no toca nada', async () => {
+  const deps = outreachDeps();
+  const out = await dispatchTool(
+    { name: 'schedule_outreach', input: { action: 'reschedule', id: 99, due_at: '2026-07-06 15:00:00' } },
+    deps,
+    ctx
+  );
+  assert.match(out, /No encontré/);
+  assert.equal(deps._state.rescheduled.length, 0);
 });
 
 test('schedule_outreach con número nuevo + nombre lo guarda y ECHA el número en la confirmación', async () => {

@@ -622,6 +622,7 @@ function tareasDeps() {
     tasks: [
       { id: 1, request: 'súbeme esto a una hoja nueva', detail: 'col A: fechas', created_by: 'jefe@lid', status: 'pending' },
       { id: 2, request: 'ya hecha', detail: null, created_by: 'jefe@lid', status: 'done' },
+      { id: 3, request: 'que Juanito mande audios', detail: null, created_by: 'jefe@lid', status: 'pending', kind: 'capability_gap' },
     ],
     sent: [],
   };
@@ -685,6 +686,17 @@ test('/tareas descartar <id> cierra sin avisar', async () => {
 
 test('/tareas ver con id inválido → uso', async () => {
   assert.match(await handleCommand({ text: '/tareas ver abc', sender: 'a@lid', role: 'admin' }, tareasDeps()), /Uso:/);
+});
+
+test('/tareas distingue capability gaps (🧩) de encargos a mano (§18.AC)', async () => {
+  const list = await handleCommand({ text: '/tareas', sender: 'a@lid', role: 'admin' }, tareasDeps());
+  assert.match(list, /#3 → 🧩/);
+  assert.doesNotMatch(list, /#1 → 🧩/, 'las filas viejas (sin kind) no llevan marca');
+
+  const ver = await handleCommand({ text: '/tareas ver 3', sender: 'a@lid', role: 'admin' }, tareasDeps());
+  assert.match(ver, /falta función/);
+  const verTask = await handleCommand({ text: '/tareas ver 1', sender: 'a@lid', role: 'admin' }, tareasDeps());
+  assert.match(verTask, /encargo del equipo/);
 });
 
 // ─── /negocio (contexto del negocio, Fase 2, admin-only) ──────────────────────

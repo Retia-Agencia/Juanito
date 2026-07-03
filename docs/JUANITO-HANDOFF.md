@@ -260,12 +260,12 @@ invocar pase lo que pase.
 | Tool | Admin | Boss | Grupo | Qué hace |
 |------|:-----:|:----:|:-----:|---------|
 | `create_reminder` | ✅ | ✅ | ❌ | Crea recordatorio con fecha/hora y destinatario opcional |
-| `schedule_outreach` | ✅ | ✅ | ❌ | Escribe a un TERCERO de parte del jefe (única/intervalo/diaria). Jefe **y admin** (§18.S; admin habilitado §18.X) |
+| `schedule_outreach` | ✅ | ✅ | ❌ | Escribe a un TERCERO de parte del jefe (única/intervalo/diaria). Jefe **y admin** (§18.S; admin habilitado §18.X; reschedule §18.AC) |
 | `save_memory` | ✅ | ❌ | ❌ | Escribe en la memoria núcleo del sistema (key/value) |
 | `remember_note` | ✅ | ✅ | ❌ | Guarda nota personal del jefe (sandboxed, no afecta comportamiento) |
 | `summarize_group` | ✅ | ✅ | ❌ | Lee y resume un grupo por nombre |
 | `search_knowledge` | ✅ | ✅ | ❌ | Busca en historial, memoria núcleo y resúmenes de grupos |
-| `capture_task` | ✅ | ✅ | ❌ | Anota una orden del jefe que NINGUNA tool ejecuta y avisa al equipo (§18.T) |
+| `capture_task` | ✅ | ✅ | ❌ | Anota una orden del jefe que NINGUNA tool ejecuta y avisa al equipo por DM privado (§18.T; kind + DMs a admins §18.AC) |
 
 **Por qué el jefe no puede usar `save_memory`:** la memoria núcleo alimenta el
 comportamiento del bot para todos. Solo el equipo técnico (admins) debe modificarla.
@@ -2499,6 +2499,58 @@ Docker/VPS — `data.outcomes.test.js`.
 **Pendiente v2:** espejo a sheet `Registro`; calls no agendadas en Calendly (walk-ins); editar un outcome
 ya registrado; desambiguar mejor cuando un closer tiene varias calls pendientes a la vez (hoy: FIFO +
 mid-flow primero).
+
+### 18.AC 🔵 Reprogramar recurrentes (once vs always) + escalado privado al equipo (2026-07-03)
+
+**Pedido:** (a) poder **adelantar/atrasar** mensajes programados — y que Juanito pregunte si el
+cambio es *solo por ese día* o *para siempre*; (b) sistema "human-agent": cuando a Juanito le piden
+algo que no puede hacer, que avise **en privado** a los admins para que lo hagan a mano o
+implementen la función. Se construyó como EXTENSIÓN de lo existente (§18.E/§18.S/§18.T), sin tools
+ni tablas nuevas.
+
+**(a) `action=reschedule` en `schedule_group_message` y `schedule_outreach`:**
+- **Semántica** — `scope='always'`: UPDATE permanente de `time_hm` (y `days` si vienen).
+  `scope='once'`: columnas nuevas `override_date`/`override_time` (en `scheduled_messages` y
+  `outreach_schedules`): **ese día** la fila dispara a la hora del override y NO a la normal
+  (aplica aunque el día no esté en `days` — el jefe lo movió ahí a propósito); cualquier otra
+  fecha es inerte. Un cambio permanente **limpia** el override; el anti doble-envío
+  (`last_sent_date`) sigue mandando.
+- **Pregunta obligada:** si el jefe no dijo el alcance, el prompt Y el handler obligan a preguntar
+  ("¿solo por hoy o de ahora en adelante?") — sin `scope` la tool no toca nada y devuelve la
+  instrucción de preguntar. Guardas: fecha `YYYY-MM-DD` válida, "ese día ya se envió" → no se mueve,
+  hora por `normalizeTimeHm`, piso anti-spam en interval.
+- **Por recur_kind en outreach:** `once` → nueva `due_at` · `interval` → nuevo `interval_min` (+
+  `next_due_at` recalculado) · `daily` → misma disyuntiva once/always que grupos. El reschedule
+  busca la fila en `listOutreachByCreator` → nadie reprograma envíos ajenos.
+- **Lógica pura** (`recurring-logic.js`): `isRecurringDue`/`isDraftDue`/`isGeneratedPublishDue`
+  aceptan `overrideDate`/`overrideTime`; `isOutreachDue` los pasa de la fila; helper
+  `effectiveTimeHm` para que los avisos al jefe digan la hora EFECTIVA de hoy (borradores
+  generados incluidos). `list` muestra "(⚠️ solo el <fecha>: a las <hora>)" si hay override vigente.
+- **DB** (`db/index.js` + `migrate.js` idempotente): `rescheduleScheduledMessage`,
+  `setScheduledMessageOverride`, `rescheduleOutreach`, `setOutreachOverride` (este último solo
+  filas `daily`).
+
+**(b) Escalado privado al equipo (extensión de `capture_task` §18.T):**
+- **`pending_tasks.kind`**: `'task'` (encargo que el equipo hace a mano, default) |
+  `'capability_gap'` (le pidieron a Juanito algo para lo que NO tiene función; el equipo decide si
+  se hace a mano o se implementa). El modelo lo clasifica vía el param nuevo de la tool.
+- **Aviso EN PRIVADO:** el aviso de captura ahora va por **DM a cada `ADMIN_LID`**
+  (`adminDmTargets()` nuevo en `roles.js`) en vez del grupo de aprobaciones — el jefe no ve ese
+  canal. Sin admins configurados cae al `approvalsTarget()` de siempre. Best-effort por-admin (un
+  DM fallido no bloquea a los demás ni pierde la tarea). Los capability gaps llegan como
+  "🧩 Pidieron algo para lo que Juanito NO tiene función… ¿se hace a mano o se implementa?".
+- **`/tareas`** marca los gaps con 🧩 en el list y "Tipo: 🧩 falta función" en `ver`. El flujo
+  `hecha`/`descartar` y el aviso al solicitante quedan igual.
+- Al jefe se le sigue respondiendo "se lo paso al equipo y te confirmo" (transparente; lo privado
+  es el canal del aviso, no el hecho de que se escaló).
+
+**Tests:** `recurring-logic` (+9 override puros), `group-messages` (+3 ciclo con override),
+`brain.tools` (+8 reschedule grupo/outreach, +4 capture_task kind/DMs privados),
+`commands` (+1 /tareas 🧩), `data.db` (+3 nativos para el contenedor: reschedule/override/kind).
+Suite pura en Windows verde; los `data.*` corren en Docker/VPS como siempre.
+
+**⚠️ PENDIENTE DE DESPLIEGUE AL VPS** (migración idempotente incluida; basta
+`pscp src test` + `docker compose up -d --build` según receta de §18.U).
 
 ### 🟢 Baja prioridad / Nice-to-have
 

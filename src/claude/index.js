@@ -78,12 +78,13 @@ export function __resetDeps() {
 
 async function resolveDeps() {
   if (_injectedDeps) return _injectedDeps;
-  const [db, contacts, whatsapp, routing, documents] = await Promise.all([
+  const [db, contacts, whatsapp, routing, documents, roles] = await Promise.all([
     import('../db/index.js'),
     import('../contacts/index.js'),
     import('../whatsapp/index.js'),
     import('../common/approval-routing.js'),
     import('../documents/index.js'),
+    import('../common/roles.js'),
   ]);
   return {
     // db
@@ -110,11 +111,15 @@ async function resolveDeps() {
     createScheduledMessage: db.createScheduledMessage,
     listScheduledMessages: db.listScheduledMessages,
     cancelScheduledMessage: db.cancelScheduledMessage,
+    rescheduleScheduledMessage: db.rescheduleScheduledMessage,
+    setScheduledMessageOverride: db.setScheduledMessageOverride,
     isGroupAuthorized: db.isGroupAuthorized,
     // mensajes/recordatorios a terceros (tool schedule_outreach)
     createOutreach: db.createOutreach,
     listOutreachByCreator: db.listOutreachByCreator,
     finishOutreach: db.finishOutreach,
+    rescheduleOutreach: db.rescheduleOutreach,
+    setOutreachOverride: db.setOutreachOverride,
     // órdenes capturadas para el equipo (tool capture_task)
     createTask: db.createTask,
     listPendingTasks: db.listPendingTasks,
@@ -150,8 +155,10 @@ async function resolveDeps() {
     sendDocument: whatsapp.sendDocument,
     // generación de documentos (tool generate_document) — Fase 3A
     buildDocument: documents.buildDocument,
-    // ruteo de avisos al equipo (tool capture_task)
+    // ruteo de avisos al equipo (tool capture_task): DM privado a cada admin; el
+    // grupo de aprobaciones (donde está el jefe) queda de fallback si no hay admins.
     approvalsTarget: routing.approvalsTarget,
+    adminTargets: roles.adminDmTargets,
     // claude (mismo módulo)
     summarizeGroupMessages,
   };
@@ -277,17 +284,22 @@ const TOOLS = [
   {
     name: 'schedule_group_message',
     description:
-      'Programa, lista o cancela mensajes RECURRENTES que se envían automáticamente a un ' +
+      'Programa, lista, cancela o REPROGRAMA mensajes RECURRENTES que se envían automáticamente a un ' +
       'grupo de WhatsApp en días y hora fijos cada semana. Úsalo cuando el jefe pida cosas como ' +
       '"en el grupo X todos los jueves a las 8pm envía <mensaje>", pregunte qué mensajes ' +
-      'programados hay, o pida cancelar uno. Para recordatorios de una sola vez usa create_reminder.',
+      'programados hay, pida cancelar uno, o pida ADELANTAR/ATRASAR uno ("el mensaje de hoy ' +
+      'mándalo mejor a las 6"). Si pide cambiar la hora y NO dijo si es solo por ese día o de ' +
+      'ahora en adelante, PREGÚNTASELO antes de llamar con action=reschedule. Para recordatorios ' +
+      'de una sola vez usa create_reminder.',
     input_schema: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['create', 'list', 'cancel'],
-          description: 'create = programar uno nuevo · list = ver los programados · cancel = cancelar por id',
+          enum: ['create', 'list', 'cancel', 'reschedule'],
+          description:
+            'create = programar uno nuevo · list = ver los programados · cancel = cancelar por id · ' +
+            'reschedule = adelantar/atrasar uno existente por id (requiere scope)',
         },
         group_name: {
           type: 'string',
@@ -299,11 +311,15 @@ const TOOLS = [
             type: 'string',
             enum: ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'],
           },
-          description: 'Días de la semana en que se envía. Requerido para create.',
+          description:
+            'Días de la semana en que se envía. Requerido para create. En reschedule con ' +
+            'scope=always, pásalo SOLO si el jefe también quiere cambiar los días.',
         },
         time: {
           type: 'string',
-          description: 'Hora local de envío en formato 24h HH:MM (ej: "20:00" para las 8pm). Requerido para create.',
+          description:
+            'Hora local de envío en formato 24h HH:MM (ej: "20:00" para las 8pm). Requerido ' +
+            'para create y para reschedule (la hora nueva).',
         },
         text: {
           type: 'string',
@@ -326,7 +342,21 @@ const TOOLS = [
         },
         id: {
           type: 'number',
-          description: 'Id del mensaje programado a cancelar. Requerido para cancel.',
+          description: 'Id del mensaje programado. Requerido para cancel y reschedule.',
+        },
+        scope: {
+          type: 'string',
+          enum: ['once', 'always'],
+          description:
+            'Solo reschedule. "once" = el cambio aplica a UN solo día (requiere override_date; ' +
+            'los demás días siguen igual). "always" = cambia el horario definitivo de ahora en ' +
+            'adelante. Si el jefe no aclaró cuál quiere, NO adivines: pregúntale primero.',
+        },
+        override_date: {
+          type: 'string',
+          description:
+            'Solo reschedule con scope=once: fecha del día afectado, YYYY-MM-DD (calcúlala con ' +
+            'la fecha actual del sistema; "hoy" = la fecha de hoy, "el jueves" = el jueves próximo).',
         },
       },
       required: ['action'],
@@ -341,15 +371,19 @@ const TOOLS = [
       'que…", "cada 40 minutos dile a María que…". Soporta tres modalidades (recurrence): "once" ' +
       '(una sola vez a una hora), "interval" (cada N minutos) y "daily" (a una hora fija ciertos ' +
       'días). Para recordatorios DEL PROPIO jefe o mensajes a GRUPOS NO uses esta tool ' +
-      '(usa create_reminder o schedule_group_message). También lista (action=list) y cancela ' +
-      '(action=cancel) los envíos a terceros activos.',
+      '(usa create_reminder o schedule_group_message). También lista (action=list), cancela ' +
+      '(action=cancel) y REPROGRAMA (action=reschedule: adelantar/atrasar un envío existente) ' +
+      'los envíos a terceros activos. En un reschedule de uno DIARIO, si el jefe no dijo si el ' +
+      'cambio es solo por ese día o para siempre, PREGÚNTASELO antes de llamar.',
     input_schema: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['create', 'list', 'cancel'],
-          description: 'create = programar uno nuevo · list = ver los activos · cancel = cancelar por id',
+          enum: ['create', 'list', 'cancel', 'reschedule'],
+          description:
+            'create = programar uno nuevo · list = ver los activos · cancel = cancelar por id · ' +
+            'reschedule = adelantar/atrasar uno existente por id',
         },
         recipient: {
           type: 'string',
@@ -384,11 +418,15 @@ const TOOLS = [
         },
         due_at: {
           type: 'string',
-          description: 'Solo recurrence=once: fecha y hora YYYY-MM-DD HH:MM:SS en la zona del jefe.',
+          description:
+            'Recurrence=once: fecha y hora YYYY-MM-DD HH:MM:SS en la zona del jefe. En reschedule ' +
+            'de un envío "once", la NUEVA fecha y hora.',
         },
         interval_min: {
           type: 'number',
-          description: 'Solo recurrence=interval: cada cuántos minutos escribir (ej: 40). Mínimo configurado.',
+          description:
+            'Recurrence=interval: cada cuántos minutos escribir (ej: 40). Mínimo configurado. ' +
+            'En reschedule de un envío "interval", el NUEVO intervalo.',
         },
         until: {
           type: 'string',
@@ -406,15 +444,33 @@ const TOOLS = [
             type: 'string',
             enum: ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'],
           },
-          description: 'Solo recurrence=daily: días de la semana en que se escribe.',
+          description:
+            'Recurrence=daily: días de la semana en que se escribe. En reschedule con ' +
+            'scope=always, pásalo SOLO si también cambian los días.',
         },
         time: {
           type: 'string',
-          description: 'Solo recurrence=daily: hora local en formato 24h HH:MM (ej: "17:00" para las 5pm).',
+          description:
+            'Recurrence=daily: hora local en formato 24h HH:MM (ej: "17:00" para las 5pm). ' +
+            'En reschedule de uno daily, la hora nueva.',
         },
         id: {
           type: 'number',
-          description: 'Id del envío a terceros a cancelar. Requerido para cancel.',
+          description: 'Id del envío a terceros. Requerido para cancel y reschedule.',
+        },
+        scope: {
+          type: 'string',
+          enum: ['once', 'always'],
+          description:
+            'Solo reschedule de un envío DAILY. "once" = el cambio aplica a UN solo día ' +
+            '(requiere override_date). "always" = cambia el horario definitivo. Si el jefe no ' +
+            'aclaró cuál quiere, NO adivines: pregúntale primero.',
+        },
+        override_date: {
+          type: 'string',
+          description:
+            'Solo reschedule daily con scope=once: fecha del día afectado, YYYY-MM-DD ' +
+            '(calcúlala con la fecha actual del sistema).',
         },
       },
       required: ['action'],
@@ -567,6 +623,15 @@ const TOOLS = [
         detail: {
           type: 'string',
           description: 'Opcional. Contexto extra que ayude al equipo a ejecutarla (datos, plazos, enlaces).',
+        },
+        kind: {
+          type: 'string',
+          enum: ['task', 'capability_gap'],
+          description:
+            'Opcional (default "task"). "task" = un encargo que una persona del equipo puede ' +
+            'hacer a mano (llamar, comprar, gestionar algo). "capability_gap" = te pidieron algo ' +
+            'que TÚ deberías poder hacer como asistente pero no tienes función para ello (el ' +
+            'equipo decidirá si lo hace a mano o implementa la función).',
         },
       },
       required: ['request'],
@@ -1000,14 +1065,20 @@ confirma al jefe en una línea natural:
   identificar al contacto o al grupo, te lo diré por el resultado de la herramienta: en ese caso
   pídele al jefe que aclare en vez de inventar.
 - summarize_group: lee y resume un grupo por nombre cuando pregunte qué pasó ahí.
-- schedule_group_message: programa/lista/cancela mensajes RECURRENTES a un grupo.
+- schedule_group_message: programa/lista/cancela/reprograma mensajes RECURRENTES a un grupo.
   Dos tipos: texto FIJO (se guarda EXACTO; si el jefe no dio el literal, pídeselo) o
   GENERADO (generated=true + brief editorial: Juanito redacta uno distinto cada vez
-  y el jefe lo aprueba por DM antes de publicarse).
-- schedule_outreach: programa/lista/cancela mensajes o recordatorios a OTRA persona de
-  tu parte. Una vez (en una fecha/hora), a diario (días + hora fija) o cada N minutos
-  hasta una hora límite o un número de veces (ej: "escríbele a Sebastián cada 40 min que
-  confirme, hasta las 6pm" → recurrence=interval, interval_min=40, until=hoy 18:00). Si el
+  y el jefe lo aprueba por DM antes de publicarse). Para ADELANTAR/ATRASAR uno
+  (action=reschedule): si el jefe NO dijo si el cambio es solo por ese día o de ahora en
+  adelante, PREGÚNTASELO SIEMPRE primero ("¿solo por hoy o de ahora en adelante?") y
+  recién ahí llama con scope="once" (+ override_date) o scope="always". No adivines.
+- schedule_outreach: programa/lista/cancela/reprograma mensajes o recordatorios a OTRA
+  persona de tu parte. Una vez (en una fecha/hora), a diario (días + hora fija) o cada N
+  minutos hasta una hora límite o un número de veces (ej: "escríbele a Sebastián cada 40 min
+  que confirme, hasta las 6pm" → recurrence=interval, interval_min=40, until=hoy 18:00).
+  Para adelantar/atrasar uno (action=reschedule): once → nueva due_at; interval → nuevo
+  interval_min; daily → aplica la MISMA pregunta obligada de "¿solo ese día o para siempre?"
+  que en los mensajes de grupo. Si el
   jefe da un número nuevo junto al nombre, pásalo en recipient_phone para guardarlo.
   Si COMPARTIÓ una tarjeta de contacto (verás "compartió una tarjeta de contacto…
   datos CONFIABLES" en el chat), usa ESE número en recipient_phone tal cual: es exacto, NO
@@ -1026,8 +1097,10 @@ confirma al jefe en una línea natural:
   productos, jerga, clientes, metas) cuando el jefe te explique cómo funciona algo. Distinto
   de remember_note (eso es personal) y de capture_task (eso es una orden puntual).
 - capture_task: SOLO para órdenes que NINGUNA otra herramienta puede ejecutar. Anota la
-  orden y la pasa al equipo para que la haga. NO la uses para lo que ya puedes hacer
-  (recordatorios, outreach, resúmenes, mensajes a grupos).${
+  orden y le avisa al equipo EN PRIVADO para que la haga. NO la uses para lo que ya puedes
+  hacer (recordatorios, outreach, resúmenes, mensajes a grupos). Si lo pedido es algo que
+  TÚ deberías poder hacer pero no tienes función (no un encargo humano), márcalo con
+  kind="capability_gap" para que el equipo evalúe implementarlo.${
     role === 'admin'
       ? '\n- save_memory: guarda hechos en la memoria núcleo del sistema (key/value).'
       : ''
@@ -1121,7 +1194,14 @@ function formatOutreachRow(r) {
         : '';
     return `${who}: cada ${r.interval_min} min${stop}`;
   }
-  if (r.recur_kind === 'daily') return `${who}: cada ${csvToDayLabels(r.days)} a las ${r.time_hm}`;
+  if (r.recur_kind === 'daily') {
+    // Override vigente de un-solo-día (§18.AC): se muestra; los de fechas pasadas son inertes.
+    const ov =
+      r.override_date && r.override_date >= zonedNowParts().date
+        ? ` (⚠️ solo el ${r.override_date}: a las ${r.override_time})`
+        : '';
+    return `${who}: cada ${csvToDayLabels(r.days)} a las ${r.time_hm}${ov}`;
+  }
   return who;
 }
 
@@ -1275,24 +1355,38 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
       const request = String(input.request || '').trim();
       if (!request) return '¿Qué quieres que le pase al equipo? Dímelo y se lo anoto.';
 
+      const kind = input.kind === 'capability_gap' ? 'capability_gap' : 'task';
       await deps.createTask({
         request,
         detail: input.detail?.trim() || null,
         createdBy: ctx.createdBy,
+        kind,
       });
 
-      // Aviso al equipo (grupo de aprobaciones si está configurado, o DM del jefe).
-      // Un fallo de envío no debe romper la captura: la tarea ya quedó guardada.
+      // Aviso al equipo EN PRIVADO (§18.AC): DM a cada admin configurado — el jefe no ve
+      // ese canal. Sin admins, cae al destino de aprobaciones (grupo o DM del jefe), el
+      // comportamiento de siempre. Best-effort: un fallo de envío no pierde la tarea.
+      const notice =
+        kind === 'capability_gap'
+          ? `🧩 Pidieron algo para lo que Juanito NO tiene función: «${request}». ` +
+            `¿Se hace a mano o se implementa? Gestión: /tareas`
+          : `📌 El jefe pidió: «${request}». Para tomarla: /tareas`;
+      let targets = [];
       try {
-        const target = await deps.approvalsTarget?.();
-        if (target) {
-          await deps.sendMessage?.(
-            target,
-            `📌 El jefe pidió: «${request}». Para tomarla: /tareas`
-          );
+        targets = (deps.adminTargets?.() || []).filter(Boolean);
+        if (!targets.length) {
+          const fallback = await deps.approvalsTarget?.();
+          if (fallback) targets = [fallback];
         }
       } catch {
-        /* el aviso es best-effort; la tarea ya está anotada */
+        /* sin destino resoluble: la tarea ya está anotada igual */
+      }
+      for (const target of targets) {
+        try {
+          await deps.sendMessage?.(target, notice);
+        } catch {
+          /* el aviso es best-effort; la tarea ya está anotada */
+        }
       }
 
       return 'Listo, se lo paso al equipo y te confirmo en cuanto esté.';
@@ -1363,10 +1457,13 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
       if (action === 'list') {
         const rows = (await deps.listScheduledMessages?.()) || [];
         if (!rows.length) return 'No hay mensajes programados activos.';
+        // Los overrides de fechas pasadas son inertes: no se muestran.
+        const today = zonedNowParts().date;
         return rows
           .map(
             (r) =>
               `#${r.id} → "${r.group_name || r.group_id}" — ${csvToDayLabels(r.days)} a las ${r.time_hm}` +
+              `${r.override_date && r.override_date >= today ? ` (⚠️ solo el ${r.override_date}: a las ${r.override_time})` : ''}` +
               `${r.last_sent_date ? ` (último envío: ${r.last_sent_date})` : ''}\n   "${r.text}"`
           )
           .join('\n');
@@ -1382,7 +1479,56 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
           : `No encontré ningún mensaje programado activo con id ${input.id}.`;
       }
 
-      if (action !== 'create') return 'Acción no reconocida. Usa create, list o cancel.';
+      // reschedule — adelantar/atrasar. scope decide el alcance: 'once' mueve UN solo día
+      // (override, los demás días siguen igual) · 'always' cambia el horario definitivo.
+      // Sin scope no se toca nada: la pregunta "¿solo ese día o para siempre?" es del jefe.
+      if (action === 'reschedule') {
+        if (!Number.isInteger(input.id)) {
+          return 'Para reprogramar necesito el id del mensaje programado (pídelo con action=list).';
+        }
+        const rows = (await deps.listScheduledMessages?.()) || [];
+        const row = rows.find((r) => r.id === input.id);
+        if (!row) return `No encontré ningún mensaje programado activo con id ${input.id}.`;
+
+        const newTime = normalizeTimeHm(input.time);
+        if (!newTime) {
+          return 'No entendí la hora nueva. Necesito la hora en formato 24h, ej: 20:00 para las 8pm.';
+        }
+
+        if (input.scope === 'always') {
+          const newDays = input.days?.length ? daysToCsv(input.days) : null;
+          if (input.days?.length && !newDays) {
+            return 'No entendí los días nuevos. Dímelos como días de la semana (ej: jueves y domingo).';
+          }
+          await deps.rescheduleScheduledMessage?.(input.id, { timeHm: newTime, days: newDays });
+          return (
+            `Listo ✅ El mensaje #${input.id} para "${row.group_name || row.group_id}" queda ` +
+            `de ahora en adelante cada ${csvToDayLabels(newDays || row.days)} a las ${newTime}.`
+          );
+        }
+
+        if (input.scope === 'once') {
+          const date = String(input.override_date || '').trim();
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            return 'Para mover un solo día necesito la fecha exacta (YYYY-MM-DD). ¿Qué día es el que se mueve?';
+          }
+          if (row.last_sent_date === date) {
+            return `El mensaje #${input.id} ya se envió el ${date}, así que ese día ya no se puede mover.`;
+          }
+          await deps.setScheduledMessageOverride?.(input.id, { date, timeHm: newTime });
+          return (
+            `Listo ✅ SOLO el ${date} el mensaje #${input.id} para "${row.group_name || row.group_id}" ` +
+            `saldrá a las ${newTime}. Los demás días sigue a las ${row.time_hm} como siempre.`
+          );
+        }
+
+        return (
+          '¿El cambio de hora es solo por ese día o de ahora en adelante? Pregúntale al jefe y ' +
+          'vuelve a llamarme con scope "once" o "always".'
+        );
+      }
+
+      if (action !== 'create') return 'Acción no reconocida. Usa create, list, cancel o reschedule.';
 
       // create — validar todo antes de tocar la DB.
       // Si el jefe da la orden DESDE un grupo y no nombra otro ("aquí", "en este grupo"),
@@ -1475,7 +1621,79 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
           : `No encontré un envío a terceros activo con id ${input.id}.`;
       }
 
-      if (action !== 'create') return 'Acción no reconocida. Usa create, list o cancel.';
+      // reschedule — adelantar/atrasar un envío existente. Qué se puede mover depende del
+      // recur_kind de la fila; en daily el scope decide un-solo-día vs para-siempre (misma
+      // pregunta obligada al jefe que en schedule_group_message).
+      if (action === 'reschedule') {
+        if (!Number.isInteger(input.id)) {
+          return 'Para reprogramar necesito el id del envío (míralos con action=list).';
+        }
+        // Se busca entre los del propio creador: nadie reprograma envíos ajenos.
+        const rows = (await deps.listOutreachByCreator?.(ctx.createdBy)) || [];
+        const row = rows.find((r) => r.id === input.id);
+        if (!row) return `No encontré un envío a terceros activo tuyo con id ${input.id}.`;
+        const who = row.to_name || row.to_phone;
+
+        if (row.recur_kind === 'once') {
+          const newDue = String(input.due_at || '').trim();
+          if (!DUE_AT_RE.test(newDue)) {
+            return 'Necesito la nueva fecha y hora exactas (formato YYYY-MM-DD HH:MM:SS). ¿Para cuándo lo muevo?';
+          }
+          await deps.rescheduleOutreach?.(input.id, { dueAt: newDue });
+          return `Listo ✅ Ahora le escribiré a ${who} el ${newDue}: «${row.intent}».`;
+        }
+
+        if (row.recur_kind === 'interval') {
+          const floor = OUTREACH_MIN_INTERVAL_MIN();
+          const min = Number(input.interval_min);
+          if (!Number.isFinite(min) || min < floor) {
+            return `Para no spamear al contacto, el intervalo mínimo es ${floor} minutos. ¿Cada cuántos minutos le escribo?`;
+          }
+          const nextDueAt = zonedStamp(new Date(Date.now() + min * 60000));
+          await deps.rescheduleOutreach?.(input.id, { intervalMin: min, nextDueAt });
+          return `Listo ✅ Ahora le escribiré a ${who} cada ${min} min (próximo: ${nextDueAt}).`;
+        }
+
+        // daily → misma disyuntiva que los mensajes recurrentes a grupos.
+        const newTime = normalizeTimeHm(input.time);
+        if (!newTime) {
+          return 'No entendí la hora nueva. Necesito la hora en formato 24h, ej: 17:00 para las 5pm.';
+        }
+
+        if (input.scope === 'always') {
+          const newDays = input.days?.length ? daysToCsv(input.days) : null;
+          if (input.days?.length && !newDays) {
+            return 'No entendí los días nuevos. Dímelos como días de la semana (ej: lunes y miércoles).';
+          }
+          await deps.rescheduleOutreach?.(input.id, { timeHm: newTime, days: newDays });
+          return (
+            `Listo ✅ De ahora en adelante le escribiré a ${who} cada ` +
+            `${csvToDayLabels(newDays || row.days)} a las ${newTime}.`
+          );
+        }
+
+        if (input.scope === 'once') {
+          const date = String(input.override_date || '').trim();
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            return 'Para mover un solo día necesito la fecha exacta (YYYY-MM-DD). ¿Qué día es el que se mueve?';
+          }
+          if (row.last_sent_date === date) {
+            return `A ${who} ya le escribí el ${date}, así que ese día ya no se puede mover.`;
+          }
+          await deps.setOutreachOverride?.(input.id, { date, timeHm: newTime });
+          return (
+            `Listo ✅ SOLO el ${date} le escribiré a ${who} a las ${newTime}. ` +
+            `Los demás días sigue a las ${row.time_hm} como siempre.`
+          );
+        }
+
+        return (
+          '¿El cambio de hora es solo por ese día o de ahora en adelante? Pregúntale al jefe y ' +
+          'vuelve a llamarme con scope "once" o "always".'
+        );
+      }
+
+      if (action !== 'create') return 'Acción no reconocida. Usa create, list, cancel o reschedule.';
 
       // create — resolver el destinatario primero (guardándolo si el jefe da número + nombre).
       const recipient = input.recipient?.trim();

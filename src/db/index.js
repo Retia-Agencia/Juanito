@@ -779,13 +779,38 @@ export function createScheduledMessage({ groupId, groupName, days, timeHm, text,
 export function listScheduledMessages({ activeOnly = true } = {}) {
   const where = activeOnly ? 'WHERE active = 1' : '';
   return db
-    .prepare(`SELECT id, group_id, group_name, days, time_hm, text, created_by, last_sent_date, active, kind, brief
+    .prepare(`SELECT id, group_id, group_name, days, time_hm, text, created_by, last_sent_date, active, kind, brief,
+                     override_date, override_time
               FROM scheduled_messages ${where} ORDER BY id`)
     .all();
 }
 
 export function cancelScheduledMessage(id) {
   return db.prepare(`UPDATE scheduled_messages SET active = 0 WHERE id = ? AND active = 1`).run(id).changes;
+}
+
+// Reprograma PERMANENTEMENTE un mensaje recurrente activo (nueva hora y, opcional, nuevos
+// días). Solo pisa lo que venga no-null. Un cambio "para siempre" también limpia el
+// override de un-solo-día si lo hubiera (el horario nuevo es la verdad completa).
+export function rescheduleScheduledMessage(id, { timeHm = null, days = null } = {}) {
+  return db.prepare(`
+    UPDATE scheduled_messages
+    SET time_hm = COALESCE(?, time_hm),
+        days = COALESCE(?, days),
+        override_date = NULL,
+        override_time = NULL
+    WHERE id = ? AND active = 1
+  `).run(timeHm, days, id).changes;
+}
+
+// Adelanta/atrasa SOLO una ocurrencia (§18.AC): el día `date` la fila dispara a `timeHm`
+// en vez de su hora normal. Solo hay UN override vigente por fila (el nuevo pisa al viejo);
+// una fecha pasada queda inerte (la lógica de disparo solo mira override_date == hoy).
+export function setScheduledMessageOverride(id, { date, timeHm }) {
+  return db.prepare(`
+    UPDATE scheduled_messages SET override_date = ?, override_time = ?
+    WHERE id = ? AND active = 1
+  `).run(date, timeHm, id).changes;
 }
 
 export function markScheduledMessageSent(id, dateStr) {
@@ -870,14 +895,40 @@ export function finishOutreach(id, status = 'done') {
     .run(status, id).changes;
 }
 
+// Reprograma un outreach vivo según su recur_kind: dueAt (once), intervalMin+nextDueAt
+// (interval) o timeHm/days (daily, cambio permanente). Solo pisa lo que venga no-null;
+// un cambio permanente de daily limpia el override de un-solo-día si lo hubiera.
+export function rescheduleOutreach(id, { dueAt = null, intervalMin = null, nextDueAt = null, days = null, timeHm = null } = {}) {
+  return db.prepare(`
+    UPDATE outreach_schedules
+    SET due_at = COALESCE(?, due_at),
+        interval_min = COALESCE(?, interval_min),
+        next_due_at = COALESCE(?, next_due_at),
+        days = COALESCE(?, days),
+        time_hm = COALESCE(?, time_hm),
+        override_date = CASE WHEN ? IS NOT NULL THEN NULL ELSE override_date END,
+        override_time = CASE WHEN ? IS NOT NULL THEN NULL ELSE override_time END
+    WHERE id = ? AND active = 1 AND status = 'active'
+  `).run(dueAt, intervalMin, nextDueAt, days, timeHm, timeHm, timeHm, id).changes;
+}
+
+// Adelanta/atrasa SOLO una ocurrencia de un outreach daily (§18.AC), mismo contrato que
+// setScheduledMessageOverride.
+export function setOutreachOverride(id, { date, timeHm }) {
+  return db.prepare(`
+    UPDATE outreach_schedules SET override_date = ?, override_time = ?
+    WHERE id = ? AND active = 1 AND status = 'active' AND recur_kind = 'daily'
+  `).run(date, timeHm, id).changes;
+}
+
 // ─── Tareas capturadas (tool capture_task) ────────────────────────────────────
 // Órdenes del jefe que ninguna herramienta puede ejecutar: se anotan aquí y el equipo
 // las gestiona con /tareas. createdBy = LID/jid de quien la pidió (destino del aviso "hecha").
 
-export function createTask({ request, detail = null, createdBy = null }) {
+export function createTask({ request, detail = null, createdBy = null, kind = 'task' }) {
   const info = db
-    .prepare(`INSERT INTO pending_tasks (request, detail, created_by) VALUES (?, ?, ?)`)
-    .run(request, detail, createdBy);
+    .prepare(`INSERT INTO pending_tasks (request, detail, created_by, kind) VALUES (?, ?, ?, ?)`)
+    .run(request, detail, createdBy, kind);
   return info.lastInsertRowid;
 }
 

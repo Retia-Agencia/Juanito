@@ -466,3 +466,87 @@ test('pending_replies: createPendingReply persiste kind (default group; dm expl�
   const did = db.createPendingReply({ kind: 'dm', groupId: '57300@s.whatsapp.net', groupName: 'DM de Pedro', draft: 'hola' });
   assert.equal(db.getPendingReply(did).kind, 'dm');
 });
+
+// ─── Reprogramación de recurrentes + overrides de un solo día (§18.AC) ─────────
+
+test('scheduled_messages: reschedule permanente y override de un día (que el cambio permanente limpia)', () => {
+  const id = db.createScheduledMessage({
+    groupId: 'g@g.us',
+    groupName: 'G',
+    days: '0,4',
+    timeHm: '20:00',
+    text: 'hola',
+    createdBy: 'boss@lid',
+  });
+
+  // Override de un solo día: queda en la fila y sale por list.
+  assert.equal(db.setScheduledMessageOverride(id, { date: '2026-07-09', timeHm: '18:00' }), 1);
+  let row = db.listScheduledMessages().find((r) => r.id === Number(id));
+  assert.equal(row.override_date, '2026-07-09');
+  assert.equal(row.override_time, '18:00');
+
+  // Cambio permanente: nueva hora (y días si vienen) + limpia el override.
+  assert.equal(db.rescheduleScheduledMessage(id, { timeHm: '19:00', days: '1' }), 1);
+  row = db.listScheduledMessages().find((r) => r.id === Number(id));
+  assert.equal(row.time_hm, '19:00');
+  assert.equal(row.days, '1');
+  assert.equal(row.override_date, null, 'el horario nuevo es la verdad completa');
+
+  // Solo hora (days=null no pisa los días).
+  assert.equal(db.rescheduleScheduledMessage(id, { timeHm: '21:00' }), 1);
+  row = db.listScheduledMessages().find((r) => r.id === Number(id));
+  assert.equal(row.days, '1');
+  assert.equal(row.time_hm, '21:00');
+
+  // Cancelado → ni reschedule ni override lo tocan.
+  db.cancelScheduledMessage(id);
+  assert.equal(db.rescheduleScheduledMessage(id, { timeHm: '10:00' }), 0);
+  assert.equal(db.setScheduledMessageOverride(id, { date: '2026-07-10', timeHm: '10:00' }), 0);
+});
+
+test('outreach_schedules: reschedule por recur_kind y override solo para daily', () => {
+  const onceId = db.createOutreach({
+    toPhone: '573000000009',
+    toName: 'Ana',
+    intent: 'saludo',
+    recurKind: 'once',
+    dueAt: '2026-07-05 10:00:00',
+    createdBy: 'boss@lid',
+  });
+  assert.equal(db.rescheduleOutreach(onceId, { dueAt: '2026-07-06 15:00:00' }), 1);
+  assert.equal(db.listActiveOutreach().find((r) => r.id === Number(onceId)).due_at, '2026-07-06 15:00:00');
+
+  const dailyId = db.createOutreach({
+    toPhone: '573000000009',
+    toName: 'Ana',
+    intent: 'buenos días',
+    recurKind: 'daily',
+    days: '1,3',
+    timeHm: '09:00',
+    createdBy: 'boss@lid',
+  });
+  // Override de un día (permitido: daily).
+  assert.equal(db.setOutreachOverride(dailyId, { date: '2026-07-06', timeHm: '07:30' }), 1);
+  let row = db.listActiveOutreach().find((r) => r.id === Number(dailyId));
+  assert.equal(row.override_date, '2026-07-06');
+  // Cambio permanente de hora limpia el override.
+  assert.equal(db.rescheduleOutreach(dailyId, { timeHm: '08:00' }), 1);
+  row = db.listActiveOutreach().find((r) => r.id === Number(dailyId));
+  assert.equal(row.time_hm, '08:00');
+  assert.equal(row.override_date, null);
+  assert.equal(row.days, '1,3', 'los días no se tocan si no vienen');
+
+  // Override sobre un once → 0 cambios (solo aplica a daily).
+  assert.equal(db.setOutreachOverride(onceId, { date: '2026-07-06', timeHm: '07:30' }), 0);
+
+  // Cerrado → reschedule no lo toca.
+  db.finishOutreach(dailyId, 'cancelled');
+  assert.equal(db.rescheduleOutreach(dailyId, { timeHm: '11:00' }), 0);
+});
+
+test('pending_tasks: kind se persiste (capability_gap) y default task (§18.AC)', () => {
+  const t1 = db.createTask({ request: 'encargo normal', createdBy: 'boss@lid' });
+  const t2 = db.createTask({ request: 'que mande audios', createdBy: 'boss@lid', kind: 'capability_gap' });
+  assert.equal(db.getTask(t1).kind, 'task');
+  assert.equal(db.getTask(t2).kind, 'capability_gap');
+});

@@ -182,3 +182,54 @@ test('un fallo en una fila no rompe el resto del ciclo', async () => {
   assert.equal(await runScheduledMessagesCycle(bogota('20:00')), 1, 'la fila sana se envía');
   assert.equal(world.rows.find((r) => r.id === 9).last_sent_date, null, 'la fallida NO se marca (reintenta)');
 });
+
+// ─── Override de un solo día en el ciclo (§18.AC) ──────────────────────────────
+
+test('fixed con override HOY: publica a la hora nueva y NO a la normal', async () => {
+  const { world, deps } = makeWorld({
+    rows: [{ ...FIXED, override_date: '2026-06-11', override_time: '18:00' }],
+  });
+  __setDeps(deps);
+
+  await runScheduledMessagesCycle(bogota('17:59'));
+  assert.equal(world.sent.length, 0, 'antes de la hora nueva no');
+
+  await runScheduledMessagesCycle(bogota('18:00'));
+  assert.equal(world.sent.length, 1, 'a la hora del override sí');
+
+  await runScheduledMessagesCycle(bogota('20:00'));
+  assert.equal(world.sent.length, 1, 'a la hora normal ya no (se movió y ya salió)');
+});
+
+test('fixed con override en OTRA fecha: hoy publica normal a su hora de siempre', async () => {
+  const { world, deps } = makeWorld({
+    rows: [{ ...FIXED, override_date: '2026-06-18', override_time: '18:00' }],
+  });
+  __setDeps(deps);
+
+  await runScheduledMessagesCycle(bogota('18:00'));
+  assert.equal(world.sent.length, 0, 'la hora del override de otro día no aplica hoy');
+
+  await runScheduledMessagesCycle(bogota('20:00'));
+  assert.equal(world.sent.length, 1, 'a su hora normal sí');
+});
+
+test('generated con override HOY: el borrador se genera con lead sobre la hora nueva y el aviso la menciona', async () => {
+  const { world, deps } = makeWorld({
+    rows: [{ ...GENERATED, override_date: '2026-06-11', override_time: '07:00' }],
+  });
+  __setDeps(deps);
+
+  await runScheduledMessagesCycle(bogota('05:59'));
+  assert.equal(world.drafts.length, 0, 'antes del lead (07:00 - 60min) no genera');
+
+  await runScheduledMessagesCycle(bogota('06:00'));
+  assert.equal(world.drafts.length, 1, 'dentro del lead de la hora nueva genera');
+  assert.match(world.sent[0].text, /sale hoy a las 07:00/, 'el DM al jefe dice la hora EFECTIVA');
+
+  // Aprobado → publica desde la hora nueva, no desde las 09:00.
+  world.drafts[0].status = 'approved';
+  await runScheduledMessagesCycle(bogota('07:00'));
+  const published = world.sent.filter((s) => s.to === 'patah@g.us');
+  assert.equal(published.length, 1, 'publica a la hora del override');
+});

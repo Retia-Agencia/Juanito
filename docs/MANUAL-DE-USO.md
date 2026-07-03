@@ -122,14 +122,18 @@ Esto aplica **igual** a respuestas de grupo y a DMs.
 ## Órdenes del jefe para el equipo — `/tareas` *(admin)*
 
 Cuando el jefe le pide a Juanito algo que **ninguna de sus herramientas puede hacer** (subir algo a
-una hoja nueva, una gestión manual, etc.), Juanito **no se niega**: anota la orden y avisa al equipo
-(al grupo de aprobaciones si está configurado, o al DM del jefe). El jefe recibe un "se lo paso al
-equipo y te confirmo en cuanto esté".
+una hoja nueva, una gestión manual, etc.), Juanito **no se niega**: anota la orden y le avisa al
+equipo **por DM privado a cada admin** (sin admins configurados, cae al grupo de aprobaciones o al
+DM del jefe). El jefe recibe un "se lo paso al equipo y te confirmo en cuanto esté".
+
+Si lo pedido es algo que Juanito *debería* poder hacer pero **le falta la función** (no un encargo
+humano), la tarea llega marcada con 🧩 y la pregunta "¿se hace a mano o se implementa?" — el equipo
+decide.
 
 | Comando | Qué hace |
 |---|---|
-| `/tareas` | Lista las órdenes pendientes del jefe (id + texto) |
-| `/tareas ver <id>` | Detalle completo (orden + contexto + quién la pidió) |
+| `/tareas` | Lista las órdenes pendientes del jefe (id + texto; 🧩 = falta función) |
+| `/tareas ver <id>` | Detalle completo (orden + tipo + contexto + quién la pidió) |
 | `/tareas hecha <id>` | La cierra y **avisa al jefe** ("✅ Listo lo que pediste…") |
 | `/tareas descartar <id>` | La descarta (sin avisar a nadie) |
 
@@ -168,11 +172,14 @@ Ejemplo: `/persona Patah | Grupo católico. Tono cercano a la fe; di "muchachos"
 ## Mensajes recurrentes a grupos — `/programados` *(admin)*
 
 Ver/cancelar los mensajes que Juanito envía de forma recurrente a un grupo. **Crearlos** es por
-lenguaje natural en el DM del jefe ("manda cada jueves a las 8pm al grupo X…").
+lenguaje natural en el DM del jefe ("manda cada jueves a las 8pm al grupo X…"). También se pueden
+**adelantar/atrasar** por lenguaje natural ("el mensaje de hoy mándalo mejor a las 6"): Juanito
+pregunta si el cambio es **solo por ese día** o **de ahora en adelante**, y aplica lo que el jefe
+diga (lo mismo funciona con los envíos diarios a terceros).
 
 | Comando | Qué hace |
 |---|---|
-| `/programados` | Lista los mensajes recurrentes activos (días + hora) |
+| `/programados` | Lista los mensajes recurrentes activos (días + hora; ⚠️ si hay un día movido) |
 | `/programados off <id>` | Cancela uno |
 
 Los mensajes **generados** (Claude redacta cada día según un brief) pasan por aprobación: ver

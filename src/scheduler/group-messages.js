@@ -13,7 +13,7 @@
 // Deps inyectables (__setDeps) para testear el ciclo sin DB/WA/Claude reales.
 
 import { CronJob } from 'cron';
-import { isRecurringDue, isDraftDue, isGeneratedPublishDue, zonedNowParts } from './recurring-logic.js';
+import { isRecurringDue, isDraftDue, isGeneratedPublishDue, effectiveTimeHm, zonedNowParts } from './recurring-logic.js';
 import { bossDmTarget } from '../common/roles.js';
 
 const TZ = () => process.env.TZ || 'America/Bogota';
@@ -55,7 +55,15 @@ async function resolveDeps() {
 // ─── kind='fixed': publicar directo a la hora ─────────────────────────────────
 
 async function processFixed(d, row, nowParts) {
-  if (!isRecurringDue({ days: row.days, timeHm: row.time_hm, lastSentDate: row.last_sent_date, nowParts, windowMin: WINDOW_MIN })) {
+  if (!isRecurringDue({
+    days: row.days,
+    timeHm: row.time_hm,
+    lastSentDate: row.last_sent_date,
+    nowParts,
+    windowMin: WINDOW_MIN,
+    overrideDate: row.override_date,
+    overrideTime: row.override_time,
+  })) {
     return false;
   }
   if (!d.isGroupAuthorized(row.group_id)) {
@@ -72,9 +80,12 @@ async function processFixed(d, row, nowParts) {
 
 async function processGenerated(d, row, nowParts) {
   const draft = d.getDraftFor(row.id, nowParts.date);
+  const ov = { overrideDate: row.override_date, overrideTime: row.override_time };
+  // Hora efectiva de HOY (respeta el override de un-solo-día) para los avisos al jefe.
+  const effTime = effectiveTimeHm({ timeHm: row.time_hm, ...ov }, nowParts);
 
   // 1) Fase de borrador: aún no existe y ya estamos dentro del lead → generar + DM al jefe.
-  if (!draft && isDraftDue({ days: row.days, timeHm: row.time_hm, nowParts, leadMin: DRAFT_LEAD_MIN() })) {
+  if (!draft && isDraftDue({ days: row.days, timeHm: row.time_hm, nowParts, leadMin: DRAFT_LEAD_MIN(), ...ov })) {
     if (row.last_sent_date === nowParts.date) return false; // ya publicado hoy
     const boss = d.approvalsTarget ? await d.approvalsTarget() : bossDmTarget();
     if (!boss) {
@@ -93,7 +104,7 @@ async function processGenerated(d, row, nowParts) {
     if (draftId === null) return false; // carrera: otro ciclo lo creó
     await d.sendMessage(
       boss,
-      `📝 *Borrador #${draftId}* para *${row.group_name || row.group_id}* (sale hoy a las ${row.time_hm} si lo apruebas):\n\n` +
+      `📝 *Borrador #${draftId}* para *${row.group_name || row.group_id}* (sale hoy a las ${effTime} si lo apruebas):\n\n` +
         `${text}\n\n` +
         `Respóndeme *"apruebo"* para publicarlo, o dime qué corregir y te muestro la nueva versión. Sin tu visto bueno NO se publica.\n_Tip: cítame este mensaje (reply) para decidir sobre este borrador exacto._`
     );
@@ -104,7 +115,7 @@ async function processGenerated(d, row, nowParts) {
   if (!draft) return false;
 
   // 2) Fase de publicación: hora cumplida + borrador APROBADO → publicar.
-  if (isGeneratedPublishDue({ days: row.days, timeHm: row.time_hm, lastSentDate: row.last_sent_date, nowParts })) {
+  if (isGeneratedPublishDue({ days: row.days, timeHm: row.time_hm, lastSentDate: row.last_sent_date, nowParts, ...ov })) {
     if (draft.status === 'approved') {
       if (!d.isGroupAuthorized(row.group_id)) {
         console.log(`[Scheduler] Borrador #${draft.id} omitido: grupo no autorizado`);
@@ -124,7 +135,7 @@ async function processGenerated(d, row, nowParts) {
         await d.sendMessage(
           boss,
           `⏳ El borrador #${draft.id} para *${row.group_name || row.group_id}* sigue SIN aprobar y ya pasó ` +
-            `su hora (${row.time_hm}). No se publicó. Si lo apruebas ahora, sale de inmediato.`
+            `su hora (${effTime}). No se publicó. Si lo apruebas ahora, sale de inmediato.`
         );
       }
       console.log(`[Scheduler] Borrador #${draft.id} pendiente a la hora de publicar — recordatorio enviado`);

@@ -109,6 +109,8 @@ export function isOutreachDue(row, { nowStamp, nowParts, windowMin = 30 }) {
       lastSentDate: row.last_sent_date,
       nowParts,
       windowMin,
+      overrideDate: row.override_date,
+      overrideTime: row.override_time,
     });
   }
   return false;
@@ -119,21 +121,28 @@ const toMinutes = (hm) => {
   return h * 60 + m;
 };
 
+// Override de UN solo día (§18.AC): si hoy es override_date, la fila dispara a
+// override_time en vez de a su hora normal — incluso si hoy no está en `days` (el jefe
+// pidió explícitamente moverlo a este día). Cualquier otra fecha deja todo como estaba.
+const overrideApplies = (overrideDate, overrideTime, nowParts) =>
+  Boolean(overrideDate && overrideTime && overrideDate === nowParts.date);
+
 // ¿Toca enviar AHORA esta fila?
-//  - el día de hoy está en `days` (CSV 0-6)
+//  - el día de hoy está en `days` (CSV 0-6) — o hay override para HOY (ver arriba)
 //  - la hora actual está en [time_hm, time_hm + windowMin) — la ventana da catch-up
 //    si el bot estaba reiniciando justo a la hora exacta
 //  - no se envió ya hoy (last_sent_date)
 // Nota: una ventana que cruce medianoche no dispara al día siguiente (el dow ya no
 // coincide) — aceptado, no programar mensajes a las 23:5x con ventana larga.
-export function isRecurringDue({ days, timeHm, lastSentDate, nowParts, windowMin = 30 }) {
+export function isRecurringDue({ days, timeHm, lastSentDate, nowParts, windowMin = 30, overrideDate = null, overrideTime = null }) {
+  const ov = overrideApplies(overrideDate, overrideTime, nowParts);
   const dayList = String(days || '')
     .split(',')
     .map(Number)
     .filter(Number.isInteger);
-  if (!dayList.includes(nowParts.dow)) return false;
+  if (!ov && !dayList.includes(nowParts.dow)) return false;
   if (lastSentDate === nowParts.date) return false;
-  const target = toMinutes(timeHm);
+  const target = toMinutes(ov ? overrideTime : timeHm);
   const now = toMinutes(nowParts.hm);
   return now >= target && now < target + windowMin;
 }
@@ -145,9 +154,10 @@ const isPublishDay = (days, dow) =>
 // `leadMin` de anticipación a la hora de publicar, durante todo el resto del día
 // (sin tope superior: si el bot estuvo caído, genera tarde y el jefe aprueba tarde).
 // El dedup real es el UNIQUE(scheduled_id, publish_date) de scheduled_drafts.
-export function isDraftDue({ days, timeHm, nowParts, leadMin = 60 }) {
-  if (!isPublishDay(days, nowParts.dow)) return false;
-  const target = toMinutes(timeHm);
+export function isDraftDue({ days, timeHm, nowParts, leadMin = 60, overrideDate = null, overrideTime = null }) {
+  const ov = overrideApplies(overrideDate, overrideTime, nowParts);
+  if (!ov && !isPublishDay(days, nowParts.dow)) return false;
+  const target = toMinutes(ov ? overrideTime : timeHm);
   const now = toMinutes(nowParts.hm);
   return now >= target - leadMin;
 }
@@ -155,8 +165,14 @@ export function isDraftDue({ days, timeHm, nowParts, leadMin = 60 }) {
 // ¿Toca PUBLICAR un mensaje kind='generated'? Requiere borrador APROBADO.
 // Sin tope superior dentro del día: una aprobación tardía publica al minuto
 // siguiente, mientras siga siendo el día programado.
-export function isGeneratedPublishDue({ days, timeHm, lastSentDate, nowParts }) {
-  if (!isPublishDay(days, nowParts.dow)) return false;
+export function isGeneratedPublishDue({ days, timeHm, lastSentDate, nowParts, overrideDate = null, overrideTime = null }) {
+  const ov = overrideApplies(overrideDate, overrideTime, nowParts);
+  if (!ov && !isPublishDay(days, nowParts.dow)) return false;
   if (lastSentDate === nowParts.date) return false;
-  return toMinutes(nowParts.hm) >= toMinutes(timeHm);
+  return toMinutes(nowParts.hm) >= toMinutes(ov ? overrideTime : timeHm);
+}
+
+// Hora EFECTIVA de una fila para hoy (para mensajes al jefe: "sale hoy a las X").
+export function effectiveTimeHm({ timeHm, overrideDate = null, overrideTime = null }, nowParts) {
+  return overrideApplies(overrideDate, overrideTime, nowParts) ? overrideTime : timeHm;
 }

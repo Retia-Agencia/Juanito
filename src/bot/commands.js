@@ -366,8 +366,11 @@ async function handleTareas({ text, sender }, deps = {}) {
     if (!t) return `No encontré ninguna tarea con id ${id}.`;
 
     if (action === 'ver') {
+      const kindLabel =
+        t.kind === 'capability_gap' ? '🧩 falta función (¿a mano o se implementa?)' : '📌 encargo del equipo';
       return (
         `Tarea #${id} — ${t.status}\n` +
+        `Tipo: ${kindLabel}\n` +
         `Pidió: ${t.created_by || '?'}\n\n${t.request}` +
         (t.detail ? `\n\nContexto: ${t.detail}` : '')
       );
@@ -398,7 +401,8 @@ async function handleTareas({ text, sender }, deps = {}) {
   if (!rows.length) return '📭 No hay tareas pendientes del jefe.';
   const lines = [`📌 Tareas pendientes (${rows.length})`, ''];
   for (const t of rows) {
-    lines.push(`#${t.id} → ${truncate(t.request, 90)}`);
+    // 🧩 = capability gap (a Juanito le falta una función); el resto son encargos a mano.
+    lines.push(`#${t.id} → ${t.kind === 'capability_gap' ? '🧩 ' : ''}${truncate(t.request, 90)}`);
   }
   lines.push('', 'Acciones: /tareas ver <id> · hecha <id> · descartar <id>');
   return lines.join('\n');
@@ -543,9 +547,12 @@ function handleProgramados(text, deps = {}) {
     /* DB puede no estar lista */
   }
   if (!rows.length) return '📆 No hay mensajes programados activos.';
+  // Los overrides de un solo día (§18.AC) con fecha pasada son inertes: no se muestran.
+  const today = zonedNowParts().date;
   const lines = [`📆 Mensajes programados (${rows.length})`, ''];
   for (const r of rows) {
-    lines.push(`#${r.id} → ${r.group_name || r.group_id} — ${csvToDayLabels(r.days)} a las ${r.time_hm}`);
+    const ov = r.override_date && r.override_date >= today ? ` (⚠️ solo el ${r.override_date}: a las ${r.override_time})` : '';
+    lines.push(`#${r.id} → ${r.group_name || r.group_id} — ${csvToDayLabels(r.days)} a las ${r.time_hm}${ov}`);
     lines.push(`    "${truncate(r.text, 100)}"`);
   }
   lines.push('', 'Cancelar: /programados off <id>');

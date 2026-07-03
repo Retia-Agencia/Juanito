@@ -201,7 +201,9 @@ db.exec(`
     last_sent_date TEXT,            -- 'YYYY-MM-DD' local del último envío (anti doble-envío)
     active         INTEGER NOT NULL DEFAULT 1,
     kind           TEXT NOT NULL DEFAULT 'fixed',  -- 'fixed' | 'generated' (con aprobación)
-    brief          TEXT             -- instrucción editorial para kind='generated'
+    brief          TEXT,            -- instrucción editorial para kind='generated'
+    override_date  TEXT,            -- 'YYYY-MM-DD': ese día sale a override_time, no a time_hm (§18.AC)
+    override_time  TEXT             -- 'HH:MM' del override de un solo día
   );
 
   -- Borradores de mensajes GENERADOS (kind='generated' en scheduled_messages):
@@ -263,7 +265,9 @@ db.exec(`
     created_by    TEXT,
     status        TEXT NOT NULL DEFAULT 'active',  -- active | done | cancelled
     active        INTEGER NOT NULL DEFAULT 1,
-    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+    override_date TEXT,               -- daily: 'YYYY-MM-DD' que sale a override_time, no a time_hm (§18.AC)
+    override_time TEXT                -- 'HH:MM' del override de un solo día
   );
 
   -- Órdenes libres del jefe que NO caen en ninguna herramienta (tool capture_task §18).
@@ -276,6 +280,7 @@ db.exec(`
     detail      TEXT,               -- contexto opcional
     created_by  TEXT,               -- LID/jid de quien la pidió (jefe/admin)
     status      TEXT NOT NULL DEFAULT 'pending',  -- pending | done | dismissed
+    kind        TEXT NOT NULL DEFAULT 'task',     -- 'task' (a mano) | 'capability_gap' (falta función, §18.AC)
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
     decided_by  TEXT,
     decided_at  DATETIME
@@ -340,6 +345,19 @@ addColumnIfMissing('calendly_pushes', 'program', 'TEXT');
 // publica solo tras aprobación del jefe).
 addColumnIfMissing('scheduled_messages', 'kind', "TEXT NOT NULL DEFAULT 'fixed'");
 addColumnIfMissing('scheduled_messages', 'brief', 'TEXT');
+
+// Adelantar/atrasar UNA sola ocurrencia (§18.AC): el día override_date la fila dispara a
+// override_time en vez de su hora normal (y NO a la hora normal). Fechas pasadas quedan
+// inertes (la lógica solo mira override_date == hoy); un override nuevo pisa al anterior.
+addColumnIfMissing('scheduled_messages', 'override_date', 'TEXT');
+addColumnIfMissing('scheduled_messages', 'override_time', 'TEXT');
+addColumnIfMissing('outreach_schedules', 'override_date', 'TEXT');
+addColumnIfMissing('outreach_schedules', 'override_time', 'TEXT');
+
+// Tipo de tarea capturada (§18.AC): 'task' (el equipo la hace a mano) | 'capability_gap'
+// (le pidieron a Juanito algo para lo que NO tiene función — el equipo decide si la hace
+// a mano o la implementa). Filas viejas quedan 'task'.
+addColumnIfMissing('pending_tasks', 'kind', "TEXT NOT NULL DEFAULT 'task'");
 
 // Nombre de QUIEN ordena el outreach (jefe o admin) → el mensaje al tercero va "de parte de"
 // esa persona, no siempre del jefe. Se resuelve al crear (BOSS_NAME para el jefe, pushName para

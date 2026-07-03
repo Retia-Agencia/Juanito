@@ -73,6 +73,13 @@ export function bossDmTarget() {
   return BOSS_LID() || BOSS_PHONE() || null;
 }
 
+// LIDs del equipo (ADMIN_LID) como destinos DM-ables. Para avisos EN PRIVADO al equipo
+// (tareas capturadas §18.AC): a diferencia del grupo de aprobaciones, estos DMs no los ve
+// el jefe. Devuelve [] si no hay admins configurados (el caller decide su fallback).
+export function adminDmTargets() {
+  return ADMIN_LIDS();
+}
+
 // ¿Hay un jefe o admin entre los participantes de un grupo?
 // Heurística restart-safe para autorizar grupos: si el dueño o el equipo está
 // dentro, el grupo es legítimo aunque no hayamos capturado el evento de "add".

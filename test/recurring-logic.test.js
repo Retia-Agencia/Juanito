@@ -139,3 +139,72 @@ test('isGeneratedPublishDue: desde la hora en adelante, sin tope, hasta cambiar 
   assert.equal(isGeneratedPublishDue({ ...base, lastSentDate: 'd', nowParts: { date: 'd', hm: '10:00', dow: 4 } }), false, 'ya publicado hoy');
   assert.equal(isGeneratedPublishDue({ ...base, nowParts: { date: 'd', hm: '10:00', dow: 5 } }), false, 'otro día no');
 });
+
+// ─── Override de un solo día (§18.AC: adelantar/atrasar UNA ocurrencia) ────────
+
+test('override: el día del override dispara a la hora nueva, no a la normal', () => {
+  const base = { days: '4', timeHm: '20:00', lastSentDate: null, overrideDate: '2026-06-11', overrideTime: '18:00' };
+  // A la hora del override sí:
+  assert.equal(isRecurringDue({ ...base, nowParts: { ...JUEVES_8PM, hm: '18:00' } }), true);
+  // A la hora NORMAL de ese día no (ya no aplica: el jefe la movió):
+  assert.equal(isRecurringDue({ ...base, nowParts: JUEVES_8PM }), false);
+});
+
+test('override: atrasar (hora nueva DESPUÉS de la normal) también anula la normal', () => {
+  const base = { days: '4', timeHm: '20:00', lastSentDate: null, overrideDate: '2026-06-11', overrideTime: '21:30' };
+  assert.equal(isRecurringDue({ ...base, nowParts: JUEVES_8PM }), false, 'a las 20:00 ya no');
+  assert.equal(isRecurringDue({ ...base, nowParts: { ...JUEVES_8PM, hm: '21:30' } }), true, 'a las 21:30 sí');
+});
+
+test('override: aplica aunque el día no esté en days (el jefe lo movió a ese día)', () => {
+  const viernes = { date: '2026-06-12', hm: '10:00', dow: 5 };
+  assert.equal(
+    isRecurringDue({ days: '0,4', timeHm: '20:00', lastSentDate: null, nowParts: viernes, overrideDate: '2026-06-12', overrideTime: '10:00' }),
+    true
+  );
+});
+
+test('override: en otras fechas todo sigue normal (override futuro o pasado es inerte)', () => {
+  const base = { days: '4', timeHm: '20:00', lastSentDate: null, nowParts: JUEVES_8PM };
+  assert.equal(isRecurringDue({ ...base, overrideDate: '2026-06-18', overrideTime: '18:00' }), true, 'override futuro no afecta hoy');
+  assert.equal(isRecurringDue({ ...base, overrideDate: '2026-06-04', overrideTime: '18:00' }), true, 'override pasado inerte');
+});
+
+test('override: respeta el anti doble-envío (last_sent_date de hoy bloquea)', () => {
+  assert.equal(
+    isRecurringDue({
+      days: '4', timeHm: '20:00', lastSentDate: '2026-06-11',
+      nowParts: { ...JUEVES_8PM, hm: '18:05' }, overrideDate: '2026-06-11', overrideTime: '18:00',
+    }),
+    false
+  );
+});
+
+test('override en isDraftDue/isGeneratedPublishDue: lead y publicación siguen la hora nueva', async () => {
+  const { isDraftDue, isGeneratedPublishDue } = await import('../src/scheduler/recurring-logic.js');
+  const ov = { overrideDate: 'd', overrideTime: '07:00' };
+  // Draft: lead de 60 min ANTES de la hora del override (07:00), no de la normal (09:00).
+  assert.equal(isDraftDue({ days: '4', timeHm: '09:00', leadMin: 60, nowParts: { date: 'd', hm: '06:00', dow: 4 }, ...ov }), true);
+  assert.equal(isDraftDue({ days: '4', timeHm: '09:00', leadMin: 60, nowParts: { date: 'd', hm: '05:59', dow: 4 }, ...ov }), false);
+  // Publicación: desde la hora del override.
+  assert.equal(isGeneratedPublishDue({ days: '4', timeHm: '09:00', lastSentDate: null, nowParts: { date: 'd', hm: '07:00', dow: 4 }, ...ov }), true);
+  assert.equal(isGeneratedPublishDue({ days: '4', timeHm: '09:00', lastSentDate: null, nowParts: { date: 'd', hm: '06:59', dow: 4 }, ...ov }), false);
+});
+
+test('isOutreachDue daily: pasa el override de la fila (adelantado dispara, hora normal no)', async () => {
+  const { isOutreachDue } = await import('../src/scheduler/recurring-logic.js');
+  const row = {
+    recur_kind: 'daily', days: '4', time_hm: '17:00', last_sent_date: null,
+    override_date: '2026-06-11', override_time: '15:00',
+  };
+  const at = (hm) => ({ nowStamp: `2026-06-11 ${hm}:00`, nowParts: { date: '2026-06-11', hm, dow: 4 } });
+  assert.equal(isOutreachDue(row, at('15:00')), true, 'a la hora del override sí');
+  assert.equal(isOutreachDue(row, at('17:00')), false, 'a la hora normal ya no');
+});
+
+test('effectiveTimeHm: hora del override solo el día que aplica', async () => {
+  const { effectiveTimeHm } = await import('../src/scheduler/recurring-logic.js');
+  assert.equal(effectiveTimeHm({ timeHm: '20:00', overrideDate: 'd', overrideTime: '18:00' }, { date: 'd' }), '18:00');
+  assert.equal(effectiveTimeHm({ timeHm: '20:00', overrideDate: 'otro', overrideTime: '18:00' }, { date: 'd' }), '20:00');
+  assert.equal(effectiveTimeHm({ timeHm: '20:00' }, { date: 'd' }), '20:00');
+});
