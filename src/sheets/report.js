@@ -39,8 +39,11 @@ export function formatReport(summary, { startMs, endMs } = {}) {
   }
   if (summary.selfCheckout != null) {
     const { reached, paid } = summary.selfCheckout;
+    // Cuando el pago viene de Stripe (no del tag manual del Sheet), lo marcamos: ese
+    // número es plata cobrada de verdad, sin falsos positivos.
+    const src = summary.paidSource === 'stripe' ? ' ✅ Stripe' : '';
     const avg = a ? `  ·  prom. ${a.days}d: ${d1(a.reached)} (pagaron: ${d1(a.paid)})` : '';
-    lines.push(`💳 Llegaron al self-checkout: ${reached} (pagaron: ${paid})${avg}`);
+    lines.push(`💳 Llegaron al self-checkout: ${reached} (pagaron: ${paid}${src})${avg}`);
   }
 
   for (const cat of summary.breakdown) {
