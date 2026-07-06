@@ -367,6 +367,102 @@ export function markCalendlyPushSkipped(id, reason = '') {
     .run(reason, id);
 }
 
+// ─── Setteo de leads que no agendaron (§18.AD) ────────────────────────────────
+// Mismo rigor de idempotencia/claim que los pushes de Calendly, pero el envío sale
+// por la Cloud API (Twilio), no por Baileys. Una fila por (programa, lead, toque).
+
+// Agenda UN toque (idempotente por UNIQUE(program, lead_key, touch_n)). Devuelve
+// 'new' si insertó, 'exists' si ya estaba (no repisa: el due de un toque no cambia
+// una vez agendado). due_at en 'YYYY-MM-DD HH:MM:SS' UTC.
+export function scheduleSettingTouch({ program, lead_key, to_phone, to_name = null, touch_n, due_at }) {
+  const info = db
+    .prepare(`
+      INSERT INTO setting_schedules (program, lead_key, to_phone, to_name, touch_n, due_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(program, lead_key, touch_n) DO NOTHING
+    `)
+    .run(program, lead_key, to_phone, to_name, touch_n, due_at);
+  return info.changes === 1 ? 'new' : 'exists';
+}
+
+export function getDueSettingTouches() {
+  return db
+    .prepare(`
+      SELECT * FROM setting_schedules
+      WHERE status = 'scheduled' AND due_at <= datetime('now')
+      ORDER BY due_at ASC
+    `)
+    .all();
+}
+
+// Claim atómico (anti doble-envío): toma la fila solo si sigue 'scheduled'. true si
+// ESTE worker la reclamó (la pasó a 'sending'), false si otro ya la tenía.
+export function claimSettingTouch(id) {
+  return db
+    .prepare(`UPDATE setting_schedules SET status = 'sending' WHERE id = ? AND status = 'scheduled'`)
+    .run(id).changes === 1;
+}
+
+// Devuelve una fila reclamada ('sending') a 'scheduled' para reintentar (ej. Cloud API caída).
+export function revertSettingTouch(id) {
+  return db
+    .prepare(`UPDATE setting_schedules SET status = 'scheduled' WHERE id = ? AND status = 'sending'`)
+    .run(id).changes;
+}
+
+export function markSettingSent(id, message = null) {
+  return db
+    .prepare(`UPDATE setting_schedules SET status = 'sent', sent_at = datetime('now'), message = COALESCE(?, message) WHERE id = ?`)
+    .run(message, id).changes;
+}
+
+export function markSettingSkipped(id, reason = '') {
+  return db
+    .prepare(`UPDATE setting_schedules SET status = 'skipped', message = COALESCE(message,'') || ' | skip: ' || ? WHERE id = ?`)
+    .run(reason, id).changes;
+}
+
+// Cancela los toques AÚN vivos ('scheduled') de un lead: se usa cuando el lead agenda
+// entre toques o se da de baja. No toca los ya enviados.
+export function cancelSettingTouches(program, lead_key, reason = 'cancelled') {
+  return db
+    .prepare(`UPDATE setting_schedules SET status = 'cancelled', message = COALESCE(message,'') || ' | ' || ? WHERE program = ? AND lead_key = ? AND status = 'scheduled'`)
+    .run(reason, program, lead_key).changes;
+}
+
+// Conteo por estado (para /setteo status).
+export function countSettingByStatus() {
+  const rows = db.prepare(`SELECT status, COUNT(*) AS n FROM setting_schedules GROUP BY status`).all();
+  return Object.fromEntries(rows.map((r) => [r.status, r.n]));
+}
+
+// ─── Bajas del setteo (opt-out) ───────────────────────────────────────────────
+export function addSettingOptout(phone, reason = null) {
+  const p = normalizePhone(phone);
+  if (!p) return 0;
+  return db
+    .prepare(`INSERT INTO setting_optouts (phone, reason) VALUES (?, ?) ON CONFLICT(phone) DO UPDATE SET reason = excluded.reason, at = CURRENT_TIMESTAMP`)
+    .run(p, reason).changes;
+}
+export function removeSettingOptout(phone) {
+  const p = normalizePhone(phone);
+  if (!p) return 0;
+  return db.prepare(`DELETE FROM setting_optouts WHERE phone = ?`).run(p).changes;
+}
+export function isSettingOptedOut(phone) {
+  const p = normalizePhone(phone);
+  if (!p) return false;
+  return !!db.prepare(`SELECT 1 FROM setting_optouts WHERE phone = ?`).get(p);
+}
+
+// Pausa GLOBAL del setteo (botón de pánico, mismo patrón que Calendly).
+export function isSettingPaused() {
+  return getSetting('setting_paused', '0') === '1';
+}
+export function setSettingPaused(paused) {
+  return setSetting('setting_paused', paused ? '1' : '0');
+}
+
 // ─── Calendly: outcomes post-call (§18.AB) ────────────────────────────────────
 // Fuente de verdad del registro de calls: el estado que el closer confirmó por
 // WhatsApp tras la llamada (Show/No show/Reagendó + resultado). Una fila por call.
@@ -1206,6 +1302,7 @@ export function cleanup() {
     `DELETE FROM group_usage WHERE date < date('now', 'localtime', '-7 days')`,
     `DELETE FROM group_reply_usage WHERE hour_bucket < strftime('%Y-%m-%d-%H', datetime('now', 'localtime', '-2 days'))`,
     `DELETE FROM outreach_schedules WHERE status != 'active' AND created_at < datetime('now', '-30 days')`,
+    `DELETE FROM setting_schedules WHERE status != 'scheduled' AND created_at < datetime('now', '-30 days')`,
   ];
   let total = 0;
   for (const sql of stmts) total += db.prepare(sql).run().changes;

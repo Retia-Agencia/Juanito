@@ -2561,6 +2561,61 @@ de DB verdes DENTRO de la imagen (incluidos los 3 nuevos) con el truco de montar
 "atrasa el mensaje de hoy" (debe preguntar ¿solo hoy o siempre?) y una orden sin tool
 (el aviso debe llegar por DM a los admins, no al grupo de aprobaciones).
 
+### 18.AD 🔵 Setteo a leads que no agendaron — Cloud API oficial (2026-07-05)
+
+**Pedido:** un flujo de *setteo* para los leads que NO agendan llamada (todos los programas,
+incluido EstadoX), evitando el riesgo de ban de WhatsApp. Se evaluó Kapso y otros "third parties":
+todos son la **misma WhatsApp Business Cloud API de Meta** por debajo, así que no evitan las reglas
+de Meta (plantillas aprobadas, opt-in, quality rating) — Kapso además tenía la provisión de números
+caída con Meta desde ~mayo-2026. **Decisión: Cloud API oficial vía Twilio, número WABA DEDICADO.**
+El envío manual a mano (lo de hoy) es cold-outbound → es lo que estaba baneando números; la API
+oficial con plantillas lo vuelve ban-safe.
+
+**Rol de Juanito = CEREBRO, no el brazo.** Igual que los pushes precall, Juanito **no** escribe al
+lead desde su propio Baileys (eso lo banearía). Detecta al lead sin agendar, agenda la cadencia y
+**dispara la plantilla por la Cloud API** (Twilio) desde un número aparte. Un número en Cloud API
+**no puede** correr en Baileys/app a la vez → por eso el número dedicado.
+
+**Fase 1 — EstadoX (Sheet), lo construido:**
+- **Fuente de leads** (`src/setting/lead-source-estadox.js`): reusa `fetchLeadRows()`; "no agendó"
+  = col I (`COL.calendly`) vacía; teléfono col B + nombre col A (PII que el reporte no lee).
+  `toDialable` antepone código país (`SETTING_DEFAULT_CC=57`) si el Form lo trae sin él.
+- **Lógica pura** (`src/setting/setting-logic.js`): compuerta por antigüedad
+  (`SETTING_ENROLL_MAX_AGE_H=48`, evita ráfagas a leads viejos al estrenar) + **máx 2 toques**
+  (toque 1 a ~2h, toque 2 a ~48h; el 3.º no aporta bookings). Los `due` se cuentan desde que
+  Juanito ve al lead, no desde la postulación.
+- **Envío** (`src/whatsapp/cloud-api.js`): adaptador Twilio (`sendTemplate` → Content SID +
+  ContentVariables), aislado de Baileys, con pacing cortés vía `createSendQueue`. Plantillas por
+  programa/toque en env (`SETTING_TEMPLATE_ABOGADOS_TOUCH1/2`); si falta la de un toque, ese toque
+  se SALTA (no se inventa texto libre fuera de la ventana de 24h).
+- **Orquestación** (`src/setting/index.js` + `src/scheduler/setting.js`): cron `SETTING_CRON`
+  (cada 10 min) que enrola + entrega. Calca de Calendly: **claim atómico**, idempotencia
+  `UNIQUE(program, lead_key, touch_n)`, **re-check** antes de enviar (si ya agendó o se dio de baja
+  → `cancelSettingTouches`), quiet hours (pausa, no avanza), **FYI al jefe** por cada envío. Se
+  autodesactiva sin credenciales Twilio o sin `GOOGLE_SA_KEY`. `SETTING_DRY_RUN` default **true**.
+- **DB** (`setting_schedules` + `setting_optouts` en `migrate.js`; funciones en `db/index.js`).
+- **Comando** `/setteo [on|off]` (botón de pánico global) · `/setteo baja|alta <número>` (opt-out
+  manual — en Fase 1 sin webhook, el equipo marca las bajas que vea en el inbox de Twilio).
+- **Inbound (Fase 1):** solo saliente. Las respuestas del lead caen en el **inbox de Twilio** y las
+  atiende el setter (regla del repo: no exponer puertos → sin webhook). Automatizar el inbound =
+  mejora posterior.
+
+**Fase 2 — 30X (HubSpot):** mismo motor, nueva fuente `lead-source-30x.js` que lee el tag
+`DESATENDIDO` (`hs_tag_ids` `25397556`) + teléfono vía **HubSpot API con private-app token del
+runtime** (`HUBSPOT_TOKEN`) — el MCP de HubSpot es del lado de Claude, no del bot. Pendiente.
+
+**Setup pendiente (fuera de código):** crear cuenta Twilio, comprar número (sin SIM), registrarlo
+como WhatsApp sender, aprobar las 2 plantillas (categoría marketing, variable `{{1}}`=nombre),
+poblar el `.env`. Luego probar en sandbox con `SETTING_DRY_RUN=false` a un número propio, validar el
+estado en `setting_schedules`, y abrir a producción.
+
+**Tests:** `setting-logic` (8 puros), `cloud-api` (3 con fetch falso), `setting` (10 del ciclo con
+`__setDeps`) — **21 verdes en Windows**. La capa DB (`setting_schedules`/optouts) corre en el
+contenedor/VPS como el resto de los `data.*` (better-sqlite3 no compila en Windows).
+
+**Estado:** código en la rama `feat/reschedule-y-escalado`. **NO desplegado.** Falta el setup de
+Twilio + plantillas antes de poder activarlo (arranca en DRY_RUN, inerte, hasta configurar el env).
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):

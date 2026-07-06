@@ -7,6 +7,7 @@
 // (recurring-logic es PURO — seguro de importar.)
 
 import { csvToDayLabels, zonedNowParts } from '../scheduler/recurring-logic.js';
+import { validatePhone } from '../common/utils.js';
 
 // Reconoce el comando unificado de reportes y sus alias (/reportes, /reporte, /metricas).
 // `cmd` es el texto en minúsculas y sin espacios al borde. Exportado para que el router
@@ -61,6 +62,14 @@ export async function handleCommand({ text, sender, role }, deps = {}) {
   if (cmd === '/calendly' || cmd.startsWith('/calendly ')) {
     if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
     return handleCalendly(text, deps);
+  }
+
+  // /setteo [on|off] · /setteo baja|alta <número> — control del setteo a leads que no
+  // agendaron (§18.AD). Pausa global (botón de pánico) y gestión de bajas (opt-out) que,
+  // en la Fase 1 sin webhook, el equipo marca a mano al verlas en el inbox de Twilio.
+  if (cmd === '/setteo' || cmd.startsWith('/setteo ')) {
+    if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
+    return handleSetteo(text, deps);
   }
 
   // /grupos [on|off] [n|nombre] — visibilidad y control remoto de los grupos de
@@ -591,6 +600,7 @@ function buildHelp(role) {
       '• /tareas [ver|hecha|descartar <id>] — órdenes del jefe por hacer',
       '• /negocio [pendientes|ok|no|olvida <id>] — contexto del negocio',
       '• /calendly [on|off] [closer] — pushes precall',
+      '• /setteo [on|off] · /setteo baja|alta <número> — setteo a leads sin agendar',
       '• /reportes [leads|metricas] — preview (en grupo lo publica; jefe/admin)',
       '• /status — estado del sistema',
       '• /whoami · /id — tu ID y rol',
@@ -756,6 +766,68 @@ function handleCalendly(text, deps = {}) {
   return pause
     ? 'Pushes de Calendly: PAUSADOS ⏸️ (global) — no se enviará nada hasta `/calendly on`.'
     : 'Pushes de Calendly: reactivados ▶️ (global).';
+}
+
+// /setteo … — control del setteo a leads que no agendaron (§18.AD).
+function handleSetteo(text, deps = {}) {
+  const { isSettingPaused, setSettingPaused, countSettingByStatus, addSettingOptout, removeSettingOptout } = deps;
+  const parts = (text || '').trim().split(/\s+/); // [ '/setteo', action?, número? ]
+  const action = (parts[1] || 'status').toLowerCase();
+  const arg = parts.slice(2).join(' ').trim();
+
+  if (action === 'status') return buildSetteoStatus(deps);
+
+  if (action === 'on' || action === 'off') {
+    const pause = action === 'off';
+    if (setSettingPaused) setSettingPaused(pause);
+    return pause
+      ? 'Setteo: PAUSADO ⏸️ (global) — no se enrola ni se envía hasta `/setteo on`.'
+      : 'Setteo: reactivado ▶️ (global).';
+  }
+
+  if (action === 'baja' || action === 'alta') {
+    const v = validatePhone(arg);
+    if (!v.ok) return `Uso: /setteo ${action} <número con código país> (ej: /setteo ${action} 573105551234)`;
+    if (action === 'baja') {
+      const n = addSettingOptout ? addSettingOptout(v.digits, 'manual') : 0;
+      return n
+        ? `Listo: ${v.digits} queda de BAJA 🚫 — no recibirá más setteo (y se cancelan sus toques vivos en el próximo ciclo).`
+        : `No pude registrar la baja de ${v.digits}.`;
+    }
+    const n = removeSettingOptout ? removeSettingOptout(v.digits) : 0;
+    return n
+      ? `Listo: ${v.digits} vuelve a estar habilitado para setteo ✅`
+      : `${v.digits} no estaba de baja, no hay nada que reactivar.`;
+  }
+
+  return 'Uso: /setteo [on|off] · /setteo baja <número> · /setteo alta <número>';
+}
+
+function buildSetteoStatus({ isSettingPaused, countSettingByStatus } = {}) {
+  let paused = false;
+  try {
+    paused = isSettingPaused ? isSettingPaused() : false;
+  } catch {
+    /* DB puede no estar lista */
+  }
+  const dryRun = (process.env.SETTING_DRY_RUN ?? 'true') !== 'false';
+  const hasCreds = !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_WA_FROM);
+  const lines = [
+    '📨 Setteo — leads que no agendaron',
+    `Estado global: ${paused ? 'PAUSADO ⏸️' : 'activo ▶️'}`,
+    `Cloud API (Twilio): ${hasCreds ? 'configurada ✅' : 'FALTA ⚠️'}`,
+    `DRY_RUN: ${dryRun ? 'ON (no envía)' : 'OFF (envía real ⚠️)'}`,
+  ];
+  try {
+    const counts = countSettingByStatus ? countSettingByStatus() : {};
+    const fmt = ['scheduled', 'sent', 'skipped', 'cancelled', 'sending']
+      .map((s) => `${s}: ${counts[s] || 0}`)
+      .join(' · ');
+    lines.push(`Toques → ${fmt}`);
+  } catch {
+    /* opcional */
+  }
+  return lines.join('\n');
 }
 
 function buildCalendlyStatus({ isCalendlyPaused, listOptins } = {}) {

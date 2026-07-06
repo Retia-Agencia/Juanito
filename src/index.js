@@ -45,6 +45,11 @@ import {
   listProposedBusinessFacts,
   getBusinessFact,
   setBusinessFactStatus,
+  isSettingPaused,
+  setSettingPaused,
+  countSettingByStatus,
+  addSettingOptout,
+  removeSettingOptout,
 } from './db/index.js';
 import { resolveCloserByPushName } from './calendly/closers.js';
 import { getHealth } from './calendly/health.js';
@@ -193,6 +198,12 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
         listProposedBusinessFacts,
         getBusinessFact,
         setBusinessFactStatus,
+        // /setteo — control del setteo a leads que no agendaron (§18.AD)
+        isSettingPaused,
+        setSettingPaused,
+        countSettingByStatus,
+        addSettingOptout,
+        removeSettingOptout,
       }
     );
     if (cmdReply !== null) {

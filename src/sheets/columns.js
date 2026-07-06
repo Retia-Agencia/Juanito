@@ -12,6 +12,10 @@ export const COL = {
   inversion: 6,    // G — "¿invertir hasta $1200 USD?" (Sí / No / Sí pero financiado)
   momento: 12,     // M — "¿Cuál describe mejor tu momento profesional?" — ya no entra al reporte
   calendly: 8,     // I — "Agenda aquí tu entrevista final…" → URL de invitee de Calendly (booked si no vacío)
+  // PII — NO entra al reporte del grupo. Lo usa SOLO el setteo de leads que no agendaron
+  // (§18.AD), que envía por la Cloud API oficial (no por Baileys). name = A, phone = B.
+  name: 0,         // A — "¿Cuál es tu nombre completo?"
+  phone: 1,        // B — "¿Cuál es tu telefono?"
 };
 
 // Categorías para el desglose del reporte. El orden de este arreglo = el orden en

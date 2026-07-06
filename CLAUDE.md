@@ -59,7 +59,8 @@ Cron jobs centralizados en `src/scheduler/index.js` (`startAllJobs()`) — ahí 
 completo con horarios. Cada job **se autodesactiva si le falta su token/destino**, para no romper
 el arranque. Cubren: recordatorios, limpieza diaria, resúmenes de grupos, Calendly (Push 0-3),
 reporte de Sheets, mensajes recurrentes a grupos, mensajes a terceros por orden del jefe
-(`schedule_outreach`) y respuestas con aprobación.
+(`schedule_outreach`), setteo a leads que no agendaron vía Cloud API oficial (§18.AD) y respuestas
+con aprobación.
 
 ## Sistema de roles
 
@@ -70,9 +71,10 @@ pruebas. Detalle en §3 del handoff.
 
 ## Comandos (DM admin)
 
-`/confirmaciones [dm|grupo …] on|off` · `/calendly on|off [closer]` · `/grupos` ·
-`/reporte(s)` · `/persona <grupo> | <texto>` · `/programados` · `/aprobaciones` · `/respuestas` ·
-`/status` · `/whoami` · `/id` — manual completo en [docs/MANUAL-DE-USO.md](docs/MANUAL-DE-USO.md).
+`/confirmaciones [dm|grupo …] on|off` · `/calendly on|off [closer]` ·
+`/setteo on|off | baja|alta <número>` · `/grupos` · `/reporte(s)` · `/persona <grupo> | <texto>` ·
+`/programados` · `/aprobaciones` · `/respuestas` · `/status` · `/whoami` · `/id` — manual completo
+en [docs/MANUAL-DE-USO.md](docs/MANUAL-DE-USO.md).
 
 ## Variables de entorno
 

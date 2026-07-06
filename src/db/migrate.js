@@ -302,6 +302,41 @@ db.exec(`
     decided_by  TEXT,
     decided_at  DATETIME
   );
+
+  -- Setteo de leads que NO agendaron llamada (§18.AD). A diferencia de los pushes
+  -- precall de Calendly (que van al CLOSER), estas plantillas salen POR LA CLOUD API
+  -- oficial (Twilio) a un número WABA DEDICADO, jamás por Baileys → cero riesgo de ban
+  -- al número de Juanito. Juanito solo orquesta: detecta al lead sin agendar, agenda una
+  -- cadencia corta (máx 2 toques) y dispara la plantilla aprobada. Una fila por
+  -- (programa, lead, toque). due_at en UTC (comparable con datetime('now')).
+  --   status: scheduled → agendado, aún no vence
+  --           sending   → reclamado por un worker (claim atómico anti doble-envío)
+  --           sent      → plantilla enviada por la Cloud API
+  --           skipped   → no se envió (opt-out / sin plantilla configurada)
+  --           cancelled → el lead agendó entre toques, o se dio de baja
+  CREATE TABLE IF NOT EXISTS setting_schedules (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    program      TEXT NOT NULL,                    -- abogados (EstadoX) | ... (30X, Fase 2)
+    lead_key     TEXT NOT NULL,                    -- teléfono normalizado (dedup estable)
+    to_phone     TEXT NOT NULL,                    -- número marcable (con código país)
+    to_name      TEXT,
+    touch_n      INTEGER NOT NULL,                 -- 1 | 2
+    due_at       TEXT NOT NULL,                    -- 'YYYY-MM-DD HH:MM:SS' UTC
+    status       TEXT NOT NULL DEFAULT 'scheduled',
+    message      TEXT,                             -- copia legible de lo enviado (auditoría)
+    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+    sent_at      DATETIME,
+    UNIQUE(program, lead_key, touch_n)
+  );
+
+  -- Bajas del setteo: un número aquí nunca recibe más plantillas de setteo. En la Fase 1
+  -- (sin webhook, por la regla de no-puertos) lo llena un admin a mano con /setteo baja
+  -- <número> cuando ve una baja en el inbox de Twilio.
+  CREATE TABLE IF NOT EXISTS setting_optouts (
+    phone   TEXT PRIMARY KEY,   -- número normalizado (solo dígitos)
+    reason  TEXT,
+    at      DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // ─── 2. Migración de bases existentes (esquema viejo) ─────────────────────────
@@ -423,6 +458,8 @@ db.exec(`
   -- §18.AB: outcomes pendientes por closer (captura de respuesta) + insistencia por asked_at.
   CREATE INDEX IF NOT EXISTS idx_call_outcomes_pending ON call_outcomes(status, closer_phone, asked_at);
   CREATE INDEX IF NOT EXISTS idx_call_outcomes_program ON call_outcomes(program, call_start);
+  -- §18.AD: setteo — entrega de toques vencidos (status='scheduled' AND due_at<=now).
+  CREATE INDEX IF NOT EXISTS idx_setting_due ON setting_schedules(status, due_at);
 `);
 
 console.log('✅ Base de datos lista en', DB_PATH);

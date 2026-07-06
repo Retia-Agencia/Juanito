@@ -13,6 +13,7 @@ import { startOutcomeReportJob } from './outcome-report.js';
 import { startGroupMessagesJob } from './group-messages.js';
 import { startGroupRepliesJob } from './group-replies.js';
 import { startOutreachJob } from './outreach.js';
+import { startSettingJob } from './setting.js';
 import { startBusinessExtractionJob } from './business-extraction.js';
 import { cleanup } from '../db/index.js';
 
@@ -92,5 +93,13 @@ export async function startAllJobs() {
     startBusinessExtractionJob();
   } catch (err) {
     console.warn('[Scheduler] Extracción de negocio no disponible:', err.message);
+  }
+
+  // Setteo a leads que no agendaron (§18.AD) por la Cloud API oficial. Se autodesactiva
+  // sin credenciales Twilio o sin GOOGLE_SA_KEY. Default DRY_RUN (no envía).
+  try {
+    startSettingJob();
+  } catch (err) {
+    console.warn('[Scheduler] Setteo no disponible:', err.message);
   }
 }
