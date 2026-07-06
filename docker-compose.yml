@@ -113,6 +113,20 @@ services:
       # programa. ENABLED=false lo apaga (ej: durante un test acotado a un closer).
       - OUTCOME_REPORT_ENABLED=${OUTCOME_REPORT_ENABLED:-true}
       - OUTCOME_REPORT_CRON=${OUTCOME_REPORT_CRON:-0 22 * * *}
+      # Setteo a leads que no agendaron (§18.AD) — Cloud API oficial (Twilio) en número
+      # DEDICADO. Sin credenciales Twilio o sin GOOGLE_SA_KEY el job se autodesactiva.
+      # Arranca en DRY_RUN por default (no envía). Ver docs/SETTEO-SETUP.md.
+      - SETTING_DRY_RUN=${SETTING_DRY_RUN:-true}
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
+      - TWILIO_WA_FROM=${TWILIO_WA_FROM:-}
+      - SETTING_TEMPLATE_ABOGADOS_TOUCH1=${SETTING_TEMPLATE_ABOGADOS_TOUCH1:-}
+      - SETTING_TEMPLATE_ABOGADOS_TOUCH2=${SETTING_TEMPLATE_ABOGADOS_TOUCH2:-}
+      - SETTING_CRON=${SETTING_CRON:-*/10 * * * *}
+      - SETTING_ENROLL_MAX_AGE_H=${SETTING_ENROLL_MAX_AGE_H:-48}
+      - SETTING_TOUCH1_DELAY_MIN=${SETTING_TOUCH1_DELAY_MIN:-120}
+      - SETTING_TOUCH2_DELAY_MIN=${SETTING_TOUCH2_DELAY_MIN:-2880}
+      - SETTING_DEFAULT_CC=${SETTING_DEFAULT_CC:-57}
       # QR web server — solo durante la vinculación inicial.
       # Descomentar la línea de abajo y agregar QR_PORT=3001 al .env.
       # Volver a comentar una vez vinculado.
