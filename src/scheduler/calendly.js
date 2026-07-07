@@ -180,35 +180,39 @@ function isAuthError(msg) {
 // pausa por-closer (`optin.paused`) corta solo a ese closer. Es ortogonal a DRY_RUN
 // (master dev-only del .env) y se controla en caliente desde la DB, sin redeploy.
 async function deliver(d, to, text, tag) {
+  // Etiqueta de log: distingue la fuente inyectada (ej. 'HubSpot') del default 'Calendly'.
+  const L = d.logLabel || 'Calendly';
   // 1) Pausa global: botón de pánico — apaga absolutamente todo.
   if (d.isCalendlyPaused && d.isCalendlyPaused()) {
-    console.log(`[Calendly] PAUSADO (global) → ${to}: omito (${tag})`);
+    console.log(`[${L}] PAUSADO (global) → ${to}: omito (${tag})`);
     return 'paused';
   }
   // 2) Opt-in GANADO requerido (anti-ban).
   if (REQUIRE_OPTIN() && !d.isOptedIn(to)) {
-    console.log(`[Calendly] OMITIDO (${tag}) → ${to}: el closer aún no le ha escrito a Juanito (sin opt-in)`);
+    console.log(`[${L}] OMITIDO (${tag}) → ${to}: el closer aún no le ha escrito a Juanito (sin opt-in)`);
     return 'skipped-optin';
   }
   const optin = d.getOptin ? d.getOptin(to) : null;
   // 3) Pausa por-closer.
   if (optin?.paused) {
-    console.log(`[Calendly] PAUSADO (closer ${to}): omito (${tag})`);
+    console.log(`[${L}] PAUSADO (closer ${to}): omito (${tag})`);
     return 'paused-closer';
   }
   // 4) Entrega estricta: solo a un hilo YA establecido (contact_jid). Sin él, no se envía.
   const target = optin?.contact_jid;
   if (!target) {
-    console.log(`[Calendly] OMITIDO (${tag}) → ${to}: sin hilo establecido (contact_jid) — no se entrega para evitar envío en frío`);
+    console.log(`[${L}] OMITIDO (${tag}) → ${to}: sin hilo establecido (contact_jid) — no se entrega para evitar envío en frío`);
     return 'skipped-no-thread';
   }
   const via = ` [hilo de opt-in; closer ${to}]`;
-  if (DRY_RUN()) {
-    console.log(`[Calendly][DRY-RUN] (${tag}) → ${target}${via}\n${text}\n`);
+  // dryRunOverride: una fuente inyectada (ej. validación en paralelo de HubSpot) fuerza
+  // DRY-RUN y jamás envía, aunque CALENDLY_DRY_RUN=false. Es ortogonal al DRY_RUN global.
+  if (DRY_RUN() || d.dryRunOverride) {
+    console.log(`[${L}][DRY-RUN] (${tag}) → ${target}${via}\n${text}\n`);
     return 'dry-run';
   }
   await d.sendMessage(target, text);
-  console.log(`[Calendly] enviado (${tag}) → ${target}${via}`);
+  console.log(`[${L}] enviado (${tag}) → ${target}${via}`);
   return 'sent';
 }
 
@@ -551,8 +555,12 @@ function whenLabel(offsetDays, nowMs = Date.now()) {
   return offsetDays === 1 ? `mañana (${fmt})` : `hoy (${fmt})`;
 }
 
-async function runDigest(pushN, offsetDays) {
-  const d = await deps();
+async function runDigest(pushN, offsetDays, source = null) {
+  // source === null → comportamiento idéntico al de siempre (Calendly). Una fuente
+  // inyectada (ej. HubSpot en validación) reemplaza API/DB/WhatsApp y trae su propia
+  // etiqueta de log (logLabel) y, si aplica, dryRunOverride.
+  const d = source || (await deps());
+  const L = d.logLabel || 'Calendly';
   const nowMs = d.now();
   const { minStartIso, maxStartIso } = dayRangeUtc(TZ(), offsetDays, new Date(nowMs));
 
@@ -561,9 +569,9 @@ async function runDigest(pushN, offsetDays) {
     events = await d.listProgramEvents({ minStartIso, maxStartIso });
   } catch (e) {
     recordPollError(e.message);
-    console.error(`[Calendly] digest push${pushN}: error listando:`, e.message);
+    console.error(`[${L}] digest push${pushN}: error listando:`, e.message);
     if (isAuthError(e.message)) {
-      await notifyAdmins(d, `Calendly rechazó el token (${e.message.slice(0, 80)}). Los pushes están caídos hasta rotarlo.`, 'token');
+      await notifyAdmins(d, `${L} rechazó el token (${e.message.slice(0, 80)}). Los pushes están caídos hasta rotarlo.`, `token:${L}`);
     }
     return 0;
   }
@@ -575,8 +583,8 @@ async function runDigest(pushN, offsetDays) {
     if (!closer) {
       if (isIgnoredCloser(email)) continue; // host conocido, no gestionado aún → silencio
       recordUnmapped(email);
-      console.warn(`[Calendly] digest push${pushN}: sin closer para "${email}" — omito cita`);
-      await notifyAdmins(d, `Closer sin mapear en Calendly: ${email}. Esa(s) cita(s) no recibirán pushes — agrégalo a src/calendly/closers.js.`, `unmapped:${email}`);
+      console.warn(`[${L}] digest push${pushN}: sin closer para "${email}" — omito cita`);
+      await notifyAdmins(d, `Closer sin mapear (${L}): ${email}. Esa(s) cita(s) no recibirán pushes — agrégalo a src/calendly/closers.js.`, `unmapped:${email}`);
       continue;
     }
     let invitee = null;
@@ -609,11 +617,16 @@ async function runDigest(pushN, offsetDays) {
     await deliver(d, phone, msg, `push${pushN}`);
   }
 
+  const dryLabel = DRY_RUN() || d.dryRunOverride ? ' [DRY-RUN]' : '';
   console.log(
-    `[Calendly] Digest ${label}: ${byCloser.size} closers, ${events.length} citas${DRY_RUN() ? ' [DRY-RUN]' : ''}`
+    `[${L}] Digest ${label}: ${byCloser.size} closers, ${events.length} citas${dryLabel}`
   );
   return byCloser.size;
 }
+
+// Exportado para que la fuente de HubSpot (src/scheduler/hubspot.js) reuse el mismo
+// digest inyectándose como `source`. runPush1/runPush2 llaman sin source → Calendly.
+export { runDigest };
 
 export const runPush1 = () => runDigest(1, 1); // mañana
 export const runPush2 = () => runDigest(2, 0); // hoy

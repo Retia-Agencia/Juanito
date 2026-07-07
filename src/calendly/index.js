@@ -57,12 +57,21 @@ const PROGRAMS = {
   [LINKEDIN_ET]: 'linkedin',
 };
 
+// Claves de programa ya resueltas (second_brain / abogados / linkedin). La fuente de
+// HubSpot no tiene URIs de event_type: pasa directamente la clave del programa como
+// `event_type`, así que programKeyOf debe aceptarla tal cual (ver abajo).
+const KNOWN_PROGRAM_KEYS = new Set(Object.values(PROGRAMS));
+
 // Acepta el event_type (string) o el evento completo. Devuelve la clave de
 // programa | null (null si el event_type no es de los productos conocidos).
 export function programKeyOf(eventTypeOrEvent) {
   const et =
     typeof eventTypeOrEvent === 'string' ? eventTypeOrEvent : eventTypeOrEvent?.event_type;
-  return PROGRAMS[et] || null;
+  if (PROGRAMS[et]) return PROGRAMS[et];
+  // Fuente HubSpot: el adaptador entrega la clave de programa ya resuelta como event_type.
+  // Aceptarla no cambia el comportamiento con las URIs de Calendly (mapean por PROGRAMS).
+  if (KNOWN_PROGRAM_KEYS.has(et)) return et;
+  return null;
 }
 
 // Link de la llamada (Push 3): Calendly guarda el join_url del conferencing en

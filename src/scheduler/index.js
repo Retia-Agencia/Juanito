@@ -7,6 +7,7 @@
 import { CronJob } from 'cron';
 import { startReminderJob } from './reminders.js';
 import { startCalendlyJobs } from './calendly.js';
+import { startHubspotJobs } from './hubspot.js';
 import { startSheetsReportJob } from './sheets-report.js';
 import { startSheetsMetricsJob } from './sheets-metrics.js';
 import { startOutcomeReportJob } from './outcome-report.js';
@@ -53,6 +54,15 @@ export async function startAllJobs() {
     startCalendlyJobs();
   } catch (err) {
     console.warn('[Scheduler] Calendly no disponible:', err.message);
+  }
+
+  // Validación en paralelo de HubSpot como fuente del motor precall (se autodesactiva si
+  // falta HUBSPOT_TOKEN). Fase 1: digests Push 1/2 en DRY-RUN forzado (solo loguea) para
+  // comparar contra Calendly antes de cortar.
+  try {
+    startHubspotJobs();
+  } catch (err) {
+    console.warn('[Scheduler] HubSpot no disponible:', err.message);
   }
 
   // Reporte diario de leads del Sheet (se autodesactiva si falta GOOGLE_SA_KEY o grupo)
