@@ -67,6 +67,36 @@ export async function searchDeals({ minStartIso, maxStartIso, pipelines, token =
   return out;
 }
 
+// Trae UN deal por id (re-validación en la entrega: ¿sigue "Agendado"? ¿cambió la hora?).
+// `properties` es la lista a pedir (incluye la propiedad del join URL si está configurada).
+export async function getDealById({ id, properties = DEAL_PROPERTIES, token = HUBSPOT_TOKEN() }) {
+  if (!token) throw new Error('[hubspot] HUBSPOT_TOKEN no configurado');
+  const qs = new URLSearchParams({ properties: properties.join(',') });
+  return get(`/crm/v3/objects/deals/${encodeURIComponent(id)}?${qs}`, token);
+}
+
+// GET con Bearer + 429/Retry-After (misma disciplina que post()).
+async function get(path, token, { retries = 3 } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(API + path, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.status === 429 && attempt < retries) {
+      const retryAfter = Number(res.headers.get('retry-after')) || 2 ** attempt;
+      console.warn(`[hubspot] 429 rate limit — esperando ${retryAfter}s`);
+      await sleep(retryAfter * 1000);
+      continue;
+    }
+    const text = await res.text();
+    if (!res.ok) throw new Error(`[hubspot] HubSpot ${res.status}: ${text.slice(0, 300)}`);
+    try {
+      return JSON.parse(text);
+    } catch {
+      return {};
+    }
+  }
+}
+
 // POST con Bearer. Maneja 429 (Retry-After), lee el body una sola vez y lanza con
 // status + body truncado (mismo patrón que stripe/client.js y cloud-api.js). Los errores
 // 401/403 se propagan → el motor los detecta con isAuthError() y alerta al admin.

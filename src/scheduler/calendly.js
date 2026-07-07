@@ -138,6 +138,9 @@ async function deps() {
     isCalendlyPaused: db.isCalendlyPaused,
     sendMessage: whatsapp.sendMessage,
     now: () => Date.now(),
+    // Construye la URL/identificador que getEvent re-consulta al entregar. Default Calendly;
+    // una fuente inyectada (HubSpot) lo sustituye por su propio identificador de deal.
+    eventUri: (uuid) => `https://api.calendly.com/scheduled_events/${uuid}`,
   };
 }
 
@@ -218,8 +221,11 @@ async function deliver(d, to, text, tag) {
 
 // ─── Poll: descubre citas y agenda Push 3 ─────────────────────────────────────
 
-export async function runCalendlyPoll() {
-  const d = await deps();
+export async function runCalendlyPoll(source = null) {
+  // source === null → Calendly (deps() con __setDeps para tests). Una fuente inyectada
+  // (HubSpot) reemplaza API/DB y trae su propia etiqueta de log.
+  const d = source || (await deps());
+  const L = d.logLabel || 'Calendly';
   const nowMs = d.now();
   const now = new Date(nowMs);
   const minStartIso = new Date(nowMs - 5 * 60000).toISOString();
@@ -230,9 +236,9 @@ export async function runCalendlyPoll() {
     events = await d.listProgramEvents({ minStartIso, maxStartIso });
   } catch (e) {
     recordPollError(e.message);
-    console.error('[Calendly] poll: error listando eventos:', e.message);
+    console.error(`[${L}] poll: error listando eventos:`, e.message);
     if (isAuthError(e.message)) {
-      await notifyAdmins(d, `Calendly rechazó el token (${e.message.slice(0, 80)}). Los pushes están caídos hasta rotarlo.`, 'token');
+      await notifyAdmins(d, `${L} rechazó el token (${e.message.slice(0, 80)}). Los pushes están caídos hasta rotarlo.`, `token:${L}`);
     }
     return 0;
   }
@@ -253,8 +259,8 @@ export async function runCalendlyPoll() {
       if (!closer) {
         if (isIgnoredCloser(email)) continue; // host conocido, no gestionado aún → silencio
         recordUnmapped(email);
-        console.warn(`[Calendly] poll: sin closer mapeado para "${email}" (evento ${uuid}) — omito`);
-        await notifyAdmins(d, `Closer sin mapear en Calendly: ${email}. Esa(s) cita(s) no recibirán pushes — agrégalo a src/calendly/closers.js.`, `unmapped:${email}`);
+        console.warn(`[${L}] poll: sin closer mapeado para "${email}" (evento ${uuid}) — omito`);
+        await notifyAdmins(d, `Closer sin mapear (${L}): ${email}. Esa(s) cita(s) no recibirán pushes — agrégalo a src/calendly/closers.js.`, `unmapped:${email}`);
         continue;
       }
 
@@ -290,7 +296,7 @@ export async function runCalendlyPoll() {
         nuevos++;
         const tag = sched.immediate ? ' [catch-up]' : '';
         console.log(
-          `[Calendly] Push 3 ${result}${tag} → ${closer.name} | ${firstName} | ${formatCallTime(ev.start_time)} (due ${toSqliteUtc(due)} UTC)`
+          `[${L}] Push 3 ${result}${tag} → ${closer.name} | ${firstName} | ${formatCallTime(ev.start_time)} (due ${toSqliteUtc(due)} UTC)`
         );
       }
 
@@ -298,7 +304,9 @@ export async function runCalendlyPoll() {
       // Se agenda para start + duración + gracia (default 30+5). Mismo dedup
       // (UNIQUE event_uuid+push_n). El mensaje real se reconstruye al entregar.
       // Gateado por allowlist (PUSH4_CLOSERS) para rollouts acotados a un closer.
-      if (PUSH4_ENABLED() && push4AllowedFor(email)) {
+      // Una fuente inyectada puede desactivar Push 4 (ej. HubSpot: el outcome post-call
+      // queda para una fase posterior) via d.push4Enabled, sin tocar el env global.
+      if ((d.push4Enabled ?? PUSH4_ENABLED()) && push4AllowedFor(email)) {
         const due4 = push4DueUtc(ev.start_time, CALL_DURATION_MIN(), PUSH4_GRACE_MIN());
         const r4 = d.scheduleCalendlyPush({
           event_uuid: uuid,
@@ -314,7 +322,7 @@ export async function runCalendlyPoll() {
         });
         if (r4 === 'new' || r4 === 'rescheduled') {
           console.log(
-            `[Calendly] Push 4 ${r4} → ${closer.name} | ${firstName} | call ${formatCallTime(ev.start_time)} (pregunta ${toSqliteUtc(due4)} UTC)`
+            `[${L}] Push 4 ${r4} → ${closer.name} | ${firstName} | call ${formatCallTime(ev.start_time)} (pregunta ${toSqliteUtc(due4)} UTC)`
           );
         }
       }
@@ -348,19 +356,19 @@ export async function runCalendlyPoll() {
           });
           if (r0 === 'new') {
             console.log(
-              `[Calendly] Push 0 (nueva call HOY) → ${closer.name} | ${firstName} | ${formatCallTime(ev.start_time)}`
+              `[${L}] Push 0 (nueva call HOY) → ${closer.name} | ${firstName} | ${formatCallTime(ev.start_time)}`
             );
           }
         }
       }
     } catch (e) {
-      console.error(`[Calendly] poll: error en evento ${ev.uri}:`, e.message);
+      console.error(`[${L}] poll: error en evento ${ev.uri}:`, e.message);
     }
   }
 
   recordPollOk(events.length);
   console.log(
-    `[Calendly] Poll completo: ${events.length} citas, ${nuevos} push 3 agendados/actualizados${DRY_RUN() ? ' [DRY-RUN]' : ''}`
+    `[${L}] Poll completo: ${events.length} citas, ${nuevos} push 3 agendados/actualizados${DRY_RUN() || d.dryRunOverride ? ' [DRY-RUN]' : ''}`
   );
   return nuevos;
 }
@@ -373,14 +381,15 @@ export async function runCalendlyPoll() {
 
 let _delivering = false;
 
-export async function runCalendlyDelivery() {
+export async function runCalendlyDelivery(source = null) {
+  const L = source?.logLabel || 'Calendly';
   if (_delivering) {
-    console.log('[Calendly] deliver: ya hay una entrega en curso, salto este tick');
+    console.log(`[${L}] deliver: ya hay una entrega en curso, salto este tick`);
     return 0;
   }
   _delivering = true;
   try {
-    const d = await deps();
+    const d = source || (await deps());
     const due = d.getDueCalendlyPushes();
     let procesados = 0;
     for (const p of due) {
@@ -391,7 +400,9 @@ export async function runCalendlyDelivery() {
         // INVIERTE el guard de obsolescencia: este push es JUSTAMENTE post-call
         // (due = start + duración + gracia), así que NO se salta por "ya pasó".
         if (p.push_n === 4) {
-          const uri4 = `https://api.calendly.com/scheduled_events/${p.event_uuid}`;
+          const uri4 = d.eventUri
+            ? d.eventUri(p.event_uuid)
+            : `https://api.calendly.com/scheduled_events/${p.event_uuid}`;
           let ev4 = null;
           try {
             ev4 = await d.getEvent(uri4);
@@ -413,13 +424,13 @@ export async function runCalendlyDelivery() {
                 asistencia: 'cancelado',
               });
             d.markCalendlyPushSent(p.id);
-            console.log(`[Calendly] Push 4 #${p.id}: cita cancelada → outcome auto (no se pregunta)`);
+            console.log(`[${L}] Push 4 #${p.id}: cita cancelada → outcome auto (no se pregunta)`);
             continue;
           }
           // Reagendada a otra hora → no preguntar ahora; el poll reagenda el Push 4.
           if (ev4 && ev4.status === 'active' && toSqliteUtc(new Date(ev4.start_time)) !== p.call_start) {
             d.markCalendlyPushSkipped(p.id, 'reagendada (el poll reagenda el push 4)');
-            console.log(`[Calendly] Push 4 #${p.id} omitido: reagendada`);
+            console.log(`[${L}] Push 4 #${p.id} omitido: reagendada`);
             continue;
           }
 
@@ -463,11 +474,13 @@ export async function runCalendlyDelivery() {
         // Push 1/2 no pasan por aquí; se calculan a hora fija por cron.)
         if (toSqliteUtc(new Date(d.now())) >= p.call_start) {
           d.markCalendlyPushSkipped(p.id, 'llamada ya pasó (push obsoleto)');
-          console.log(`[Calendly] Push ${p.push_n} #${p.id} omitido: llamada ya pasó (${p.call_start} UTC)`);
+          console.log(`[${L}] Push ${p.push_n} #${p.id} omitido: llamada ya pasó (${p.call_start} UTC)`);
           continue;
         }
         // Re-validar: la cita pudo cancelarse o reagendarse después de agendar el push.
-        const uri = `https://api.calendly.com/scheduled_events/${p.event_uuid}`;
+        const uri = d.eventUri
+          ? d.eventUri(p.event_uuid)
+          : `https://api.calendly.com/scheduled_events/${p.event_uuid}`;
         let ev = null;
         try {
           ev = await d.getEvent(uri);
@@ -477,12 +490,12 @@ export async function runCalendlyDelivery() {
         if (ev) {
           if (ev.status !== 'active') {
             d.markCalendlyPushSkipped(p.id, `cita ${ev.status}`);
-            console.log(`[Calendly] Push 3 #${p.id} omitido: cita ${ev.status}`);
+            console.log(`[${L}] Push 3 #${p.id} omitido: cita ${ev.status}`);
             continue;
           }
           if (toSqliteUtc(new Date(ev.start_time)) !== p.call_start) {
             d.markCalendlyPushSkipped(p.id, 'reagendada');
-            console.log(`[Calendly] Push 3 #${p.id} omitido: reagendada (el poll agendará la nueva hora)`);
+            console.log(`[${L}] Push 3 #${p.id} omitido: reagendada (el poll agendará la nueva hora)`);
             continue;
           }
         }
@@ -533,7 +546,7 @@ export async function runCalendlyDelivery() {
       } catch (e) {
         // Falló el envío (ej. WA caído): devolver a 'scheduled' para reintentar.
         if (d.revertCalendlyPush) d.revertCalendlyPush(p.id);
-        console.error(`[Calendly] Error entregando push 3 #${p.id}:`, e.message);
+        console.error(`[${L}] Error entregando push 3 #${p.id}:`, e.message);
       }
     }
     return procesados;

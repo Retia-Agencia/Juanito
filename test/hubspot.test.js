@@ -7,9 +7,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+process.env.TZ = 'America/Bogota';
+
 import { searchDeals, DEAL_PROPERTIES, hasHubspotCreds } from '../src/hubspot/client.js';
-import { dealToEvent, listProgramEvents, getFirstInvitee, pipelineConfig } from '../src/hubspot/index.js';
+import { dealToEvent, listProgramEvents, getFirstInvitee, getEvent, eventUri, pipelineConfig } from '../src/hubspot/index.js';
 import { closerEmailOf, programKeyOf, prospectPhoneOf } from '../src/calendly/index.js';
+import { runCalendlyPoll, runCalendlyDelivery } from '../src/scheduler/calendly.js';
+import { makeStore, makeWaSpy } from './helpers/calendly-harness.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -183,4 +187,148 @@ test('listProgramEvents mapea y descarta deals sin closer o sin hora; getFirstIn
   assert.equal(await getFirstInvitee('hubspot:deal:999'), null);
 
   delete process.env.HUBSPOT_TOKEN;
+});
+
+// ─── getEvent / eventUri (re-validación en la entrega) ─────────────────────────
+
+test('eventUri devuelve el uuid tal cual (getEvent lo parsea)', () => {
+  assert.equal(eventUri('hubspot:deal:42'), 'hubspot:deal:42');
+});
+
+test('getEvent: deal en etapa Agendado → active, con start_time y programa', async () => {
+  process.env.HUBSPOT_TOKEN = 'tok';
+  const ev = await withFakeFetch([], [
+    { body: { id: '42', properties: { calendly_meeting_start_time: '2026-07-08T20:00:00Z', dealstage: '1368121620', pipeline: '904247681' } } },
+  ], () => getEvent('hubspot:deal:42'));
+  assert.equal(ev.status, 'active');
+  assert.equal(ev.start_time, '2026-07-08T20:00:00Z');
+  assert.equal(ev.event_type, 'second_brain');
+  assert.equal(ev.location, null); // sin HUBSPOT_JOINURL_PROP → sin link
+  delete process.env.HUBSPOT_TOKEN;
+});
+
+test('getEvent: deal fuera de la etapa Agendado → canceled (conservador)', async () => {
+  process.env.HUBSPOT_TOKEN = 'tok';
+  const ev = await withFakeFetch([], [
+    { body: { id: '42', properties: { calendly_meeting_start_time: 'x', dealstage: 'OTRA_ETAPA', pipeline: '904247681' } } },
+  ], () => getEvent('hubspot:deal:42'));
+  assert.equal(ev.status, 'canceled');
+  delete process.env.HUBSPOT_TOKEN;
+});
+
+test('getEvent: join URL desde HUBSPOT_JOINURL_PROP (pide la propiedad extra en el GET)', async () => {
+  process.env.HUBSPOT_TOKEN = 'tok';
+  process.env.HUBSPOT_JOINURL_PROP = 'zoom_link';
+  const calls = [];
+  const ev = await withFakeFetch(calls, [
+    { body: { id: '9', properties: { calendly_meeting_start_time: 'x', dealstage: '1372359685', pipeline: '906259304', zoom_link: 'https://zoom.us/j/9' } } },
+  ], () => getEvent('hubspot:deal:9'));
+  assert.deepEqual(ev.location, { join_url: 'https://zoom.us/j/9' });
+  assert.match(calls[0].url, /zoom_link/); // la propiedad configurada se pidió en el GET
+  delete process.env.HUBSPOT_JOINURL_PROP;
+  delete process.env.HUBSPOT_TOKEN;
+});
+
+// ─── Integración: el motor (poll+delivery) corre con una source de HubSpot ─────
+// Prueba que runCalendlyPoll/runCalendlyDelivery funcionan inyectándoles una source
+// estilo HubSpot (uris 'hubspot:deal:X', eventUri propio), agendando y entregando el Push 3
+// contra el store en memoria del harness. Reemplaza deps() sin __setDeps (se pasa por arg).
+
+function makeHubspotSource({ events, store, wa, clock, dryRunOverride = false }) {
+  const byUri = new Map(events.map((e) => [e.uri, e]));
+  return {
+    now: () => clock.ms,
+    async listProgramEvents({ minStartIso, maxStartIso }) {
+      const min = new Date(minStartIso).getTime();
+      const max = new Date(maxStartIso).getTime();
+      return [...byUri.values()]
+        .filter((e) => e.status === 'active')
+        .filter((e) => {
+          const t = new Date(e.start_time).getTime();
+          return t >= min && t < max;
+        });
+    },
+    async getFirstInvitee(uri) {
+      return byUri.get(uri)?.__invitee || null;
+    },
+    async getEvent(uri) {
+      const e = byUri.get(uri);
+      return e
+        ? { status: e.status, start_time: e.start_time, event_type: e.event_type, location: null }
+        : { status: 'canceled', start_time: null, event_type: null, location: null };
+    },
+    eventUri: (uuid) => uuid, // uuid ya es 'hubspot:deal:X'
+    scheduleCalendlyPush: store.scheduleCalendlyPush,
+    getDueCalendlyPushes: store.getDueCalendlyPushes,
+    claimCalendlyPush: store.claimCalendlyPush,
+    revertCalendlyPush: store.revertCalendlyPush,
+    markCalendlyPushSent: store.markCalendlyPushSent,
+    markCalendlyPushSkipped: store.markCalendlyPushSkipped,
+    isOptedIn: store.isOptedIn,
+    getOptin: store.getOptin,
+    isCalendlyPaused: store.isCalendlyPaused,
+    sendMessage: wa.sendMessage,
+    push4Enabled: false,
+    dryRunOverride,
+    logLabel: 'HubSpot',
+  };
+}
+
+test('integración: poll+delivery con source HubSpot agenda Push 3 (start-25) y lo entrega', async () => {
+  process.env.CALENDLY_DRY_RUN = 'false';
+  process.env.CALENDLY_REQUIRE_OPTIN = 'true';
+  process.env.CALENDLY_PUSH3_LEAD_MIN = '25';
+  const now = Date.now();
+  const startIso = new Date(now + 20 * 60000).toISOString(); // en 20 min → catch-up inmediato
+  const ev = {
+    uri: 'hubspot:deal:501',
+    start_time: startIso,
+    status: 'active',
+    event_type: 'second_brain',
+    event_memberships: [{ user_email: 'sebastian.salazar@30x.com' }],
+    __invitee: { name: 'Ana Ruiz', text_reminder_number: '573001112222' },
+  };
+  const clock = { ms: now };
+  const store = makeStore({ optins: ['+573054312905'], nowRef: clock }); // opt-in del closer Salazar
+  const wa = makeWaSpy();
+  const source = makeHubspotSource({ events: [ev], store, wa, clock });
+
+  await runCalendlyPoll(source);
+  assert.equal(store._rows.length, 1, 'el poll debió agendar 1 push');
+  assert.equal(store._rows[0].push_n, 3);
+  assert.equal(store._rows[0].event_uuid, 'hubspot:deal:501');
+
+  await runCalendlyDelivery(source);
+  assert.equal(wa.sent.length, 1, 'el Push 3 debió entregarse al hilo del closer');
+  assert.match(wa.sent[0].text, /Push 3/);
+  assert.equal(store._rows[0].status, 'sent');
+});
+
+test('integración: cancelación en HubSpot (deal salió de Agendado) → no se entrega', async () => {
+  process.env.CALENDLY_DRY_RUN = 'false';
+  process.env.CALENDLY_REQUIRE_OPTIN = 'true';
+  process.env.CALENDLY_PUSH3_LEAD_MIN = '25';
+  const now = Date.now();
+  const startIso = new Date(now + 20 * 60000).toISOString();
+  const ev = {
+    uri: 'hubspot:deal:777',
+    start_time: startIso,
+    status: 'active',
+    event_type: 'second_brain',
+    event_memberships: [{ user_email: 'sebastian.salazar@30x.com' }],
+    __invitee: { name: 'Ana Ruiz', text_reminder_number: '573001112222' },
+  };
+  const clock = { ms: now };
+  const store = makeStore({ optins: ['+573054312905'], nowRef: clock });
+  const wa = makeWaSpy();
+  const source = makeHubspotSource({ events: [ev], store, wa, clock });
+
+  await runCalendlyPoll(source);
+  assert.equal(store._rows.length, 1);
+
+  // La cita se cancela (el deal sale de Agendado) antes de entregar.
+  ev.status = 'canceled';
+  await runCalendlyDelivery(source);
+  assert.equal(wa.sent.length, 0, 'no se entrega una cita cancelada');
+  assert.equal(store._rows[0].status, 'skipped');
 });

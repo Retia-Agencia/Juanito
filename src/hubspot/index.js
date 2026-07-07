@@ -11,10 +11,15 @@
 //   props.dealname                    → invitee.name          (nombre del lead — ver open item)
 //   props.telefono_de_contcato        → invitee.text_reminder_number (teléfono del lead)
 
-import { searchDeals, hasHubspotCreds } from './client.js';
+import { searchDeals, getDealById, DEAL_PROPERTIES, hasHubspotCreds } from './client.js';
 import { normalizePhone } from '../common/utils.js';
 
 export { hasHubspotCreds };
+
+// Propiedad del deal que guarda el link de la llamada (join URL) para el Push 3. HubSpot
+// NO trae una por defecto en la lista base → configurable por env. Si no está seteada, el
+// Push 3 se manda sin link (buildPrecallText lo omite). Open item: confirmar cuál es.
+const JOINURL_PROP = () => (process.env.HUBSPOT_JOINURL_PROP || '').trim();
 
 // Pipelines gestionados: pipeline HubSpot → { stage 'Agendado', programKey }. Los IDs son
 // overridables por env (mismo patrón lazy del repo) con los defaults ya validados.
@@ -86,4 +91,42 @@ export async function listProgramEvents({ minStartIso, maxStartIso }) {
 // datos ya vinieron con el deal en listProgramEvents.
 export async function getFirstInvitee(uri) {
   return _inviteeByUri.get(uri) || null;
+}
+
+// ─── Re-validación en la entrega (Push 3): getEvent + eventUri ─────────────────
+// El motor, al entregar un Push 3 vencido, re-consulta la cita para saber si sigue viva
+// (no cancelada) y no reagendada. En Calendly eso es GET al scheduled_event; acá es GET
+// al deal por id. `eventUri(uuid)` construye el identificador que getEvent sabe parsear.
+
+// El poll guarda event_uuid = ev.uri.split('/').pop() = 'hubspot:deal:<id>'. eventUri lo
+// devuelve tal cual (self-describing) y getEvent extrae el <id> del final.
+export function eventUri(uuid) {
+  return String(uuid);
+}
+
+function dealIdFromUri(uri) {
+  return String(uri || '').split(':').pop();
+}
+
+// getEvent(uri) → { status, start_time, event_type, location } estilo Calendly.
+//  status: SUPUESTO (open item, confirmar con el token) — una cita sigue 'active' mientras
+//  el deal esté en la etapa "Agendado" de su pipeline; si salió de esa etapa lo tratamos
+//  como 'canceled' (conservador: preferimos NO mandar el push antes que mandarlo a una
+//  cita que ya no está agendada). Un deal borrado (404) propaga error → el motor cae al
+//  mensaje guardado, igual que con Calendly.
+export async function getEvent(uri) {
+  const cfg = pipelineConfig();
+  const joinProp = JOINURL_PROP();
+  const props = joinProp ? [...DEAL_PROPERTIES, joinProp] : DEAL_PROPERTIES;
+  const deal = await getDealById({ id: dealIdFromUri(uri), properties: props });
+  const p = deal.properties || {};
+  const managed = cfg.find((c) => c.pipeline === p.pipeline);
+  const stillAgendado = managed && p.dealstage === managed.stage;
+  const joinUrl = joinProp ? p[joinProp] : '';
+  return {
+    status: stillAgendado ? 'active' : 'canceled',
+    start_time: p.calendly_meeting_start_time || null,
+    event_type: managed ? managed.program : null,
+    location: joinUrl ? { join_url: joinUrl } : null,
+  };
 }
