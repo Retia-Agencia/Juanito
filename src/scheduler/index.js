@@ -54,9 +54,12 @@ export async function startAllJobs() {
     console.warn('[Scheduler] Calendly no disponible:', err.message);
   }
 
-  // Reporte diario de leads del Sheet (se autodesactiva si falta GOOGLE_SA_KEY o grupo)
+  // Reporte diario de leads del Sheet (§18.B, grupo "Ventas EstadoX", 8pm).
+  // APAGADO POR AHORA (2026-07-08, a pedido del jefe). Para reactivar: descomentar
+  // la llamada de abajo y redeploy. Se autodesactiva si falta GOOGLE_SA_KEY o grupo.
   try {
-    startSheetsReportJob();
+    // startSheetsReportJob();  // ← reactivar aquí
+    console.log('[Scheduler] Reporte de EstadoX (8pm) apagado a propósito ⏸️');
   } catch (err) {
     console.warn('[Scheduler] Reporte de Sheets no disponible:', err.message);
   }
