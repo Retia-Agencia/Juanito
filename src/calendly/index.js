@@ -243,7 +243,7 @@ export const MATERIAL_LINKS = {
     video: 'https://www.youtube.com/watch?v=88W1z_M9tCg',
   },
   linkedin: {
-    brochure: 'https://drive.google.com/file/d/1WUQftLcYWM5uCzE59Hql0B6cTpxoziO_/view',
+    brochure: 'https://drive.google.com/file/d/1MO5jP7rnbWKUyDWao3Q1-vfF1fzR-h3O/view',
     video: 'https://youtu.be/J9LDlmtQeHs',
   },
 };
