@@ -10,9 +10,11 @@
 import { CronJob } from 'cron';
 import { sendMessage, resolveGroupByName } from '../whatsapp/index.js';
 import { fetchLeadRows, fetchSetteoRows } from '../sheets/index.js';
-import { computeWindow } from '../sheets/window.js';
+import { computeWindow, toNaiveMs } from '../sheets/window.js';
 import { summarize, countSelfCheckout, averagePriorDays } from '../sheets/aggregate.js';
+import { buildWeeklySections } from '../sheets/weekly.js';
 import { formatReport } from '../sheets/report.js';
+import { STRIPE_API_KEY, fetchSucceededPaymentTimestamps } from '../stripe/client.js';
 
 const TZ = () => process.env.TZ || 'America/Bogota';
 const CRON = () => process.env.SHEETS_REPORT_CRON || '0 20 * * *';
@@ -30,6 +32,10 @@ async function resolveTarget() {
 
 // Núcleo orquestador (sin cron): lee → cuenta → formatea. Devuelve el mensaje y el
 // resumen para que el caller (o una prueba) decida qué hacer.
+// Días de historial a pedirle a Stripe: cubre la semana previa a la pasada (~21d)
+// y la parcial más vieja (~27d), con margen.
+const STRIPE_LOOKBACK_DAYS = 35;
+
 export async function buildSheetsReport({ now = new Date() } = {}) {
   const win = computeWindow(now);
   // El total/Calendly salen del tab de leads; el self-checkout del tab "Setteo Pendiente".
@@ -37,6 +43,25 @@ export async function buildSheetsReport({ now = new Date() } = {}) {
   const summary = { ...summarize(rows, win), selfCheckout: countSelfCheckout(setteoRows, win) };
   // Promedio de los 7 días previos (sin hoy) para comparar las métricas de funnel.
   summary.avg7 = averagePriorDays(rows, setteoRows, now, 7);
+
+  // Pagos reales (PaymentIntents succeeded) si hay key; si Stripe falla, el reporte
+  // sale igual con el tag manual del Sheet — nunca tumba el job.
+  let paymentsNaive = null;
+  if (STRIPE_API_KEY()) {
+    try {
+      const createdGteSec = Math.floor(now.getTime() / 1000) - STRIPE_LOOKBACK_DAYS * 24 * 3600;
+      const secs = await fetchSucceededPaymentTimestamps({ createdGteSec });
+      paymentsNaive = secs.map((s) => toNaiveMs(new Date(s * 1000)));
+    } catch (e) {
+      console.warn('[Sheets] Stripe falló, uso el tag del Sheet:', e.message);
+    }
+  }
+  if (paymentsNaive) {
+    summary.stripeToday = paymentsNaive.filter((ms) => ms >= win.startMs && ms < win.endMs).length;
+  }
+  // Comparativas: semana pasada completa (lun-dom) + últimas 4 semanas like-for-like.
+  summary.weekly = buildWeeklySections(rows, setteoRows, now, paymentsNaive);
+
   return { message: formatReport(summary, win), summary, win };
 }
 

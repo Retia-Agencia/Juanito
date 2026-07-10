@@ -55,8 +55,10 @@ export async function startAllJobs() {
   }
 
   // Reporte diario de leads del Sheet (§18.B, grupo "Ventas EstadoX", 8pm).
-  // APAGADO POR AHORA (2026-07-08, a pedido del jefe). Para reactivar: descomentar
-  // la llamada de abajo y redeploy. Se autodesactiva si falta GOOGLE_SA_KEY o grupo.
+  // APAGADO POR AHORA (pedido del jefe 2026-07-08; confirmado 2026-07-09). El código
+  // ya trae comparativas semanales + pagos reales de Stripe (§18.B) y /reporte a
+  // demanda sí los muestra. Para reactivar el cron: descomentar y redeploy.
+  // Se autodesactiva si falta GOOGLE_SA_KEY o grupo.
   try {
     // startSheetsReportJob();  // ← reactivar aquí
     console.log('[Scheduler] Reporte de EstadoX (8pm) apagado a propósito ⏸️');

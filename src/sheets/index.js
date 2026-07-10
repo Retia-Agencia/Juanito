@@ -13,8 +13,16 @@
 
 export { COL, CATEGORIES, SETTEO } from './columns.js';
 export { parseSubmittedAt } from './parse.js';
-export { zonedParts, computeWindow } from './window.js';
+export {
+  zonedParts,
+  computeWindow,
+  toNaiveMs,
+  startOfWeekMonday,
+  lastFullWeekWindow,
+  partialWeekWindows,
+} from './window.js';
 export { summarize, countSelfCheckout, averagePriorDays } from './aggregate.js';
-export { formatReport } from './report.js';
+export { windowTotals, buildWeeklySections } from './weekly.js';
+export { formatReport, formatWeeklySections } from './report.js';
 export { formatMetrics, COMPANIES } from './metrics.js';
 export { fetchLeadRows, fetchSetteoRows, fetchSheetValues, LEADS_ID, LEADS_TAB, SETTEO_TAB } from './client.js';

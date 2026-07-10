@@ -1186,6 +1186,33 @@ de 24h da ventanas diarias limpias; cero llamadas de red extra, reusa las filas 
 adjunta `summary.avg7`; `formatReport` lo imprime sólo si está presente (los tests sin `avg7` siguen pasando).
 **Tests 15/15.**
 
+**✅ COMPARATIVAS SEMANALES + PAGOS REALES DE STRIPE — añadido (2026-07-09, pedido de Alejandro). El
+cron de 8pm SIGUE APAGADO** (pedido del jefe 2026-07-08; Alejandro decidió mantenerlo así por ahora).
+`/reporte` a demanda SÍ sale con todo lo nuevo; cuando se quiera reencender el cron, descomentar
+`startSheetsReportJob()` en `src/scheduler/index.js` y redeploy:
+- **📅 Semana pasada (lun 00:00 → lun 00:00 Bogotá):** totales de la última semana COMPLETA con delta
+  firmado vs la semana anterior (`(ant: N, +Δ)`), para las 4 métricas: leads, Calendly, self-checkout
+  alcanzado y pagos. Límites de calendario (no 20:00→20:00): así "semana del 29/6 al 5/7" se lee como
+  el negocio la lee.
+- **📈 Últimas 4 semanas like-for-like:** si hoy es miércoles, compara lunes→miércoles **20:00** de cada
+  una de las últimas 4 semanas (incluida la actual, marcada `(en curso)`), viejo→nuevo. Mismo corte
+  horario en las 4 → manzanas con manzanas. Caso lunes: ventanas de 20h, comparables entre sí.
+  Helpers puros en `window.js` (`startOfWeekMonday`, `lastFullWeekWindow`, `partialWeekWindows`,
+  `toNaiveMs`) + agregación en `src/sheets/weekly.js` (`buildWeeklySections` — mismo patrón que
+  `averagePriorDays`: re-agrega sobre filas ya leídas, cero red extra) + `formatWeeklySections` en
+  `report.js`.
+- **💰 Pagos reales desde Stripe:** `src/stripe/client.js` (IMPURO, fetch nativo SIN SDK) lista
+  PaymentIntents con la **restricted key solo-lectura** (`STRIPE_API_KEY`, `created[gte]` 35 días,
+  paginación `has_more`/`starting_after`) y filtra `succeeded`. **Solo conteo — montos y PII jamás
+  salen del cliente.** Con key: el bloque diario gana la línea `💰 Pagos confirmados (Stripe): N` y
+  las comparativas usan Stripe (pie `Pagos: Stripe (solo conteo)`); sin key o si Stripe falla:
+  try/catch + fallback al tag manual del Sheet (pie `Pagos: tag del Sheet`) — **nunca tumba el job**.
+  ⚠️ `created` de Stripe viene en epoch REAL → se convierte a naive con `toNaiveMs` (nunca restar 5h
+  a mano). Si el histórico del Sheet no cubre las ventanas viejas, el mensaje lo advierte
+  (`historyOk`). Env nueva en `.env.example` y `docker-compose.yml` (`STRIPE_API_KEY`, gotcha §12).
+  **Tests: `test/sheets-weekly.test.js` (14) + `test/stripe.test.js` (4); 36/36 verde junto a los de
+  sheets.** Smoke local 2026-07-09: Stripe real respondió 56 succeeded/35d; ventanas y rótulos correctos.
+
 ### 18.C 🔵 Aviso de "nueva call agendada" a los closers (idea Sebas — 2026-06-10)
 
 **Pedido de Sebas (textual):** *"Si nosotros borramos y generamos espacio en agenda, siguiendo el
