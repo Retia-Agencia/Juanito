@@ -11,7 +11,7 @@ import { CronJob } from 'cron';
 import { sendMessage, resolveGroupByName } from '../whatsapp/index.js';
 import { fetchLeadRows, fetchSetteoRows } from '../sheets/index.js';
 import { computeWindow, toNaiveMs } from '../sheets/window.js';
-import { summarize, countSelfCheckout, averagePriorDays } from '../sheets/aggregate.js';
+import { summarize, countSelfCheckout } from '../sheets/aggregate.js';
 import { buildWeeklySections } from '../sheets/weekly.js';
 import { formatReport } from '../sheets/report.js';
 import { STRIPE_API_KEY, fetchSucceededPaymentTimestamps } from '../stripe/client.js';
@@ -40,9 +40,10 @@ export async function buildSheetsReport({ now = new Date() } = {}) {
   const win = computeWindow(now);
   // El total/Calendly salen del tab de leads; el self-checkout del tab "Setteo Pendiente".
   const [rows, setteoRows] = await Promise.all([fetchLeadRows(), fetchSetteoRows()]);
-  const summary = { ...summarize(rows, win), selfCheckout: countSelfCheckout(setteoRows, win) };
-  // Promedio de los 7 días previos (sin hoy) para comparar las métricas de funnel.
-  summary.avg7 = averagePriorDays(rows, setteoRows, now, 7);
+  // Sin desglose por categorías (pedido del owner 2026-07-09: fuera la sección de
+  // "Dispuesto a invertir $1000 USD") y sin prom. 7d — la comparación histórica
+  // ahora es el bloque semanal en promedio diario.
+  const summary = { ...summarize(rows, win, []), selfCheckout: countSelfCheckout(setteoRows, win) };
 
   // Pagos reales (PaymentIntents succeeded) si hay key; si Stripe falla, el reporte
   // sale igual con el tag manual del Sheet — nunca tumba el job.

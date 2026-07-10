@@ -13,28 +13,46 @@ function dm(ms) {
 const DAY_MS = 24 * 3600 * 1000;
 const DOW = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
 const dow = (ms) => DOW[new Date(ms).getUTCDay()];
-const signed = (n) => (n >= 0 ? `+${n}` : `${n}`);
 
 // Bloque de comparativas semanales (§18.B). Recibe el resultado de
-// buildWeeklySections (weekly.js). Viñetas por línea (las tablas alineadas se
-// rompen en WhatsApp móvil), orden viejo→nuevo, deltas absolutos con signo.
+// buildWeeklySections (weekly.js). Todo en PROMEDIO DIARIO (pedido del owner
+// 2026-07-09): total de la ventana / días exactos de la ventana — la semana
+// completa divide entre 7 y las parciales comparten duración, así que siguen
+// siendo comparables entre sí. Viñetas por línea (las tablas alineadas se rompen
+// en WhatsApp móvil), orden viejo→nuevo, deltas con signo sobre los valores YA
+// redondeados (para que el delta cuadre con lo que se ve).
 export function formatWeeklySections(weekly) {
   if (!weekly) return '';
   const { lastWeek, partialWeeks, historyOk, paymentsSource } = weekly;
   // Pagos: Stripe si hay dato; si no, el tag manual del Sheet.
   const pay = (m) => (m.payments != null ? m.payments : m.paid);
 
+  const days = (win) => (win.endMs - win.startMs) / DAY_MS;
+  const d1 = (n) => n.toFixed(1);
+  // Las 4 tasas diarias de una ventana, redondeadas a 1 decimal.
+  const rates = (m, win) => ({
+    leads: d1(m.total / days(win)),
+    cal: d1(m.calendly / days(win)),
+    chk: d1(m.reached / days(win)),
+    pagos: d1(pay(m) / days(win)),
+  });
+  const fmtDelta = (cur, prev) => {
+    let s = (parseFloat(cur) - parseFloat(prev)).toFixed(1);
+    if (s === '-0.0') s = '0.0';
+    return s.startsWith('-') ? s : `+${s}`;
+  };
+
   const lines = ['──────────'];
 
-  const lw = lastWeek.metrics;
-  const pv = lastWeek.prev.metrics;
-  const delta = (a, b) => `(ant: ${b}, ${signed(a - b)})`;
+  const lw = rates(lastWeek.metrics, lastWeek.win);
+  const pv = rates(lastWeek.prev.metrics, lastWeek.prev.win);
+  const row = (label, cur, prev) => `• ${label}: ${cur}/día (ant: ${prev}, ${fmtDelta(cur, prev)})`;
   lines.push(
     `📅 Semana pasada (lun ${dm(lastWeek.win.startMs)} → dom ${dm(lastWeek.win.endMs - DAY_MS)})`,
-    `• Leads: ${lw.total} ${delta(lw.total, pv.total)}`,
-    `• Calendly: ${lw.calendly} ${delta(lw.calendly, pv.calendly)}`,
-    `• Self-checkout: ${lw.reached} ${delta(lw.reached, pv.reached)}`,
-    `• Pagos: ${pay(lw)} ${delta(pay(lw), pay(pv))}`
+    row('Leads', lw.leads, pv.leads),
+    row('Calendly', lw.cal, pv.cal),
+    row('Self-checkout', lw.chk, pv.chk),
+    row('Pagos', lw.pagos, pv.pagos)
   );
 
   // Últimas N semanas, lunes → día/corte de hoy. partialWeeks viene con índice 0 =
@@ -45,9 +63,10 @@ export function formatWeeklySections(weekly) {
   lines.push('', `📈 Últimas ${partialWeeks.length} semanas — lun → ${dow(cur.endMs)} ${cutLabel}`);
   for (let i = partialWeeks.length - 1; i >= 0; i--) {
     const { win, metrics: m } = partialWeeks[i];
+    const r = rates(m, win);
     const enCurso = i === 0 ? ' (en curso)' : '';
     lines.push(
-      `• ${dm(win.startMs)}${enCurso}: ${m.total} leads · ${m.calendly} cal · ${m.reached} checkout · ${pay(m)} pagos`
+      `• ${dm(win.startMs)}${enCurso}: ${r.leads} leads/d · ${r.cal} cal/d · ${r.chk} chk/d · ${r.pagos} pagos/d`
     );
   }
 
@@ -69,14 +88,7 @@ export function formatReport(summary, { startMs, endMs } = {}) {
     lines.push(`🗓️ ${dm(startMs)} 8:00pm → ${dm(endMs)} 8:00pm`);
   }
 
-  // Promedio de los 7 días previos (sin hoy), 1 decimal, para comparar el dato del día.
-  const a = summary.avg7;
-  const d1 = (n) => n.toFixed(1);
-
-  lines.push(
-    '',
-    `Total de entradas: ${summary.total}${a ? `  ·  prom. ${a.days}d: ${d1(a.total)}` : ''}`
-  );
+  lines.push('', `Total de entradas: ${summary.total}`);
 
   if (summary.total === 0) {
     lines.push('', 'No llegaron postulaciones en esta ventana.');
@@ -88,16 +100,14 @@ export function formatReport(summary, { startMs, endMs } = {}) {
     return lines.join('\n');
   }
 
-  // Métricas del funnel (conteos simples sobre la ventana + promedio de comparación).
+  // Métricas del funnel: conteos simples de la ventana del día. La comparación
+  // histórica vive en el bloque semanal (pedido del owner 2026-07-09: sin prom. 7d).
   if (summary.calendlyBooked != null) {
-    lines.push(
-      `📅 Bookearon Calendly: ${summary.calendlyBooked}${a ? `  ·  prom. ${a.days}d: ${d1(a.calendly)}` : ''}`
-    );
+    lines.push(`📅 Bookearon Calendly: ${summary.calendlyBooked}`);
   }
   if (summary.selfCheckout != null) {
     const { reached, paid } = summary.selfCheckout;
-    const avg = a ? `  ·  prom. ${a.days}d: ${d1(a.reached)} (pagaron: ${d1(a.paid)})` : '';
-    lines.push(`💳 Llegaron al self-checkout: ${reached} (pagaron: ${paid})${avg}`);
+    lines.push(`💳 Llegaron al self-checkout: ${reached} (pagaron: ${paid})`);
   }
   // Pagos cobrados de verdad (PaymentIntents succeeded) — solo si Stripe respondió.
   if (summary.stripeToday != null) {

@@ -161,22 +161,23 @@ test('buildWeeklySections marca historyOk=false si el Sheet no cubre la ventana 
 
 // ─── formatWeeklySections / formatReport extendido ────────────────────────────
 
-test('formatWeeklySections: semana pasada con deltas firmados y 4 semanas viejo→nuevo', () => {
+test('formatWeeklySections: promedio diario con deltas firmados y 4 semanas viejo→nuevo', () => {
   const w = buildWeeklySections(ROWS, SETTEO_ROWS, WED, PAYMENTS);
   const msg = formatWeeklySections(w);
 
-  // Semana pasada lun 1/6 → dom 7/6, con delta vs la anterior.
+  // Semana pasada lun 1/6 → dom 7/6, en promedio POR DÍA (÷7) con delta vs la anterior.
   assert.match(msg, /📅 Semana pasada \(lun 1\/6 → dom 7\/6\)/);
-  assert.match(msg, /• Leads: 2 \(ant: 1, \+1\)/);
-  assert.match(msg, /• Calendly: 1 \(ant: 0, \+1\)/);
-  assert.match(msg, /• Pagos: 1 \(ant: 1, \+0\)/);
+  assert.match(msg, /• Leads: 0\.3\/día \(ant: 0\.1, \+0\.2\)/); // 2/7 vs 1/7
+  assert.match(msg, /• Calendly: 0\.1\/día \(ant: 0\.0, \+0\.1\)/);
+  assert.match(msg, /• Pagos: 0\.1\/día \(ant: 0\.1, \+0\.0\)/);
 
-  // 4 semanas like-for-like, rótulo con el día actual y corte 8pm, viejo→nuevo.
+  // 4 semanas like-for-like en tasa diaria (÷2.83 días: lun 00:00 → mié 20:00),
+  // rótulo con el día actual y corte 8pm, viejo→nuevo.
   assert.match(msg, /📈 Últimas 4 semanas — lun → mié 8:00pm/);
-  const bullets = msg.split('\n').filter((l) => / leads · /.test(l));
+  const bullets = msg.split('\n').filter((l) => / leads\/d · /.test(l));
   assert.equal(bullets.length, 4);
-  assert.match(bullets[0], /^• 18\/5: /);
-  assert.match(bullets[3], /^• 8\/6 \(en curso\): 1 leads · 0 cal · 1 checkout · 1 pagos$/);
+  assert.match(bullets[0], /^• 18\/5: 0\.4 leads\/d · 0\.0 cal\/d · 0\.0 chk\/d · 0\.0 pagos\/d$/);
+  assert.match(bullets[3], /^• 8\/6 \(en curso\): 0\.4 leads\/d · 0\.0 cal\/d · 0\.4 chk\/d · 0\.4 pagos\/d$/);
 
   assert.match(msg, /Pagos: Stripe \(solo conteo\)/);
   assert.doesNotMatch(msg, /histórico/); // historyOk=true → sin advertencia
@@ -198,8 +199,8 @@ test('formatWeeklySections: delta negativo con signo y fallback al tag del Sheet
     paymentsSource: 'sheet',
   };
   const msg = formatWeeklySections(w);
-  assert.match(msg, /• Leads: 3 \(ant: 7, -4\)/);
-  assert.match(msg, /• Pagos: 1 \(ant: 4, -3\)/); // sin Stripe usa el paid del Sheet
+  assert.match(msg, /• Leads: 0\.4\/día \(ant: 1\.0, -0\.6\)/); // 3/7 vs 7/7
+  assert.match(msg, /• Pagos: 0\.1\/día \(ant: 0\.6, -0\.5\)/); // sin Stripe usa el paid del Sheet
   assert.match(msg, /Pagos: tag del Sheet/);
   assert.match(msg, /⚠️ El histórico del Sheet no cubre todas las semanas/);
 });

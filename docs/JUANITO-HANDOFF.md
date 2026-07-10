@@ -1213,6 +1213,19 @@ cron de 8pm SIGUE APAGADO** (pedido del jefe 2026-07-08; Alejandro decidió mant
   **Tests: `test/sheets-weekly.test.js` (14) + `test/stripe.test.js` (4); 36/36 verde junto a los de
   sheets.** Smoke local 2026-07-09: Stripe real respondió 56 succeeded/35d; ventanas y rótulos correctos.
 
+**✅ AJUSTE DE FORMATO (2026-07-09, misma sesión, pedido de Alejandro tras revisar):**
+- **Fuera el `prom. 7d`** del bloque diario (el orquestador ya no llama `averagePriorDays` y
+  `formatReport` ya no lo imprime aunque venga; la función queda en `aggregate.js` marcada sin uso,
+  por si vuelve).
+- **Fuera el desglose "Dispuesto a invertir ($1000 USD)"**: `buildSheetsReport` pasa `categories=[]`
+  a `summarize`. El motor de categorías (`CATEGORIES`/`breakdown`) queda intacto para reactivarlo.
+- **Las secciones semanales pasan a PROMEDIO DIARIO** (elección de Alejandro entre 3 layouts):
+  total de la ventana ÷ días exactos de la ventana — semana completa ÷7, parciales ÷(p.ej. 2.83 si
+  es lun→mié 20:00; comparten duración → siguen comparables). Formato:
+  `• Leads: 0.3/día (ant: 0.1, +0.2)` y `• 15/6: 0.0 leads/d · … · 0.5 pagos/d`. El delta se
+  calcula sobre los valores YA redondeados para que cuadre con lo mostrado. Tests actualizados,
+  36/36 verde.
+
 ### 18.C 🔵 Aviso de "nueva call agendada" a los closers (idea Sebas — 2026-06-10)
 
 **Pedido de Sebas (textual):** *"Si nosotros borramos y generamos espacio en agenda, siguiendo el

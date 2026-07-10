@@ -231,7 +231,7 @@ test('formatReport arma el mensaje con total, funnel e inversión (sin momento/I
   assert.doesNotMatch(msg, /@|\+?\d{7,}/);
 });
 
-test('formatReport muestra el promedio de 7 días (1 decimal) junto a cada métrica', () => {
+test('formatReport ya NO muestra el prom. 7d aunque el summary traiga avg7 (pedido 2026-07-09)', () => {
   const summary = {
     total: 26,
     calendlyBooked: 4,
@@ -240,9 +240,10 @@ test('formatReport muestra el promedio de 7 días (1 decimal) junto a cada métr
     avg7: { days: 7, total: 22.4, calendly: 4.9, reached: 6.0, paid: 1.3 },
   };
   const msg = formatReport(summary, WIN);
-  assert.match(msg, /Total de entradas: 26 {2}· {2}prom\. 7d: 22\.4/);
-  assert.match(msg, /Bookearon Calendly: 4 {2}· {2}prom\. 7d: 4\.9/);
-  assert.match(msg, /Llegaron al self-checkout: 7 \(pagaron: 0\) {2}· {2}prom\. 7d: 6\.0 \(pagaron: 1\.3\)/);
+  assert.match(msg, /Total de entradas: 26$/m);
+  assert.match(msg, /Bookearon Calendly: 4$/m);
+  assert.match(msg, /Llegaron al self-checkout: 7 \(pagaron: 0\)$/m);
+  assert.doesNotMatch(msg, /prom\. 7d/);
 });
 
 test('formatReport con ventana vacía dice que no llegaron postulaciones', () => {
