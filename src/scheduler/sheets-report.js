@@ -9,6 +9,7 @@
 
 import { CronJob } from 'cron';
 import { sendMessage, resolveGroupByName } from '../whatsapp/index.js';
+import { hasDmThread } from '../db/index.js';
 import { fetchLeadRows, fetchSetteoRows } from '../sheets/index.js';
 import { computeWindow, toNaiveMs } from '../sheets/window.js';
 import { summarize, countSelfCheckout } from '../sheets/aggregate.js';
@@ -20,6 +21,20 @@ const TZ = () => process.env.TZ || 'America/Bogota';
 const CRON = () => process.env.SHEETS_REPORT_CRON || '0 20 * * *';
 const TARGET = () => (process.env.SHEETS_REPORT_GROUP || '').trim();
 
+// El reporte al GRUPO está apagado desde el 2026-07-08 (pedido de Dani). `SHEETS_REPORT_GROUP`
+// sigue configurado en el VPS, así que el apagado NO puede depender de que esa var esté vacía:
+// hace falta un flag explícito. Sin él, reactivar el job para mandarle el DM a la admin de
+// EstadoX (§18.AD) volvería a publicar en "Ventas EstadoX" sin que nadie lo pidiera.
+const GROUP_ENABLED = () => process.env.SHEETS_REPORT_GROUP_ENABLED === 'true';
+
+// Destinatarios por DM (§18.AD): JIDs de WhatsApp (CSV). Debe ser el JID desde el que la
+// persona LE ESCRIBIÓ a Juanito (`/whoami` se lo dice), o no hay hilo y no se entrega.
+const DM_RECIPIENTS = () =>
+  (process.env.SHEETS_REPORT_DM || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
 // SHEETS_REPORT_GROUP puede ser un group_id (…@g.us) o el NOMBRE del grupo, que se
 // resuelve a id en runtime vía resolveGroupByName (más robusto que hardcodear el id).
 async function resolveTarget() {
@@ -28,6 +43,42 @@ async function resolveTarget() {
   if (t.endsWith('@g.us')) return t;
   const g = await resolveGroupByName(t);
   return g?.id || null;
+}
+
+// Entrega el reporte a quien corresponda: el grupo (solo si está habilitado) + los DMs.
+// Devuelve cuántos envíos salieron.
+async function deliverReport(message) {
+  let enviados = 0;
+
+  if (GROUP_ENABLED() && TARGET()) {
+    const target = await resolveTarget();
+    if (!target) {
+      console.error(`[Sheets] no pude resolver el grupo destino "${TARGET()}" (¿Juanito está en el grupo?)`);
+    } else {
+      await sendMessage(target, message);
+      console.log(`[Sheets] reporte enviado → grupo ${target}`);
+      enviados++;
+    }
+  }
+
+  for (const to of DM_RECIPIENTS()) {
+    // Anti-ban: nunca en frío. Sin hilo previo, no se entrega.
+    if (!hasDmThread(to)) {
+      console.warn(
+        `[Sheets] OMITIDO → ${to}: no tiene hilo con Juanito. Que le escriba un mensaje primero (anti-ban).`
+      );
+      continue;
+    }
+    try {
+      await sendMessage(to, message);
+      console.log(`[Sheets] reporte enviado → DM ${to}`);
+      enviados++;
+    } catch (e) {
+      console.error(`[Sheets] fallo enviando el reporte a ${to}:`, e.message);
+    }
+  }
+
+  return enviados;
 }
 
 // Núcleo orquestador (sin cron): lee → cuenta → formatea. Devuelve el mensaje y el
@@ -71,8 +122,11 @@ export function startSheetsReportJob() {
     console.warn('[Sheets] sin GOOGLE_SA_KEY → reporte diario desactivado');
     return;
   }
-  if (!TARGET()) {
-    console.warn('[Sheets] sin SHEETS_REPORT_GROUP → reporte diario desactivado');
+
+  const dms = DM_RECIPIENTS();
+  const grupo = GROUP_ENABLED() && TARGET();
+  if (!dms.length && !grupo) {
+    console.warn('[Sheets] sin destinatarios (grupo apagado y sin SHEETS_REPORT_DM) → reporte diario desactivado');
     return;
   }
 
@@ -80,14 +134,9 @@ export function startSheetsReportJob() {
     CRON(),
     async () => {
       try {
-        const target = await resolveTarget();
-        if (!target) {
-          console.error(`[Sheets] no pude resolver el grupo destino "${TARGET()}" (¿Juanito está en el grupo?)`);
-          return;
-        }
         const { message, summary } = await buildSheetsReport();
-        await sendMessage(target, message);
-        console.log(`[Sheets] reporte enviado → ${target} (${summary.total} entradas)`);
+        const n = await deliverReport(message);
+        console.log(`[Sheets] reporte diario: ${n} envío(s) (${summary.total} entradas)`);
       } catch (e) {
         console.error('[Sheets] error en el reporte diario:', e.message);
       }
@@ -96,5 +145,7 @@ export function startSheetsReportJob() {
     true,
     TZ()
   );
-  console.log(`[Sheets] Job de reporte diario activo ✅ (cron "${CRON()}", grupo "${TARGET()}")`);
+  console.log(
+    `[Sheets] Job de reporte diario activo ✅ (cron "${CRON()}", grupo: ${grupo ? `"${TARGET()}"` : 'APAGADO'}, DMs: ${dms.length})`
+  );
 }

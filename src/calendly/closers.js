@@ -4,9 +4,22 @@
 // Notas de la validación contra la cuenta real (grupo "Negociación"):
 //  - El "organizado por" del evento (event_memberships[0].user_email) ES el closer.
 //
-// Para cambiar un número o un closer, editar este mapa. (2026-06-24: salieron Mateo León y
-// Natalia González; la cuenta de EstadoX `equipo@estadox.com` quedó en standby — sin enrutar;
-// entraron Sebastián Marín y Lucas Mendoza, ambos de LinkedIn Sales.)
+// Para cambiar un número o un closer, editar este mapa.
+//
+// Recuento del equipo — auditoría 2026-07-14 contra la cuenta real de Calendly (45 días de
+// historia + 14 de agenda futura, los 3 programas gestionados). Calls y agenda futura:
+//   Pablo Lozano        265 calls · 17 futuras · AI Second Brain
+//   Sebastian Rodriguez 211 calls · 12 futuras · AI Second Brain, EstadoX, LinkedIn
+//   Sebastian Salazar   209 calls ·  1 futura  · AI Second Brain, EstadoX
+//   Lucas Mendoza       199 calls ·  2 futuras · LinkedIn
+//   Sebastian Marin     187 calls ·  0 futuras · LinkedIn (última call: 10 jul)
+//   Maca Celis          172 calls ·  0 futuras · AI Second Brain (última call: 3 jul)
+//   Daniela Camacho      78 calls ·  1 futura  · EstadoX
+//   Pablo Suarez          0 calls ·  0 futuras · nuevo (entró 2026-07-14, aún sin agenda)
+// Todos los demás hosts de esos programas están en IGNORED_CLOSERS (0 calls futuras).
+//
+// El PROGRAMA no se configura acá: se deriva del event_type de cada cita (programKeyOf),
+// así que un closer nuevo queda cubierto en los 3 programas sin tocar nada más.
 export const CLOSERS = {
   'daniela.camacho@30x.com':  { name: 'Daniela Camacho',     phone: '+573103062287' },
   'sebastian@30x.com':        { name: 'Sebastian Rodriguez', phone: '+573102212005' },
@@ -15,6 +28,9 @@ export const CLOSERS = {
   'maca.celis@30x.com':       { name: 'Maca Celis',          phone: '+573246345899' },
   'sebastian.marin@30x.com':  { name: 'Sebastian Marin',     phone: '+573212100048' },
   'lucas.mendoza@30x.com':    { name: 'Lucas Mendoza',       phone: '+573014477044' },
+  // Entró 2026-07-14. OJO: su email NO lleva punto (pablosuarez@), a diferencia de
+  // pablo.lozano@ — son personas distintas y ambas están activas.
+  'pablosuarez@30x.com':      { name: 'Pablo Suarez',        phone: '+573152573103' },
 };
 
 // LIDs de TRABAJO conocidos de closers cuyo número/nombre de WhatsApp NO permite el match por las
@@ -28,16 +44,22 @@ export const CLOSER_LIDS = {
 };
 
 // Hosts de Calendly que aparecen en el query org-wide pero que DELIBERADAMENTE NO
-// gestionamos con pushes (todavía). Se saltan en SILENCIO — sin alerta de "closer sin
-// mapear" al admin. Mover a CLOSERS cuando se quieran activar. (2026-06-25: Andrea/Dana/
-// Yuli hostean LinkedIn Sales pero aún no entran a recordatorios; Mateo León salió del
-// equipo; la cuenta compartida de EstadoX está en standby.)
+// gestionamos con pushes. Se saltan en SILENCIO — sin alerta de "closer sin mapear" al admin.
+// Mover a CLOSERS cuando se quieran activar.
+//
+// Auditoría 2026-07-14 (45 días de historia + 14 de agenda futura contra la cuenta real):
+// TODOS los de esta lista tienen CERO calls futuras y llevan entre 20 y 42 días sin hostear
+// — están fuera del equipo o dormidos. Camilo/Natalia/registro@ estaban SIN MAPEAR (ni acá
+// ni en CLOSERS), así que sus calls disparaban alertas de "closer sin mapear" en cada poll.
 export const IGNORED_CLOSERS = new Set([
-  'andrea.machado@30x.com',
-  'dana@30x.com',
-  'yuli@30x.com',
-  'mateo.leon@30x.com',
-  'equipo@estadox.com',
+  'andrea.machado@30x.com',   // salió del equipo (2026-07-14; última call 25 jun)
+  'mateo.leon@30x.com',       // salió del equipo (2026-06-24)
+  'natalia.gonzalez@30x.com', // salió del equipo (2026-06-24; se documentó pero no se ignoró → alertas)
+  'camilo.castiblanco@30x.com', // salió del equipo (2026-07-14; última call 8 jun)
+  'dana@30x.com',             // su volumen real está en "AI for Executives" (programa no gestionado)
+  'yuli@30x.com',             // idem Dana
+  'equipo@estadox.com',       // cuenta compartida de EstadoX — standby
+  'registro@estadox.com',     // cuenta de sistema de EstadoX — nunca fue un closer
 ]);
 
 export function isIgnoredCloser(email) {
@@ -94,16 +116,29 @@ export function workLidForCloser(email) {
 // no se puede mapear a teléfono. Requiere que el pushName contenga el nombre completo
 // del closer (ej: "Pablo Lozano") para evitar ambigüedades (ej: dos Sebastians).
 // Devuelve { email, name, phone } | null — null si no hay match o hay ambigüedad.
+// Normaliza para comparar nombres: minúsculas, SIN ACENTOS, sin emojis ni puntuación.
+// Los acentos importan: en el mapa los nombres van sin tilde ("Pablo Suarez") pero el
+// pushName de WhatsApp casi siempre la trae ("Pablo Suárez") → sin esto no matchean.
+function nameWords(s) {
+  return String(s)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/\s*\(.*\)/, '') // quita "(EstadoX)" y similares
+    .replace(/[^\w\s]/g, '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
 export function resolveCloserByPushName(pushName) {
   if (!pushName) return null;
-  // Quitar emojis/puntuación, lowercase, palabras
-  const words = pushName.toLowerCase().replace(/[^\w\s]/g, '').trim().split(/\s+/).filter(Boolean);
+  const words = nameWords(pushName);
   if (!words.length) return null;
 
   const seen = new Map(); // phone → entry, para deduplicar si dos emails apuntan al mismo número
   for (const [email, c] of Object.entries(CLOSERS)) {
-    // Normalizar nombre del closer: quitar "(EstadoX)" y similares
-    const closerWords = c.name.toLowerCase().replace(/\s*\(.*\)/, '').trim().split(/\s+/).filter(Boolean);
+    const closerWords = nameWords(c.name);
     // Exigir que TODAS las palabras del closer estén en el pushName (evita falsos parciales)
     if (closerWords.every(w => words.includes(w))) {
       if (!seen.has(c.phone)) seen.set(c.phone, { email, name: c.name, phone: c.phone });

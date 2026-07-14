@@ -272,6 +272,18 @@ export function searchMemory(query, ownerLid = null) {
     .all(`%${query}%`, `%${query}%`, ownerLid);
 }
 
+// ¿Existe ya un hilo de DM con este JID? Es el guard ANTI-BAN para las notificaciones a
+// terceros (§18.AD): Juanito nunca escribe en frío a quien no le ha escrito antes — ese es
+// el patrón que dispara los softbans. Un DM atendido queda persistido en `messages` con
+// chat_id = el JID del interlocutor, así que su presencia prueba que el hilo existe.
+export function hasDmThread(jid) {
+  if (!jid) return false;
+  const row = db
+    .prepare(`SELECT 1 FROM messages WHERE chat_id = ? AND source != 'group' LIMIT 1`)
+    .get(jid);
+  return !!row;
+}
+
 // ─── Deduplicación de webhooks ────────────────────────────────────────────────
 // Devuelve true si el mensaje es nuevo (y lo marca), false si ya se procesó.
 

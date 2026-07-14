@@ -10,6 +10,7 @@ import { startCalendlyJobs } from './calendly.js';
 import { startSheetsReportJob } from './sheets-report.js';
 import { startSheetsMetricsJob } from './sheets-metrics.js';
 import { startOutcomeReportJob } from './outcome-report.js';
+import { startStripeAlertsJob } from './stripe-alerts.js';
 import { startGroupMessagesJob } from './group-messages.js';
 import { startGroupRepliesJob } from './group-replies.js';
 import { startOutreachJob } from './outreach.js';
@@ -54,16 +55,25 @@ export async function startAllJobs() {
     console.warn('[Scheduler] Calendly no disponible:', err.message);
   }
 
-  // Reporte diario de leads del Sheet (§18.B, grupo "Ventas EstadoX", 8pm).
-  // APAGADO POR AHORA (pedido del jefe 2026-07-08; confirmado 2026-07-09). El código
-  // ya trae comparativas semanales + pagos reales de Stripe (§18.B) y /reporte a
-  // demanda sí los muestra. Para reactivar el cron: descomentar y redeploy.
-  // Se autodesactiva si falta GOOGLE_SA_KEY o grupo.
+  // Reporte diario de leads del Sheet (§18.B, 8pm).
+  //
+  // La publicación AL GRUPO "Ventas EstadoX" sigue APAGADA (pedido del jefe 2026-07-08):
+  // ahora la corta el flag `SHEETS_REPORT_GROUP_ENABLED` (default false), no el hecho de
+  // que el job no arranque. El job SÍ corre cuando hay destinatarios por DM
+  // (`SHEETS_REPORT_DM`, §18.AD: la admin de EstadoX). Sin DMs y sin el flag del grupo, se
+  // autodesactiva igual que antes.
   try {
-    // startSheetsReportJob();  // ← reactivar aquí
-    console.log('[Scheduler] Reporte de EstadoX (8pm) apagado a propósito ⏸️');
+    startSheetsReportJob();
   } catch (err) {
     console.warn('[Scheduler] Reporte de Sheets no disponible:', err.message);
+  }
+
+  // Aviso de pago en (casi) tiempo real a la admin de EstadoX (§18.AD). Poll a Stripe;
+  // se autodesactiva sin STRIPE_API_KEY o sin STRIPE_ALERT_JIDS.
+  try {
+    startStripeAlertsJob();
+  } catch (err) {
+    console.warn('[Scheduler] Avisos de pago no disponibles:', err.message);
   }
 
   // Reporte diario de métricas de desempeño por DM (se autodesactiva si falta
