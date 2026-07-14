@@ -21,11 +21,15 @@ const {
   toSqliteUtc,
   dayRangeUtc,
   formatCallTime,
+  MATERIAL_LINKS,
+  PROGRAM_EVENT_TYPES,
 } = await import('../src/calendly/index.js');
 
 const SECOND_BRAIN_ET = 'https://api.calendly.com/event_types/56efc028-ee2f-46e8-852c-e50d45b15b83';
 const ABOGADOS_ET = 'https://api.calendly.com/event_types/f8d123ac-364b-47f9-a446-1316fdf37b08';
 const LINKEDIN_ET = 'https://api.calendly.com/event_types/96ddf036-9174-459c-be73-b248ad95be13';
+const DEVELOPERS_ET = 'https://api.calendly.com/event_types/dff3e48a-4859-417a-98fb-822048aef5d9';
+const OPERACIONES_ET = 'https://api.calendly.com/event_types/8462e92a-8210-4bb2-8e2b-583aa3c3d877';
 const { resolveCloser, resolveCloserByPhone, resolveCloserByLid, resolveCloserByPushName, isNonCanonicalOptinJid, isIgnoredCloser, workLidForCloser } = await import('../src/calendly/closers.js');
 
 test('firstNameFrom parsea y capitaliza el primer nombre', () => {
@@ -235,13 +239,39 @@ test('buildDigestMessage elige el copy por producto en cada línea (digest mixto
 
 // ─── Producto (programa) por evento ───────────────────────────────────────────
 
-test('programKeyOf mapea los tres productos y null para desconocidos', () => {
+test('programKeyOf mapea los cinco productos y null para desconocidos', () => {
   assert.equal(programKeyOf(SECOND_BRAIN_ET), 'second_brain');
   assert.equal(programKeyOf(ABOGADOS_ET), 'abogados');
   assert.equal(programKeyOf(LINKEDIN_ET), 'linkedin');
+  assert.equal(programKeyOf(DEVELOPERS_ET), 'developers');
+  assert.equal(programKeyOf(OPERACIONES_ET), 'operaciones');
   assert.equal(programKeyOf({ event_type: LINKEDIN_ET }), 'linkedin'); // acepta el evento completo
   assert.equal(programKeyOf('https://api.calendly.com/event_types/otro'), null);
   assert.equal(programKeyOf(null), null);
+});
+
+// Los event_types cableados y el copy tienen que ir de la mano. Sin esta guarda, agregar un
+// programa a PROGRAM_EVENT_TYPES sin su copy hace que sus closers no reciban push (o, antes
+// del endurecimiento, que el lead recibiera el pitch del programa equivocado).
+test('todo programa cableado tiene copy y brochure propios', () => {
+  for (const et of PROGRAM_EVENT_TYPES()) {
+    const key = programKeyOf(et);
+    assert.ok(key, `event_type sin clave de programa: ${et}`);
+    const push1 = buildPrecallText({ programKey: key, pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
+    assert.ok(push1, `${key}: no tiene copy en PROGRAM_PITCH`);
+    assert.ok(MATERIAL_LINKS[key]?.brochure, `${key}: no tiene brochure en MATERIAL_LINKS`);
+  }
+});
+
+test('los programas nuevos nombran SU programa, no el de otro', () => {
+  const dev = buildPrecallText({ programKey: 'developers', pushN: 1, primerNombre: 'Ana', closer: 'Pablo', hora: '3pm' });
+  assert.match(dev, /programa de AI for Developers de 30X/);
+  assert.ok(!dev.includes('Second Brain'), 'no debe colarse el pitch de Second Brain');
+  assert.ok(!dev.includes('🎥'), 'todavía no tiene video → sin la línea de video');
+
+  const ops = buildPrecallText({ programKey: 'operaciones', pushN: 1, primerNombre: 'Ana', closer: 'Lucas', hora: '3pm' });
+  assert.match(ops, /programa de Operaciones Escalables con AI de 30X/);
+  assert.match(ops, /📄 Brochure: /);
 });
 
 test('isIgnoredCloser: hosts conocidos no gestionados → true; mapeados/desconocidos → false', () => {
@@ -285,24 +315,44 @@ test('buildPrecallText Push 1 distingue producto (intro + nombre del programa)',
   assert.match(ab, /IA para Abogados de EstadoX/);
 });
 
-test('buildPrecallText Push 1 incrusta el bloque de materiales por producto', () => {
-  // MATERIAL_LINKS está configurado (brochure PDF en Google Drive + video YouTube)
-  // → el Push 1 incluye el bloque con el brochure y video del producto correcto.
-  const sb = buildPrecallText({ programKey: 'second_brain', pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
-  assert.match(sb, /Es MUY IMPORTANTE que puedas ver estos materiales/);
-  assert.match(sb, /drive\.google\.com\/file\/d\/1Yq7cK4kJ_tjX97v1TQbjy0cmkXLNLg4d\/view/);
-  assert.match(sb, /youtube\.com\/watch\?v=DGA0nf0geN0/);
+// Se asserta contra MATERIAL_LINKS, NO contra los links literales: el owner cambia los
+// decks cada tanto (p.ej. el de Second Brain en 2e8e109) y hardcodearlos acá hacía que el
+// test se pudriera en cada cambio de copy. Lo que importa es que el bloque LLEVE el link
+// configurado del producto correcto, no cuál es ese link.
+test('buildPrecallText Push 1 incrusta el bloque de materiales del producto correcto', () => {
+  for (const prog of Object.keys(MATERIAL_LINKS)) {
+    const txt = buildPrecallText({ programKey: prog, pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
+    assert.match(txt, /Es MUY IMPORTANTE que puedas ver estos materiales/);
+    assert.ok(txt.includes(MATERIAL_LINKS[prog].brochure), `${prog}: falta su brochure`);
+    // El video es opcional: los programas nuevos (developers, operaciones) todavía no tienen.
+    if (MATERIAL_LINKS[prog].video) assert.ok(txt.includes(MATERIAL_LINKS[prog].video), `${prog}: falta su video`);
+  }
 
+  // Y que no se cruce el material entre productos: el de abogados no lleva el de LinkedIn.
   const ab = buildPrecallText({ programKey: 'abogados', pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
-  assert.match(ab, /drive\.google\.com\/file\/d\/1TN5HfX7r8ViM2JXuOmFOnvBSI3xyeLwR\/view/);
-  assert.match(ab, /youtube\.com\/watch\?v=88W1z_M9tCg/);
+  assert.ok(!ab.includes(MATERIAL_LINKS.linkedin.brochure));
 
-  // LinkedIn Sales: intro "de 30X", nombre del programa, su brochure (Drive) y video (YouTube).
+  // LinkedIn Sales: intro "de 30X" + nombre del programa.
   const li = buildPrecallText({ programKey: 'linkedin', pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
   assert.match(li, /Por acá Sebastian de 30X/);
   assert.match(li, /programa de LinkedIn Sales de 30X/);
-  assert.match(li, /drive\.google\.com\/file\/d\/1WUQftLcYWM5uCzE59Hql0B6cTpxoziO_\/view/);
-  assert.match(li, /youtu\.be\/J9LDlmtQeHs/);
+});
+
+// Guarda del endurecimiento: un programa sin copy en PROGRAM_PITCH NO debe fabricar un
+// mensaje con el pitch de otro programa (antes caía a second_brain). El texto viaja en el
+// link wa.me que el closer toca para enviar, así que un pitch errado le llega al lead.
+test('buildPrecallText devuelve null si el programa no tiene copy (no inventa otro)', () => {
+  assert.equal(buildPrecallText({ programKey: 'programa_nuevo', pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' }), null);
+  assert.equal(buildLeadLink('+573001234567', null), null); // y sin texto no se arma link
+});
+
+test('buildPush3Message sin copy del programa degrada a manual, no manda link roto', () => {
+  const msg = buildPush3Message({
+    name: 'Ana Gómez', phone: '+573001234567',
+    startIso: '2026-07-15T20:00:00.000Z', programKey: 'programa_nuevo', closer: 'Sebastian',
+  });
+  assert.match(msg, /mándalo manual/);
+  assert.ok(!msg.includes('wa.me'), 'no debe incluir un link wa.me con texto "null"');
 });
 
 test('buildPrecallText Push 2 es igual entre productos (recordatorio corto)', () => {

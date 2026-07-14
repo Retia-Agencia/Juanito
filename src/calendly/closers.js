@@ -6,26 +6,25 @@
 //
 // Para cambiar un número o un closer, editar este mapa.
 //
-// Recuento del equipo — auditoría 2026-07-14 contra la cuenta real de Calendly (45 días de
-// historia + 14 de agenda futura, los 3 programas gestionados). Calls y agenda futura:
-//   Pablo Lozano        265 calls · 17 futuras · AI Second Brain
-//   Sebastian Rodriguez 211 calls · 12 futuras · AI Second Brain, EstadoX, LinkedIn
-//   Sebastian Salazar   209 calls ·  1 futura  · AI Second Brain, EstadoX
-//   Lucas Mendoza       199 calls ·  2 futuras · LinkedIn
-//   Sebastian Marin     187 calls ·  0 futuras · LinkedIn (última call: 10 jul)
-//   Maca Celis          172 calls ·  0 futuras · AI Second Brain (última call: 3 jul)
-//   Daniela Camacho      78 calls ·  1 futura  · EstadoX
-//   Pablo Suarez          0 calls ·  0 futuras · nuevo (entró 2026-07-14, aún sin agenda)
-// Todos los demás hosts de esos programas están en IGNORED_CLOSERS (0 calls futuras).
+// EQUIPO — lista dictada por el jefe el 2026-07-14 y validada contra la cuenta real de
+// Calendly. Estos 7 son TODO el equipo: quien no esté acá, no se gestiona.
+//
+//   Pablo Lozano        AI Second Brain · AI For Developers
+//   Sebastian Rodriguez AI Second Brain
+//   Sebastian Marin     LinkedIn Sales  · Instagram & TikTok / Media
+//   Lucas Mendoza       LinkedIn Sales  · Instagram & TikTok · Operaciones Escalables
+//   Pablo Suarez        AI For Developers
+//   Daniela Camacho     EstadoX (IA para Abogados) · Instagram & TikTok (ambos)
+//   Sebastian Salazar   EstadoX (IA para Abogados)
 //
 // El PROGRAMA no se configura acá: se deriva del event_type de cada cita (programKeyOf),
-// así que un closer nuevo queda cubierto en los 3 programas sin tocar nada más.
+// así que un closer queda cubierto en TODOS los programas sin tocar nada más. La columna
+// de arriba es informativa (a qué pools pertenece hoy), no la usa el código.
 export const CLOSERS = {
   'daniela.camacho@30x.com':  { name: 'Daniela Camacho',     phone: '+573103062287' },
   'sebastian@30x.com':        { name: 'Sebastian Rodriguez', phone: '+573102212005' },
   'sebastian.salazar@30x.com':{ name: 'Sebastian Salazar',   phone: '+573054312905' },
   'pablo.lozano@30x.com':     { name: 'Pablo Lozano',        phone: '+573046131437' },
-  'maca.celis@30x.com':       { name: 'Maca Celis',          phone: '+573246345899' },
   'sebastian.marin@30x.com':  { name: 'Sebastian Marin',     phone: '+573212100048' },
   'lucas.mendoza@30x.com':    { name: 'Lucas Mendoza',       phone: '+573014477044' },
   // Entró 2026-07-14. OJO: su email NO lleva punto (pablosuarez@), a diferencia de
@@ -52,6 +51,10 @@ export const CLOSER_LIDS = {
 // — están fuera del equipo o dormidos. Camilo/Natalia/registro@ estaban SIN MAPEAR (ni acá
 // ni en CLOSERS), así que sus calls disparaban alertas de "closer sin mapear" en cada poll.
 export const IGNORED_CLOSERS = new Set([
+  // Salió del equipo (2026-07-14). No está en la lista de closers que dictó el jefe.
+  // Tenía 139 calls en Second Brain pero CERO futuras y sin hostear desde el 3 jul.
+  // Su opt-in también se borró de la DB — si vuelve, tiene que escribirle a Juanito de nuevo.
+  'maca.celis@30x.com',
   'andrea.machado@30x.com',   // salió del equipo (2026-07-14; última call 25 jun)
   'mateo.leon@30x.com',       // salió del equipo (2026-06-24)
   'natalia.gonzalez@30x.com', // salió del equipo (2026-06-24; se documentó pero no se ignoró → alertas)

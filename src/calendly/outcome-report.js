@@ -14,10 +14,16 @@
 import { ASISTENCIA_LABELS, RESULTADO_LABELS, formatCallDateTime } from './index.js';
 
 // Clave de programa (en la DB) → nombre de sección (igual al del reporte de métricas).
+// OJO: el reporte al grupo solo publica las secciones que `metrics-targets.js` sabe enrutar
+// (hoy: las 3 originales, cada una con su grupo en el .env). Los programas nuevos SÍ quedan
+// registrados en `call_outcomes` y sus closers reciben el Push 4; lo que falta para que
+// aparezcan en el reporte publicado es un grupo destino. Ver §18.AE del handoff.
 export const PROGRAM_TO_COMPANY = {
   second_brain: 'AI SECOND BRAIN',
   abogados: 'ESTADOX',
   linkedin: 'LINKEDIN SALES',
+  developers: 'AI FOR DEVELOPERS',
+  operaciones: 'OPERACIONES ESCALABLES',
 };
 
 // Estados que sacan la call del volumen: no ocurrió.

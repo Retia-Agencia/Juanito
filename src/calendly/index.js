@@ -29,13 +29,22 @@ export const ORG_URI = () =>
   process.env.CALENDLY_ORG_URI ||
   'https://api.calendly.com/organizations/9ac5ab82-0c41-43c8-bede-cc9787043b28';
 
-// event_types de los tres programas (resueltos contra la cuenta real):
-//  - AI Second Brain 30X
-//  - Programa IA para Abogados | EstadoX
+// event_types de los programas gestionados (resueltos contra la cuenta real).
+// Auditoría 2026-07-14: la lista de programas la dicta el jefe; estos son sus event_types.
+//  - Postulación Implementación AI Second Brain 30X
+//  - Postulación Programa IA para Abogados | EstadoX
 //  - Postulación LinkedIn Sales 30X
+//  - Postulación AI for Developers 30X          (agregado 2026-07-14)
+//  - Postulación Operaciones Escalables con AI 30X (agregado 2026-07-14)
+//
+// PENDIENTE: los dos programas de "Instagram & TikTok for Business 30X" (uno normal y otro
+// /Media) todavía NO existen en Calendly — cero reservas, y los event_types tipo pool no se
+// pueden enumerar por API sin ninguna reserva. Agregar su ET acá cuando se lancen.
 const SECOND_BRAIN_ET = 'https://api.calendly.com/event_types/56efc028-ee2f-46e8-852c-e50d45b15b83';
 const ABOGADOS_ET = 'https://api.calendly.com/event_types/f8d123ac-364b-47f9-a446-1316fdf37b08';
 const LINKEDIN_ET = 'https://api.calendly.com/event_types/96ddf036-9174-459c-be73-b248ad95be13';
+const DEVELOPERS_ET = 'https://api.calendly.com/event_types/dff3e48a-4859-417a-98fb-822048aef5d9';
+const OPERACIONES_ET = 'https://api.calendly.com/event_types/8462e92a-8210-4bb2-8e2b-583aa3c3d877';
 
 export const PROGRAM_EVENT_TYPES = () => {
   const fromEnv = (process.env.CALENDLY_EVENT_TYPES || '')
@@ -43,7 +52,7 @@ export const PROGRAM_EVENT_TYPES = () => {
     .map((s) => s.trim())
     .filter(Boolean);
   if (fromEnv.length) return fromEnv;
-  return [SECOND_BRAIN_ET, ABOGADOS_ET, LINKEDIN_ET];
+  return [SECOND_BRAIN_ET, ABOGADOS_ET, LINKEDIN_ET, DEVELOPERS_ET, OPERACIONES_ET];
 };
 
 // ─── Producto (programa) por evento ───────────────────────────────────────────
@@ -55,6 +64,8 @@ const PROGRAMS = {
   [SECOND_BRAIN_ET]: 'second_brain',
   [ABOGADOS_ET]: 'abogados',
   [LINKEDIN_ET]: 'linkedin',
+  [DEVELOPERS_ET]: 'developers',
+  [OPERACIONES_ET]: 'operaciones',
 };
 
 // Acepta el event_type (string) o el evento completo. Devuelve la clave de
@@ -246,6 +257,14 @@ export const MATERIAL_LINKS = {
     brochure: 'https://drive.google.com/file/d/1MO5jP7rnbWKUyDWao3Q1-vfF1fzR-h3O/view',
     video: 'https://youtu.be/J9LDlmtQeHs',
   },
+  // Programas nuevos (2026-07-14). Todavía SIN video: el bloque de materiales se arma
+  // igual, solo con el brochure (materialsBlock omite la línea que falte).
+  developers: {
+    brochure: 'https://drive.google.com/file/d/1VEUK_yF1UxwrkiCQJP1VHFW-nG9d426I/view',
+  },
+  operaciones: {
+    brochure: 'https://drive.google.com/file/d/1K_vkZLqBOCQeW3XqCWyOzsgIiIA_zfWz/view',
+  },
 };
 // ▲▲▲ EDITA AQUÍ ▲▲▲
 
@@ -263,6 +282,14 @@ const PROGRAM_PITCH = {
     from: 'de 30X',
     program: 'programa de LinkedIn Sales de 30X',
   },
+  developers: {
+    from: 'de 30X',
+    program: 'programa de AI for Developers de 30X',
+  },
+  operaciones: {
+    from: 'de 30X',
+    program: 'programa de Operaciones Escalables con AI de 30X',
+  },
 };
 
 function materialsBlock(programKey) {
@@ -275,9 +302,18 @@ function materialsBlock(programKey) {
 }
 
 // Construye el texto precall (lo que el closer envía al lead). pushN: 1 | 2 | 3.
+// Devuelve null si el programa no tiene copy propio en PROGRAM_PITCH — los callers
+// degradan a "mándalo manual". NO hay fallback a otro programa: antes caía a
+// second_brain, así que agregar un programa sin su copy le mandaba al lead un mensaje
+// que lo invitaba al programa EQUIVOCADO (el texto viaja en el link wa.me que el closer
+// toca para enviar, o sea que sale casi tal cual). Mejor sin push que con el push errado.
 export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora, linkLlamada = '' }) {
   const lead = primerNombre || 'hola';
-  const pitch = PROGRAM_PITCH[programKey] || PROGRAM_PITCH.second_brain;
+  const pitch = PROGRAM_PITCH[programKey];
+  if (!pitch) {
+    console.warn(`[Calendly] programa "${programKey}" sin copy en PROGRAM_PITCH → push precall omitido`);
+    return null;
+  }
 
   if (pushN === 1) {
     return (
@@ -307,10 +343,12 @@ export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora
 }
 
 // Link wa.me con el mensaje ya escrito. El closer lo toca → chat del lead listo.
-// Normaliza el teléfono a dígitos E.164 sin `+`. Devuelve null si no hay teléfono.
+// Normaliza el teléfono a dígitos E.164 sin `+`. Devuelve null si no hay teléfono
+// o si no hay texto (programa sin copy → buildPrecallText devuelve null; sin esta
+// guarda, encodeURIComponent(null) mandaba al lead un chat con la palabra "null").
 export function buildLeadLink(phone, text) {
   const digits = String(phone || '').replace(/\D/g, '');
-  if (!digits) return null;
+  if (!digits || !text) return null;
   return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
 }
 
@@ -332,7 +370,7 @@ export function buildPush3Message({ name, firstName, phone, startIso, programKey
     linkLlamada,
   });
   const link = buildLeadLink(phone, text);
-  return link ? `${head}\n👉 Enviar push: ${link}` : head;
+  return link ? `${head}\n👉 Enviar push: ${link}` : `${head}\n(sin copy para este programa — mándalo manual)`;
 }
 
 // Push 0 (aviso de nueva call HOY): mensaje INFORMATIVO al closer — "te reservaron

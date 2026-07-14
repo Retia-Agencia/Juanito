@@ -97,7 +97,7 @@ db.exec(`
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     event_uuid     TEXT NOT NULL,
     push_n         INTEGER NOT NULL DEFAULT 3,
-    program        TEXT,                            -- second_brain | abogados | linkedin (§18.AB)
+    program        TEXT,                            -- second_brain | abogados | linkedin | developers | operaciones (§18.AB)
     closer_email   TEXT,
     closer_phone   TEXT,
     prospect_name  TEXT,
@@ -123,7 +123,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS call_outcomes (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     event_uuid   TEXT NOT NULL UNIQUE,
-    program      TEXT,                       -- second_brain | abogados | linkedin
+    program      TEXT,                       -- second_brain | abogados | linkedin | developers | operaciones
     closer_email TEXT,
     closer_phone TEXT,                       -- número canónico (clave del opt-in)
     closer_name  TEXT,
