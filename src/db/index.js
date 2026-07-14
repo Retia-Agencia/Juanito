@@ -14,6 +14,10 @@ mkdirSync(dirname(DB_PATH), { recursive: true });
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 
+// Ventana en la que un outcome a medio flujo sigue "caliente" y se lleva la respuesta
+// del closer (ver getActiveOutcomeForCloser). Pasada, cae al final de la fila.
+const REPLY_WINDOW_MIN = Number(process.env.OUTCOME_REPLY_WINDOW_MIN || 120);
+
 // ─── Mensajes / historial ─────────────────────────────────────────────────────
 
 export function saveMessage({ role, content, source = 'bot', chatId = null }) {
@@ -386,10 +390,10 @@ export function createPendingOutcome(o) {
     .prepare(`
       INSERT OR IGNORE INTO call_outcomes
         (event_uuid, program, closer_email, closer_phone, closer_name,
-         lead_name, lead_phone, call_start, status, asked_at)
+         lead_name, lead_phone, call_start, status, asked_at, prompted_at)
       VALUES
         (@event_uuid, @program, @closer_email, @closer_phone, @closer_name,
-         @lead_name, @lead_phone, @call_start, 'pending', datetime('now'))
+         @lead_name, @lead_phone, @call_start, 'pending', datetime('now'), datetime('now'))
     `)
     .run(row);
   return info.changes === 1 ? 'new' : 'exists';
@@ -427,37 +431,73 @@ export function recordAutoOutcome(o) {
     .run(row);
 }
 
-// El outcome que el closer está respondiendo ahora. Prioriza el que ya tiene
-// asistencia (mid-flow, esperando resultado) y luego el más viejo sin responder.
-// Solo filas 'pending' (answered/auto/no_answer ya cerraron). null si no hay.
-export function getActiveOutcomeForCloser(phone) {
+// El outcome que el closer está respondiendo ahora. Tres capas, en orden:
+//
+//   1. Mid-flow CALIENTE: ya tiene asistencia y se le preguntó algo hace poco (esperando
+//      el resultado de un show, o la fecha de una reagenda). Es lo que está contestando.
+//   2. FIFO de las que aún esperan asistencia (Push 4 recién entregado).
+//   3. Mid-flow FRÍO, como último recurso: nadie más reclama el mensaje.
+//
+// La ventana de frescura (capa 1) evita que una fila a medio flujo se lleve para siempre
+// TODA respuesta del closer: sin ella, una reagenda sin fecha de ayer (o un show al que
+// nunca le llegó el resultado) secuestraría la respuesta al Push 4 de hoy.
+// Solo filas abiertas ('pending' | 'awaiting_date'); answered/auto/no_answer ya cerraron.
+export function getActiveOutcomeForCloser(phone, windowMin = REPLY_WINDOW_MIN) {
   const p = normalizePhone(phone);
   if (!p) return null;
+  const OPEN = `status IN ('pending','awaiting_date')`;
+
+  const hot = db
+    .prepare(`
+      SELECT * FROM call_outcomes
+      WHERE closer_phone = ? AND ${OPEN} AND asistencia IS NOT NULL
+        AND prompted_at IS NOT NULL AND prompted_at >= datetime('now', ?)
+      ORDER BY prompted_at DESC
+      LIMIT 1
+    `)
+    .get(p, `-${Number(windowMin)} minutes`);
+  if (hot) return hot;
+
+  const fifo = db
+    .prepare(`
+      SELECT * FROM call_outcomes
+      WHERE closer_phone = ? AND status = 'pending' AND asistencia IS NULL
+      ORDER BY asked_at ASC
+      LIMIT 1
+    `)
+    .get(p);
+  if (fifo) return fifo;
+
   return (
     db
       .prepare(`
         SELECT * FROM call_outcomes
-        WHERE closer_phone = ? AND status = 'pending'
-        ORDER BY (asistencia IS NOT NULL) DESC, asked_at ASC
+        WHERE closer_phone = ? AND ${OPEN} AND asistencia IS NOT NULL
+        ORDER BY asked_at ASC
         LIMIT 1
       `)
       .get(p) || null
   );
 }
 
-// Guarda la asistencia. Si NO es 'show', el outcome queda cerrado ('answered').
-// Si es 'show', sigue 'pending' a la espera del resultado (segundo paso).
+// Guarda la asistencia y decide si el flujo sigue o cierra:
+//   show       → sigue 'pending'       (falta el resultado)
+//   reagendado → sigue 'awaiting_date' (falta la fecha de la nueva call, §18.AC)
+//   no_show / cancelado → cierra en 'answered'
+// `prompted_at` se refresca porque Juanito hace la repregunta acto seguido.
 export function setOutcomeAsistencia(id, asistencia, rawReply = null) {
-  const closes = asistencia !== 'show';
+  const status =
+    asistencia === 'show' ? 'pending' : asistencia === 'reagendado' ? 'awaiting_date' : 'answered';
+  const closes = status === 'answered';
   return db
     .prepare(`
       UPDATE call_outcomes
-      SET asistencia = ?, raw_reply = ?,
-          status = ${closes ? `'answered'` : `'pending'`},
+      SET asistencia = ?, raw_reply = ?, status = ?,
+          prompted_at = datetime('now'),
           answered_at = ${closes ? `datetime('now')` : `answered_at`}
       WHERE id = ?
     `)
-    .run(asistencia, rawReply, id);
+    .run(asistencia, rawReply, status, id);
 }
 
 // Guarda el resultado y cierra el outcome ('answered').
@@ -507,12 +547,100 @@ export function expireUnansweredOutcomes(minMinutes = 30) {
 export function getOutcomesInWindow(fromUtc, toUtc) {
   return db
     .prepare(`
-      SELECT program, closer_name, closer_email, asistencia, resultado, status, call_start
+      SELECT program, closer_name, closer_email, lead_name, asistencia, resultado, status,
+             call_start, rescheduled_to
       FROM call_outcomes
       WHERE call_start >= ? AND call_start < ?
       ORDER BY program, closer_name, call_start
     `)
     .all(fromUtc, toUtc);
+}
+
+// ─── Calendly: reagendas (§18.AC) ─────────────────────────────────────────────
+// Cuando el closer marca "Reagendó", el outcome queda en 'awaiting_date' hasta que dé
+// la fecha. Con la fecha, `createRescheduledCall` (calendly/reschedule.js) agenda la
+// call nueva como pushes con un event_uuid sintético 'manual:<uuid>:<n>' y cierra esta
+// fila. En call_outcomes solo sobreviven `rescheduled_to` y `reschedule_uuid`: eso ES
+// la métrica. El estado temporal vive en calendly_pushes y lo purga cleanup().
+
+// Cierra la reagenda con su fecha (o sin ella, si startUtc es null).
+export function setOutcomeReschedule(id, { startUtc = null, uuid = null, rawReply = null } = {}) {
+  return db
+    .prepare(`
+      UPDATE call_outcomes
+      SET rescheduled_to = ?, reschedule_uuid = ?,
+          raw_reply = TRIM(COALESCE(raw_reply, '') || ' | ' || COALESCE(?, '')),
+          status = 'answered', answered_at = datetime('now')
+      WHERE id = ?
+    `)
+    .run(startUtc, uuid, rawReply, id);
+}
+
+// Reagendas a las que hay que volver a pedirles la fecha. El cron corre 1 vez al día,
+// así que el corte de 8h basta para que sea "al día siguiente" sin pelearse con el TZ
+// (prompted_at está en UTC; el cron dispara 9am Bogotá).
+export function getAwaitingDateOutcomes({ maxAsked = 3, minHours = 8 } = {}) {
+  return db
+    .prepare(`
+      SELECT * FROM call_outcomes
+      WHERE status = 'awaiting_date' AND reschedule_asked < ?
+        AND (prompted_at IS NULL OR prompted_at <= datetime('now', ?))
+      ORDER BY asked_at ASC
+    `)
+    .all(Number(maxAsked), `-${Number(minHours)} hours`);
+}
+
+export function markReschedulePrompted(id) {
+  return db
+    .prepare(`
+      UPDATE call_outcomes
+      SET reschedule_asked = reschedule_asked + 1, prompted_at = datetime('now')
+      WHERE id = ?
+    `)
+    .run(id);
+}
+
+// Al tope de insistencias la reagenda se cierra SIN fecha: cuenta como movida en el
+// reporte y deja de ocupar la ventana de captura del closer.
+export function expireAwaitingDateOutcomes({ maxAsked = 3 } = {}) {
+  return db
+    .prepare(`
+      UPDATE call_outcomes
+      SET status = 'answered', answered_at = datetime('now')
+      WHERE status = 'awaiting_date' AND reschedule_asked >= ?
+    `)
+    .run(Number(maxAsked));
+}
+
+// Pushes sintéticos aún por entregar (para el dedup contra Calendly del poll). Set
+// chiquito: el match por lead se hace en JS (normalización de nombre/teléfono).
+export function getPendingManualPushes() {
+  return db
+    .prepare(`
+      SELECT * FROM calendly_pushes
+      WHERE event_uuid LIKE 'manual:%' AND status = 'scheduled'
+        AND call_start > datetime('now', '-1 hour')
+    `)
+    .all();
+}
+
+// La reagenda volvió a entrar por Calendly → el evento real manda. Se cancelan los
+// pushes sintéticos (así no se pregunta dos veces ni se cuenta dos veces) y el outcome
+// que los originó apunta al uuid real.
+export function supersedeManualPushes(manualUuid, realUuid) {
+  const info = db
+    .prepare(`
+      UPDATE calendly_pushes
+      SET status = 'skipped',
+          message = COALESCE(message, '') || ' | skip: superseded por evento real ' || ?
+      WHERE event_uuid = ? AND status = 'scheduled'
+    `)
+    .run(realUuid, manualUuid);
+  db.prepare(`UPDATE call_outcomes SET reschedule_uuid = ? WHERE reschedule_uuid = ?`).run(
+    realUuid,
+    manualUuid
+  );
+  return info.changes;
 }
 
 // ─── Calendly: opt-in de closers (anti-baneo) ─────────────────────────────────
@@ -1152,6 +1280,9 @@ export function cleanup() {
     `DELETE FROM group_context WHERE created_at < datetime('now', '-14 days')`,
     `DELETE FROM processed_messages WHERE created_at < datetime('now', '-7 days')`,
     `DELETE FROM calendly_pushes WHERE status != 'scheduled' AND created_at < datetime('now', '-30 days')`,
+    // Pushes de reagendas (§18.AC) que nunca se entregaron —el closer perdió el opt-in, WA
+    // estuvo caído— y cuya call ya pasó hace rato: basura, no memoria.
+    `DELETE FROM calendly_pushes WHERE event_uuid LIKE 'manual:%' AND status = 'scheduled' AND call_start < datetime('now', '-7 days')`,
     `DELETE FROM group_usage WHERE date < date('now', 'localtime', '-7 days')`,
     `DELETE FROM group_reply_usage WHERE hour_bucket < strftime('%Y-%m-%d-%H', datetime('now', 'localtime', '-2 days'))`,
     `DELETE FROM outreach_schedules WHERE status != 'active' AND created_at < datetime('now', '-30 days')`,

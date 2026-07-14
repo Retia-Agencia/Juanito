@@ -94,6 +94,21 @@ services:
       - CALENDLY_OUTCOME_REMIND_MIN=${CALENDLY_OUTCOME_REMIND_MIN:-30}
       - CALENDLY_OUTCOME_EXPIRE_MIN=${CALENDLY_OUTCOME_EXPIRE_MIN:-30}
       - CALENDLY_OUTCOME_CRON=${CALENDLY_OUTCOME_CRON:-*/10 * * * *}
+      # Reagendas (§18.AC): con "3 · Reagendó", Juanito pide la fecha nueva y agenda la call
+      # por su cuenta (uuid sintético 'manual:…'), venga o no de Calendly. Evita el doble
+      # conteo y hace visibles las reagendas por otro link. APAGADO por default: se prende
+      # junto con el allowlist de CALENDLY_PUSH4_CLOSERS.
+      - CALENDLY_RESCHEDULE_ENABLED=${CALENDLY_RESCHEDULE_ENABLED:-false}
+      - CALENDLY_RESCHEDULE_PROMPT_CRON=${CALENDLY_RESCHEDULE_PROMPT_CRON:-0 9 * * *}
+      - CALENDLY_RESCHEDULE_MAX_ASKED=${CALENDLY_RESCHEDULE_MAX_ASKED:-3}
+      - CALENDLY_RESCHEDULE_MAX_CHAIN=${CALENDLY_RESCHEDULE_MAX_CHAIN:-3}
+      # Fallback a Claude solo si el parser regex no entiende la fecha.
+      - CALENDLY_RESCHEDULE_AI=${CALENDLY_RESCHEDULE_AI:-true}
+      - CALENDLY_RESCHEDULE_MODEL=${CALENDLY_RESCHEDULE_MODEL:-}
+      - CALENDLY_RESCHEDULE_AI_TIMEOUT_MS=${CALENDLY_RESCHEDULE_AI_TIMEOUT_MS:-8000}
+      # Cuánto sigue "caliente" un outcome a medio flujo antes de ceder la respuesta del
+      # closer al Push 4 más reciente (§18.AC).
+      - OUTCOME_REPLY_WINDOW_MIN=${OUTCOME_REPLY_WINDOW_MIN:-120}
       # Reporte diario de leads del Sheet (§18.B) — sin GOOGLE_SA_KEY o grupo el job se autodesactiva.
       - GOOGLE_SA_KEY=${GOOGLE_SA_KEY:-}
       - SHEETS_REPORT_GROUP=${SHEETS_REPORT_GROUP:-}

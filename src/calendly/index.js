@@ -300,8 +300,10 @@ export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora
     );
   }
 
-  // pushN === 3
-  return `Ya casi nos vemos ${lead}, te dejo a la mano el link de la llamada:${linkLlamada ? `\n${linkLlamada}` : ''}`;
+  // pushN === 3. Sin link: pasa en las reagendas por fuera de Calendly (§18.AC), donde
+  // el link lo coordinó el closer con el lead y Juanito no lo tiene.
+  if (!linkLlamada) return `Ya casi nos vemos ${lead}, nos conectamos por el link que ya te compartí.`;
+  return `Ya casi nos vemos ${lead}, te dejo a la mano el link de la llamada:\n${linkLlamada}`;
 }
 
 // Link wa.me con el mensaje ya escrito. El closer lo toca → chat del lead listo.
@@ -493,6 +495,69 @@ export function buildOutcomeConfirmation({ name, firstName, asistencia, resultad
   const a = ASISTENCIA_LABELS[asistencia] || asistencia || '—';
   const r = resultado ? ` / ${RESULTADO_LABELS[resultado] || resultado}` : '';
   return `✅ Registrado: *${who}* → ${a}${r}. ¡Gracias! 🙌`;
+}
+
+// ─── Reagendas (§18.AC) ───────────────────────────────────────────────────────
+// Cuando el closer marca "3 · Reagendó", Juanito le pide la fecha nueva y con eso agenda
+// la call reagendada por su cuenta (venga o no de Calendly). Sin la fecha, esa call sería
+// invisible para las métricas — y la original se contaría igual, inflando el volumen.
+
+export function buildRescheduleAskMessage({ name, firstName }) {
+  const who = name || firstName || 'el prospecto';
+  return (
+    `🔁 Listo, *${who}* quedó reagendado. ¿Para cuándo?\n` +
+    `Escríbeme la fecha y la hora — ej: *hoy 3pm* · *mañana 10:30am* · *22/07 9am*.\n` +
+    `Si aún no hay fecha, dime "aún no sé" y te lo pregunto mañana.`
+  );
+}
+
+// Confirmación con ECHO de la fecha resuelta: es la red de seguridad del parser. Si Juanito
+// entendió mal, el closer lo ve acá mismo y lo corrige en el hilo.
+export function buildRescheduleConfirmation({ name, firstName, startIso, tz = TZ() }) {
+  const who = name || firstName || 'el prospecto';
+  const cuando = formatCallDateTime(startIso, tz);
+  return (
+    `✅ Anotado: *${who}* → *${cuando}*.\n` +
+    `Te escribo antes de esa call y te pregunto cómo te fue. No tienes que hacer nada más 🙌`
+  );
+}
+
+export function buildRescheduleSinFechaMessage({ name, firstName }) {
+  const who = name || firstName || 'el prospecto';
+  return `✅ Anotado: *${who}* reagendó (sin fecha aún). Te pregunto mañana. Si la agenda entra por Calendly, la tomo solo.`;
+}
+
+// Insistencia diaria: reagendas que quedaron sin fecha.
+export function buildReschedulePromptMessage({ name, firstName }) {
+  const who = name || firstName || 'el prospecto';
+  return (
+    `🔁 ¿Ya quedó fecha con *${who}*?\n` +
+    `Escríbemela — ej: *hoy 3pm* · *mañana 10:30am* · *22/07 9am*.`
+  );
+}
+
+// Repregunta cuando no se entendió la fecha (o la que dio no sirve).
+export function buildRescheduleReprompt({ name, firstName, reason }) {
+  const who = name || firstName || 'el prospecto';
+  if (reason === 'past')
+    return `🤔 Esa fecha ya pasó. ¿Para cuándo quedó *${who}*? Ej: *hoy 3pm* · *mañana 10:30am*.`;
+  if (reason === 'far')
+    return `🤔 Esa fecha está muy lejos (más de 3 meses). ¿Para cuándo quedó *${who}*?`;
+  return (
+    `🙈 No te entendí la fecha de *${who}*.\n` +
+    `Escríbela así: *hoy 3pm* · *mañana 10:30am* · *22/07 9am*. O dime "aún no sé".`
+  );
+}
+
+// Fecha + hora legibles ("mar 22 jul, 3:00 pm") — para el echo de confirmación.
+export function formatCallDateTime(startIso, tz = TZ()) {
+  const fecha = new Intl.DateTimeFormat('es-CO', {
+    timeZone: tz,
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  }).format(new Date(startIso));
+  return `${fecha}, ${formatLeadTime(startIso, tz)}`;
 }
 
 // Recordatorio (insistencia v1): si no respondió el Push 4 en ~30 min.

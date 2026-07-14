@@ -2536,9 +2536,77 @@ Docker/VPS — `data.outcomes.test.js`.
 `CALENDLY_PUSH4_GRACE_MIN` (5), `CALENDLY_OUTCOME_REMIND_MIN` (30), `CALENDLY_OUTCOME_EXPIRE_MIN` (30),
 `CALENDLY_OUTCOME_CRON` (`*/10 * * * *`), `OUTCOME_REPORT_CRON` (`0 22 * * *`).
 
-**Pendiente v2:** espejo a sheet `Registro`; calls no agendadas en Calendly (walk-ins); editar un outcome
-ya registrado; desambiguar mejor cuando un closer tiene varias calls pendientes a la vez (hoy: FIFO +
-mid-flow primero).
+**Pendiente v2:** espejo a sheet `Registro`; editar un outcome ya registrado. *(La desambiguación entre
+varias calls pendientes y las calls fuera de Calendly quedaron resueltas en §18.AC.)*
+
+### 18.AC 🔵 Reagendas: capturar la fecha, crear la call futura y matar el doble conteo (2026-07-14)
+
+**Dos problemas, uno de ellos silencioso y ya en producción:**
+
+1. **Doble conteo — pasaba sin que nadie contestara nada.** Al reagendar, Calendly **cancela el evento
+   viejo y crea uno NUEVO con otro uuid**. Juanito le metía al viejo una fila automática `cancelado` y al
+   nuevo otra fila cuando el poll lo veía → el mismo lead contaba **2 calls** en el `total` del reporte.
+   El código asumía que reagendar = "mismo uuid, otra hora" (`push-logic.js`), que solo aplica a la
+   edición in-place, no al flujo real.
+2. **Las reagendas por fuera de Calendly eran invisibles.** El caso frecuente: la call de las 9am se
+   mueve a las 3pm por otro link. Juanito no se enteraba, no preguntaba el outcome, y esa call no existía
+   en las métricas.
+
+**La idea central: la "memoria hasta el día de la reagenda" NO necesita tabla nueva.** Es una fila de
+`calendly_pushes` con un `event_uuid` **sintético** (`manual:<uuid-original>:<n>`). La maquinaria que ya
+existe hace todo lo demás: el cron de entrega la dispara a la hora nueva con los gates anti-ban, y el
+`cleanup()` de las 3am la purga sola.
+
+**Flujo:**
+- Push 4 → el closer marca "3 · Reagendó" → **ya no cierra**: el outcome pasa a `awaiting_date` y Juanito
+  pregunta *"¿para cuándo?"*.
+- **Parseo de la fecha:** `reschedule-parse.js` (regex determinista en español: `hoy 3pm`, `mañana 10:30am`,
+  `viernes 2pm`, `22/07 9am`, `el 22 a las 9`, `3 y media`). Hora ambigua → horario laboral (1-6 pm, 7-11 am);
+  la confirmación hace **echo** de la fecha para que el closer corrija. Guards: nada en el pasado ni a >90 días.
+  Si el regex no entiende, **un** intento con Claude (`reschedule-ai.js`, modelo barato, timeout corto, degrada
+  a repregunta). Si el closer no sabe aún, se queda en `awaiting_date` y un cron diario le insiste (3 veces,
+  luego cierra sin fecha).
+- **Se agenda la call nueva** (`reschedule-logic.js` decide, `reschedule.js` escribe): **Push 3** (recordatorio
+  precall, sin link de llamada porque no lo tenemos) + **Push 4** (registro post-call). Tope de 3 reagendas
+  encadenadas por lead.
+- **Dedup contra Calendly:** si la reagenda igual entró por Calendly, el poll ve el evento real (mismo closer +
+  mismo lead, por teléfono o nombre) y **cancela los pushes sintéticos** (`supersedeManualPushes`) → nunca se
+  pregunta ni se cuenta dos veces. La entrega salta el `getEvent()` para uuids `manual:` (no existen en la API).
+
+**Regla de conteo nueva (`outcome-report.js`):** una call **reagendada o cancelada NO ocurrió** → sale del
+`total`, de `registrados` y de `sin_registrar`, y se reporta en una línea aparte (`🔁 movidas: N reagendadas ·
+M canceladas`, con el destino de cada una). El lead cuenta **una sola vez**: el día que la call de verdad se
+resolvió. `show_rate` no cambia (ya excluía esos estados del denominador).
+
+**Bug latente arreglado de paso:** `getActiveOutcomeForCloser` daba prioridad **para siempre** a cualquier fila
+a medio flujo, así que una reagenda sin fecha de ayer (o un `show` que nunca recibió su resultado) secuestraría
+la respuesta al Push 4 de hoy. Ahora son 3 capas: **mid-flow caliente** (`prompted_at` dentro de
+`OUTCOME_REPLY_WINDOW_MIN`, default 120) → **FIFO** de las que esperan asistencia → **mid-flow frío** como
+último recurso.
+
+**Purga (nada se acumula):** los pushes sintéticos los borra el `cleanup()` de las 3am (30 días), más un
+barrido de huérfanos (`manual:%` que quedaron `scheduled` con la call >7 días atrás). El `awaiting_date` se
+cierra solo a los 3 días. En `call_outcomes` sobreviven **2 campos y ambos SON métrica**: `rescheduled_to`
+(cuándo se movió) y `reschedule_uuid` (a qué call).
+
+**Archivos:** `db/migrate.js` (+4 columnas), `db/index.js` (`awaiting_date`, ventana de frescura,
+`setOutcomeReschedule`, `getAwaitingDateOutcomes`, `supersedeManualPushes`, cleanup), `calendly/reschedule-parse.js`
+(NUEVO), `calendly/reschedule-ai.js` (NUEVO), `calendly/reschedule-logic.js` (NUEVO, puro),
+`calendly/reschedule.js` (NUEVO, efecto), `calendly/outcome-logic.js`, `calendly/outcome-capture.js`,
+`calendly/outcome-report.js`, `calendly/index.js` (mensajes), `scheduler/calendly.js` (supersede + `runReschedulePrompts`).
+
+**Tests:** puros — `calendly.reschedule-parse.test.js`, `calendly.reschedule-logic.test.js`,
+`calendly.reschedule-scenarios.test.js` (el caso completo end-to-end sobre el harness),
+`calendly.outcome-report.test.js` (el test que prueba que el doble conteo murió). Nativo en Docker/VPS —
+`data.outcomes.test.js`.
+
+**Env:** `CALENDLY_RESCHEDULE_ENABLED` (**default false** — rollout acotado con `CALENDLY_PUSH4_CLOSERS`),
+`CALENDLY_RESCHEDULE_PROMPT_CRON` (`0 9 * * *`), `CALENDLY_RESCHEDULE_MAX_ASKED` (3),
+`CALENDLY_RESCHEDULE_MAX_CHAIN` (3), `CALENDLY_RESCHEDULE_AI` (true), `CALENDLY_RESCHEDULE_MODEL`,
+`OUTCOME_REPLY_WINDOW_MIN` (120).
+
+**Pendiente:** el reporte histórico anterior a este cambio sigue teniendo el doble conteo (no se hizo backfill);
+si alguien compara semanas, el volumen de calls baja legítimamente al activarlo.
 
 ### 🟢 Baja prioridad / Nice-to-have
 

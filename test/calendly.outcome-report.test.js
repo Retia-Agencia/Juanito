@@ -55,10 +55,64 @@ test('formatOutcomeSection devuelve null si no hay closers', () => {
   assert.equal(formatOutcomeSection('linkedin', {}, {}), null);
 });
 
-test('cancelada cuenta como registrada (auto), no como sin registrar', () => {
+// §18.AC: una cancelada NO ocurrió → sale del volumen (ni total, ni registrados, ni sin
+// registrar) y se reporta como "movida". Antes contaba en el total, y como Calendly cancela
+// el evento viejo al reagendar, el mismo lead se contaba dos veces.
+test('cancelada sale del volumen y cuenta como movida', () => {
   const sebas = aggregateOutcomes(rows).abogados['Sebas Rodriguez'];
-  assert.equal(sebas.registrados, 1);
+  assert.equal(sebas.total, 0);
+  assert.equal(sebas.registrados, 0);
   assert.equal(sebas.sin_registrar, 0);
   assert.equal(sebas.cancelado, 1);
+  assert.equal(sebas.movidas, 1);
   assert.equal(PROGRAM_TO_COMPANY.abogados, 'ESTADOX');
+});
+
+// EL test del bug: el mismo lead reagendado y luego atendido cuenta UNA vez.
+test('reagendada + su call nueva = 1 sola call en el volumen (sin doble conteo)', () => {
+  const mismoLead = [
+    // La call original de las 9am: el closer dijo "reagendó" y dio la fecha.
+    {
+      program: 'abogados', closer_name: 'Pablo Lozano', lead_name: 'Ana Pérez',
+      asistencia: 'reagendado', resultado: null, status: 'answered',
+      call_start: '2026-07-14 14:00:00', rescheduled_to: '2026-07-14 20:00:00',
+    },
+    // La call reagendada de las 3pm (fila propia, uuid sintético): esta SÍ ocurrió.
+    {
+      program: 'abogados', closer_name: 'Pablo Lozano', lead_name: 'Ana Pérez',
+      asistencia: 'show', resultado: 'venta_cerrada', status: 'answered',
+      call_start: '2026-07-14 20:00:00', rescheduled_to: null,
+    },
+  ];
+  const pablo = aggregateOutcomes(mismoLead).abogados['Pablo Lozano'];
+  assert.equal(pablo.total, 1); // ← el lead cuenta UNA vez, no dos
+  assert.equal(pablo.movidas, 1);
+  assert.equal(pablo.reagendado, 1);
+  assert.equal(pablo.show, 1);
+  assert.equal(pablo.venta_cerrada, 1);
+  assert.equal(pablo.cumplimiento, 100); // 1/1, la reagendada no diluye
+  assert.equal(pablo.show_rate, 100);
+});
+
+test('formatOutcomeSection muestra las movidas aparte y a dónde se movieron', () => {
+  const agg = aggregateOutcomes([
+    {
+      program: 'abogados', closer_name: 'Pablo Lozano', lead_name: 'Ana Pérez',
+      asistencia: 'reagendado', status: 'answered',
+      call_start: '2026-07-14 14:00:00', rescheduled_to: '2026-07-14 20:00:00',
+    },
+    {
+      program: 'abogados', closer_name: 'Pablo Lozano', lead_name: 'Luis Gómez',
+      asistencia: 'show', resultado: 'no_cerro', status: 'answered',
+      call_start: '2026-07-14 16:00:00',
+    },
+  ]);
+  const msg = formatOutcomeSection('abogados', agg.abogados, {
+    dateLabel: 'mar 14 jul',
+    tz: 'America/Bogota',
+  });
+  assert.match(msg, /^📋 \*Registro de calls — ESTADOX\* \(mar 14 jul\)\n1 call /);
+  assert.match(msg, /🔁 movidas: 1 reagendada/);
+  assert.match(msg, /Ana P\. → /); // el destino de la reagenda, con su fecha
+  assert.match(msg, /3:00 pm/); // 20:00 UTC = 3pm Bogotá
 });

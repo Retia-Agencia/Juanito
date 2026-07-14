@@ -115,10 +115,11 @@ db.exec(`
   -- registro de calls: lo que el closer confirmó por WhatsApp apenas colgó, no lo
   -- que se acordó de anotar en una hoja. Separa por programa y por closer (pedido
   -- del owner). Una fila por call (event_uuid UNIQUE).
-  --   status: pending  → se preguntó, falta respuesta
-  --           answered → el closer respondió (asistencia [+ resultado])
-  --           no_answer→ no respondió tras insistir (queda "sin registrar")
-  --           auto     → lo derivó el sistema sin preguntar (ej: cita cancelada)
+  --   status: pending       → se preguntó, falta respuesta
+  --           awaiting_date → dijo "reagendó", falta la fecha de la nueva call (§18.AC)
+  --           answered      → el closer respondió (asistencia [+ resultado / fecha])
+  --           no_answer     → no respondió tras insistir (queda "sin registrar")
+  --           auto          → lo derivó el sistema sin preguntar (ej: cita cancelada)
   CREATE TABLE IF NOT EXISTS call_outcomes (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     event_uuid   TEXT NOT NULL UNIQUE,
@@ -334,6 +335,19 @@ addColumnIfMissing('calendly_optins', 'paused', 'INTEGER DEFAULT 0');
 // §18.AB: programa de la cita en el push (para no re-consultar Calendly al reportar).
 // Filas viejas quedan NULL (eran Push 0/3, no se reportan como outcome).
 addColumnIfMissing('calendly_pushes', 'program', 'TEXT');
+
+// §18.AC: reagendas. Cuando el closer marca "Reagendó", Juanito le pregunta la fecha y
+// agenda por su cuenta la call nueva (Push 3 + Push 4 con un event_uuid sintético
+// 'manual:<uuid>:<n>'), venga o no de Calendly. Sobreviven solo los 2 campos que SON
+// métrica; el estado temporal vive en calendly_pushes y lo purga la limpieza diaria.
+addColumnIfMissing('call_outcomes', 'rescheduled_to', 'TEXT');      // 'YYYY-MM-DD HH:MM:SS' UTC | NULL = sin fecha
+addColumnIfMissing('call_outcomes', 'reschedule_uuid', 'TEXT');     // event_uuid de la call generada
+addColumnIfMissing('call_outcomes', 'reschedule_asked', 'INTEGER NOT NULL DEFAULT 0'); // veces que se pidió la fecha
+// Última vez que Juanito preguntó ALGO de esta fila. Ancla la ventana de frescura de
+// getActiveOutcomeForCloser: una fila a medio flujo solo se lleva la respuesta del closer
+// si se le preguntó hace poco (si no, una reagenda sin fecha de ayer secuestraría el
+// Push 4 de hoy). Filas viejas quedan NULL → caen al FIFO por asked_at, como antes.
+addColumnIfMissing('call_outcomes', 'prompted_at', 'DATETIME');
 
 // Mensajes programados GENERADOS (§18.E fase aprobación): kind 'fixed' (texto exacto,
 // comportamiento original) | 'generated' (Claude redacta cada día según `brief` y se

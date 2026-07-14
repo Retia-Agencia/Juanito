@@ -208,6 +208,28 @@ Botón de pánico de los pushes a closers.
 
 ---
 
+## Registro de calls — lo que responde el **closer** (sin comandos)
+
+Después de cada call, Juanito le escribe al closer y le pregunta cómo le fue. El closer
+responde con un número o en lenguaje natural; no abre ninguna hoja.
+
+```
+📋 Registro de call — Ana Pérez (de las 9:00 a. m.)
+   1️⃣ Show   2️⃣ No show   3️⃣ Reagendó
+```
+
+- **1 · Show** → Juanito pregunta el resultado (venta cerrada / acuerdo verbal / seguimiento / no cerró).
+- **2 · No show** → cierra ahí.
+- **3 · Reagendó** → Juanito pregunta **para cuándo** (`hoy 3pm`, `mañana 10:30am`, `22/07 9am`).
+  Con esa fecha **agenda solo** el recordatorio precall y el registro de la call nueva — **también si la
+  reagenda se hizo por otro link, fuera de Calendly**. Si aún no hay fecha, el closer dice *"aún no sé"* y
+  Juanito le vuelve a preguntar al día siguiente.
+
+**En las métricas:** una call reagendada o cancelada **no cuenta** como call (no ocurrió). Aparece en la
+línea `🔁 movidas` del reporte, y el lead cuenta **una sola vez**: el día que la call de verdad se hizo.
+
+---
+
 ## Reporte de leads — `/reporte` *(admin)*
 
 | Comando | Qué hace |

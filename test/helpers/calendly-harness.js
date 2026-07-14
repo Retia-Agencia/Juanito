@@ -229,9 +229,13 @@ export function makeStore({ optins = [], nowRef } = {}) {
         resultado: null,
         status: 'pending',
         asked_at: now(),
+        prompted_at: now(),
         answered_at: null,
         reminded: 0,
         raw_reply: null,
+        rescheduled_to: null,
+        reschedule_uuid: null,
+        reschedule_asked: 0,
       });
       return 'new';
     },
@@ -265,24 +269,96 @@ export function makeStore({ optins = [], nowRef } = {}) {
         raw_reply: null,
       });
     },
-    getActiveOutcomeForCloser(phone) {
+    // Misma regla de 3 capas que el SQL real (§18.AC): mid-flow caliente → FIFO de las que
+    // esperan asistencia → mid-flow frío. La ventana evita que una fila vieja a medio flujo
+    // se lleve para siempre toda respuesta del closer.
+    getActiveOutcomeForCloser(phone, windowMin = Number(process.env.OUTCOME_REPLY_WINDOW_MIN || 120)) {
       const p = normalizePhone(phone);
       if (!p) return null;
-      return (
-        outcomes
-          .filter((x) => x.closer_phone === p && x.status === 'pending')
-          .sort((a, b) => (b.asistencia ? 1 : 0) - (a.asistencia ? 1 : 0) || a.asked_at - b.asked_at)[0] || null
+      const abiertos = outcomes.filter(
+        (x) => x.closer_phone === p && (x.status === 'pending' || x.status === 'awaiting_date')
       );
+      const cutoff = now() - windowMin * 60000;
+      const hot = abiertos
+        .filter((x) => x.asistencia != null && x.prompted_at != null && x.prompted_at >= cutoff)
+        .sort((a, b) => b.prompted_at - a.prompted_at)[0];
+      if (hot) return hot;
+      const fifo = abiertos
+        .filter((x) => x.status === 'pending' && x.asistencia == null)
+        .sort((a, b) => a.asked_at - b.asked_at)[0];
+      if (fifo) return fifo;
+      return abiertos.filter((x) => x.asistencia != null).sort((a, b) => a.asked_at - b.asked_at)[0] || null;
     },
     setOutcomeAsistencia(id, asistencia, raw = null) {
       const o = outcomes.find((x) => x.id === id);
       if (!o) return;
       o.asistencia = asistencia;
       o.raw_reply = raw;
-      if (asistencia !== 'show') {
-        o.status = 'answered';
-        o.answered_at = now();
+      o.prompted_at = now();
+      // show → falta el resultado · reagendado → falta la fecha · resto → cierra.
+      o.status = asistencia === 'show' ? 'pending' : asistencia === 'reagendado' ? 'awaiting_date' : 'answered';
+      if (o.status === 'answered') o.answered_at = now();
+    },
+    setOutcomeReschedule(id, { startUtc = null, uuid = null, rawReply = null } = {}) {
+      const o = outcomes.find((x) => x.id === id);
+      if (!o) return;
+      o.rescheduled_to = startUtc;
+      o.reschedule_uuid = uuid;
+      o.raw_reply = `${o.raw_reply || ''} | ${rawReply || ''}`.trim();
+      o.status = 'answered';
+      o.answered_at = now();
+    },
+    getAwaitingDateOutcomes({ maxAsked = 3, minHours = 8 } = {}) {
+      const cutoff = now() - minHours * 3600000;
+      return outcomes
+        .filter(
+          (x) =>
+            x.status === 'awaiting_date' &&
+            x.reschedule_asked < maxAsked &&
+            (x.prompted_at == null || x.prompted_at <= cutoff)
+        )
+        .sort((a, b) => a.asked_at - b.asked_at)
+        .map((x) => ({ ...x }));
+    },
+    markReschedulePrompted(id) {
+      const o = outcomes.find((x) => x.id === id);
+      if (o) {
+        o.reschedule_asked++;
+        o.prompted_at = now();
       }
+    },
+    expireAwaitingDateOutcomes({ maxAsked = 3 } = {}) {
+      let changes = 0;
+      for (const o of outcomes) {
+        if (o.status === 'awaiting_date' && o.reschedule_asked >= maxAsked) {
+          o.status = 'answered';
+          o.answered_at = now();
+          changes++;
+        }
+      }
+      return { changes };
+    },
+    getPendingManualPushes() {
+      return rows
+        .filter(
+          (r) =>
+            String(r.event_uuid).startsWith('manual:') &&
+            r.status === 'scheduled' &&
+            sqliteUtcToMs(r.call_start) > now() - 3600000
+        )
+        .map((r) => ({ ...r }));
+    },
+    supersedeManualPushes(manualUuid, realUuid) {
+      let changes = 0;
+      for (const r of rows) {
+        if (r.event_uuid === manualUuid && r.status === 'scheduled') {
+          r.status = 'skipped';
+          r.message = `${r.message || ''} | skip: superseded por evento real ${realUuid}`;
+          changes++;
+        }
+      }
+      for (const o of outcomes) if (o.reschedule_uuid === manualUuid) o.reschedule_uuid = realUuid;
+      return changes;
     },
     setOutcomeResultado(id, resultado, raw = null) {
       const o = outcomes.find((x) => x.id === id);
@@ -358,6 +434,12 @@ export function installHarness(scheduler, { events = [], optins = [], nowMs = Da
     getDueOutcomeReminders: store.getDueOutcomeReminders,
     markOutcomeReminded: store.markOutcomeReminded,
     expireUnansweredOutcomes: store.expireUnansweredOutcomes,
+    // §18.AC: reagendas.
+    getPendingManualPushes: store.getPendingManualPushes,
+    supersedeManualPushes: store.supersedeManualPushes,
+    getAwaitingDateOutcomes: store.getAwaitingDateOutcomes,
+    markReschedulePrompted: store.markReschedulePrompted,
+    expireAwaitingDateOutcomes: store.expireAwaitingDateOutcomes,
   };
 
   scheduler.__setDeps(deps);

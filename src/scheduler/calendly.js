@@ -40,8 +40,10 @@ import {
   push4DueUtc,
   buildPush4Message,
   buildOutcomeReminder,
+  buildReschedulePromptMessage,
 } from '../calendly/index.js';
 import { computePush3Schedule, decidePush0 } from '../calendly/push-logic.js';
+import { pickSupersededPushes, isManualUuid } from '../calendly/reschedule-logic.js';
 import { resolveCloser, isIgnoredCloser } from '../calendly/closers.js';
 import {
   recordPollOk,
@@ -82,6 +84,14 @@ const PUSH4_GRACE_MIN = () => Number(process.env.CALENDLY_PUSH4_GRACE_MIN || 5);
 const OUTCOME_REMIND_AFTER_MIN = () => Number(process.env.CALENDLY_OUTCOME_REMIND_MIN || 30);
 const OUTCOME_EXPIRE_AFTER_MIN = () => Number(process.env.CALENDLY_OUTCOME_EXPIRE_MIN || 30);
 const OUTCOME_CRON = () => process.env.CALENDLY_OUTCOME_CRON || '*/10 * * * *';
+
+// Reagendas (§18.AC): cuando el closer marca "Reagendó", Juanito le pide la fecha y agenda
+// la call nueva por su cuenta (uuid sintético 'manual:…'), venga o no de Calendly. Apagado
+// por default → rollout acotado con la misma allowlist del Push 4.
+const RESCHEDULE_ENABLED = () => process.env.CALENDLY_RESCHEDULE_ENABLED === 'true';
+// Insistencia diaria a las reagendas que quedaron sin fecha (9am Bogotá).
+const RESCHEDULE_PROMPT_CRON = () => process.env.CALENDLY_RESCHEDULE_PROMPT_CRON || '0 9 * * *';
+const RESCHEDULE_MAX_ASKED = () => Number(process.env.CALENDLY_RESCHEDULE_MAX_ASKED || 3);
 
 const POLL_CRON = () => process.env.CALENDLY_POLL_CRON || '*/5 * * * *';
 const DELIVER_CRON = () => process.env.CALENDLY_DELIVER_CRON || '* * * * *';
@@ -129,6 +139,12 @@ async function deps() {
     getDueOutcomeReminders: db.getDueOutcomeReminders,
     markOutcomeReminded: db.markOutcomeReminded,
     expireUnansweredOutcomes: db.expireUnansweredOutcomes,
+    // §18.AC: reagendas — dedup contra Calendly + insistencia por la fecha.
+    getPendingManualPushes: db.getPendingManualPushes,
+    supersedeManualPushes: db.supersedeManualPushes,
+    getAwaitingDateOutcomes: db.getAwaitingDateOutcomes,
+    markReschedulePrompted: db.markReschedulePrompted,
+    expireAwaitingDateOutcomes: db.expireAwaitingDateOutcomes,
     // Anti-ban: el gate de entrega exige opt-in GANADO (el closer escribió), no solo
     // que la fila exista. Una fila sembrada/sin verificar NO habilita envío en frío.
     isOptedIn: db.isVerifiedOptedIn,
@@ -233,6 +249,12 @@ export async function runCalendlyPoll() {
     return 0;
   }
 
+  // §18.AC: pushes de reagendas manuales aún por entregar. Si una de esas reagendas
+  // terminó entrando por Calendly, el evento real manda y hay que cancelar el sintético
+  // — si no, se le pregunta dos veces al closer y el lead cuenta dos veces.
+  let manualPushes =
+    RESCHEDULE_ENABLED() && d.getPendingManualPushes ? d.getPendingManualPushes() : [];
+
   let nuevos = 0;
   for (const ev of events) {
     try {
@@ -259,6 +281,27 @@ export async function runCalendlyPoll() {
       const firstName = firstNameFrom(invitee?.name);
       const name = fullNameFrom(invitee?.name);
       const phone = prospectPhoneOf(invitee);
+
+      // Dedup de reagendas (§18.AC): mismo closer + mismo lead + call futura = es la misma
+      // call que el closer nos dictó por WhatsApp, pero ahora con evento real. Calendly
+      // manda: se cancelan los pushes sintéticos y el outcome apunta al uuid real.
+      if (manualPushes.length && d.supersedeManualPushes) {
+        const hits = pickSupersededPushes(manualPushes, {
+          closerPhone: closer.phone,
+          leadPhone: phone,
+          leadName: invitee?.name,
+        });
+        const uuids = new Set(hits.map((h) => h.event_uuid));
+        for (const manualUuid of uuids) {
+          d.supersedeManualPushes(manualUuid, uuid);
+          console.log(
+            `[Calendly] reagenda ${manualUuid} superseded por evento real ${uuid} (${firstName}) — no se pregunta dos veces`
+          );
+        }
+        // Fuera de la lista: ya no pueden volver a matchear con otra cita de este mismo poll.
+        if (uuids.size) manualPushes = manualPushes.filter((p) => !uuids.has(p.event_uuid));
+      }
+
       const message = buildPush3Message({
         name,
         firstName,
@@ -387,12 +430,16 @@ export async function runCalendlyDelivery() {
         // INVIERTE el guard de obsolescencia: este push es JUSTAMENTE post-call
         // (due = start + duración + gracia), así que NO se salta por "ya pasó".
         if (p.push_n === 4) {
-          const uri4 = `https://api.calendly.com/scheduled_events/${p.event_uuid}`;
           let ev4 = null;
-          try {
-            ev4 = await d.getEvent(uri4);
-          } catch {
-            /* si la verificación falla, preguntamos igual con lo guardado */
+          // Los uuids sintéticos de reagenda (§18.AC) no existen en Calendly — es una call
+          // que nos dictó el closer. Ni se consulta la API: se pregunta con lo guardado.
+          if (!isManualUuid(p.event_uuid)) {
+            const uri4 = `https://api.calendly.com/scheduled_events/${p.event_uuid}`;
+            try {
+              ev4 = await d.getEvent(uri4);
+            } catch {
+              /* si la verificación falla, preguntamos igual con lo guardado */
+            }
           }
           // Cancelada → outcome AUTOMÁTICO, sin molestar al closer.
           if (ev4 && ev4.status === 'canceled') {
@@ -653,6 +700,41 @@ export async function runOutcomeReminders() {
   return sent;
 }
 
+// ─── Insistencia por la fecha de una reagenda (§18.AC) ────────────────────────
+// El closer dijo "reagendó" pero aún no sabía para cuándo. Una vez al día Juanito le
+// vuelve a pedir la fecha; al tercer intento la reagenda se cierra sin fecha (cuenta como
+// movida en el reporte y deja de ocupar la ventana de captura de ese closer).
+export async function runReschedulePrompts() {
+  const d = await deps();
+  if (!d.getAwaitingDateOutcomes) return 0;
+
+  const due = d.getAwaitingDateOutcomes({ maxAsked: RESCHEDULE_MAX_ASKED() });
+  let sent = 0;
+  for (const o of due) {
+    const msg = buildReschedulePromptMessage({
+      name: fullNameFrom(o.lead_name),
+      firstName: firstNameFrom(o.lead_name),
+    });
+    const r = await deliver(d, o.closer_phone, msg, 'reagenda-fecha');
+    // Solo cuenta el intento si de verdad salió: si estaba pausado o sin opt-in, se
+    // reintenta mañana en vez de quemar una de las tres insistencias.
+    if (r === 'sent' || r === 'dry-run') {
+      if (d.markReschedulePrompted) d.markReschedulePrompted(o.id);
+      sent++;
+    }
+  }
+
+  const expired = d.expireAwaitingDateOutcomes
+    ? d.expireAwaitingDateOutcomes({ maxAsked: RESCHEDULE_MAX_ASKED() })
+    : { changes: 0 };
+  if (sent || expired.changes) {
+    console.log(
+      `[Calendly] Reagendas sin fecha: ${sent} repregunta(s), ${expired.changes || 0} cerrada(s) sin fecha${DRY_RUN() ? ' [DRY-RUN]' : ''}`
+    );
+  }
+  return sent;
+}
+
 // ─── Arranque de los jobs ─────────────────────────────────────────────────────
 
 export function startCalendlyJobs() {
@@ -669,6 +751,10 @@ export function startCalendlyJobs() {
   job(PUSH1_CRON(), runPush1, 'push1');
   job(PUSH2_CRON(), runPush2, 'push2');
   if (PUSH4_ENABLED()) job(OUTCOME_CRON(), runOutcomeReminders, 'outcomes');
+  if (PUSH4_ENABLED() && RESCHEDULE_ENABLED())
+    job(RESCHEDULE_PROMPT_CRON(), runReschedulePrompts, 'reagendas');
 
-  console.log(`[Calendly] Jobs activos ✅  (DRY-RUN: ${DRY_RUN()}, Push 4: ${PUSH4_ENABLED()})`);
+  console.log(
+    `[Calendly] Jobs activos ✅  (DRY-RUN: ${DRY_RUN()}, Push 4: ${PUSH4_ENABLED()}, reagendas: ${RESCHEDULE_ENABLED()})`
+  );
 }
