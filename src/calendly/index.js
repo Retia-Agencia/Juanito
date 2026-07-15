@@ -324,6 +324,10 @@ export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora
       `* Estés en un espacio dispuesto para conversar\n` +
       `* Si debes tomar la decisión con alguien más de ingresar al programa, que esa persona esté contigo en la llamada.\n\n` +
       `Si todo sale bien, ahí mismo formalizaremos tu ingreso al programa.` +
+      // Solo AI Second Brain: pedimos confirmar que puede instalar Claude en su compu de trabajo.
+      (programKey === 'second_brain'
+        ? `\n\nUna última cosa: confírmame porfa si en el computador que usas en el día a día puedes instalar la herramienta de inteligencia artificial Claude o si tienes alguna restricción de tu compañía.`
+        : '') +
       materialsBlock(programKey)
     );
   }
