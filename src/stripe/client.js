@@ -15,6 +15,7 @@
 // PaymentIntents). La cuenta solo cobra EstadoX → no hace falta filtrar por producto.
 
 const API = 'https://api.stripe.com/v1/payment_intents';
+const SESSIONS_API = 'https://api.stripe.com/v1/checkout/sessions';
 const MAX_PAGES = 10; // tope de seguridad: 10 × 100 intents cubre 35 días con margen
 
 export const STRIPE_API_KEY = () => (process.env.STRIPE_API_KEY || '').trim();
@@ -89,4 +90,66 @@ export async function fetchRecentPayments({ createdGteSec, fetchImpl = fetch } =
     startingAfter = data[data.length - 1].id;
   }
   return out;
+}
+
+// Timestamps `created` (epoch SEGUNDOS, UTC real) de los PaymentIntents `succeeded` que
+// nacieron de UN Payment Link. Es un conteo, como `fetchSucceededPaymentTimestamps`: ni
+// montos ni clientes salen de acá.
+//
+// Por qué pasa por Checkout Sessions: el PaymentIntent no guarda de qué link vino — esa
+// relación solo vive en la Session. Se listan las sessions del link y se expande su PI.
+//
+// ⚠️ Devuelve el `created` del PAYMENT INTENT, no el de la Session, y filtra por el status
+// del PI (no por `payment_status` de la Session). Las dos cosas son a propósito:
+//   - La Session nace al abrir el carrito y el PI se paga 3-6 min después (medido sobre la
+//     cuenta real). Con el reloj de la Session, un pago iniciado 7:57pm y pagado 8:01pm
+//     caería en un día distinto al que le da `fetchSucceededPaymentTimestamps`.
+//   - Mismo predicado (`status === 'succeeded'`) que esa función ⇒ lo que sale de acá es
+//     por construcción un SUBCONJUNTO de lo que sale de allá, y la resta que hace el
+//     reporte ("total − self-checkout") nunca puede dar negativo.
+//
+// `createdGteSec` filtra por el `created` de la SESSION, que es anterior al del PI. El
+// caller debe pedir con margen hacia atrás (una Session de payment link expira a las 24h,
+// así que el PI nunca se aleja más de eso) y luego filtrar por ventana con lo devuelto.
+export async function fetchSucceededPaymentTimestampsForLink({
+  paymentLink,
+  createdGteSec,
+  fetchImpl = fetch,
+} = {}) {
+  const key = STRIPE_API_KEY();
+  if (!key) throw new Error('[stripe] falta STRIPE_API_KEY');
+  if (!paymentLink) throw new Error('[stripe] falta paymentLink');
+
+  const created = [];
+  let startingAfter = null;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const params = new URLSearchParams({ limit: '100', payment_link: paymentLink });
+    params.append('expand[]', 'data.payment_intent');
+    if (createdGteSec != null) params.set('created[gte]', String(Math.floor(createdGteSec)));
+    if (startingAfter) params.set('starting_after', startingAfter);
+
+    const res = await fetchImpl(`${SESSIONS_API}?${params}`, {
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`[stripe] sessions ${res.status}: ${body.slice(0, 200)}`);
+    }
+    const json = await res.json();
+    const data = json?.data || [];
+    for (const s of data) {
+      const pi = s?.payment_intent;
+      // Sin expandir (string) no hay forma de saber su `created` → se ignora antes que
+      // contarlo con el reloj equivocado.
+      if (pi && typeof pi === 'object' && pi.status === 'succeeded' && pi.created != null) {
+        created.push(pi.created);
+      }
+    }
+    if (!json?.has_more || data.length === 0) return created;
+    startingAfter = data[data.length - 1].id;
+  }
+  console.warn(
+    `[stripe] corté la paginación de sessions en ${MAX_PAGES} páginas; el conteo del link podría quedar corto`
+  );
+  return created;
 }

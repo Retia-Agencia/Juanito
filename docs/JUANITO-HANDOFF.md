@@ -2613,6 +2613,66 @@ cierra solo a los 3 días. En `call_outcomes` sobreviven **2 campos y ambos SON 
 **Pendiente:** el reporte histórico anterior a este cambio sigue teniendo el doble conteo (no se hizo backfill);
 si alguien compara semanas, el volumen de calls baja legítimamente al activarlo.
 
+### 18.AD 🟡 Reporte ADMIN de EstadoX para Mariana Cerón (2026-07-15 · self-checkout cableado 2026-07-16)
+
+**Qué es:** un mensaje **distinto** al reporte estándar de leads (§18.B), con las 5 métricas que pidió
+Mariana el 2026-07-15. Misma ventana 8pm→8pm. Sin PII — solo conteos. Formatter puro en
+`src/sheets/estadox-report.js`; el builder (`buildEstadoxAdminReport`) vive en `scheduler/sheets-report.js`.
+
+**Las 5 métricas y de dónde salen:**
+1. **Typeforms del día** + promedio diario de los 30 previos → Sheet de leads (`summarize` + `averagePriorDays`).
+2. **Desglose "dispuesto a invertir"** sí / sí financiado / no → mismo Sheet (`invBreakdown`).
+3. **Llamadas agendadas** → leads de hoy que reservaron Calendly. **Efectivas** → `Show` en el Push 4
+   (§18.AB), programa `abogados`. ⚠️ Solo cuenta closers con Push 4 activo (`CALENDLY_PUSH4_CLOSERS`).
+4. **Pagos self-checkout** → ver abajo.
+5. **Pagos fuera de self-checkout** = `stripeToday − scPaid`. Si Stripe no responde, sale `n/d`.
+
+**El self-checkout: por qué pasa por Checkout Sessions.** Hasta el 2026-07-16 este conteo salía del
+**tag manual** del Sheet (col G del tab "📞 Setteo Pendiente"). El owner entregó el Payment Link real
+(`STRIPE_SELF_CHECKOUT_PLINK`, un `plink_…` — **no** la URL `buy.stripe.com`, que es solo la cara
+pública; se resuelve listando `/v1/payment_links` y matcheando por `url`). Con él, el conteo se
+atribuye por link vía `fetchSucceededPaymentTimestampsForLink`.
+
+Tres decisiones de ese lector que **no son gratuitas** y conviene no revertir por "simplificar":
+- **El PaymentIntent NO sabe de qué link vino.** Esa relación solo existe en la Checkout Session → hay
+  que listar sessions del link y expandir su PI (`expand[]=data.payment_intent`).
+- **Se cuenta con el `created` del PI, no el de la Session.** Medido sobre la cuenta real, el pago
+  ocurre **3-6 min después** de que nace el carrito. Con el reloj de la Session, un pago iniciado 7:57pm
+  y pagado 8:01pm caería en un día distinto al que le da `fetchSucceededPaymentTimestamps` — y como el
+  formatter hace `Math.max(0, stripeToday − scPaid)`, la resta negativa se **taparía en silencio**.
+- **Mismo predicado `status === 'succeeded'`** que el conteo total ⇒ el self-checkout es por construcción
+  un **subconjunto** del total, y la resta nunca puede dar negativo.
+- **Margen de 48h hacia atrás** al listar sessions: el filtro `created[gte]` aplica al `created` de la
+  **Session**, que es anterior al del PI. Una session de payment link expira a las 24h → 48h cubre de
+  sobra. El exceso lo descarta el filtro de ventana; en la práctica cada consulta trae 3-8 filas (1 página).
+
+**🟡 EN OBSERVACIÓN — las dos fuentes corren en paralelo.** El mensaje **todavía usa el tag del Sheet**
+(`sc.paid`); el conteo por link se calcula al lado y solo se **loguea**:
+`[EstadoX] scPaid — sheet:N stripe:M ✓|⚠ DIFF`. Cuando pasen varios días sin `DIFF`, `scPaid` pasa a ser
+`scPaidStripe`, el tag deja de leerse para esta métrica y se borra el bloque. Si aparece `DIFF`, el log
+dice cuál de los dos miente **antes** de que el número le llegue a Mariana.
+
+**Verificado contra la cuenta real (2026-07-16):** los 5 pagos del link caen en las ventanas correctas
+— 2 el 07-08, 1 el 07-09, 2 el 07-10. `test/stripe.test.js` 9/9 verde (incluye el test de que se usa el
+reloj del PI y no el de la session).
+
+**⚠️ Ojo con los montos.** El link lista **$1000 USD** pero los pagos reales fueron $900/$800 (promo
+codes o precios ajustados). Para un **conteo** da igual; si algún día el reporte muestra **montos**, el
+precio del link **no sirve** como proxy — hay que leer el `amount` real.
+
+**Contexto del negocio:** hay **23 payment links** en la cuenta; el owner clasificó 3 (self-checkout
+$1000 · "mitad" $500 · "Masterclasses" $800). Los otros 20 caen en "fuera de self-checkout", que es
+correcto para el split de 2 baldes que pidió Mariana. Los 2 links de **ventas** están identificados pero
+**sin usar** — se decidió (2026-07-16) no abrir una tercera línea que ella no pidió. Último pago por
+self-checkout: **2026-07-10** → el número que verá la mayoría de los días es `0`, y **es real, no un bug**.
+
+**Env:** `STRIPE_SELF_CHECKOUT_PLINK` (vacío → el conteo por link se apaga solo y sigue el tag).
+⚠️ Requiere que la `rk_` tenga permiso **read sobre Checkout Sessions** además de PaymentIntents.
+
+**Pendientes:** decidir el envío automático (hoy no tiene cron propio) y su destino; cerrar el periodo
+de observación; **`src/sheets/estadox-report.js` sigue sin desplegarse** — el VPS tenía 0 referencias a
+`estadox-report` al 2026-07-16 (ver la nota de copiado selectivo en §18.AG).
+
 ### 18.AF 🔵 HubSpot read-only: fill de teléfono precall + modelo nudge (2026-07-15)
 
 **Contexto:** llegó la credencial de HubSpot que bloqueaba §18.I desde junio. Con ella se hicieron
