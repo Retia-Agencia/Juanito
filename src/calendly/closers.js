@@ -11,11 +11,15 @@
 //
 //   Pablo Lozano        AI Second Brain · AI For Developers
 //   Sebastian Rodriguez AI Second Brain
-//   Sebastian Marin     LinkedIn Sales  · Instagram & TikTok / Media
-//   Lucas Mendoza       LinkedIn Sales  · Instagram & TikTok · Operaciones Escalables
+//   Sebastian Marin     LinkedIn Sales  · Instagram & TikTok
+//   Lucas Mendoza       LinkedIn Sales  · Operaciones Escalables
 //   Pablo Suarez        AI For Developers
-//   Daniela Camacho     EstadoX (IA para Abogados) · Instagram & TikTok (ambos)
+//   Daniela Camacho     EstadoX (IA para Abogados) · Instagram & TikTok · Operaciones Escalables
 //   Sebastian Salazar   EstadoX (IA para Abogados)
+//
+// Actualizado 2026-07-16 contra la agenda real: Instagram & TikTok lo hostean Marin y
+// Camacho (no Lucas); Operaciones lo hostean Lucas y Camacho (no solo Lucas). El programa
+// "/Media" que se anticipaba no existe en Calendly.
 //
 // El PROGRAMA no se configura acá: se deriva del event_type de cada cita (programKeyOf),
 // así que un closer queda cubierto en TODOS los programas sin tocar nada más. La columna

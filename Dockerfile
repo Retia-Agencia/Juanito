@@ -20,6 +20,9 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY package*.json ./
 COPY src/ ./src/
 COPY scripts/ ./scripts/
+# Brochures que Juanito adjunta en el Push 1 (BROCHURE_FILES en src/calendly/index.js).
+# Sin esto el adjunto falla SOLO en producción: en local el PDF está en el repo.
+COPY assets/ ./assets/
 COPY entrypoint.sh ./entrypoint.sh
 
 RUN mkdir -p /app/data && chmod +x /app/entrypoint.sh

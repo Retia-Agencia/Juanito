@@ -23,6 +23,7 @@ const {
   formatCallTime,
   MATERIAL_LINKS,
   PROGRAM_EVENT_TYPES,
+  BROCHURE_FILES,
 } = await import('../src/calendly/index.js');
 
 const SECOND_BRAIN_ET = 'https://api.calendly.com/event_types/56efc028-ee2f-46e8-852c-e50d45b15b83';
@@ -30,6 +31,7 @@ const ABOGADOS_ET = 'https://api.calendly.com/event_types/f8d123ac-364b-47f9-a44
 const LINKEDIN_ET = 'https://api.calendly.com/event_types/96ddf036-9174-459c-be73-b248ad95be13';
 const DEVELOPERS_ET = 'https://api.calendly.com/event_types/dff3e48a-4859-417a-98fb-822048aef5d9';
 const OPERACIONES_ET = 'https://api.calendly.com/event_types/8462e92a-8210-4bb2-8e2b-583aa3c3d877';
+const INSTAGRAM_ET = 'https://api.calendly.com/event_types/d33075cb-d349-43ef-be43-6f80f9c5da03';
 const { resolveCloser, resolveCloserByPhone, resolveCloserByLid, resolveCloserByPushName, isNonCanonicalOptinJid, isIgnoredCloser, workLidForCloser } = await import('../src/calendly/closers.js');
 
 test('firstNameFrom parsea y capitaliza el primer nombre', () => {
@@ -259,7 +261,12 @@ test('todo programa cableado tiene copy y brochure propios', () => {
     assert.ok(key, `event_type sin clave de programa: ${et}`);
     const push1 = buildPrecallText({ programKey: key, pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
     assert.ok(push1, `${key}: no tiene copy en PROGRAM_PITCH`);
-    assert.ok(MATERIAL_LINKS[key]?.brochure, `${key}: no tiene brochure en MATERIAL_LINKS`);
+    // El brochure llega por link (MATERIAL_LINKS.brochure) o como PDF que Juanito adjunta
+    // al closer (BROCHURE_FILES + attachedBrochure). Una de las dos, pero alguna.
+    const porLink = Boolean(MATERIAL_LINKS[key]?.brochure);
+    const porAdjunto = Boolean(MATERIAL_LINKS[key]?.attachedBrochure && BROCHURE_FILES[key]);
+    assert.ok(porLink || porAdjunto, `${key}: no entrega brochure ni por link ni adjunto`);
+    assert.ok(!(porLink && porAdjunto), `${key}: declara brochure por link Y adjunto — elegí uno`);
   }
 });
 
@@ -323,7 +330,15 @@ test('buildPrecallText Push 1 incrusta el bloque de materiales del producto corr
   for (const prog of Object.keys(MATERIAL_LINKS)) {
     const txt = buildPrecallText({ programKey: prog, pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
     assert.match(txt, /Es MUY IMPORTANTE que puedas ver estos materiales/);
-    assert.ok(txt.includes(MATERIAL_LINKS[prog].brochure), `${prog}: falta su brochure`);
+    // Dos formas de entregar el brochure: link (la mayoría) o PDF que Juanito le adjunta
+    // al closer para que lo reenvíe (attachedBrochure, p.ej. operaciones). Lo que NO puede
+    // pasar es que un programa no anuncie su brochure de ninguna de las dos formas.
+    if (MATERIAL_LINKS[prog].attachedBrochure) {
+      assert.match(txt, /📄 Brochure: te lo acabo de enviar/, `${prog}: no anuncia el brochure adjunto`);
+      assert.ok(!/📄 Brochure: http/.test(txt), `${prog}: es adjunto, no debería llevar link`);
+    } else {
+      assert.ok(txt.includes(MATERIAL_LINKS[prog].brochure), `${prog}: falta su brochure`);
+    }
     // El video es opcional: los programas nuevos (developers, operaciones) todavía no tienen.
     if (MATERIAL_LINKS[prog].video) assert.ok(txt.includes(MATERIAL_LINKS[prog].video), `${prog}: falta su video`);
   }
@@ -336,6 +351,40 @@ test('buildPrecallText Push 1 incrusta el bloque de materiales del producto corr
   const li = buildPrecallText({ programKey: 'linkedin', pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
   assert.match(li, /Por acá Sebastian de 30X/);
   assert.match(li, /programa de LinkedIn Sales de 30X/);
+});
+
+// El brochure adjunto (Operaciones) NO tiene link de respaldo en el copy: si el PDF no
+// llegó a la imagen Docker, el lead se queda sin material y el push le promete uno que
+// nunca llega. El archivo tiene que existir de verdad, no solo estar declarado.
+test('BROCHURE_FILES: cada programa con brochure adjunto tiene su PDF en el repo', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+  for (const [prog, spec] of Object.entries(BROCHURE_FILES)) {
+    const buf = await readFile(path.join(root, spec.path)); // tira si no existe
+    assert.ok(buf.length > 0, `${prog}: el brochure está vacío`);
+    assert.equal(buf.subarray(0, 4).toString('latin1'), '%PDF', `${prog}: no es un PDF`);
+    assert.match(spec.fileName, /\.pdf$/i, `${prog}: fileName debería terminar en .pdf`);
+    // Coherencia con el copy: si Juanito adjunta el PDF, el texto tiene que anunciarlo
+    // como adjunto — si no, el lead recibe un PDF suelto sin contexto.
+    assert.ok(MATERIAL_LINKS[prog]?.attachedBrochure, `${prog}: adjunta PDF pero su copy no lo anuncia`);
+  }
+});
+
+// Instagram & TikTok (2026-07-16): su ET es tipo pool y se resolvió desde las reservas
+// reales. Si se cae de PROGRAM_EVENT_TYPES, el bot deja de ver sus llamadas EN SILENCIO.
+test('Instagram & TikTok está en la lista de programas y enruta a su copy', () => {
+  assert.ok(PROGRAM_EVENT_TYPES().includes(INSTAGRAM_ET), 'el ET de Instagram no está en PROGRAM_EVENT_TYPES');
+  assert.equal(programKeyOf(INSTAGRAM_ET), 'instagram');
+  assert.equal(programKeyOf({ event_type: INSTAGRAM_ET }), 'instagram');
+
+  const ig = buildPrecallText({ programKey: 'instagram', pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
+  assert.match(ig, /Por acá Sebastian de 30X/);
+  assert.match(ig, /programa de Instagram & TikTok for Business de 30X/);
+  assert.ok(ig.includes(MATERIAL_LINKS.instagram.brochure));
+  assert.ok(ig.includes(MATERIAL_LINKS.instagram.video));
 });
 
 // Guarda del endurecimiento: un programa sin copy en PROGRAM_PITCH NO debe fabricar un

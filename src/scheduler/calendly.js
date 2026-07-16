@@ -47,6 +47,10 @@ import { pickSupersededPushes, isManualUuid } from '../calendly/reschedule-logic
 import { isCoveredProgram } from '../hubspot/deals.js';
 import { decideNudgeAction, buildDealNudgeMessage, buildCreateDealNudgeMessage } from '../hubspot/nudge.js';
 import { resolveCloser, isIgnoredCloser } from '../calendly/closers.js';
+import { BROCHURE_FILES } from '../calendly/index.js';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   recordPollOk,
   recordPollError,
@@ -168,6 +172,8 @@ async function deps() {
     // Botón de pánico global (`/calendly off`): apaga TODOS los envíos al instante.
     isCalendlyPaused: db.isCalendlyPaused,
     sendMessage: whatsapp.sendMessage,
+    // Brochure adjunto del Push 1 (Operaciones): pasa por la MISMA cola anti-ban.
+    sendDocument: whatsapp.sendDocument,
     now: () => Date.now(),
   };
 }
@@ -303,6 +309,79 @@ async function deliver(d, to, text, tag) {
   console.log(`[Calendly] enviado (${tag}) → ${target}${via}`);
   return 'sent';
 }
+
+// ─── Brochure adjunto al closer (Push 1) ──────────────────────────────────────
+// Para los programas de BROCHURE_FILES, Juanito le manda el PDF al CLOSER; el closer
+// lo reenvía al lead y luego toca el link wa.me del push. El porqué (wa.me solo lleva
+// texto + Juanito nunca escribe en frío a un lead) está en src/calendly/index.js.
+//
+// Se envía UNA vez por (closer, programa) por digest, NO una por lead: un closer con 5
+// calls de Operaciones mañana recibe un PDF, no cinco.
+//
+// ACOPLE: no re-chequea pausa/opt-in/contact_jid — se llama SOLO después de que
+// deliver() del digest devolvió 'sent'/'dry-run', o sea con los gates ya pasados. Si
+// algún día se llama desde otro lado, hay que replicar esos gates.
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const brochureCache = new Map(); // programKey → Buffer (los PDFs son estáticos en la imagen)
+
+async function loadBrochure(programKey) {
+  if (brochureCache.has(programKey)) return brochureCache.get(programKey);
+  const spec = BROCHURE_FILES[programKey];
+  if (!spec) return null;
+  const buf = await readFile(path.join(REPO_ROOT, spec.path));
+  brochureCache.set(programKey, buf);
+  return buf;
+}
+
+async function deliverBrochures(d, phone, items, closerName) {
+  const keys = [...new Set(items.map((i) => i.programKey))].filter((k) => k && BROCHURE_FILES[k]);
+  for (const key of keys) {
+    const spec = BROCHURE_FILES[key];
+    let buffer;
+    try {
+      buffer = await loadBrochure(key);
+    } catch (e) {
+      // El PDF no llegó a la imagen. El digest ya salió y su copy dice "te lo acabo de
+      // enviar acá arriba" → el lead quedaría esperando un material que no existe.
+      console.error(`[Calendly] brochure ${key}: no pude leer ${spec.path}: ${e.message}`);
+      await notifyAdmins(
+        d,
+        `No pude adjuntar el brochure de ${key} (${spec.path}) al Push 1 de ${closerName}. ` +
+          `El copy del push ya lo anuncia, así que esos leads van a quedar sin material.`,
+        `brochure:${key}`
+      );
+      continue;
+    }
+    const optin = d.getOptin ? d.getOptin(phone) : null;
+    const target = optin?.contact_jid;
+    if (!target) continue; // no debería pasar (deliver ya pasó), pero no enviamos en frío
+    const caption =
+      `📎 Brochure de ${PROGRAM_LABELS[key] || key}.\n\n` +
+      `Reenvíaselo a cada prospecto de este programa ANTES de tocar su link de push — ` +
+      `el mensaje ya le dice que se lo acabas de mandar.`;
+    if (DRY_RUN()) {
+      console.log(`[Calendly][DRY-RUN] (push1-brochure:${key}) → ${target} "${spec.fileName}" (${buffer.length} bytes)`);
+      continue;
+    }
+    try {
+      await d.sendDocument(target, {
+        buffer,
+        fileName: spec.fileName,
+        mimetype: 'application/pdf',
+        caption,
+      });
+      console.log(`[Calendly] brochure ${key} enviado → ${target} [closer ${phone}]`);
+    } catch (e) {
+      console.error(`[Calendly] brochure ${key} → ${target}: ${e.message}`);
+    }
+  }
+}
+
+// Nombre legible del programa para el caption del brochure.
+const PROGRAM_LABELS = {
+  operaciones: 'Operaciones Escalables con IA 30X',
+};
 
 // ─── Poll: descubre citas y agenda Push 3 ─────────────────────────────────────
 
@@ -749,7 +828,12 @@ async function runDigest(pushN, offsetDays) {
       pushN,
       closer: firstNameFrom(name),
     });
-    await deliver(d, phone, msg, `push${pushN}`);
+    const res = await deliver(d, phone, msg, `push${pushN}`);
+    // Brochure adjunto: solo en el Push 1 (el único cuyo copy lleva materiales) y solo
+    // si el digest de verdad salió — sin él, mandar el PDF suelto no tiene contexto.
+    if (pushN === 1 && (res === 'sent' || res === 'dry-run')) {
+      await deliverBrochures(d, phone, items, name);
+    }
   }
 
   console.log(

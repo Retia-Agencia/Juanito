@@ -400,10 +400,17 @@ export function makeStore({ optins = [], nowRef } = {}) {
 // ─── Spy de WhatsApp ──────────────────────────────────────────────────────────
 export function makeWaSpy() {
   const sent = [];
+  const docs = [];
   return {
     sent,
+    // Brochures adjuntos del Push 1. Se registran aparte de `sent` para no descuadrar
+    // las aserciones de conteo de mensajes que ya existen en los escenarios.
+    docs,
     async sendMessage(to, text) {
       sent.push({ to, text });
+    },
+    async sendDocument(to, { buffer, fileName, mimetype, caption } = {}) {
+      docs.push({ to, fileName, mimetype, caption, bytes: buffer?.length ?? 0 });
     },
   };
 }
@@ -444,6 +451,7 @@ export function installHarness(
     getOptin: store.getOptin,
     isCalendlyPaused: store.isCalendlyPaused,
     sendMessage: wa.sendMessage,
+    sendDocument: wa.sendDocument,
     now: () => clock.ms,
     // §18.AB: outcomes post-call.
     createPendingOutcome: store.createPendingOutcome,

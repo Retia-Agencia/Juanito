@@ -343,7 +343,17 @@ leyendo las citas reales de **Calendly** (API v2):
 - **Push 3** — ~25 min antes de cada llamada → un mensaje por cita.
 
 El closer = host del evento (`event_memberships[0].user_email`), mapeado a su WhatsApp
-en `src/calendly/closers.js` (8 closers; "Equipo EstadoX" se enruta a Mateo).
+en `src/calendly/closers.js` (**7 closers**, lista dictada por el jefe el 2026-07-14 — quien no
+esté ahí no se gestiona; los que salieron viven en `IGNORED_CLOSERS` y se saltan en silencio).
+
+El **programa** NO se configura por closer: se deriva del `event_type` de cada cita
+(`programKeyOf`), así que un closer queda cubierto en todos sus programas. Cablear un programa
+nuevo = agregar su ET + su copy en `PROGRAM_PITCH` + sus materiales (§18.AG).
+
+Los materiales del Push 1 salen de dos formas: **link** (`MATERIAL_LINKS.brochure`, la mayoría) o
+**PDF adjunto** que Juanito le pasa al closer para que lo reenvíe (`BROCHURE_FILES`, hoy solo
+Operaciones). El adjunto existe porque el copy viaja en un `wa.me?text=` que solo lleva texto —
+ver §18.AG.
 
 **Anti-baneo:** Juanito NUNCA inicia una conversación con un closer. Solo se le envía si
 el closer le escribió primero (opt-in **ganado**, ver §11.2). Además `CALENDLY_DRY_RUN=true`
@@ -2608,12 +2618,159 @@ cierra solo a los 3 días. En `call_outcomes` sobreviven **2 campos y ambos SON 
 **Pendiente:** el reporte histórico anterior a este cambio sigue teniendo el doble conteo (no se hizo backfill);
 si alguien compara semanas, el volumen de calls baja legítimamente al activarlo.
 
+### 18.AF 🔵 HubSpot read-only: fill de teléfono precall + modelo nudge (2026-07-15)
+
+**Contexto:** llegó la credencial de HubSpot que bloqueaba §18.I desde junio. Con ella se hicieron
+**dos features**, no el reporte diario: un fill de teléfono (chico, ya vivo) y el **modelo nudge**
+(grande, apagado por default). La tesis del nudge: **no preguntarle al closer lo que HubSpot ya
+sabe**. El Push 4 (§18.AB) le pregunta el outcome a todos; si el deal ya está actualizado en
+HubSpot, esa pregunta es doble trabajo y erosiona la confianza en los pushes.
+
+**La credencial (importante, no es lo que dice §18.I original):** es un **Personal Access Key (PAK)**,
+no un Private App Token. El PAK es un refresh token codificado que se intercambia por un access token
+de ~30 min en `localdevauth/v1/auth/refresh` (el mismo mecanismo de la CLI de HubSpot); ESE va como
+Bearer. `client.js` cachea y renueva solo. **Solo lectura** — ningún scope `.write`, así que este
+módulo **nunca modifica HubSpot** (no hay write-back de outcomes).
+
+**Límites conocidos de los scopes:** no hay `leads.read` (pipeline de leads pre-webinar no
+consultable) y engagements (meetings/calls) puede fallar. `/crm/v3/pipelines/*` responde **403** al
+token de usuario → las etapas se leen por el endpoint **legacy** `/crm-pipelines/v1/pipelines/deals`,
+cacheado en la primera llamada.
+
+**Feature 1 — Fill de teléfono precall (VIVO si hay `HUBSPOT_PAT`).** Si Calendly no trae número, se
+busca el contacto por email (Calendly siempre captura email) y se toma `mobilephone`/`phone`. Mata los
+"sin teléfono, mándalo manual". Sin HubSpot o sin match → devuelve `null` = comportamiento previo.
+
+**Feature 2 — Modelo nudge (`HUBSPOT_NUDGE_ENABLED`, APAGADO por default).** Reemplaza la pregunta del
+Push 4 **solo para programas cubiertos** (los que tienen pipeline en esta cuenta):
+
+| Estado del deal tras la call | Acción | Mensaje |
+|---|---|---|
+| Avanzó de "Agendado" o cerrado (`resolved`) | `silent` | ninguno — se cosecha la métrica |
+| Sigue en "Agendado" (`stale`) | `nudge_update` | pica al closer + deep-link al deal |
+| Contacto o deal no existe (`no_contact`/`no_deal`) | `nudge_create` | "créalo/asócialo en HubSpot" |
+| Programa no cubierto, error de API, etapa no clasificable | `ask` | **Push 4 clásico** (red de seguridad) |
+
+**Programas cubiertos** (default, override con `HUBSPOT_PROGRAM_PIPELINES`): `second_brain:904247681`,
+`linkedin:906259304`, `operaciones:887379063`. **AI for Developers** → falta que Dani confirme si usa el
+pipeline "Hardcore AI" (`887379064`). **Abogados/EstadoX vive en OTRO HubSpot** → no cubrible aquí,
+se queda en Push 4 clásico para siempre.
+
+**Regla de diseño clave — ante la duda, preguntar.** Cualquier error, etapa rara o programa no cubierto
+cae a `ask`. Perder el dato es peor que preguntar de más.
+
+**El detalle fino (`reminded=1`):** el nudge crea el pendiente de outcome con `reminded=1`, lo que
+**suprime el recordatorio clásico** (ya se mandó un nudge — no doble-preguntar) pero **deja intacta la
+captura de reagenda** (§18.AC): si el closer contesta "se movió al jueves", el auto-scheduling se
+dispara igual por esa respuesta. `createPendingOutcome` recibe `reminded` como opcional, default `0`
+→ el camino clásico no cambia.
+
+**Archivos:** `src/hubspot/client.js` (red: token, throttle 120ms, 429 + reauth en 401, contactos,
+deals, pipelines legacy, `matchCallToDeal`, `ping`) · `src/hubspot/deals.js` + `nudge.js` (**puros**:
+mapa programa→pipeline, clasificación de etapa, decisión, mensajes) · `src/scheduler/calendly.js`
+(integración en la entrega del Push 4) · `src/db/index.js` (`reminded` opcional).
+**Todo helper de red es tolerante a fallos:** devuelve `null`/`[]` y loguea, nunca tira — el push
+precall debe salir aunque HubSpot esté caído.
+
+**Tests:** 93/93 puros verdes — `hubspot.deals.test.js`, `hubspot.nudge.test.js`,
+`calendly.nudge-scenarios.test.js` (5 escenarios vía el harness) + regresión del Push 4 clásico.
+
+**Deploy:** `docker-compose.yml` **no usa `env_file`** → hubo que declarar las vars en `environment:`
+o todo quedaba en no-op silencioso. Ya está hecho.
+
+**Env:** `HUBSPOT_PAT` (sin él, todo se autodesactiva), `HUBSPOT_ENABLED` (gate maestro),
+`HUBSPOT_PORTAL_ID` (`50929115`, para los deep-links), `HUBSPOT_NUDGE_ENABLED` (**false**),
+`HUBSPOT_PROGRAM_PIPELINES`, `HUBSPOT_MIN_GAP_MS` (120).
+
+**Pendiente:** (1) **prender el nudge** — está off; validar primero con un closer acotado, como el
+rollout de §18.AC; (2) confirmar el pipeline de `developers` con Dani; (3) el reporte diario de §18.I
+sigue sin construirse; (4) el comentario de cabecera de `client.js` dice que el mapa de pipelines "es
+estático, no se consulta" — **quedó desactualizado**, sí se consulta por el endpoint legacy.
+
+### 18.AG 🔵 Instagram & TikTok activo + brochure de Operaciones como PDF adjunto (2026-07-16)
+
+**Dos cosas independientes que salieron en la misma sesión.**
+
+**1) Instagram & TikTok for Business — el bot no veía sus llamadas.** El programa ya estaba
+activo en Calendly con **11 llamadas futuras** (hosts: Sebastian Marin y Daniela Camacho), pero
+su `event_type` no estaba cableado → `listProgramEvents` lo filtraba y **ningún closer recibía
+push**. Fallo silencioso: no hay alerta para "programa que existe pero nadie configuró".
+
+Su ET es **tipo pool**, y el query org-wide de `/event_types` **solo devuelve los `kind=solo`** —
+por eso el comentario viejo decía "no se puede enumerar por API". Sí se puede: se resuelve
+mirando el `event_type` de las reservas reales en `/scheduled_events`. Método reusable para el
+próximo programa que lance. ET: `d33075cb-d349-43ef-be43-6f80f9c5da03` → clave `instagram`.
+
+El segundo programa **"/Media" que se anticipaba NO existe**: al 2026-07-16 hay un único ET de
+Instagram en la cuenta. Los comentarios de `closers.js` que lo mencionaban ya se limpiaron.
+
+Materiales: brochure subido a Drive (`1VvP9kCMld…`, misma unidad que los demás) + video
+`https://30x.com/instagram-tiktok` (es una landing de 30x.com, no YouTube como el resto).
+El owner mandó una revisión el mismo día; la primera subida quedó en la papelera. Ojo: el MCP
+de Drive **no actualiza contenido en sitio**, así que cada revisión = archivo nuevo = **ID nuevo**
+= hay que tocar `MATERIAL_LINKS` y volver a poner el permiso público.
+
+**2) Operaciones: el brochure ahora es un PDF ADJUNTO, no un link.**
+
+**La restricción que manda acá:** el copy precall viaja dentro de un `wa.me?text=` que el closer
+toca — y wa.me **solo transporta texto, no admite adjuntos**. Y el que envía al lead tiene que
+seguir siendo el closer (Juanito nunca escribe en frío a un lead: regla anti-ban de §11.2). Así
+que **"mandar el PDF al lead" es imposible por diseño**. El único camino real: Juanito le manda el
+PDF **al closer**, y el closer lo reenvía.
+
+Implementación: `BROCHURE_FILES` (`src/calendly/index.js`) declara qué programas adjuntan PDF;
+`deliverBrochures` (`src/scheduler/calendly.js`) lo manda en el **Push 1** (el único push cuyo copy
+lleva materiales), **una vez por (closer, programa)** — un closer con 5 calls de Operaciones recibe
+un PDF, no cinco. Sale por `sendDocument`, o sea por la **misma cola anti-ban** que el texto.
+
+En vez de omitir el bloque de materiales, el copy dice `📄 Brochure: te lo acabo de enviar acá
+arriba 👆` (`attachedBrochure` en `MATERIAL_LINKS`) — sin eso, el lead recibía un PDF suelto y un
+mensaje que jamás lo mencionaba.
+
+**Costo asumido (decisión del jefe):** Operaciones **no lleva link de respaldo** en el copy. El
+reenvío es manual y **no verificable** — si el closer no reenvía, ese lead se queda sin material.
+Es el precio de que el PDF llegue como archivo. Si se quiere red de seguridad, volver a poner
+`brochure:` en `MATERIAL_LINKS.operaciones` (el test acepta link **o** adjunto, no ambos).
+
+**Gotcha de deploy:** el `Dockerfile` copiaba `src/`, `scripts/` y `entrypoint.sh` — **no `assets/`**.
+Sin el `COPY assets/` que se agregó, el adjunto fallaba **solo en producción** (en local el PDF está
+en el repo). Si se agrega otra carpeta de recursos, acordarse de esto.
+
+**Deriva corregida:** `closers.js` documentaba Operaciones como solo-Lucas e Instagram con Lucas.
+Contra la agenda real: Operaciones = Lucas + **Daniela Camacho**; Instagram = Marin + Camacho. No
+era bug (el programa se deriva del `event_type`, no del closer), pero el comentario mentía.
+
+**Tests:** 532/532 puros verdes. Nuevos: el PDF de cada programa de `BROCHURE_FILES` **existe de
+verdad en el repo y es un PDF** (guarda del gotcha del Dockerfile), Instagram enruta a su copy, y
+5 escenarios del Push 1 vía harness (un PDF por closer aunque haya 3 calls; Push 2 no adjunta;
+sin opt-in no sale ni digest ni PDF; digest mixto). El harness ganó `sendDocument` (`wa.docs`).
+
+**Deploy 2026-07-16 22:56 UTC — EN VIVO y verificado.** Los tres pendientes quedaron cerrados:
+permiso `anyoneWithLink: reader` puesto en el brochure de Instagram; el `.env` del VPS **no** tiene
+`CALENDLY_EVENT_TYPES` (aplica la lista del código); y **los 7 closers tienen opt-in ganado**, sin
+pausa y con hilo.
+
+**Copiado SELECTIVO, no `src/` entero.** La receta de §12 (`pscp -r src scripts test`) **no sirvió
+tal cual** por dos razones, y conviene recordarlas:
+- Habría arrastrado a producción trabajo local **sin terminar y nunca desplegado** (el reporte admin
+  de EstadoX: `sheets-report.js` modificado + `src/sheets/estadox-report.js` sin commitear). Se
+  verificó que el VPS tenía **0** referencias a `estadox-report` y se dejó así.
+- **No copia `assets/` ni el `Dockerfile`**, que este cambio necesita. Se copiaron a mano
+  (`mkdir -p /root/juanito/assets/brochures` primero — pscp no crea directorios).
+
+**Verificación en vivo (no solo "el container levantó"):** WA reconectó **sin QR**;
+`[Calendly] Jobs activos ✅ (DRY-RUN: false)`; el PDF está en `/app/assets/brochures/` dentro de la
+imagen; y `listProgramEvents` **desde el contenedor** devolvió para mañana: `instagram 10`,
+`operaciones 11`, `second_brain 11`, `abogados 3`, `linkedin 1`. Las 10 de Instagram eran
+**invisibles** antes de este deploy.
+
+**Rollback:** `/root/juanito-backup-20260716-225521.tar.gz` + imagen
+`juanito-agent:pre-brochure-20260716-225521`.
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):
   sería envío hacia afuera → debería pasar por la cola de aprobación.
-- **Test `calendly.helpers.test.js` desactualizado:** la URL de brochure hardcodeada (línea 267) no
-  coincide con el `MATERIAL_LINKS` de producción. Actualizar el test al valor vigente.
 - **Comando `/recuerda` en grupos (admins):** `@Juanito /recuerda [texto]` → memoria núcleo sin ir a DM.
 - **Resumen on-demand explícito:** exponer `summarize_group` en el prompt del jefe.
 - **✅ Personalización del tono por grupo — SHIPPED (2026-06-12)** vía `/persona` (§18.E).

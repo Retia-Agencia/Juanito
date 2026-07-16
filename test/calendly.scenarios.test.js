@@ -336,3 +336,97 @@ test('digest Push 2 (hoy): agrupa por closer y envía a los opted-in', async () 
   assert.match(h.wa.sent[0].text, /tienes 2 llamadas/);
   assert.ok(h.wa.sent[0].text.indexOf('Ana') < h.wa.sent[0].text.indexOf('Beto'), 'ordenado por hora');
 });
+
+// ─── Brochure adjunto en el Push 1 (Operaciones) ──────────────────────────────
+// Juanito le pasa el PDF al closer para que lo reenvíe al lead: el copy precall viaja
+// en un `wa.me?text=` que solo lleva texto, y el que envía al lead debe seguir siendo
+// el closer (anti-ban). Ver BROCHURE_FILES en src/calendly/index.js.
+
+const LUCAS = 'lucas.mendoza@30x.com';
+const LUCAS_PHONE = '+573014477044';
+const OPERACIONES_ET = 'https://api.calendly.com/event_types/8462e92a-8210-4bb2-8e2b-583aa3c3d877';
+const INSTAGRAM_ET = 'https://api.calendly.com/event_types/d33075cb-d349-43ef-be43-6f80f9c5da03';
+
+// Mañana a las 10:00 Bogotá (=15:00Z), con el reloj puesto hoy 19:00 Bogotá (=00:00Z+1).
+function tomorrowAt(hourUtc) {
+  const t = new Date(Date.now() + 86400000);
+  const y = t.getFullYear();
+  const mo = String(t.getMonth() + 1).padStart(2, '0');
+  const d = String(t.getDate()).padStart(2, '0');
+  return `${y}-${mo}-${d}T${String(hourUtc).padStart(2, '0')}:00:00.000Z`;
+}
+
+test('Push 1 Operaciones: adjunta el brochure UNA vez, aunque el closer tenga varias calls', async () => {
+  const events = [
+    makeEvent({ uuid: 'o1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Ana Gómez' }),
+    makeEvent({ uuid: 'o2', startIso: tomorrowAt(19), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Beto Ruiz' }),
+    makeEvent({ uuid: 'o3', startIso: tomorrowAt(20), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Cami Díaz' }),
+  ];
+  const h = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: Date.now() });
+
+  await scheduler.runPush1();
+
+  assert.equal(h.wa.sent.length, 1, 'un digest al closer');
+  assert.equal(h.wa.docs.length, 1, '3 calls del mismo programa → UN solo PDF, no tres');
+  const doc = h.wa.docs[0];
+  assert.match(doc.fileName, /Operaciones/);
+  assert.equal(doc.mimetype, 'application/pdf');
+  assert.ok(doc.bytes > 0, 'el PDF se leyó del repo y no está vacío');
+  assert.match(doc.caption, /Reenvíaselo a cada prospecto/);
+  // El PDF va al MISMO hilo que el digest (contact_jid del opt-in), no al número canónico.
+  assert.equal(doc.to, h.wa.sent[0].to);
+});
+
+test('Push 1: el brochure solo va para su programa (Instagram va por link, no adjunto)', async () => {
+  const events = [
+    makeEvent({ uuid: 'i1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: INSTAGRAM_ET, prospectName: 'Ana Gómez' }),
+  ];
+  const h = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: Date.now() });
+
+  await scheduler.runPush1();
+  assert.equal(h.wa.sent.length, 1);
+  assert.equal(h.wa.docs.length, 0, 'Instagram entrega por link → sin adjunto');
+  // El copy del lead viaja percent-encoded dentro del wa.me → hay que decodificar.
+  const copy = decodeURIComponent(h.wa.sent[0].text);
+  assert.match(copy, /programa de Instagram & TikTok for Business de 30X/);
+  assert.match(copy, /📄 Brochure: https:\/\/drive\.google\.com/, 'Instagram sí lleva link de Drive');
+});
+
+test('Push 1: digest mixto → un PDF de Operaciones y nada para los otros programas', async () => {
+  const events = [
+    makeEvent({ uuid: 'm1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Ana Gómez' }),
+    makeEvent({ uuid: 'm2', startIso: tomorrowAt(19), closerEmail: LUCAS, eventType: INSTAGRAM_ET, prospectName: 'Beto Ruiz' }),
+  ];
+  const h = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: Date.now() });
+
+  await scheduler.runPush1();
+  assert.equal(h.wa.docs.length, 1, 'solo Operaciones adjunta');
+  assert.match(h.wa.docs[0].fileName, /Operaciones/);
+});
+
+test('Push 2 NO adjunta el brochure (su copy no anuncia materiales)', async () => {
+  const today = new Date();
+  const y = today.getFullYear();
+  const mo = String(today.getMonth() + 1).padStart(2, '0');
+  const d = String(today.getDate()).padStart(2, '0');
+  const events = [
+    makeEvent({ uuid: 'p2', startIso: `${y}-${mo}-${d}T19:00:00.000Z`, closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Ana Gómez' }),
+  ];
+  const nowMs = Date.parse(`${y}-${mo}-${d}T11:30:00.000Z`);
+  const h = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs });
+
+  await scheduler.runPush2();
+  assert.equal(h.wa.sent.length, 1);
+  assert.equal(h.wa.docs.length, 0, 'el brochure es exclusivo del Push 1');
+});
+
+test('Push 1 sin opt-in: no se manda el digest NI el brochure (anti-ban)', async () => {
+  const events = [
+    makeEvent({ uuid: 'n1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Ana Gómez' }),
+  ];
+  const h = installHarness(scheduler, { events, optins: [], nowMs: Date.now() });
+
+  await scheduler.runPush1();
+  assert.equal(h.wa.sent.length, 0);
+  assert.equal(h.wa.docs.length, 0, 'sin hilo establecido, el PDF tampoco puede salir en frío');
+});

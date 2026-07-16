@@ -36,15 +36,21 @@ export const ORG_URI = () =>
 //  - Postulación LinkedIn Sales 30X
 //  - Postulación AI for Developers 30X          (agregado 2026-07-14)
 //  - Postulación Operaciones Escalables con AI 30X (agregado 2026-07-14)
+//  - Postulación Instagram & TikTok for Business 30X (agregado 2026-07-16)
 //
-// PENDIENTE: los dos programas de "Instagram & TikTok for Business 30X" (uno normal y otro
-// /Media) todavía NO existen en Calendly — cero reservas, y los event_types tipo pool no se
-// pueden enumerar por API sin ninguna reserva. Agregar su ET acá cuando se lancen.
+// Los event_types tipo pool NO se pueden enumerar por la API (el query de /event_types
+// org-wide solo devuelve los `kind=solo`). Se resuelven mirando el `event_type` de las
+// reservas reales en /scheduled_events — así se resolvió el de Instagram el 2026-07-16,
+// cuando el programa ya tenía 11 llamadas agendadas. Mismo método si aparece otro.
+//
+// El segundo programa de Instagram ("/Media") que se anticipaba NO existe: al 2026-07-16
+// hay un único event_type de Instagram & TikTok en la cuenta. Si lanza, se agrega acá.
 const SECOND_BRAIN_ET = 'https://api.calendly.com/event_types/56efc028-ee2f-46e8-852c-e50d45b15b83';
 const ABOGADOS_ET = 'https://api.calendly.com/event_types/f8d123ac-364b-47f9-a446-1316fdf37b08';
 const LINKEDIN_ET = 'https://api.calendly.com/event_types/96ddf036-9174-459c-be73-b248ad95be13';
 const DEVELOPERS_ET = 'https://api.calendly.com/event_types/dff3e48a-4859-417a-98fb-822048aef5d9';
 const OPERACIONES_ET = 'https://api.calendly.com/event_types/8462e92a-8210-4bb2-8e2b-583aa3c3d877';
+const INSTAGRAM_ET = 'https://api.calendly.com/event_types/d33075cb-d349-43ef-be43-6f80f9c5da03';
 
 export const PROGRAM_EVENT_TYPES = () => {
   const fromEnv = (process.env.CALENDLY_EVENT_TYPES || '')
@@ -52,7 +58,7 @@ export const PROGRAM_EVENT_TYPES = () => {
     .map((s) => s.trim())
     .filter(Boolean);
   if (fromEnv.length) return fromEnv;
-  return [SECOND_BRAIN_ET, ABOGADOS_ET, LINKEDIN_ET, DEVELOPERS_ET, OPERACIONES_ET];
+  return [SECOND_BRAIN_ET, ABOGADOS_ET, LINKEDIN_ET, DEVELOPERS_ET, OPERACIONES_ET, INSTAGRAM_ET];
 };
 
 // ─── Producto (programa) por evento ───────────────────────────────────────────
@@ -66,6 +72,7 @@ const PROGRAMS = {
   [LINKEDIN_ET]: 'linkedin',
   [DEVELOPERS_ET]: 'developers',
   [OPERACIONES_ET]: 'operaciones',
+  [INSTAGRAM_ET]: 'instagram',
 };
 
 // Acepta el event_type (string) o el evento completo. Devuelve la clave de
@@ -262,11 +269,38 @@ export const MATERIAL_LINKS = {
   developers: {
     brochure: 'https://drive.google.com/file/d/1VEUK_yF1UxwrkiCQJP1VHFW-nG9d426I/view',
   },
+  // Operaciones NO lleva `brochure`: su deck viaja como PDF ADJUNTO, no como link
+  // (ver BROCHURE_FILES abajo). `attachedBrochure` hace que el bloque de materiales
+  // diga "te lo acabo de enviar" en vez de omitirse: sin eso el lead recibiría un PDF
+  // suelto del closer y un mensaje que jamás lo menciona.
   operaciones: {
-    brochure: 'https://drive.google.com/file/d/1K_vkZLqBOCQeW3XqCWyOzsgIiIA_zfWz/view',
+    attachedBrochure: true,
+  },
+  // Instagram & TikTok (2026-07-16). El video es una landing de 30x.com, no YouTube.
+  instagram: {
+    brochure: 'https://drive.google.com/file/d/1VvP9kCMldKaVs3wwXHLZFk7I6Spu-JZS/view',
+    video: 'https://30x.com/instagram-tiktok',
   },
 };
 // ▲▲▲ EDITA AQUÍ ▲▲▲
+
+// Brochures que Juanito ADJUNTA (documento WhatsApp) al closer en el Push 1, en vez de
+// mandarle un link al lead. El closer reenvía el PDF y luego toca el link wa.me.
+//
+// Por qué: el copy precall viaja dentro de un `wa.me?text=`, que SOLO transporta texto —
+// no admite adjuntos. Y el que envía al lead tiene que seguir siendo el closer (Juanito
+// nunca escribe en frío a un lead: es la regla anti-ban). Así que el único camino para
+// que el lead reciba un PDF real es que Juanito se lo pase al closer y el closer reenvíe.
+//
+// Costo asumido: el reenvío es manual y no verificable — si el closer no reenvía, el lead
+// se queda sin material (para estos programas NO hay link de respaldo en el copy).
+// Rutas relativas a la raíz del repo; los archivos entran en la imagen Docker.
+export const BROCHURE_FILES = {
+  operaciones: {
+    path: 'assets/brochures/operaciones.pdf',
+    fileName: 'Brochure Operaciones Escalables con IA 30X.pdf',
+  },
+};
 
 const PROGRAM_PITCH = {
   second_brain: {
@@ -290,12 +324,19 @@ const PROGRAM_PITCH = {
     from: 'de 30X',
     program: 'programa de Operaciones Escalables con AI de 30X',
   },
+  instagram: {
+    from: 'de 30X',
+    program: 'programa de Instagram & TikTok for Business de 30X',
+  },
 };
 
 function materialsBlock(programKey) {
   const links = MATERIAL_LINKS[programKey] || {};
   const lines = [];
-  if (links.brochure) lines.push(`📄 Brochure: ${links.brochure}`);
+  // El brochure adjunto (Operaciones) no tiene link: el closer se lo reenvía al lead
+  // justo antes de este mensaje, así que lo referenciamos como "acá arriba".
+  if (links.attachedBrochure) lines.push('📄 Brochure: te lo acabo de enviar acá arriba 👆');
+  else if (links.brochure) lines.push(`📄 Brochure: ${links.brochure}`);
   if (links.video) lines.push(`🎥 Video: ${links.video}`);
   if (!lines.length) return ''; // sin links → no incluimos el bloque
   return `\n\nEs MUY IMPORTANTE que puedas ver estos materiales sí o sí antes de nuestra llamada:\n\n${lines.join('\n')}`;
