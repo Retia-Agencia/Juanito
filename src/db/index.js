@@ -393,19 +393,23 @@ export function markCalendlyPushSkipped(id, reason = '') {
 export function createPendingOutcome(o) {
   const row = {
     program: null, closer_email: null, closer_phone: null, closer_name: null,
-    lead_name: null, lead_phone: null, ...o,
+    lead_name: null, lead_phone: null, reminded: 0, ...o,
   };
   // closer_phone NORMALIZADO (igual que el opt-in) — es la clave de matcheo de la
   // respuesta del closer (getActiveOutcomeForCloser normaliza el número entrante).
   row.closer_phone = normalizePhone(row.closer_phone) || null;
+  // `reminded`: default 0 (Push 4 clásico → el cron insiste una vez). El modelo nudge
+  // (§18.AF) lo crea con reminded=1 para SUPRIMIR el recordatorio (ya mandó un nudge, no
+  // debe re-preguntar la pregunta clásica) sin perder la captura de una respuesta de
+  // reagenda (getActiveOutcomeForCloser no mira `reminded`).
   const info = db
     .prepare(`
       INSERT OR IGNORE INTO call_outcomes
         (event_uuid, program, closer_email, closer_phone, closer_name,
-         lead_name, lead_phone, call_start, status, asked_at, prompted_at)
+         lead_name, lead_phone, call_start, status, reminded, asked_at, prompted_at)
       VALUES
         (@event_uuid, @program, @closer_email, @closer_phone, @closer_name,
-         @lead_name, @lead_phone, @call_start, 'pending', datetime('now'), datetime('now'))
+         @lead_name, @lead_phone, @call_start, 'pending', @reminded, datetime('now'), datetime('now'))
     `)
     .run(row);
   return info.changes === 1 ? 'new' : 'exists';

@@ -44,6 +44,8 @@ import {
 } from '../calendly/index.js';
 import { computePush3Schedule, decidePush0 } from '../calendly/push-logic.js';
 import { pickSupersededPushes, isManualUuid } from '../calendly/reschedule-logic.js';
+import { isCoveredProgram } from '../hubspot/deals.js';
+import { decideNudgeAction, buildDealNudgeMessage, buildCreateDealNudgeMessage } from '../hubspot/nudge.js';
 import { resolveCloser, isIgnoredCloser } from '../calendly/closers.js';
 import {
   recordPollOk,
@@ -81,6 +83,12 @@ function push4AllowedFor(email) {
 }
 const CALL_DURATION_MIN = () => Number(process.env.CALENDLY_CALL_DURATION_MIN || 30);
 const PUSH4_GRACE_MIN = () => Number(process.env.CALENDLY_PUSH4_GRACE_MIN || 5);
+
+// Modelo nudge (§18.AF): para programas con pipeline en HubSpot, en vez de preguntarle
+// el outcome al closer, Juanito revisa el deal y solo lo pica si sigue en "Agendado"
+// (no preguntar lo que HubSpot ya sabe). Apagado por default → rollout controlado; sin
+// el flag, TODO sigue en Push 4 clásico. Requiere HUBSPOT_PAT configurado.
+const NUDGE_ENABLED = () => process.env.HUBSPOT_NUDGE_ENABLED === 'true';
 const OUTCOME_REMIND_AFTER_MIN = () => Number(process.env.CALENDLY_OUTCOME_REMIND_MIN || 30);
 const OUTCOME_EXPIRE_AFTER_MIN = () => Number(process.env.CALENDLY_OUTCOME_EXPIRE_MIN || 30);
 const OUTCOME_CRON = () => process.env.CALENDLY_OUTCOME_CRON || '*/10 * * * *';
@@ -118,15 +126,22 @@ export function __resetDeps() {
 
 async function deps() {
   if (_injectedDeps) return _injectedDeps;
-  const [calendly, db, whatsapp] = await Promise.all([
+  const [calendly, db, whatsapp, hubspot] = await Promise.all([
     import('../calendly/index.js'),
     import('../db/index.js'),
     import('../whatsapp/index.js'),
+    import('../hubspot/client.js'),
   ]);
   return {
     listProgramEvents: calendly.listProgramEvents,
     getEvent: calendly.getEvent,
     getFirstInvitee: calendly.getFirstInvitee,
+    // Fallback de teléfono: si Calendly no trae número, se busca por email en HubSpot
+    // (read-only). Se autodesactiva si HubSpot no está configurado → comportamiento previo.
+    hubspotEnabled: hubspot.isEnabled,
+    getContactPhone: hubspot.getContactPhone,
+    // §18.AF: modelo nudge — matchea la call con su deal y clasifica el estado.
+    matchCallToDeal: hubspot.matchCallToDeal,
     scheduleCalendlyPush: db.scheduleCalendlyPush,
     getDueCalendlyPushes: db.getDueCalendlyPushes,
     claimCalendlyPush: db.claimCalendlyPush,
@@ -155,6 +170,67 @@ async function deps() {
     sendMessage: whatsapp.sendMessage,
     now: () => Date.now(),
   };
+}
+
+// Teléfono del prospecto para el push precall. Calendly deja `text_reminder_number`
+// null en muchas reservas (instant_book / reagendadas / formularios sin SMS) → antes
+// eso caía a "sin teléfono, mándalo manual". Fallback read-only: buscar el contacto en
+// HubSpot por su email (Calendly siempre lo captura) y tomar mobilephone/phone. Si
+// HubSpot está apagado o no hay match, se comporta igual que antes (devuelve null).
+async function resolvePhone(d, invitee) {
+  const direct = prospectPhoneOf(invitee);
+  if (direct) return direct;
+  const email = invitee?.email;
+  if (!email || !d.hubspotEnabled?.() || !d.getContactPhone) return null;
+  const p = await d.getContactPhone(email).catch(() => null);
+  if (p) console.log(`[HubSpot] teléfono de ${email} recuperado (Calendly sin número)`);
+  return p;
+}
+
+// Payload de createPendingOutcome para una fila de push. `extra` permite fijar `reminded`
+// (el nudge lo pone en 1 para suprimir el recordatorio clásico).
+function pendingOutcomeFrom(p, extra = {}) {
+  return {
+    event_uuid: p.event_uuid,
+    program: p.program,
+    closer_email: p.closer_email,
+    closer_phone: p.closer_phone,
+    closer_name: resolveCloser(p.closer_email)?.name || null,
+    lead_name: p.prospect_name,
+    lead_phone: p.prospect_phone,
+    call_start: p.call_start,
+    ...extra,
+  };
+}
+
+// Modelo nudge (§18.AF): decide qué hacer con un Push 4 de un programa cubierto. Saca el
+// email del lead de Calendly (la fila del push no lo guarda), matchea el deal y traduce a
+// un plan. Devuelve:
+//   { handled:false }                       → cae a Push 4 clásico (preguntar) — red de seguridad
+//   { handled:true, silent:true, reason }    → el closer ya avanzó el deal → no molestar
+//   { handled:true, message }                → mandar el nudge (update o create)
+async function planNudge(d, p) {
+  if (!d.matchCallToDeal) return { handled: false };
+  // Email del lead desde Calendly (no está en la fila del push).
+  let email = null;
+  try {
+    const inv = await d.getFirstInvitee(`https://api.calendly.com/scheduled_events/${p.event_uuid}`);
+    email = inv?.email || null;
+  } catch {
+    /* sin invitee → sin email → cae a clásico */
+  }
+  if (!email) return { handled: false };
+
+  const match = await d.matchCallToDeal({ email, programKey: p.program });
+  const decision = decideNudgeAction(match);
+  const lead = fullNameFrom(p.prospect_name);
+
+  if (decision.action === 'silent') return { handled: true, silent: true, reason: match.status };
+  if (decision.action === 'nudge_update')
+    return { handled: true, message: buildDealNudgeMessage({ name: lead, url: decision.dealUrl }) };
+  if (decision.action === 'nudge_create')
+    return { handled: true, message: buildCreateDealNudgeMessage({ name: lead, reason: decision.reason }) };
+  return { handled: false }; // 'ask' / unknown / error → Push 4 clásico
 }
 
 // ─── Alertas a admins (decisión 5) ────────────────────────────────────────────
@@ -280,7 +356,7 @@ export async function runCalendlyPoll() {
       const invitee = await d.getFirstInvitee(ev.uri);
       const firstName = firstNameFrom(invitee?.name);
       const name = fullNameFrom(invitee?.name);
-      const phone = prospectPhoneOf(invitee);
+      const phone = await resolvePhone(d, invitee);
 
       // Dedup de reagendas (§18.AC): mismo closer + mismo lead + call futura = es la misma
       // call que el closer nos dictó por WhatsApp, pero ahora con evento real. Calendly
@@ -466,28 +542,48 @@ export async function runCalendlyDelivery() {
             continue;
           }
 
+          // ── Modelo nudge (§18.AF): programas cubiertos por HubSpot ──
+          // En vez de preguntar el outcome, revisa el deal y solo pica al closer si sigue
+          // en "Agendado". Cae a Push 4 clásico ante cualquier duda (programa no cubierto,
+          // sin email, error del matcher, etapa no clasificable) para no perder el dato.
+          let outcomeMsg = null; // si queda != null, es el texto del nudge
+          let remindedFlag = 0; // el nudge lo pone en 1 → suprime el recordatorio clásico
+          if (
+            NUDGE_ENABLED() &&
+            d.hubspotEnabled?.() &&
+            !isManualUuid(p.event_uuid) &&
+            isCoveredProgram(p.program)
+          ) {
+            const plan = await planNudge(d, p);
+            if (plan.handled && plan.silent) {
+              // El closer ya avanzó el deal → no molestar. No se crea pendiente.
+              d.markCalendlyPushSent(p.id);
+              console.log(`[Calendly] Push 4 #${p.id}: deal ya actualizado en HubSpot (${plan.reason}) → sin preguntar`);
+              procesados++;
+              continue;
+            }
+            if (plan.handled) {
+              outcomeMsg = plan.message; // nudge_update / nudge_create
+              remindedFlag = 1;
+            }
+          }
+
+          // Mensaje: el nudge (si aplicó) o la pregunta clásica de Push 4.
           const startIso4 = ev4?.start_time || `${p.call_start.replace(' ', 'T')}Z`;
-          const msg4 = buildPush4Message({
-            name: fullNameFrom(p.prospect_name),
-            firstName: firstNameFrom(p.prospect_name),
-            startIso: startIso4,
-          });
+          const msg4 =
+            outcomeMsg ||
+            buildPush4Message({
+              name: fullNameFrom(p.prospect_name),
+              firstName: firstNameFrom(p.prospect_name),
+              startIso: startIso4,
+            });
           const r4 = await deliver(d, p.closer_phone, msg4, 'push4');
           if (r4 === 'sent' || r4 === 'dry-run') {
             d.markCalendlyPushSent(p.id);
-            // Recién acá creamos el pendiente: el closer YA recibió la pregunta, así
-            // que su respuesta podrá matchearse (getActiveOutcomeForCloser).
+            // El pendiente se crea recién ahora: el closer YA recibió el mensaje, así que
+            // su respuesta (incl. una reagenda) podrá matchearse (getActiveOutcomeForCloser).
             if (d.createPendingOutcome)
-              d.createPendingOutcome({
-                event_uuid: p.event_uuid,
-                program: p.program,
-                closer_email: p.closer_email,
-                closer_phone: p.closer_phone,
-                closer_name: resolveCloser(p.closer_email)?.name || null,
-                lead_name: p.prospect_name,
-                lead_phone: p.prospect_phone,
-                call_start: p.call_start,
-              });
+              d.createPendingOutcome(pendingOutcomeFrom(p, { reminded: remindedFlag }));
           } else if (r4 === 'paused' || r4 === 'paused-closer') {
             if (d.revertCalendlyPush) d.revertCalendlyPush(p.id); // reintentar al despausar
           } else if (r4 === 'skipped-no-thread') {
@@ -636,7 +732,7 @@ async function runDigest(pushN, offsetDays) {
     byCloser.get(closer.phone).items.push({
       name: fullNameFrom(invitee?.name),
       firstName: firstNameFrom(invitee?.name),
-      phone: prospectPhoneOf(invitee),
+      phone: await resolvePhone(d, invitee),
       startIso: ev.start_time,
       programKey: programKeyOf(ev.event_type),
     });

@@ -30,6 +30,7 @@ export function makeEvent({
   closerEmail,
   prospectName = 'Juan Pérez',
   prospectPhone = '+57 300 111 2222',
+  prospectEmail = 'juan.perez@ejemplo.com',
   status = 'active',
   eventType = 'https://api.calendly.com/event_types/56efc028-ee2f-46e8-852c-e50d45b15b83',
   joinUrl,
@@ -49,7 +50,10 @@ export function makeEvent({
     event_type: eventType,
     location: joinUrl ? { type: 'zoom', join_url: joinUrl } : undefined,
     event_memberships: [{ user_email: closerEmail }],
-    __invitee: prospectName === null ? null : { name: prospectName, text_reminder_number: prospectPhone },
+    __invitee:
+      prospectName === null
+        ? null
+        : { name: prospectName, text_reminder_number: prospectPhone, email: prospectEmail },
   };
 }
 
@@ -231,7 +235,7 @@ export function makeStore({ optins = [], nowRef } = {}) {
         asked_at: now(),
         prompted_at: now(),
         answered_at: null,
-        reminded: 0,
+        reminded: o.reminded ?? 0,
         raw_reply: null,
         rescheduled_to: null,
         reschedule_uuid: null,
@@ -407,11 +411,24 @@ export function makeWaSpy() {
 // ─── Instalar el harness completo en el scheduler ─────────────────────────────
 // Devuelve { deps, store, api, wa, clock } y deja el scheduler inyectado.
 // Recuerda llamar a scheduler.__resetDeps() al terminar (los tests lo hacen).
-export function installHarness(scheduler, { events = [], optins = [], nowMs = Date.now(), api: apiOpts = {} } = {}) {
+export function installHarness(
+  scheduler,
+  { events = [], optins = [], nowMs = Date.now(), api: apiOpts = {}, match } = {}
+) {
   const clock = { ms: nowMs };
   const api = makeApi(events, apiOpts);
   const store = makeStore({ optins, nowRef: clock });
   const wa = makeWaSpy();
+
+  // Modelo nudge (§18.AF): mock de matchCallToDeal. `match` puede ser una función
+  // (email, programKey) → resultado, o un objeto fijo. Sin `match` → devuelve covered:false
+  // (equivale a HubSpot apagado → todo cae a Push 4 clásico).
+  const matchCalls = [];
+  const matchCallToDeal = async ({ email, programKey }) => {
+    matchCalls.push({ email, programKey });
+    if (typeof match === 'function') return match({ email, programKey });
+    return match || { covered: false };
+  };
 
   const deps = {
     listProgramEvents: api.listProgramEvents,
@@ -440,8 +457,12 @@ export function installHarness(scheduler, { events = [], optins = [], nowMs = Da
     getAwaitingDateOutcomes: store.getAwaitingDateOutcomes,
     markReschedulePrompted: store.markReschedulePrompted,
     expireAwaitingDateOutcomes: store.expireAwaitingDateOutcomes,
+    // §18.AF: modelo nudge (HubSpot). hubspotEnabled=true solo si el test dio un `match`
+    // (modela "HubSpot configurado"); sin él, el nudge se salta → Push 4 clásico.
+    matchCallToDeal,
+    hubspotEnabled: () => Boolean(match),
   };
 
   scheduler.__setDeps(deps);
-  return { deps, store, api, wa, clock };
+  return { deps, store, api, wa, clock, matchCalls };
 }
