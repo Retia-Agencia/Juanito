@@ -119,11 +119,18 @@ services:
       # Pagos reales para el reporte de EstadoX (restricted key rk_… solo-lectura de
       # PaymentIntents). Sin key → fallback al tag manual del Sheet.
       - STRIPE_API_KEY=${STRIPE_API_KEY:-}
+      # Payment Link del self-checkout (plink_…, NO la URL buy.stripe.com): con él, "pagos
+      # self-checkout" se atribuye por link en vez del tag manual del Sheet. La rk_ necesita
+      # permiso read sobre Checkout Sessions (el PaymentIntent no sabe de qué link vino).
+      - STRIPE_SELF_CHECKOUT_PLINK=${STRIPE_SELF_CHECKOUT_PLINK:-}
       # Notificaciones a la admin de EstadoX (§18.AD): reporte diario por DM + aviso de pago
       # apenas Stripe lo confirma. Destinatarios = JIDs de WhatsApp (CSV) con hilo YA abierto
       # (Juanito nunca escribe en frío). El grupo "Ventas EstadoX" sigue APAGADO: lo corta
       # SHEETS_REPORT_GROUP_ENABLED, no el hecho de que SHEETS_REPORT_GROUP esté vacío.
       - SHEETS_REPORT_DM=${SHEETS_REPORT_DM:-}
+      # Reporte ADMIN de EstadoX (§18.AD, 5 métricas): estos JIDs lo reciben EN LUGAR del
+      # estándar de leads. Listas excluyentes — quien esté en ambas recibe los dos.
+      - SHEETS_REPORT_ESTADOX_DM=${SHEETS_REPORT_ESTADOX_DM:-}
       - SHEETS_REPORT_GROUP_ENABLED=${SHEETS_REPORT_GROUP_ENABLED:-false}
       - STRIPE_ALERT_JIDS=${STRIPE_ALERT_JIDS:-}
       - STRIPE_ALERT_CRON=${STRIPE_ALERT_CRON:-*/5 * * * *}
