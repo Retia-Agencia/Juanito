@@ -46,7 +46,8 @@ import { computePush3Schedule, decidePush0 } from '../calendly/push-logic.js';
 import { pickSupersededPushes, isManualUuid } from '../calendly/reschedule-logic.js';
 import { isCoveredProgram } from '../hubspot/deals.js';
 import { decideNudgeAction, buildDealNudgeMessage, buildCreateDealNudgeMessage } from '../hubspot/nudge.js';
-import { resolveCloser, isIgnoredCloser } from '../calendly/closers.js';
+import { resolveCloser, isIgnoredCloser, accountOfCloser } from '../calendly/closers.js';
+import { accountOf, activeAccounts, DEFAULT_ACCOUNT } from '../calendly/accounts.js';
 import { BROCHURE_FILES } from '../calendly/index.js';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -137,6 +138,9 @@ async function deps() {
     import('../hubspot/client.js'),
   ]);
   return {
+    // Cuentas de Calendly a pollear. Va por el seam porque lee process.env (los tokens):
+    // es impura, y los tests necesitan poder simular dos cuentas sin tocar el entorno.
+    accounts: activeAccounts,
     listProgramEvents: calendly.listProgramEvents,
     getEvent: calendly.getEvent,
     getFirstInvitee: calendly.getFirstInvitee,
@@ -183,9 +187,17 @@ async function deps() {
 // eso caía a "sin teléfono, mándalo manual". Fallback read-only: buscar el contacto en
 // HubSpot por su email (Calendly siempre lo captura) y tomar mobilephone/phone. Si
 // HubSpot está apagado o no hay match, se comporta igual que antes (devuelve null).
-async function resolvePhone(d, invitee) {
+//
+// ⚠️ El HubSpot conectado es el de UNA empresa (`account.hubspot`). Un lead de OTRA agencia
+// no se busca ahí jamás: si el email coincidiera (misma persona en ambos CRMs, o choque de
+// email), le meteríamos al closer de una empresa el teléfono sacado del CRM de la otra —
+// el closer terminaría escribiéndole a un contacto ajeno, y cruzaríamos datos entre
+// clientes. Sin `account` (callers viejos) se asume la cuenta default, que sí lo tiene.
+async function resolvePhone(d, invitee, account) {
   const direct = prospectPhoneOf(invitee);
   if (direct) return direct;
+  const acct = account || accountOf(DEFAULT_ACCOUNT);
+  if (!acct?.hubspot) return null;
   const email = invitee?.email;
   if (!email || !d.hubspotEnabled?.() || !d.getContactPhone) return null;
   const p = await d.getContactPhone(email).catch(() => null);
@@ -263,6 +275,47 @@ function isAuthError(msg) {
   return /\b(401|403)\b/.test(String(msg || ''));
 }
 
+// ─── Listado multi-cuenta con aislamiento de errores ──────────────────────────
+// Consulta las citas de CADA cuenta activa por separado y devuelve `{ ev, account }` para
+// que el caller sepa con qué token seguir pidiendo detalles de cada evento.
+//
+// El try/catch va POR CUENTA a propósito: un token muerto en una agencia NO puede tumbar
+// el poll de la otra. Antes, con una sola cuenta, un throw acá abortaba el ciclo entero.
+// `failed` avisa si alguna cuenta se cayó, para no confundir "no hay citas" con "no pude
+// preguntar" (un 0 silencioso sería exactamente el bug que esto evita).
+async function listEventsAllAccounts(d, { minStartIso, maxStartIso, tag }) {
+  const out = [];
+  let failed = false;
+  for (const account of d.accounts ? d.accounts() : activeAccounts()) {
+    try {
+      const evs = await d.listProgramEvents({ minStartIso, maxStartIso, account });
+      for (const ev of evs) out.push({ ev, account });
+    } catch (e) {
+      failed = true;
+      recordPollError(e.message);
+      console.error(`[Calendly] ${tag} [${account.key}]: error listando:`, e.message);
+      if (isAuthError(e.message)) {
+        await notifyAdmins(
+          d,
+          `Calendly rechazó el token de ${account.label} (${e.message.slice(0, 80)}). Los pushes de esa cuenta están caídos hasta rotarlo.`,
+          `token:${account.key}` // dedup POR CUENTA: una alerta no puede silenciar la otra
+        );
+      }
+    }
+  }
+  return { events: out, failed };
+}
+
+// ─── Cuenta del closer → dry-run ──────────────────────────────────────────────
+// El dry-run es POR CUENTA: una agencia puede estar enviando en vivo mientras la otra
+// arranca muda. Se resuelve por el closer (no por el programa) porque el closer siempre se
+// conoce, incluso en filas viejas con `program` NULL. Cuenta desconocida → DRY_RUN() global,
+// que es el default seguro (true = no envía).
+function dryRunForCloser(closerEmail) {
+  const acct = accountOf(accountOfCloser(closerEmail));
+  return acct ? acct.dryRun() : DRY_RUN();
+}
+
 // ─── Envío (respeta DRY-RUN) ──────────────────────────────────────────────────
 
 // Devuelve 'sent' | 'dry-run' | 'skipped-optin' | 'skipped-no-thread'
@@ -277,7 +330,13 @@ function isAuthError(msg) {
 // Botón de pánico (Item 2, `/calendly on|off`, admin): la pausa GLOBAL corta todo; la
 // pausa por-closer (`optin.paused`) corta solo a ese closer. Es ortogonal a DRY_RUN
 // (master dev-only del .env) y se controla en caliente desde la DB, sin redeploy.
-async function deliver(d, to, text, tag) {
+//
+// `closerEmail` decide la CUENTA (accountOfCloser) y con ella el dry-run: así una agencia
+// puede estar en vivo mientras la otra solo loguea. REGLA para quien agregue un canal
+// nuevo hacia closers: el dry-run se resuelve SIEMPRE por `accountOfCloser(closerEmail)`,
+// nunca leyendo DRY_RUN() directo — si no, ese canal se le escapa a la cuenta muda
+// (le pasó a deliverBrochures, ver abajo).
+async function deliver(d, to, text, tag, closerEmail) {
   // 1) Pausa global: botón de pánico — apaga absolutamente todo.
   if (d.isCalendlyPaused && d.isCalendlyPaused()) {
     console.log(`[Calendly] PAUSADO (global) → ${to}: omito (${tag})`);
@@ -301,8 +360,9 @@ async function deliver(d, to, text, tag) {
     return 'skipped-no-thread';
   }
   const via = ` [hilo de opt-in; closer ${to}]`;
-  if (DRY_RUN()) {
-    console.log(`[Calendly][DRY-RUN] (${tag}) → ${target}${via}\n${text}\n`);
+  // 5) Dry-run de la cuenta del closer (último filtro, igual que antes).
+  if (dryRunForCloser(closerEmail)) {
+    console.log(`[Calendly][DRY-RUN:${accountOfCloser(closerEmail)}] (${tag}) → ${target}${via}\n${text}\n`);
     return 'dry-run';
   }
   await d.sendMessage(target, text);
@@ -321,6 +381,10 @@ async function deliver(d, to, text, tag) {
 // ACOPLE: no re-chequea pausa/opt-in/contact_jid — se llama SOLO después de que
 // deliver() del digest devolvió 'sent'/'dry-run', o sea con los gates ya pasados. Si
 // algún día se llama desde otro lado, hay que replicar esos gates.
+//
+// El dry-run SÍ se re-chequea acá, y por cuenta: este envío NO pasa por deliver() (manda
+// un documento, no texto), así que es un segundo camino hacia el closer. Sin esto, una
+// cuenta en dry-run igual recibiría el PDF.
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const brochureCache = new Map(); // programKey → Buffer (los PDFs son estáticos en la imagen)
@@ -334,7 +398,7 @@ async function loadBrochure(programKey) {
   return buf;
 }
 
-async function deliverBrochures(d, phone, items, closerName) {
+async function deliverBrochures(d, phone, items, closerName, closerEmail) {
   const keys = [...new Set(items.map((i) => i.programKey))].filter((k) => k && BROCHURE_FILES[k]);
   for (const key of keys) {
     const spec = BROCHURE_FILES[key];
@@ -360,8 +424,10 @@ async function deliverBrochures(d, phone, items, closerName) {
       `📎 Brochure de ${PROGRAM_LABELS[key] || key}.\n\n` +
       `Reenvíaselo a cada prospecto de este programa ANTES de tocar su link de push — ` +
       `el mensaje ya le dice que se lo acabas de mandar.`;
-    if (DRY_RUN()) {
-      console.log(`[Calendly][DRY-RUN] (push1-brochure:${key}) → ${target} "${spec.fileName}" (${buffer.length} bytes)`);
+    if (dryRunForCloser(closerEmail)) {
+      console.log(
+        `[Calendly][DRY-RUN:${accountOfCloser(closerEmail)}] (push1-brochure:${key}) → ${target} "${spec.fileName}" (${buffer.length} bytes)`
+      );
       continue;
     }
     try {
@@ -392,17 +458,13 @@ export async function runCalendlyPoll() {
   const minStartIso = new Date(nowMs - 5 * 60000).toISOString();
   const maxStartIso = new Date(nowMs + 48 * 3600 * 1000).toISOString();
 
-  let events;
-  try {
-    events = await d.listProgramEvents({ minStartIso, maxStartIso });
-  } catch (e) {
-    recordPollError(e.message);
-    console.error('[Calendly] poll: error listando eventos:', e.message);
-    if (isAuthError(e.message)) {
-      await notifyAdmins(d, `Calendly rechazó el token (${e.message.slice(0, 80)}). Los pushes están caídos hasta rotarlo.`, 'token');
-    }
-    return 0;
-  }
+  // Una cuenta caída no puede tumbar el poll de la otra → se listan por separado.
+  const { events, failed } = await listEventsAllAccounts(d, {
+    minStartIso,
+    maxStartIso,
+    tag: 'poll',
+  });
+  if (failed && !events.length) return 0;
 
   // §18.AC: pushes de reagendas manuales aún por entregar. Si una de esas reagendas
   // terminó entrando por Calendly, el evento real manda y hay que cancelar el sintético
@@ -411,7 +473,7 @@ export async function runCalendlyPoll() {
     RESCHEDULE_ENABLED() && d.getPendingManualPushes ? d.getPendingManualPushes() : [];
 
   let nuevos = 0;
-  for (const ev of events) {
+  for (const { ev, account } of events) {
     try {
       const uuid = ev.uri.split('/').pop();
 
@@ -432,10 +494,10 @@ export async function runCalendlyPoll() {
       }
 
       const programKey = programKeyOf(ev.event_type);
-      const invitee = await d.getFirstInvitee(ev.uri);
+      const invitee = await d.getFirstInvitee(ev.uri, { token: account.token() });
       const firstName = firstNameFrom(invitee?.name);
       const name = fullNameFrom(invitee?.name);
-      const phone = await resolvePhone(d, invitee);
+      const phone = await resolvePhone(d, invitee, account);
 
       // Dedup de reagendas (§18.AC): mismo closer + mismo lead + call futura = es la misma
       // call que el closer nos dictó por WhatsApp, pero ahora con evento real. Calendly
@@ -492,7 +554,10 @@ export async function runCalendlyPoll() {
       // Se agenda para start + duración + gracia (default 30+5). Mismo dedup
       // (UNIQUE event_uuid+push_n). El mensaje real se reconstruye al entregar.
       // Gateado por allowlist (PUSH4_CLOSERS) para rollouts acotados a un closer.
-      if (PUSH4_ENABLED() && push4AllowedFor(email)) {
+      // Gate por CUENTA: una agencia puede tener el registro de outcomes activo mientras
+      // otra arranca solo con los pushes precall (0-3). `push4` del registro manda; la
+      // allowlist fina (CALENDLY_PUSH4_CLOSERS) se aplica además, dentro de esa cuenta.
+      if (account.push4() && push4AllowedFor(email)) {
         const due4 = push4DueUtc(ev.start_time, CALL_DURATION_MIN(), PUSH4_GRACE_MIN());
         const r4 = d.scheduleCalendlyPush({
           event_uuid: uuid,
@@ -656,7 +721,7 @@ export async function runCalendlyDelivery() {
               firstName: firstNameFrom(p.prospect_name),
               startIso: startIso4,
             });
-          const r4 = await deliver(d, p.closer_phone, msg4, 'push4');
+          const r4 = await deliver(d, p.closer_phone, msg4, 'push4', p.closer_email);
           if (r4 === 'sent' || r4 === 'dry-run') {
             d.markCalendlyPushSent(p.id);
             // El pendiente se crea recién ahora: el closer YA recibió el mensaje, así que
@@ -735,7 +800,7 @@ export async function runCalendlyDelivery() {
                 });
         }
 
-        const result = await deliver(d, p.closer_phone, message, `push${p.push_n}`);
+        const result = await deliver(d, p.closer_phone, message, `push${p.push_n}`, p.closer_email);
         if (result === 'sent' || result === 'dry-run') {
           d.markCalendlyPushSent(p.id);
         } else if (result === 'paused' || result === 'paused-closer') {
@@ -778,20 +843,16 @@ async function runDigest(pushN, offsetDays) {
   const nowMs = d.now();
   const { minStartIso, maxStartIso } = dayRangeUtc(TZ(), offsetDays, new Date(nowMs));
 
-  let events;
-  try {
-    events = await d.listProgramEvents({ minStartIso, maxStartIso });
-  } catch (e) {
-    recordPollError(e.message);
-    console.error(`[Calendly] digest push${pushN}: error listando:`, e.message);
-    if (isAuthError(e.message)) {
-      await notifyAdmins(d, `Calendly rechazó el token (${e.message.slice(0, 80)}). Los pushes están caídos hasta rotarlo.`, 'token');
-    }
-    return 0;
-  }
+  // Una cuenta caída no puede dejar sin digest a la otra → se listan por separado.
+  const { events, failed } = await listEventsAllAccounts(d, {
+    minStartIso,
+    maxStartIso,
+    tag: `digest push${pushN}`,
+  });
+  if (failed && !events.length) return 0;
 
-  const byCloser = new Map(); // phone -> { name, items[] }
-  for (const ev of events) {
+  const byCloser = new Map(); // phone -> { name, email, items[] }
+  for (const { ev, account } of events) {
     const email = closerEmailOf(ev);
     const closer = resolveCloser(email);
     if (!closer) {
@@ -803,15 +864,16 @@ async function runDigest(pushN, offsetDays) {
     }
     let invitee = null;
     try {
-      invitee = await d.getFirstInvitee(ev.uri);
+      invitee = await d.getFirstInvitee(ev.uri, { token: account.token() });
     } catch {
       /* sin invitee igual listamos la cita */
     }
-    if (!byCloser.has(closer.phone)) byCloser.set(closer.phone, { name: closer.name, items: [] });
+    if (!byCloser.has(closer.phone))
+      byCloser.set(closer.phone, { name: closer.name, email, items: [] });
     byCloser.get(closer.phone).items.push({
       name: fullNameFrom(invitee?.name),
       firstName: firstNameFrom(invitee?.name),
-      phone: await resolvePhone(d, invitee),
+      phone: await resolvePhone(d, invitee, account),
       startIso: ev.start_time,
       programKey: programKeyOf(ev.event_type),
     });
@@ -820,7 +882,7 @@ async function runDigest(pushN, offsetDays) {
   const desc = pushN === 1 ? 'la noche anterior' : 'en la mañana';
   const label = `Push ${pushN} (${desc})`;
   const when = whenLabel(offsetDays, nowMs);
-  for (const [phone, { name, items }] of byCloser) {
+  for (const [phone, { name, email, items }] of byCloser) {
     const msg = buildDigestMessage({
       pushLabel: label,
       whenLabel: when,
@@ -828,11 +890,11 @@ async function runDigest(pushN, offsetDays) {
       pushN,
       closer: firstNameFrom(name),
     });
-    const res = await deliver(d, phone, msg, `push${pushN}`);
+    const res = await deliver(d, phone, msg, `push${pushN}`, email);
     // Brochure adjunto: solo en el Push 1 (el único cuyo copy lleva materiales) y solo
     // si el digest de verdad salió — sin él, mandar el PDF suelto no tiene contexto.
     if (pushN === 1 && (res === 'sent' || res === 'dry-run')) {
-      await deliverBrochures(d, phone, items, name);
+      await deliverBrochures(d, phone, items, name, email);
     }
   }
 
@@ -859,7 +921,7 @@ export async function runOutcomeReminders() {
       firstName: firstNameFrom(o.lead_name),
       startIso,
     });
-    const r = await deliver(d, o.closer_phone, msg, 'outcome-remind');
+    const r = await deliver(d, o.closer_phone, msg, 'outcome-remind', o.closer_email);
     // Solo marcamos 'reminded' si de verdad salió; si estaba pausado/sin opt-in se
     // reintenta en el próximo tick (no se quema la única insistencia de v1).
     if (r === 'sent' || r === 'dry-run') {
@@ -895,7 +957,7 @@ export async function runReschedulePrompts() {
       name: fullNameFrom(o.lead_name),
       firstName: firstNameFrom(o.lead_name),
     });
-    const r = await deliver(d, o.closer_phone, msg, 'reagenda-fecha');
+    const r = await deliver(d, o.closer_phone, msg, 'reagenda-fecha', o.closer_email);
     // Solo cuenta el intento si de verdad salió: si estaba pausado o sin opt-in, se
     // reintenta mañana en vez de quemar una de las tres insistencias.
     if (r === 'sent' || r === 'dry-run') {
@@ -918,8 +980,10 @@ export async function runReschedulePrompts() {
 // ─── Arranque de los jobs ─────────────────────────────────────────────────────
 
 export function startCalendlyJobs() {
-  if (!process.env.CALENDLY_TOKEN) {
-    console.warn('[Calendly] CALENDLY_TOKEN ausente — jobs de Calendly desactivados');
+  // Auto-desactivación: sin ninguna cuenta con token no hay nada que pollear.
+  const accounts = activeAccounts();
+  if (!accounts.length) {
+    console.warn('[Calendly] ninguna cuenta con token — jobs de Calendly desactivados');
     return;
   }
   const tz = TZ();
@@ -935,6 +999,7 @@ export function startCalendlyJobs() {
     job(RESCHEDULE_PROMPT_CRON(), runReschedulePrompts, 'reagendas');
 
   console.log(
-    `[Calendly] Jobs activos ✅  (DRY-RUN: ${DRY_RUN()}, Push 4: ${PUSH4_ENABLED()}, reagendas: ${RESCHEDULE_ENABLED()})`
+    `[Calendly] Jobs activos ✅  (reagendas: ${RESCHEDULE_ENABLED()}) — cuentas: ` +
+      accounts.map((a) => `${a.key}[dry-run:${a.dryRun()}, push4:${a.push4()}]`).join(' · ')
   );
 }

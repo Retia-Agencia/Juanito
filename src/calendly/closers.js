@@ -24,6 +24,17 @@
 // El PROGRAMA no se configura acá: se deriva del event_type de cada cita (programKeyOf),
 // así que un closer queda cubierto en TODOS los programas sin tocar nada más. La columna
 // de arriba es informativa (a qué pools pertenece hoy), no la usa el código.
+//
+// La CUENTA de Calendly sí se configura acá, con el campo `account` (ver accounts.js).
+// Sin campo → cuenta default ('30x'), que es el caso de todo el equipo de arriba.
+//
+// ⚠️ INVARIANTE: un teléfono = un closer = UNA cuenta. La DB la asume en varios lados:
+// `calendly_optins.phone` es PRIMARY KEY (una fila por persona),
+// `getActiveOutcomeForCloser(phone)` enruta la respuesta del closer solo por teléfono, y
+// `pickSupersededPushes` matchea por los últimos 8 dígitos sin scope de cuenta. Si alguna
+// vez una MISMA persona cierra para dos empresas, no alcanza con ponerle otro `account`:
+// hay que migrar `calendly_optins` a clave compuesta (phone, account) — tabla nueva +
+// copia + rename, porque SQLite no permite alterar una PK.
 export const CLOSERS = {
   'daniela.camacho@30x.com':  { name: 'Daniela Camacho',     phone: '+573103062287' },
   'sebastian@30x.com':        { name: 'Sebastian Rodriguez', phone: '+573102212005' },
@@ -34,6 +45,32 @@ export const CLOSERS = {
   // Entró 2026-07-14. OJO: su email NO lleva punto (pablosuarez@), a diferencia de
   // pablo.lozano@ — son personas distintas y ambas están activas.
   'pablosuarez@30x.com':      { name: 'Pablo Suarez',        phone: '+573152573103' },
+
+  // ─── TTrading (agencia #2) — datos del jefe 2026-07-16 ─────────────────────
+  // Estado: INERTES por partida doble. (1) La cuenta 'ttrading' no tiene token → no hay
+  // poll que los alcance. (2) Ninguno le ha escrito a Juanito todavía (están EN FRÍO), así
+  // que no tienen opt-in y la entrega estricta los omitiría igual.
+  //
+  // ⚠️ SIN VERIFICAR contra la cuenta real (falta el token): los emails TIENEN que coincidir
+  // exacto con el `event_memberships[0].user_email` de sus citas o cada poll alerta "closer
+  // sin mapear" y esas citas no reciben push.
+  //
+  // PENDIENTE (jefe, 2026-07-16):
+  //  · Nombre COMPLETO de Dana y Andrea. Hoy solo tenemos el de pila, y un nombre de una
+  //    palabra NO se resuelve por pushName a propósito (ver resolveCloserByPushName): sin
+  //    apellido dependen de escribir desde su número canónico o de mapear su LID acá abajo.
+  //    NO son la Dana ni la Andrea de 30X que están en IGNORED_CLOSERS (confirmado) — razón
+  //    de más para tener el apellido y no confundirlas.
+  //  · Preguntar si equipo@ / registro@ son de ellas o los maneja MÁS DE UNA persona. Si es
+  //    compartido, pedir un correo personal: hoy todos los pushes de esa cuenta le llegan a
+  //    una sola. El mismo patrón en EstadoX (equipo@estadox.com, registro@estadox.com) está
+  //    en IGNORED_CLOSERS justo por eso ("cuenta compartida", "cuenta de sistema — nunca fue
+  //    un closer"); enrutar un rol a una persona ya se hizo con "Equipo EstadoX" → Mateo.
+  'equipo@ttrading.co':       { name: 'Dana',   phone: '+573169835624', account: 'ttrading' },
+  'registro@ttrading.co':     { name: 'Andrea', phone: '+573132484664', account: 'ttrading' },
+  // Gmail personal: es el email con el que hostea en Calendly, que es lo único que importa
+  // acá (el match es contra el host del evento, no contra el dominio de la empresa).
+  'alejocarpa1108@gmail.com': { name: 'Alejo Carvajal', phone: '+573015893896', account: 'ttrading' },
 };
 
 // LIDs de TRABAJO conocidos de closers cuyo número/nombre de WhatsApp NO permite el match por las
@@ -75,11 +112,22 @@ export function isIgnoredCloser(email) {
 }
 
 import { phonesMatch } from '../common/utils.js';
+import { DEFAULT_ACCOUNT } from './accounts.js';
 
 // Devuelve { name, phone } | null
 export function resolveCloser(email) {
   if (!email) return null;
   return CLOSERS[String(email).toLowerCase().trim()] || null;
+}
+
+// Key de la cuenta de Calendly a la que pertenece un closer. Es la REGLA ÚNICA con la que
+// se decide todo lo que sale hacia un closer (dry-run, Push 4, HubSpot): el closer siempre
+// se conoce — en el loop de entrega por `closer_email` de la fila, en los digests porque
+// agrupan por closer — mientras que el programa puede venir NULL en filas viejas.
+// Un email desconocido cae a la cuenta default, que es el comportamiento histórico.
+export function accountOfCloser(email) {
+  const c = CLOSERS[String(email || '').toLowerCase().trim()];
+  return c?.account || DEFAULT_ACCOUNT;
 }
 
 // Resuelve un closer por su número entrante (cuando le escribe a Juanito).
@@ -146,6 +194,13 @@ export function resolveCloserByPushName(pushName) {
   const seen = new Map(); // phone → entry, para deduplicar si dos emails apuntan al mismo número
   for (const [email, c] of Object.entries(CLOSERS)) {
     const closerWords = nameWords(c.name);
+    // Un nombre de UNA sola palabra ("Dana") no identifica a nadie: matchearía a cualquier
+    // desconocido cuyo nombre de WhatsApp la contenga ("Dana Beauty Salon", "Juan Andrea").
+    // Y el match acá NO es inocuo: handleCloserOptin le pone al opt-in del closer el
+    // contact_jid de QUIEN ESCRIBIÓ → todos sus pushes (con nombres y teléfonos de leads)
+    // se irían a esa persona. Mismo bug que 491f604, pero disparable por cualquiera.
+    // Un nombre de una palabra es ambiguo por definición → mismo trato que la ambigüedad.
+    if (closerWords.length < 2) continue;
     // Exigir que TODAS las palabras del closer estén en el pushName (evita falsos parciales)
     if (closerWords.every(w => words.includes(w))) {
       if (!seen.has(c.phone)) seen.set(c.phone, { email, name: c.name, phone: c.phone });

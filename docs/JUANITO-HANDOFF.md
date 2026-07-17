@@ -5,7 +5,7 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-06-12**
+Última actualización: **2026-07-16** (§11.11 + §18.AH: segunda cuenta de Calendly)
 
 ---
 
@@ -342,9 +342,14 @@ leyendo las citas reales de **Calendly** (API v2):
 - **Push 2** — cron 6:30am → digest de las llamadas de **hoy**, agrupado por closer.
 - **Push 3** — ~25 min antes de cada llamada → un mensaje por cita.
 
+Desde el **2026-07-16** esto es **multi-cuenta**: Juanito puede atender varias cuentas de Calendly
+(una por empresa/agencia), cada una con su token, su organización y sus programas. El registro es
+`src/calendly/accounts.js` — ver **§11.11**.
+
 El closer = host del evento (`event_memberships[0].user_email`), mapeado a su WhatsApp
-en `src/calendly/closers.js` (**7 closers**, lista dictada por el jefe el 2026-07-14 — quien no
+en `src/calendly/closers.js` (**7 closers** de 30X, lista dictada por el jefe el 2026-07-14 — quien no
 esté ahí no se gestiona; los que salieron viven en `IGNORED_CLOSERS` y se saltan en silencio).
+El closer también determina **a qué cuenta pertenece** (campo `account`, default `30x`).
 
 El **programa** NO se configura por closer: se deriva del `event_type` de cada cita
 (`programKeyOf`), así que un closer queda cubierto en todos sus programas. Cablear un programa
@@ -361,6 +366,9 @@ por default no envía nada (solo loguea).
 
 ### 11.1 Archivos núcleo
 
+- `src/calendly/accounts.js` — **registro de cuentas** (§11.11). Fuente única del tuple que
+  distingue una empresa de otra: token, organización, event_types, dry-run, push4, hubspot.
+  `programKeyOf`/`PROGRAM_EVENT_TYPES` se DERIVAN de acá.
 - `src/calendly/index.js` — cliente API + helpers PUROS (sin DB, sin deps nativas) + plantillas.
 - `src/calendly/push-logic.js` — **lógica de decisión PURA** (sin DB, sin red):
   `computePush3Schedule()` (catch-up), `decidePushAction()` (reagenda tras envío),
@@ -617,6 +625,115 @@ la entrega manda el wa.me reconstruido con el `join_url` incrustado. Suite Calen
 contenedor (`grep 'El mensaje se reconstruye AQUÍ' src/scheduler/calendly.js` → 1), WA reconectó sin
 QR, `[Calendly] Jobs activos ✅ (DRY-RUN: false)`. Los Push 3 pendientes ya saldrán con el link.
 
+### 11.11 🟡 Multi-cuenta: una segunda agencia con su propio Calendly (2026-07-16)
+
+**Por qué:** entró una segunda agencia (**TTrading**) con su **propia cuenta de Calendly** (otra
+organización, otro token). Hasta acá todo era singleton: un `CALENDLY_TOKEN`, un `ORG_URI`, una lista
+de event_types. El objetivo es darle a sus closers los mismos pushes precall **sin que 30X se entere
+de nada**.
+
+**Estado: la refactorización está lista y desplegable; TTrading está STAGED pero INERTE.** Falta su
+token y su copy (ver §18.AH). El registro filtra por token → sin él, Juanito se comporta exactamente
+como antes.
+
+#### La idea central: la cuenta es una propiedad del CLOSER
+
+`accountOfCloser(email)` es la regla única con la que se decide todo lo que sale hacia un closer
+(dry-run, Push 4, HubSpot). Se eligió sobre "la cuenta del programa" porque:
+- El closer **siempre** se conoce: en el loop de entrega por `closer_email` de la fila, y en los
+  digests porque **agrupan por closer**.
+- El `program` puede venir **NULL** en filas viejas (su columna se migró después).
+- Resuelve gratis el digest multi-programa: un closer pertenece a UNA cuenta, aunque sus citas
+  mezclen programas.
+
+Los rosters son **disjuntos** (ningún humano cierra para las dos). Eso es lo que permite que
+`closer → cuenta` sea una función total y que **no haya migración de DB**.
+
+#### Qué cambió
+
+| Archivo | Cambio |
+|---|---|
+| `src/calendly/accounts.js` | **NUEVO.** Registro: `ACCOUNTS`, `activeAccounts()` (filtra por token), `accountOf`, `accountOfProgram`, `eventTypeToProgram`. Los ET y el mapa `PROGRAMS` se movieron acá desde `index.js`. |
+| `src/calendly/index.js` | `request(url, {token})`; `listProgramEvents({account})` (filtra por los ETs de ESA cuenta); `getEvent`/`getFirstInvitee` con `{token}`. `programKeyOf`/`PROGRAM_EVENT_TYPES` derivados del registro (misma firma → cero cambios en callers). Se borró `GROUP_URI` (código muerto declarado). |
+| `src/calendly/closers.js` | Campo `account` opcional (default `30x`) + `accountOfCloser()`. |
+| `src/scheduler/calendly.js` | `listEventsAllAccounts()` (abanico con try/catch **por cuenta**); `deliver(…, closerEmail)`; `deliverBrochures(…, closerEmail)`; `resolvePhone(…, account)`; gate de Push 4 por cuenta; `startCalendlyJobs` gateado por `activeAccounts().length`. |
+| `src/hubspot/deals.js` | `isCoveredProgram` exige además `accountOfProgram(k)?.hubspot`. |
+
+#### Dos bugs encontrados y corregidos en el camino
+
+**1. 🔴 `resolvePhone` era una fuga cross-tenant.** El fill de teléfono por HubSpot (`4df0c66`)
+consultaba el CRM de 30X para **cualquier** lead sin número, sin mirar de qué cuenta venía la cita.
+Con TTrading conectada, un lead suyo con email coincidente habría recibido un teléfono sacado de la
+base de 30X, inyectado en el `wa.me` que su closer toca → **le escribe a un contacto ajeno**, y se
+cruzan datos entre clientes. Silencioso además (`.catch(() => null)`). Ahora `account.hubspot` manda.
+
+**2. 🟡 El brochure adjunto se saltaba el dry-run.** `deliverBrochures` (`1a4a65f`) manda un
+documento, no texto → no pasa por `deliver()` y leía el `DRY_RUN()` global. Una cuenta muda igual
+habría recibido el PDF. Latente (hoy solo `operaciones` tiene adjunto), pero real: al revertir el fix,
+el log dice `brochure operaciones enviado → <closer de la cuenta muda>`.
+
+> **Regla que queda:** todo canal nuevo hacia un closer resuelve el dry-run por
+> `accountOfCloser(closerEmail)`, **nunca** leyendo `DRY_RUN()` directo. Está escrito en la cabecera
+> de `deliver()`.
+
+**3. 🔴 Nombre de una palabra = secuestro de pushes.** Los closers de TTrading vinieron con nombre de
+pila solo ("Dana", "Andrea"). `resolveCloserByPushName` los hacía matchear con **cualquier**
+desconocido cuyo pushName contuviera esa palabra ("Andrea Restrepo (Contadora)", "Dana Beauty Salon",
+"Juan Andrea"). Y el match no es inocuo: `handleCloserOptin` hace `contactJid = workJid || from` →
+sin LID de trabajo, `from` es el JID del **desconocido**, y el opt-in de la closer queda apuntando
+ahí → **todos sus pushes, con nombres y teléfonos de leads, se le entregan a esa persona**. Es el bug
+de `491f604` ("pushes al personal") pero disparable por cualquiera.
+**Fix:** un nombre de una sola palabra es ambiguo por definición → `resolveCloserByPushName` ahora lo
+trata como ambigüedad y devuelve `null`. Los 7 de 30X tienen nombre+apellido: cero impacto.
+**Costo:** Dana y Andrea no pueden auto-registrarse por pushName; dependen de escribir desde su
+número canónico o de mapear su LID en `CLOSER_LIDS`. Se pidió el apellido (§18.AH).
+
+#### Aislamiento de errores
+
+El abanico va en el scheduler, **no** adentro de `listProgramEvents`: un token muerto en una agencia
+**no puede** tumbar el poll de la otra (antes un throw al listar abortaba el ciclo entero con
+`return 0`). El `dedupKey` de `notifyAdmins` pasó a `token:<cuenta>` para que una alerta no silencie
+la otra durante 6h, y la alerta ahora **nombra la cuenta** en vez de un 401 anónimo.
+
+#### Verificación (2026-07-16)
+
+- **Suite Calendly + HubSpot: 199/199 verde.** Tests nuevos: `calendly.accounts.test.js`,
+  `calendly.closers.test.js` (**no existía** uno dedicado al roster), `calendly.multi-account.test.js`.
+- **No-regresión probada contra baseline capturado antes de tocar nada:** los 89 tests del baseline
+  siguen idénticos, y el **copy precall es byte-idéntico** (`scripts/calendly-precall-preview.js`) →
+  ningún lead recibe un texto distinto. El único cambio de comportamiento observable es la alerta al
+  admin nombrando la cuenta.
+- **Mutation-testing:** al revertir el gate de HubSpot o el del brochure, sus tests fallan → no son
+  decorativos.
+- `npm test` completo: el único fallo es `documents.test.js`, **igual antes y después** (falta
+  `pdfkit` en local; ambiental, no del cambio).
+
+#### Cómo se agrega una cuenta nueva
+
+1. **Token** → `GET /users/me` da el `current_organization`.
+2. **event_types reales**: los de tipo *pool* NO se enumeran por API — se leen del `event_type` de
+   reservas reales en `/scheduled_events` (así se resolvió el de Instagram el 2026-07-16).
+3. Entrada en `ACCOUNTS` + closers en `closers.js` con `account: '<key>'`.
+4. **Copy** de cada programa en `PROGRAM_PITCH` + materiales. Sin copy, el push degrada a
+   "mándalo manual" — **nunca** al pitch de otra empresa (red de seguridad deliberada).
+5. Verificar que los emails coincidan **exacto** con `event_memberships[0].user_email`, o cada poll
+   alerta "closer sin mapear" y esas citas no reciben push.
+
+#### Rollout (pendiente de ejecutar, ver §18.AH)
+
+1. Deploy **sin** `CALENDLY_TOKEN_TTRADING` → riesgo cero, valida el refactor con 30X en vivo.
+2. Encender TTrading **muda** (`CALENDLY_DRY_RUN_TTRADING=true`) ≥1 ciclo completo (un Push 1 de 7pm
+   y un Push 2 de 6:30am). Verificar `[Calendly][DRY-RUN:ttrading]` con citas y closers reales.
+3. Onboarding humano de closers (receta §18.A, Pasos 0-5). **Hoy están EN FRÍO**: ninguno le ha
+   escrito a Juanito → sin opt-in, la entrega estricta los omite. Son dos candados, no uno.
+4. Piloto con **un** closer en vivo, el resto pausado con `/calendly off <nombre>`.
+
+**Rollback:** `CALENDLY_DRY_RUN_TTRADING=true` + `docker compose up -d` (sin `--build`) deja a
+TTrading muda en ~1 min sin tocar 30X.
+
+> ⚠️ `/calendly off` **sin argumento sigue siendo GLOBAL** y apagaría a las DOS empresas. Falta
+> `/calendly off <cuenta>` (§18.AH).
+
 ---
 
 ## 12. Infraestructura VPS y operación
@@ -700,11 +817,14 @@ plink -pw <PW> root@157.230.152.202 "cd /root/juanito && docker compose up -d --
 | `SUMMARY_CRON` | — | `0 */4 * * *` | Frecuencia de resúmenes de grupos |
 | `SUMMARY_CYCLE_HOURS` | — | `4` | Ventana de mensajes por resumen |
 | `MAX_GROUPS_PER_CYCLE` | — | `10` | Máx grupos resumidos por ciclo |
-| `CALENDLY_TOKEN` | — | — | PAT de la API v2. Sin él, los jobs de Calendly se desactivan. |
-| `CALENDLY_DRY_RUN` | — | `true` | `true` = no envía WhatsApp, solo loguea |
-| `CALENDLY_REQUIRE_OPTIN` | — | `true` | `true` = solo envía a closers con opt-in previo |
-| `CALENDLY_EVENT_TYPES` | — | 2 hardcoded | CSV de event_types de programa a vigilar |
-| `CALENDLY_GROUP_URI` | — | hardcoded | Grupo de Calendly a consultar |
+| `CALENDLY_TOKEN` | — | — | PAT de la API v2 de la cuenta **`30x`**. Sin ninguna cuenta con token, los jobs de Calendly se desactivan (§11.11). |
+| `CALENDLY_DRY_RUN` | — | `true` | `true` = no envía WhatsApp, solo loguea. **Solo afecta a la cuenta `30x`** (§11.11). |
+| `CALENDLY_REQUIRE_OPTIN` | — | `true` | `true` = solo envía a closers con opt-in previo. Aplica a **todas** las cuentas. |
+| `CALENDLY_ORG_URI` | — | hardcoded | Organización de la cuenta `30x`. Vive en el registro (`accounts.js`). |
+| `CALENDLY_EVENT_TYPES` | — | 6 en el registro | CSV de event_types a vigilar. ⚠️ **REEMPLAZA** la lista entera y **NO distingue cuentas** → sirve para acotar una prueba, no para sumar una cuenta. |
+| `CALENDLY_TOKEN_TTRADING` | — | — | PAT de la cuenta **TTrading** (agencia #2). **Pendiente** (§18.AH). Sin él, TTrading está inerte. |
+| `CALENDLY_ORG_URI_TTRADING` | — | — | Organización de TTrading. **Pendiente**: sale de `GET /users/me` con su token. |
+| `CALENDLY_DRY_RUN_TTRADING` | — | `true` | Dry-run **solo** de TTrading. Permite que 30X siga en vivo mientras la #2 arranca muda. |
 | `CALENDLY_PUSH3_LEAD_MIN` | — | `25` | Minutos antes de la llamada para Push 3 |
 | `CALENDLY_PUSH1_CRON` | — | `0 19 * * *` | Cron Push 1 (7:00pm) |
 | `CALENDLY_PUSH2_CRON` | — | `30 6 * * *` | Cron Push 2 (6:30am) |
@@ -2863,6 +2983,67 @@ imagen; y `listProgramEvents` **desde el contenedor** devolvió para mañana: `i
 
 **Rollback:** `/root/juanito-backup-20260716-225521.tar.gz` + imagen
 `juanito-agent:pre-brochure-20260716-225521`.
+
+### 18.AH 🟡 Segunda cuenta de Calendly — agencia TTrading (2026-07-16)
+
+**Qué hay hecho:** toda la refactorización multi-cuenta. Ver **§11.11** para el diseño, los tres
+bugs que salieron en el camino (fuga cross-tenant de HubSpot, brochure saltándose el dry-run,
+secuestro de pushes por nombre de una palabra) y la verificación (199/199, copy byte-idéntico).
+Código en la rama `feat/calendly-multi-cuenta`. **No desplegado todavía.**
+
+**Estado de TTrading: STAGED e INERTE.** Registrada en `accounts.js` y sus 3 closers en
+`closers.js`, pero sin token no entra a `activeAccounts()` → Juanito se comporta como si no
+existiera. Doble candado: además **ningún closer le ha escrito a Juanito** (están EN FRÍO), así que
+tampoco tienen opt-in y la entrega estricta los omitiría.
+
+**Closers (dictados por el jefe el 2026-07-16, SIN VERIFICAR contra la cuenta real):**
+
+| Nombre | Email (host de Calendly) | WhatsApp |
+|---|---|---|
+| Dana | `equipo@ttrading.co` | +57 316 9835624 |
+| Andrea | `registro@ttrading.co` | +57 313 2484664 |
+| Alejo Carvajal | `alejocarpa1108@gmail.com` | +57 301 5893896 |
+
+**Bloqueantes (nada de esto se puede inventar):**
+
+- [ ] **Token de TTrading** (`CALENDLY_TOKEN_TTRADING`). Desbloquea: org URI (`GET /users/me` →
+      `current_organization`), los event_types reales (los *pool* se leen del `event_type` de
+      reservas reales en `/scheduled_events`), y **verificar que los 3 emails coincidan exacto**
+      con `event_memberships[0].user_email` — si no, cada poll alerta "closer sin mapear" y esas
+      citas no reciben push.
+- [ ] **Copy de cada programa** (`PROGRAM_PITCH` + `MATERIAL_LINKS`): es el mensaje que el closer le
+      manda al lead. Lo dicta el owner. Sin copy el push degrada a "mándalo manual" — nunca al pitch
+      de otra empresa (red de seguridad deliberada, ver §11.11).
+
+**Preguntas abiertas al jefe:**
+
+- [ ] **Apellido de Dana y Andrea.** Hoy solo hay nombre de pila, y un nombre de una palabra NO se
+      resuelve por pushName **a propósito** (§11.11, bug 3): sin apellido dependen de escribir desde
+      su número canónico o de mapear su LID en `CLOSER_LIDS`. Confirmado que **NO** son la
+      `dana@30x.com` ni la `andrea.machado@30x.com` que están en `IGNORED_CLOSERS` — razón de más
+      para tener el apellido y no confundirlas.
+- [ ] **¿`equipo@ttrading.co` y `registro@ttrading.co` son de ellas, o los maneja más de una
+      persona?** Si son compartidos, pedir un correo personal: hoy todos los pushes que hostee esa
+      cuenta le llegan a una sola. El mismo patrón en EstadoX (`equipo@estadox.com`,
+      `registro@estadox.com`) está en `IGNORED_CLOSERS` justo por eso ("cuenta compartida", "cuenta
+      de sistema — nunca fue un closer"); enrutar un rol a una persona ya se hizo con
+      "Equipo EstadoX" → Mateo.
+
+**Deuda asumida (documentada, no construida):**
+
+- `/calendly off` sin argumento es **global**: apagaría a las DOS empresas. Falta `/calendly off <cuenta>`.
+- `health.js` y el throttle `_lastCall` son estado global de módulo → `/status` mezcla la salud de
+  ambas cuentas, y las llamadas se serializan de más (el rate limit de Calendly es **por token**).
+  Convertir `_lastCall` en `Map<token, ms>` son ~3 líneas si molesta.
+- `notifyAdmins` manda todo a los `ADMIN_LID` globales: los closers sin mapear de TTrading alertan al
+  equipo de dev de 30X, no al de ellos.
+- Sin reporte diario de outcomes para TTrading (fuera de alcance v1; su Push 4 está apagado en el
+  registro). Nota: `developers`/`operaciones` **ya** registran outcomes que nunca se publican (§18.AE).
+- **Closer compartido entre empresas:** hoy la invariante es *un teléfono = un closer = una cuenta*
+  (fijada por test). Si algún día una misma persona cierra para las dos, no alcanza con el campo
+  `account`: hay que migrar `calendly_optins` a clave compuesta `(phone, account)` — tabla nueva +
+  copia + rename, porque SQLite no permite alterar una PK. También `getActiveOutcomeForCloser(phone)`
+  y `pickSupersededPushes` (matchea por últimos 8 dígitos) enrutan solo por teléfono.
 
 ### 🟢 Baja prioridad / Nice-to-have
 

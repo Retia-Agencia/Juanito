@@ -206,6 +206,14 @@ Botón de pánico de los pushes a closers.
 | `/calendly off <closer>` | Pausa solo a ese closer (nombre completo, ej: `Pablo Lozano`) |
 | `/calendly on <closer>` | Reactiva solo a ese closer |
 
+> ⚠️ **`/calendly off` a secas es GLOBAL y apaga a TODAS las empresas**, no solo a una. Juanito
+> puede atender varias cuentas de Calendly (una por agencia). Para cortarle a una sola, usá
+> `/calendly off <closer>` uno por uno. Un `/calendly off <empresa>` está pendiente.
+
+> `<closer>` va con **nombre completo**. Un closer registrado solo con nombre de pila no se
+> reconoce acá (es a propósito: un nombre de una palabra es ambiguo y podría apuntar a la persona
+> equivocada).
+
 ---
 
 ## Registro de calls — lo que responde el **closer** (sin comandos)

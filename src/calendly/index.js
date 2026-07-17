@@ -15,72 +15,39 @@ const API = 'https://api.calendly.com';
 const TOKEN = () => process.env.CALENDLY_TOKEN || '';
 const TZ = () => process.env.TZ || 'America/Bogota';
 
-// Grupo formal "Negociación" (legacy). Ya NO se usa para el query: el equipo de
-// LinkedIn Sales no pertenece a ningún grupo de Calendly, así que la consulta pasó a
-// ser a nivel ORGANIZACIÓN (ver ORG_URI + listProgramEvents). Se conserva por referencia.
-export const GROUP_URI = () =>
-  process.env.CALENDLY_GROUP_URI ||
-  'https://api.calendly.com/groups/61f57776-40d4-4feb-bdbc-654f397ba0c6';
+// Los event_types, las organizaciones y los tokens viven en el REGISTRO DE CUENTAS
+// (accounts.js): desde que hay más de una cuenta de Calendly, ese tuple dejó de ser un
+// singleton. Acá solo se derivan las vistas que el resto del código ya consumía.
+import { ACCOUNTS, eventTypeToProgram, accountOf, DEFAULT_ACCOUNT } from './accounts.js';
 
-// Organización (cuenta real) — alcance del query de eventos. Org-wide captura a TODOS los
-// closers de los programas, sin importar a qué grupo de Calendly pertenezcan (los de
-// LinkedIn Sales no están en ninguno). Se filtra por event_type del lado del cliente.
-export const ORG_URI = () =>
-  process.env.CALENDLY_ORG_URI ||
-  'https://api.calendly.com/organizations/9ac5ab82-0c41-43c8-bede-cc9787043b28';
+// Organización de la cuenta por default. Se conserva para callers viejos (scripts);
+// el poll usa la org de cada cuenta del registro.
+export const ORG_URI = () => accountOf(DEFAULT_ACCOUNT).orgUri();
 
-// event_types de los programas gestionados (resueltos contra la cuenta real).
-// Auditoría 2026-07-14: la lista de programas la dicta el jefe; estos son sus event_types.
-//  - Postulación Implementación AI Second Brain 30X
-//  - Postulación Programa IA para Abogados | EstadoX
-//  - Postulación LinkedIn Sales 30X
-//  - Postulación AI for Developers 30X          (agregado 2026-07-14)
-//  - Postulación Operaciones Escalables con AI 30X (agregado 2026-07-14)
-//  - Postulación Instagram & TikTok for Business 30X (agregado 2026-07-16)
-//
-// Los event_types tipo pool NO se pueden enumerar por la API (el query de /event_types
-// org-wide solo devuelve los `kind=solo`). Se resuelven mirando el `event_type` de las
-// reservas reales en /scheduled_events — así se resolvió el de Instagram el 2026-07-16,
-// cuando el programa ya tenía 11 llamadas agendadas. Mismo método si aparece otro.
-//
-// El segundo programa de Instagram ("/Media") que se anticipaba NO existe: al 2026-07-16
-// hay un único event_type de Instagram & TikTok en la cuenta. Si lanza, se agrega acá.
-const SECOND_BRAIN_ET = 'https://api.calendly.com/event_types/56efc028-ee2f-46e8-852c-e50d45b15b83';
-const ABOGADOS_ET = 'https://api.calendly.com/event_types/f8d123ac-364b-47f9-a446-1316fdf37b08';
-const LINKEDIN_ET = 'https://api.calendly.com/event_types/96ddf036-9174-459c-be73-b248ad95be13';
-const DEVELOPERS_ET = 'https://api.calendly.com/event_types/dff3e48a-4859-417a-98fb-822048aef5d9';
-const OPERACIONES_ET = 'https://api.calendly.com/event_types/8462e92a-8210-4bb2-8e2b-583aa3c3d877';
-const INSTAGRAM_ET = 'https://api.calendly.com/event_types/d33075cb-d349-43ef-be43-6f80f9c5da03';
-
+// event_types de TODOS los programas gestionados, de TODAS las cuentas.
+// El override por env sigue existiendo, pero OJO: REEMPLAZA la lista entera (no suma) y
+// no distingue cuentas → solo sirve para acotar pruebas contra una cuenta.
 export const PROGRAM_EVENT_TYPES = () => {
   const fromEnv = (process.env.CALENDLY_EVENT_TYPES || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
   if (fromEnv.length) return fromEnv;
-  return [SECOND_BRAIN_ET, ABOGADOS_ET, LINKEDIN_ET, DEVELOPERS_ET, OPERACIONES_ET, INSTAGRAM_ET];
+  return Object.keys(eventTypeToProgram());
 };
 
 // ─── Producto (programa) por evento ───────────────────────────────────────────
-// Cada reserva pertenece a uno de los tres productos. El copy del push precall
-// difiere por producto (intro + nombre del programa), así que necesitamos saber
-// cuál es para elegir la plantilla correcta — POR LLAMADA, porque un mismo closer
-// puede tener citas de varios productos en un mismo digest.
-const PROGRAMS = {
-  [SECOND_BRAIN_ET]: 'second_brain',
-  [ABOGADOS_ET]: 'abogados',
-  [LINKEDIN_ET]: 'linkedin',
-  [DEVELOPERS_ET]: 'developers',
-  [OPERACIONES_ET]: 'operaciones',
-  [INSTAGRAM_ET]: 'instagram',
-};
-
+// Cada reserva pertenece a un producto. El copy del push precall difiere por producto
+// (intro + nombre del programa), así que necesitamos saber cuál es para elegir la
+// plantilla correcta — POR LLAMADA, porque un mismo closer puede tener citas de varios
+// productos en un mismo digest.
+//
 // Acepta el event_type (string) o el evento completo. Devuelve la clave de
 // programa | null (null si el event_type no es de los productos conocidos).
 export function programKeyOf(eventTypeOrEvent) {
   const et =
     typeof eventTypeOrEvent === 'string' ? eventTypeOrEvent : eventTypeOrEvent?.event_type;
-  return PROGRAMS[et] || null;
+  return eventTypeToProgram()[et] || null;
 }
 
 // Link de la llamada (Push 3): Calendly guarda el join_url del conferencing en
@@ -101,8 +68,11 @@ const MIN_GAP_MS = Number(process.env.CALENDLY_MIN_GAP_MS || 1200);
 let _lastCall = 0;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function request(pathOrUrl, { retries = 3 } = {}) {
-  if (!TOKEN()) throw new Error('CALENDLY_TOKEN no configurado');
+// `token`: el de la cuenta dueña del recurso. Sin él cae al de la cuenta default, que
+// es el comportamiento histórico (y lo que usan los scripts de inspección).
+async function request(pathOrUrl, { retries = 3, token } = {}) {
+  const bearer = token || TOKEN();
+  if (!bearer) throw new Error('CALENDLY_TOKEN no configurado');
   const url = pathOrUrl.startsWith('http') ? pathOrUrl : API + pathOrUrl;
 
   const gap = Date.now() - _lastCall;
@@ -112,7 +82,7 @@ async function request(pathOrUrl, { retries = 3 } = {}) {
     _lastCall = Date.now();
     const res = await fetch(url, {
       headers: {
-        Authorization: `Bearer ${TOKEN()}`,
+        Authorization: `Bearer ${bearer}`,
         'User-Agent': 'juanito-agent/1.0',
         Accept: 'application/json',
       },
@@ -134,14 +104,23 @@ async function request(pathOrUrl, { retries = 3 } = {}) {
 
 // ─── Endpoints ────────────────────────────────────────────────────────────────
 
-// Lista eventos activos de la ORGANIZACIÓN en una ventana, filtrando a los programas
-// conocidos. Org-wide (no por grupo) porque los closers de LinkedIn Sales no están en
-// ningún grupo de Calendly; el filtro por event_type acota a nuestros productos.
-export async function listProgramEvents({ minStartIso, maxStartIso }) {
-  const programs = new Set(PROGRAM_EVENT_TYPES());
+// Lista eventos activos de la ORGANIZACIÓN de UNA cuenta en una ventana, filtrando a los
+// programas de ESA cuenta. Org-wide (no por grupo) porque los closers de LinkedIn Sales no
+// están en ningún grupo de Calendly; el filtro por event_type acota a nuestros productos.
+//
+// `account` = entrada del registro (accounts.js). Sin ella cae a la cuenta default, que es
+// el comportamiento histórico. El filtro usa los ETs de ESA cuenta, no la lista global:
+// una cuenta nunca debe agendar pushes de citas de otra.
+export async function listProgramEvents({ minStartIso, maxStartIso, account }) {
+  const acct = account || accountOf(DEFAULT_ACCOUNT);
+  const fromEnv = (process.env.CALENDLY_EVENT_TYPES || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const programs = new Set(fromEnv.length ? fromEnv : Object.keys(acct.eventTypes));
   const out = [];
   const params = new URLSearchParams({
-    organization: ORG_URI(),
+    organization: acct.orgUri(),
     count: '100',
     status: 'active',
     min_start_time: minStartIso,
@@ -150,7 +129,7 @@ export async function listProgramEvents({ minStartIso, maxStartIso }) {
   });
   let url = `${API}/scheduled_events?${params.toString()}`;
   while (url) {
-    const data = await request(url);
+    const data = await request(url, { token: acct.token() });
     for (const ev of data.collection || []) {
       if (programs.has(ev.event_type)) out.push(ev);
     }
@@ -159,19 +138,19 @@ export async function listProgramEvents({ minStartIso, maxStartIso }) {
   return out;
 }
 
-export async function getEvent(eventUri) {
-  const data = await request(eventUri);
+export async function getEvent(eventUri, { token } = {}) {
+  const data = await request(eventUri, { token });
   return data.resource;
 }
 
 // Fix #3: un fallo transitorio (red/rate-limit) dejaba el push sin nombre ni
 // teléfono del prospecto — justo el dato que el closer necesita para pushear.
 // Un reintento con backoff corto reduce esas líneas que caían a "el prospecto".
-export async function getFirstInvitee(eventUri) {
+export async function getFirstInvitee(eventUri, { token } = {}) {
   let lastErr;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const data = await request(`${eventUri}/invitees`);
+      const data = await request(`${eventUri}/invitees`, { token });
       return (data.collection || [])[0] || null;
     } catch (e) {
       lastErr = e;

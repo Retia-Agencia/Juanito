@@ -8,6 +8,8 @@
 // modelo nudge; el resto (AI for Developers, IA para Abogados/EstadoX) se queda en el
 // Push 4 clásico (preguntar), porque no hay HubSpot al cual apuntar.
 
+import { accountOfProgram } from '../calendly/accounts.js';
+
 // programKey (de src/calendly/index.js) → pipelineId de deals. Override por env:
 //   HUBSPOT_PROGRAM_PIPELINES="second_brain:904247681,linkedin:906259304,operaciones:887379063"
 const DEFAULT_PROGRAM_PIPELINES = {
@@ -33,8 +35,16 @@ export function pipelineForProgram(programKey) {
 }
 
 // ¿El programa se gestiona por el modelo nudge (tiene pipeline en esta cuenta)?
+//
+// Doble condición a propósito: además de tener pipeline, el programa tiene que pertenecer a
+// una cuenta de Calendly cuyos leads vivan en ESTE HubSpot (`account.hubspot`). El pipeline
+// se configura por env (HUBSPOT_PROGRAM_PIPELINES, CSV libre), así que sin este guardrail
+// bastaría un typo para apuntar el programa de una agencia al CRM de otra: le mostraríamos
+// a su closer el deal equivocado y cruzaríamos datos entre clientes. Un programa de una
+// cuenta sin HubSpot cae al Push 4 clásico (preguntar), que es el comportamiento correcto.
 export function isCoveredProgram(programKey) {
-  return Boolean(pipelineForProgram(programKey));
+  if (!pipelineForProgram(programKey)) return false;
+  return Boolean(accountOfProgram(programKey)?.hubspot);
 }
 
 // Clasifica la etapa actual de un deal, dado el detalle de etapas del pipeline.

@@ -93,3 +93,36 @@ test('pickDeal: sin deal en el pipeline → null', () => {
   assert.equal(pickDealForPipeline(deals, '904247681'), null);
   assert.equal(pickDealForPipeline([], '904247681'), null);
 });
+
+// ─── Guardrail multi-cuenta (§ segunda cuenta de Calendly) ────────────────────
+
+test('isCoveredProgram: un programa de otra cuenta NO se cubre aunque la env lo liste', async () => {
+  // HUBSPOT_PROGRAM_PIPELINES es un CSV libre: sin este guardrail, un typo bastaría para
+  // apuntar el programa de una agencia al HubSpot de OTRA → le mostraríamos a su closer el
+  // deal equivocado y cruzaríamos datos entre clientes. La cuenta manda sobre la env.
+  const { ACCOUNTS } = await import('../src/calendly/accounts.js');
+  const prev = process.env.HUBSPOT_PROGRAM_PIPELINES;
+  ACCOUNTS.__test_agencia = {
+    key: '__test_agencia',
+    label: 'Agencia de prueba',
+    token: () => '',
+    orgUri: () => 'https://api.calendly.com/organizations/test',
+    eventTypes: { 'https://api.calendly.com/event_types/test-et': 'programa_ajeno' },
+    dryRun: () => true,
+    push4: () => false,
+    hubspot: false, // su CRM NO es el que Juanito tiene conectado
+  };
+  try {
+    process.env.HUBSPOT_PROGRAM_PIPELINES = 'second_brain:904247681,programa_ajeno:999999';
+    // Tiene pipeline configurado…
+    assert.equal(pipelineForProgram('programa_ajeno'), '999999');
+    // …pero igual NO se cubre: su cuenta no vive en este HubSpot → Push 4 clásico.
+    assert.equal(isCoveredProgram('programa_ajeno'), false);
+    // Y el de la cuenta que sí tiene HubSpot sigue cubierto.
+    assert.equal(isCoveredProgram('second_brain'), true);
+  } finally {
+    delete ACCOUNTS.__test_agencia;
+    if (prev === undefined) delete process.env.HUBSPOT_PROGRAM_PIPELINES;
+    else process.env.HUBSPOT_PROGRAM_PIPELINES = prev;
+  }
+});

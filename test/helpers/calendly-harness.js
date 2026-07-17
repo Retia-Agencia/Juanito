@@ -15,8 +15,37 @@
 
 import { decidePushAction, sqliteUtcToMs } from '../../src/calendly/push-logic.js';
 import { normalizePhone } from '../../src/common/utils.js';
+import { accountOf, DEFAULT_ACCOUNT } from '../../src/calendly/accounts.js';
 
 const API_BASE = 'https://api.calendly.com';
+
+// ─── Fixture: una cuenta de Calendly ──────────────────────────────────────────
+// Para escenarios multi-cuenta (dos agencias). Los defaults imitan a una agencia recién
+// agregada: token propio, en dry-run, sin Push 4 y sin HubSpot.
+export function makeAccount({
+  key = 'acct2',
+  label = key,
+  token = `tok-${key}`,
+  orgUri = `${API_BASE}/organizations/org-${key}`,
+  eventTypes = {},
+  dryRun = true,
+  push4 = false,
+  hubspot = false,
+} = {}) {
+  return {
+    key,
+    label,
+    token: () => token,
+    orgUri: () => orgUri,
+    eventTypes,
+    dryRun: () => dryRun,
+    push4: () => push4,
+    hubspot,
+  };
+}
+
+// La cuenta real ('30x'), para componer escenarios de dos cuentas.
+export const realAccount = () => accountOf(DEFAULT_ACCOUNT);
 
 // ─── Fixtures: construir un evento de Calendly relativo a `nowMs` ──────────────
 // startInMin: minutos desde "ahora" hasta el inicio de la llamada (negativo = pasada).
@@ -37,6 +66,7 @@ export function makeEvent({
   createdInMin = -2 * 24 * 60,
   createdAtIso,
   nowMs = Date.now(),
+  account,
 }) {
   const id = uuid || `evt-${Math.random().toString(36).slice(2, 10)}`;
   const start = startIso || new Date(nowMs + startInMin * 60000).toISOString();
@@ -48,6 +78,9 @@ export function makeEvent({
     created_at: created,
     status,
     event_type: eventType,
+    // Solo para escenarios multi-cuenta: a qué cuenta responde este evento. Sin él, el
+    // mock lo devuelve para cualquier cuenta (como siempre).
+    _account: account,
     location: joinUrl ? { type: 'zoom', join_url: joinUrl } : undefined,
     event_memberships: [{ user_email: closerEmail }],
     __invitee:
@@ -66,12 +99,18 @@ export function makeApi(events, opts = {}) {
 
   return {
     _events: byUuid,
-    async listProgramEvents({ minStartIso, maxStartIso }) {
+    // `account` viene del fan-out multi-cuenta. Un evento sin `_account` pertenece a la
+    // cuenta que se esté consultando (retro-compat: los escenarios de una sola cuenta no
+    // lo declaran). `throwErrorFor` simula que SOLO una cuenta se cae (token muerto).
+    async listProgramEvents({ minStartIso, maxStartIso, account }) {
       if (opts.throwError) throw new Error(opts.throwError); // ej. 'Calendly 401: token inválido'
+      const perAccount = opts.throwErrorFor?.[account?.key];
+      if (perAccount) throw new Error(perAccount);
       const min = new Date(minStartIso).getTime();
       const max = new Date(maxStartIso).getTime();
       return [...byUuid.values()]
         .filter((e) => e.status === 'active')
+        .filter((e) => !e._account || !account || e._account === account.key)
         .filter((e) => {
           const t = new Date(e.start_time).getTime();
           return t >= min && t < max;
@@ -420,7 +459,7 @@ export function makeWaSpy() {
 // Recuerda llamar a scheduler.__resetDeps() al terminar (los tests lo hacen).
 export function installHarness(
   scheduler,
-  { events = [], optins = [], nowMs = Date.now(), api: apiOpts = {}, match } = {}
+  { events = [], optins = [], nowMs = Date.now(), api: apiOpts = {}, match, accounts } = {}
 ) {
   const clock = { ms: nowMs };
   const api = makeApi(events, apiOpts);
@@ -438,6 +477,10 @@ export function installHarness(
   };
 
   const deps = {
+    // Cuentas de Calendly a pollear. Por default, solo la real ('30x'), para que los tests
+    // que no saben de multi-cuenta se comporten como siempre. Un test puede pasar
+    // `accounts: [...]` para simular dos agencias (ver makeAccount).
+    accounts: () => accounts || [accountOf(DEFAULT_ACCOUNT)],
     listProgramEvents: api.listProgramEvents,
     getEvent: api.getEvent,
     getFirstInvitee: api.getFirstInvitee,
