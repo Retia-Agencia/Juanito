@@ -2681,11 +2681,39 @@ que escribirle a Juanito **antes** de que esto sirva de algo.
 `SHEETS_REPORT_ESTADOX_DM`. ⚠️ La `rk_` necesita permiso **read sobre Checkout Sessions** además de
 PaymentIntents, o el conteo por link cae al `catch` y sigue con el tag **en silencio**.
 
-**Pendientes:** cerrar el periodo de observación (§18.AD arriba); `/reporte` **no** dispara el admin
-(solo el cron); **`src/sheets/estadox-report.js` sigue sin desplegarse** al 2026-07-16 — el VPS tenía 0
-referencias a `estadox-report` (ver la nota de copiado selectivo en §18.AG). Ojo al desplegar:
-`sheets-report.js` lo **importa arriba del módulo**, así que copiar uno sin el otro es crash al arrancar
-→ backoff de `entrypoint.sh` → riesgo de softban. Van juntos o no van.
+**✅ Deploy 2026-07-17 00:17 UTC (19:17 Bogotá) — EN VIVO y verificado.** Copiado SELECTIVO de 3
+archivos (`stripe/client.js`, `scheduler/sheets-report.js`, `sheets/estadox-report.js`) + el
+`docker-compose.yml`, con md5 comparados uno a uno. **Mariana quedó movida**: salió de
+`SHEETS_REPORT_DM` (que quedó vacío → el reporte estándar ya no le llega a nadie) y entró a
+`SHEETS_REPORT_ESTADOX_DM`. Log de arranque:
+`[Sheets] Job de reporte diario activo ✅ (cron "0 20 * * *", grupo: APAGADO, DMs: 0, DMs admin EstadoX: 1)`.
+WA reconectó **sin QR**. Ejercitado dentro del contenedor antes del cron: mensaje real correcto (72
+typeforms, prom. 30d 64.3, 11/22/20, 4 agendadas) y el log de observación **disparó**:
+`[EstadoX] scPaid — sheet:0 stripe:0 ✓`.
+**Rollback:** `/root/juanito-backup-20260717-001229.tar.gz` (incluye `.env`) + `.env.bak-20260717-001229`
++ imagen `juanito-agent:pre-estadox-20260717-001229`.
+
+**🪤 Dos trampas nuevas del deploy, ambas silenciosas — anotarlas junto a las de §12:**
+1. **El compose declara cada var una por una en `environment:`.** Una var que existe en el `.env` del VPS
+   pero no está listada ahí **no llega al contenedor** y la feature muere sin un solo error en los logs
+   (mismo bug que `0bc6540` con HubSpot). Faltaban las dos nuevas; se agregaron en `7064b3a`.
+2. **Comentario inline sobre un valor VACÍO = el comentario ES el valor.** `SHEETS_REPORT_DM=   # nota`
+   hizo que `docker compose config` reportara `SHEETS_REPORT_DM: '# vaciado 2026-07-16: Mariana pasó…'`
+   → `DM_RECIPIENTS()` habría parseado esa frase como destinatario. Con valor no-vacío el comentario SÍ
+   se recorta bien (`STRIPE_API_KEY` lleva años así). **Regla:** si el valor va vacío, el comentario va en
+   su propia línea.
+
+**⚠️ El `✓` del 2026-07-17 es débil:** `sheet:0 stripe:0` — coinciden porque **ambos son cero** (el último
+pago por self-checkout fue el 07-10). Prueba que el camino corre, **no** que las fuentes concuerden. La
+evidencia real solo llega un día con pagos; no cerrar la observación hasta entonces.
+
+**Pendientes:** cerrar el periodo de observación (ver arriba); `/reporte` **no** dispara el admin (solo el
+cron); `buildSheetsReport` sigue corriendo en el cron aunque ya no tenga destinatarios (pega a Sheets y
+Stripe para nada — inofensivo, pero es trabajo tirado); `efectivas: 0` conviene contrastarlo contra la
+agenda real (solo cuenta closers con Push 4 activo, §18.AB).
+
+⚠️ **Al desplegar:** `sheets-report.js` **importa `estadox-report.js` arriba del módulo**, así que copiar
+uno sin el otro es crash al arrancar → backoff de `entrypoint.sh` → riesgo de softban. Van juntos o no van.
 
 ### 18.AF 🔵 HubSpot read-only: fill de teléfono precall + modelo nudge (2026-07-15)
 
