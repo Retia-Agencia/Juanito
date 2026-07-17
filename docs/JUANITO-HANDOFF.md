@@ -2666,12 +2666,26 @@ correcto para el split de 2 baldes que pidió Mariana. Los 2 links de **ventas**
 **sin usar** — se decidió (2026-07-16) no abrir una tercera línea que ella no pidió. Último pago por
 self-checkout: **2026-07-10** → el número que verá la mayoría de los días es `0`, y **es real, no un bug**.
 
-**Env:** `STRIPE_SELF_CHECKOUT_PLINK` (vacío → el conteo por link se apaga solo y sigue el tag).
-⚠️ Requiere que la `rk_` tenga permiso **read sobre Checkout Sessions** además de PaymentIntents.
+**Envío (cableado 2026-07-16).** Corre en el **mismo cron** que el reporte estándar (`SHEETS_REPORT_CRON`,
+default `0 20 * * *` = justo al cerrar la ventana). Los destinatarios salen de `SHEETS_REPORT_ESTADOX_DM`
+(CSV de JIDs) y reciben el mensaje admin **EN LUGAR** del estándar — son listas excluyentes; si un JID
+está en las dos, arranca con un warn porque recibirá los dos reportes. Los dos reportes van en
+**try/catch separados**: si el admin falla, el estándar sale igual, y al revés. Vacío → el admin no sale
+y el job sigue vivo para el estándar (regla del repo: autodesactivable).
 
-**Pendientes:** decidir el envío automático (hoy no tiene cron propio) y su destino; cerrar el periodo
-de observación; **`src/sheets/estadox-report.js` sigue sin desplegarse** — el VPS tenía 0 referencias a
-`estadox-report` al 2026-07-16 (ver la nota de copiado selectivo en §18.AG).
+⚠️ **Anti-ban (§18.D):** el JID debe ser aquel desde el que la persona **le escribió** a Juanito
+(`/whoami` se lo dice). Sin hilo previo `deliverToDMs` lo **omite con warn** y no entrega. Mariana tiene
+que escribirle a Juanito **antes** de que esto sirva de algo.
+
+**Env:** `STRIPE_SELF_CHECKOUT_PLINK` (vacío → el conteo por link se apaga solo y sigue el tag) ·
+`SHEETS_REPORT_ESTADOX_DM`. ⚠️ La `rk_` necesita permiso **read sobre Checkout Sessions** además de
+PaymentIntents, o el conteo por link cae al `catch` y sigue con el tag **en silencio**.
+
+**Pendientes:** cerrar el periodo de observación (§18.AD arriba); `/reporte` **no** dispara el admin
+(solo el cron); **`src/sheets/estadox-report.js` sigue sin desplegarse** al 2026-07-16 — el VPS tenía 0
+referencias a `estadox-report` (ver la nota de copiado selectivo en §18.AG). Ojo al desplegar:
+`sheets-report.js` lo **importa arriba del módulo**, así que copiar uno sin el otro es crash al arrancar
+→ backoff de `entrypoint.sh` → riesgo de softban. Van juntos o no van.
 
 ### 18.AF 🔵 HubSpot read-only: fill de teléfono precall + modelo nudge (2026-07-15)
 

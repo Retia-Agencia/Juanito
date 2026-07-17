@@ -252,15 +252,30 @@ export function startSheetsReportJob() {
   }
 
   const dms = DM_RECIPIENTS();
+  const estadoxDms = ESTADOX_DM_RECIPIENTS();
   const grupo = GROUP_ENABLED() && TARGET();
-  if (!dms.length && !grupo) {
-    console.warn('[Sheets] sin destinatarios (grupo apagado y sin SHEETS_REPORT_DM) → reporte diario desactivado');
+  if (!dms.length && !estadoxDms.length && !grupo) {
+    console.warn(
+      '[Sheets] sin destinatarios (grupo apagado, sin SHEETS_REPORT_DM ni SHEETS_REPORT_ESTADOX_DM) → reporte diario desactivado'
+    );
     return;
+  }
+
+  // Los dos reportes son EXCLUYENTES por destinatario: quien está en la lista de EstadoX
+  // recibe el mensaje admin EN LUGAR del estándar. Estar en ambas listas no rompe nada,
+  // pero le llegan dos reportes el mismo día — casi siempre es un error de config.
+  const enAmbas = estadoxDms.filter((j) => dms.includes(j));
+  if (enAmbas.length) {
+    console.warn(
+      `[Sheets] ⚠️ ${enAmbas.join(', ')} está en SHEETS_REPORT_DM y en SHEETS_REPORT_ESTADOX_DM → recibirá los DOS reportes. ¿Querías solo el admin?`
+    );
   }
 
   new CronJob(
     CRON(),
     async () => {
+      // Los dos reportes van en try/catch separados a propósito: si el admin de EstadoX
+      // falla (Stripe caído, Sheet raro), el reporte estándar sale igual, y al revés.
       try {
         const { message, summary } = await buildSheetsReport();
         const n = await deliverReport(message);
@@ -268,12 +283,21 @@ export function startSheetsReportJob() {
       } catch (e) {
         console.error('[Sheets] error en el reporte diario:', e.message);
       }
+
+      if (!ESTADOX_DM_RECIPIENTS().length) return;
+      try {
+        const { message, data } = await buildEstadoxAdminReport();
+        const n = await deliverToDMs(message, ESTADOX_DM_RECIPIENTS(), 'EstadoX');
+        console.log(`[EstadoX] reporte admin: ${n} envío(s) (${data.total} typeforms)`);
+      } catch (e) {
+        console.error('[EstadoX] error en el reporte admin:', e.message);
+      }
     },
     null,
     true,
     TZ()
   );
   console.log(
-    `[Sheets] Job de reporte diario activo ✅ (cron "${CRON()}", grupo: ${grupo ? `"${TARGET()}"` : 'APAGADO'}, DMs: ${dms.length})`
+    `[Sheets] Job de reporte diario activo ✅ (cron "${CRON()}", grupo: ${grupo ? `"${TARGET()}"` : 'APAGADO'}, DMs: ${dms.length}, DMs admin EstadoX: ${estadoxDms.length})`
   );
 }
