@@ -248,12 +248,8 @@ export const MATERIAL_LINKS = {
   developers: {
     brochure: 'https://drive.google.com/file/d/1VEUK_yF1UxwrkiCQJP1VHFW-nG9d426I/view',
   },
-  // Operaciones NO lleva `brochure`: su deck viaja como PDF ADJUNTO, no como link
-  // (ver BROCHURE_FILES abajo). `attachedBrochure` hace que el bloque de materiales
-  // diga "te lo acabo de enviar" en vez de omitirse: sin eso el lead recibiría un PDF
-  // suelto del closer y un mensaje que jamás lo menciona.
   operaciones: {
-    attachedBrochure: true,
+    brochure: 'https://drive.google.com/file/d/16NbFnJq1gCYSfQA0a2sfLbGuEBxVc8Yp/view',
   },
   // Instagram & TikTok (2026-07-16). El video es una landing de 30x.com, no YouTube.
   instagram: {
@@ -263,23 +259,24 @@ export const MATERIAL_LINKS = {
 };
 // ▲▲▲ EDITA AQUÍ ▲▲▲
 
-// Brochures que Juanito ADJUNTA (documento WhatsApp) al closer en el Push 1, en vez de
-// mandarle un link al lead. El closer reenvía el PDF y luego toca el link wa.me.
-//
-// Por qué: el copy precall viaja dentro de un `wa.me?text=`, que SOLO transporta texto —
-// no admite adjuntos. Y el que envía al lead tiene que seguir siendo el closer (Juanito
-// nunca escribe en frío a un lead: es la regla anti-ban). Así que el único camino para
-// que el lead reciba un PDF real es que Juanito se lo pase al closer y el closer reenvíe.
-//
-// Costo asumido: el reenvío es manual y no verificable — si el closer no reenvía, el lead
-// se queda sin material (para estos programas NO hay link de respaldo en el copy).
-// Rutas relativas a la raíz del repo; los archivos entran en la imagen Docker.
-export const BROCHURE_FILES = {
-  operaciones: {
-    path: 'assets/brochures/operaciones.pdf',
-    fileName: 'Brochure Operaciones Escalables con IA 30X.pdf',
-  },
+// Etiqueta CORTA y legible de cada programa. Fuente única — la usan los mensajes al
+// CLOSER (Push 0/3 y digest) para segmentar a qué programa pertenece cada push (un mismo
+// closer puede tener citas de dos programas), y el caption del brochure en el scheduler.
+// Distinta de PROGRAM_PITCH.program (frase larga que ve el LEAD): esto es un rótulo interno.
+export const PROGRAM_LABELS = {
+  second_brain: 'AI Second Brain',
+  abogados: 'IA para Abogados',
+  linkedin: 'LinkedIn Sales',
+  developers: 'AI for Developers',
+  operaciones: 'Operaciones Escalables con IA',
+  instagram: 'Instagram & TikTok',
 };
+
+// Rótulo del programa para los headers/líneas al closer. Devuelve '' si el programa es
+// desconocido (así el mensaje no muestra un tag vacío ni una clave cruda).
+export function programLabelOf(programKey) {
+  return PROGRAM_LABELS[programKey] || '';
+}
 
 const PROGRAM_PITCH = {
   second_brain: {
@@ -312,10 +309,7 @@ const PROGRAM_PITCH = {
 function materialsBlock(programKey) {
   const links = MATERIAL_LINKS[programKey] || {};
   const lines = [];
-  // El brochure adjunto (Operaciones) no tiene link: el closer se lo reenvía al lead
-  // justo antes de este mensaje, así que lo referenciamos como "acá arriba".
-  if (links.attachedBrochure) lines.push('📄 Brochure: te lo acabo de enviar acá arriba 👆');
-  else if (links.brochure) lines.push(`📄 Brochure: ${links.brochure}`);
+  if (links.brochure) lines.push(`📄 Brochure: ${links.brochure}`);
   if (links.video) lines.push(`🎥 Video: ${links.video}`);
   if (!lines.length) return ''; // sin links → no incluimos el bloque
   return `\n\nEs MUY IMPORTANTE que puedas ver estos materiales sí o sí antes de nuestra llamada:\n\n${lines.join('\n')}`;
@@ -383,7 +377,9 @@ export function buildPush3Message({ name, firstName, phone, startIso, programKey
   const who = name || firstName || 'el prospecto';
   const time = formatCallTime(startIso);
   const tel = phone ? `📞 ${phone}` : '📵 sin teléfono en Calendly';
-  const head = `🔔 *Push 3* (antes de la llamada) para *${who}* — ${tel} — llamada hoy a las ${time}`;
+  const label = programLabelOf(programKey);
+  const prog = label ? ` — 📦 *${label}*` : '';
+  const head = `🔔 *Push 3* (antes de la llamada) para *${who}*${prog} — ${tel} — llamada hoy a las ${time}`;
   if (!phone) return `${head}\n(sin teléfono en Calendly — mándalo manual)`;
   const text = buildPrecallText({
     programKey,
@@ -400,20 +396,22 @@ export function buildPush3Message({ name, firstName, phone, startIso, programKey
 // Push 0 (aviso de nueva call HOY): mensaje INFORMATIVO al closer — "te reservaron
 // un espacio". No lleva link wa.me; el push accionable con el link llega ~25 min
 // antes (Push 3). Concíso a propósito: es un heads-up, no el recordatorio precall.
-export function buildPush0Message({ name, firstName, phone, startIso, tz = TZ() }) {
+export function buildPush0Message({ name, firstName, phone, startIso, programKey, tz = TZ() }) {
   const who = name || firstName || 'el prospecto';
   const time = formatCallTime(startIso, tz);
   const tel = phone ? `📞 ${phone}` : '📵 sin teléfono en Calendly';
+  const label = programLabelOf(programKey);
+  const prog = label ? ` — 📦 *${label}*` : '';
   return (
     `📅 *Nueva call HOY* — te acaban de reservar un espacio en tu agenda.\n` +
-    `*${who}* — ${tel} — hoy a las ${time}\n` +
+    `*${who}*${prog} — ${tel} — hoy a las ${time}\n` +
     `Te llegará el push con el link ~25 min antes de la llamada.`
   );
 }
 
 export function buildDigestMessage({ pushLabel, whenLabel, items, pushN, closer, tz = TZ() }) {
   const sorted = [...items].sort((a, b) => new Date(a.startIso) - new Date(b.startIso));
-  const lines = sorted.map((it) => {
+  const renderLine = (it) => {
     const who = it.name || it.firstName || 'el prospecto';
     const time = formatCallTime(it.startIso, tz);
     const tel = it.phone ? `📞 ${it.phone}` : '📵 sin teléfono';
@@ -428,13 +426,31 @@ export function buildDigestMessage({ pushLabel, whenLabel, items, pushN, closer,
     });
     const link = buildLeadLink(it.phone, text);
     return link ? `${head}\n  👉 ${link}` : `${head} (mándalo manual)`;
-  });
+  };
+
+  // Segmentación por programa: un closer con citas de dos programas necesita saber cuál es
+  // cuál. Con un solo programa NO agrupamos (evita un subtítulo redundante). El orden dentro
+  // de cada grupo sigue siendo por hora (sorted); los grupos salen en el orden de su 1ra cita.
+  const programs = [...new Set(sorted.map((it) => it.programKey))];
+  let body;
+  if (programs.length > 1) {
+    body = programs
+      .map((pk) => {
+        const label = programLabelOf(pk) || 'Sin programa';
+        const lines = sorted.filter((it) => it.programKey === pk).map(renderLine);
+        return `📦 *${label}*\n${lines.join('\n')}`;
+      })
+      .join('\n\n');
+  } else {
+    body = sorted.map(renderLine).join('\n');
+  }
+
   const n = sorted.length;
   const plural = n === 1 ? 'llamada' : 'llamadas';
   return (
     `📋 *${pushLabel}* — tienes ${n} ${plural} ${whenLabel}.\n` +
     `Toca el link de cada lead para enviarle su push precall (se abre el chat con el mensaje listo, solo dale enviar):\n\n` +
-    lines.join('\n')
+    body
   );
 }
 

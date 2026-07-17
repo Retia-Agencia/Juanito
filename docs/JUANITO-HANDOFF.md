@@ -355,10 +355,10 @@ El **programa** NO se configura por closer: se deriva del `event_type` de cada c
 (`programKeyOf`), así que un closer queda cubierto en todos sus programas. Cablear un programa
 nuevo = agregar su ET + su copy en `PROGRAM_PITCH` + sus materiales (§18.AG).
 
-Los materiales del Push 1 salen de dos formas: **link** (`MATERIAL_LINKS.brochure`, la mayoría) o
-**PDF adjunto** que Juanito le pasa al closer para que lo reenvíe (`BROCHURE_FILES`, hoy solo
-Operaciones). El adjunto existe porque el copy viaja en un `wa.me?text=` que solo lleva texto —
-ver §18.AG.
+Los materiales del Push 1 (brochure + video) viajan como **link** dentro del copy
+(`MATERIAL_LINKS.brochure` / `.video`), que va en el `wa.me?text=` que el closer toca para
+enviar al lead. Todos los programas entregan así — el brochure abre renderizado en el celular del
+lead sin depender de que el closer reenvíe un archivo (ver §18.AG).
 
 **Anti-baneo:** Juanito NUNCA inicia una conversación con un closer. Solo se le envía si
 el closer le escribió primero (opt-in **ganado**, ver §11.2). Además `CALENDLY_DRY_RUN=true`
@@ -656,7 +656,7 @@ Los rosters son **disjuntos** (ningún humano cierra para las dos). Eso es lo qu
 | `src/calendly/accounts.js` | **NUEVO.** Registro: `ACCOUNTS`, `activeAccounts()` (filtra por token), `accountOf`, `accountOfProgram`, `eventTypeToProgram`. Los ET y el mapa `PROGRAMS` se movieron acá desde `index.js`. |
 | `src/calendly/index.js` | `request(url, {token})`; `listProgramEvents({account})` (filtra por los ETs de ESA cuenta); `getEvent`/`getFirstInvitee` con `{token}`. `programKeyOf`/`PROGRAM_EVENT_TYPES` derivados del registro (misma firma → cero cambios en callers). Se borró `GROUP_URI` (código muerto declarado). |
 | `src/calendly/closers.js` | Campo `account` opcional (default `30x`) + `accountOfCloser()`. |
-| `src/scheduler/calendly.js` | `listEventsAllAccounts()` (abanico con try/catch **por cuenta**); `deliver(…, closerEmail)`; `deliverBrochures(…, closerEmail)`; `resolvePhone(…, account)`; gate de Push 4 por cuenta; `startCalendlyJobs` gateado por `activeAccounts().length`. |
+| `src/scheduler/calendly.js` | `listEventsAllAccounts()` (abanico con try/catch **por cuenta**); `deliver(…, closerEmail)`; `resolvePhone(…, account)`; gate de Push 4 por cuenta; `startCalendlyJobs` gateado por `activeAccounts().length`. |
 | `src/hubspot/deals.js` | `isCoveredProgram` exige además `accountOfProgram(k)?.hubspot`. |
 
 #### Dos bugs encontrados y corregidos en el camino
@@ -667,10 +667,10 @@ Con TTrading conectada, un lead suyo con email coincidente habría recibido un t
 base de 30X, inyectado en el `wa.me` que su closer toca → **le escribe a un contacto ajeno**, y se
 cruzan datos entre clientes. Silencioso además (`.catch(() => null)`). Ahora `account.hubspot` manda.
 
-**2. 🟡 El brochure adjunto se saltaba el dry-run.** `deliverBrochures` (`1a4a65f`) manda un
-documento, no texto → no pasa por `deliver()` y leía el `DRY_RUN()` global. Una cuenta muda igual
-habría recibido el PDF. Latente (hoy solo `operaciones` tiene adjunto), pero real: al revertir el fix,
-el log dice `brochure operaciones enviado → <closer de la cuenta muda>`.
+**2. 🟡 El brochure adjunto se saltaba el dry-run.** `deliverBrochures` (`1a4a65f`) mandaba un
+documento, no texto → no pasaba por `deliver()` y leía el `DRY_RUN()` global. Una cuenta muda igual
+habría recibido el PDF. _(Obsoleto desde 2026-07-17: se eliminó la vía de adjunto — Operaciones pasó
+a entregar el brochure por link, ver §18.AG. La **regla** de abajo sigue vigente para futuros canales.)_
 
 > **Regla que queda:** todo canal nuevo hacia un closer resuelve el dry-run por
 > `accountOfCloser(closerEmail)`, **nunca** leyendo `DRY_RUN()` directo. Está escrito en la cabecera
@@ -2929,6 +2929,12 @@ de Drive **no actualiza contenido en sitio**, así que cada revisión = archivo 
 
 **2) Operaciones: el brochure ahora es un PDF ADJUNTO, no un link.**
 
+> ⚠️ **SUPERADO (2026-07-17) — ver §18.AI.** La vía de adjunto (`BROCHURE_FILES`,
+> `deliverBrochures`, `attachedBrochure`, `assets/brochures/operaciones.pdf`) se **eliminó por
+> completo**. Operaciones volvió a entregar el brochure **por link** como todos los demás
+> (`MATERIAL_LINKS.operaciones.brochure` → Drive `16NbFnJq1gCYSfQA0a2sfLbGuEBxVc8Yp`). El resto de
+> esta parte 2 queda como registro histórico del diseño anterior.
+
 **La restricción que manda acá:** el copy precall viaja dentro de un `wa.me?text=` que el closer
 toca — y wa.me **solo transporta texto, no admite adjuntos**. Y el que envía al lead tiene que
 seguir siendo el closer (Juanito nunca escribe en frío a un lead: regla anti-ban de §11.2). Así
@@ -3044,6 +3050,43 @@ tampoco tienen opt-in y la entrega estricta los omitiría.
   `account`: hay que migrar `calendly_optins` a clave compuesta `(phone, account)` — tabla nueva +
   copia + rename, porque SQLite no permite alterar una PK. También `getActiveOutcomeForCloser(phone)`
   y `pickSupersededPushes` (matchea por últimos 8 dígitos) enrutan solo por teléfono.
+
+### 18.AI 🔵 Segmentación por programa en los pushes + brochure de Operaciones por link (2026-07-17)
+
+**Dos ajustes al Push precall, ambos motivados por closers con varios programas.**
+
+**1) Segmentación por programa en los mensajes al closer.** Un closer con dos programas
+(p.ej. Lucas: Operaciones + Instagram) recibía pushes sin distinguir a cuál pertenecía cada
+lead. Ahora todo mensaje al closer rotula el programa con `📦 *<label>*`:
+- **Push 0** y **Push 3**: el rótulo va en el header, junto al nombre del lead.
+- **Digest (Push 1/2)**: si el closer tiene **≥2 programas**, el digest **agrupa por programa**
+  (subtítulo `📦` + sus líneas, ordenadas por hora dentro de cada grupo). Con un solo programa
+  **no** agrupa (evita un subtítulo redundante).
+
+Fuente única del rótulo: `PROGRAM_LABELS` + `programLabelOf()` en `src/calendly/index.js`
+(distinta de `PROGRAM_PITCH.program`, que es la frase larga que ve el LEAD). El scheduler
+importaba un `PROGRAM_LABELS` local para el caption del brochure; se unificó al de `index.js`.
+
+**2) Operaciones: el brochure vuelve a ser LINK, no PDF adjunto.** Revierte la parte 2 de §18.AG.
+El deck se subió a Drive (`16NbFnJq1gCYSfQA0a2sfLbGuEBxVc8Yp`, `anyoneWithLink: reader`, misma
+unidad que los demás) y se cableó en `MATERIAL_LINKS.operaciones.brochure`. Con eso **todos** los
+programas entregan el brochure igual: un link dentro del copy, que abre renderizado en el celular
+del lead sin depender de que el closer reenvíe un archivo.
+
+**Se eliminó por completo la maquinaria de adjunto** (era código muerto al quedar Operaciones sin
+adjunto, único usuario): `BROCHURE_FILES` + la rama `attachedBrochure` de `materialsBlock`
+(`index.js`); `deliverBrochures`/`loadBrochure`/`brochureCache`/`REPO_ROOT` + su llamada en el
+digest + los imports `readFile`/`path`/`fileURLToPath`/`PROGRAM_LABELS` (`scheduler/calendly.js`);
+y el asset `assets/brochures/operaciones.pdf` (la carpeta `assets/` quedó vacía y se borró). El
+`COPY assets/` del Dockerfile quedó sin objeto — revisar en el próximo deploy si conviene quitarlo.
+`sendDocument` (WhatsApp) **se conserva**: es un primitivo general que usa `generate_document`.
+
+**Tests:** los del brochure adjunto en `calendly.helpers` / `calendly.scenarios` /
+`calendly.multi-account` se reescribieron a "entrega por link, cero documentos"; los del digest
+cubren la segmentación por programa. **187/187 puros de Calendly verdes** (los DB-backed fallan solo
+por `better-sqlite3` sin compilar en el entorno local — preexistente).
+
+**Pendiente de deploy.** El brochure ya está público en Drive; el resto es código.
 
 ### 🟢 Baja prioridad / Nice-to-have
 

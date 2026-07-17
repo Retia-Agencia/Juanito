@@ -337,10 +337,10 @@ test('digest Push 2 (hoy): agrupa por closer y envía a los opted-in', async () 
   assert.ok(h.wa.sent[0].text.indexOf('Ana') < h.wa.sent[0].text.indexOf('Beto'), 'ordenado por hora');
 });
 
-// ─── Brochure adjunto en el Push 1 (Operaciones) ──────────────────────────────
-// Juanito le pasa el PDF al closer para que lo reenvíe al lead: el copy precall viaja
-// en un `wa.me?text=` que solo lleva texto, y el que envía al lead debe seguir siendo
-// el closer (anti-ban). Ver BROCHURE_FILES en src/calendly/index.js.
+// ─── Brochure por link en el Push 1 (todos los programas) ─────────────────────
+// El brochure viaja como link dentro del copy precall (que va en el `wa.me?text=` que el
+// closer toca para enviar al lead). Ninguna cita adjunta ya un PDF: Juanito nunca manda
+// documentos en este flujo. Ver MATERIAL_LINKS en src/calendly/index.js.
 
 const LUCAS = 'lucas.mendoza@30x.com';
 const LUCAS_PHONE = '+573014477044';
@@ -356,43 +356,24 @@ function tomorrowAt(hourUtc) {
   return `${y}-${mo}-${d}T${String(hourUtc).padStart(2, '0')}:00:00.000Z`;
 }
 
-test('Push 1 Operaciones: adjunta el brochure UNA vez, aunque el closer tenga varias calls', async () => {
+test('Push 1 Operaciones: entrega el brochure por link en el copy, sin adjuntar PDF', async () => {
   const events = [
     makeEvent({ uuid: 'o1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Ana Gómez' }),
     makeEvent({ uuid: 'o2', startIso: tomorrowAt(19), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Beto Ruiz' }),
-    makeEvent({ uuid: 'o3', startIso: tomorrowAt(20), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Cami Díaz' }),
   ];
   const h = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: Date.now() });
 
   await scheduler.runPush1();
 
   assert.equal(h.wa.sent.length, 1, 'un digest al closer');
-  assert.equal(h.wa.docs.length, 1, '3 calls del mismo programa → UN solo PDF, no tres');
-  const doc = h.wa.docs[0];
-  assert.match(doc.fileName, /Operaciones/);
-  assert.equal(doc.mimetype, 'application/pdf');
-  assert.ok(doc.bytes > 0, 'el PDF se leyó del repo y no está vacío');
-  assert.match(doc.caption, /Reenvíaselo a cada prospecto/);
-  // El PDF va al MISMO hilo que el digest (contact_jid del opt-in), no al número canónico.
-  assert.equal(doc.to, h.wa.sent[0].to);
-});
-
-test('Push 1: el brochure solo va para su programa (Instagram va por link, no adjunto)', async () => {
-  const events = [
-    makeEvent({ uuid: 'i1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: INSTAGRAM_ET, prospectName: 'Ana Gómez' }),
-  ];
-  const h = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: Date.now() });
-
-  await scheduler.runPush1();
-  assert.equal(h.wa.sent.length, 1);
-  assert.equal(h.wa.docs.length, 0, 'Instagram entrega por link → sin adjunto');
+  assert.equal(h.wa.docs.length, 0, 'Operaciones ya no adjunta PDF: el brochure va por link');
   // El copy del lead viaja percent-encoded dentro del wa.me → hay que decodificar.
   const copy = decodeURIComponent(h.wa.sent[0].text);
-  assert.match(copy, /programa de Instagram & TikTok for Business de 30X/);
-  assert.match(copy, /📄 Brochure: https:\/\/drive\.google\.com/, 'Instagram sí lleva link de Drive');
+  assert.match(copy, /programa de Operaciones Escalables con AI de 30X/);
+  assert.match(copy, /📄 Brochure: https:\/\/drive\.google\.com/, 'lleva el link de Drive del brochure');
 });
 
-test('Push 1: digest mixto → un PDF de Operaciones y nada para los otros programas', async () => {
+test('Push 1: digest mixto → ambos programas llevan su link y ninguno adjunta PDF', async () => {
   const events = [
     makeEvent({ uuid: 'm1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Ana Gómez' }),
     makeEvent({ uuid: 'm2', startIso: tomorrowAt(19), closerEmail: LUCAS, eventType: INSTAGRAM_ET, prospectName: 'Beto Ruiz' }),
@@ -400,27 +381,14 @@ test('Push 1: digest mixto → un PDF de Operaciones y nada para los otros progr
   const h = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: Date.now() });
 
   await scheduler.runPush1();
-  assert.equal(h.wa.docs.length, 1, 'solo Operaciones adjunta');
-  assert.match(h.wa.docs[0].fileName, /Operaciones/);
+  assert.equal(h.wa.docs.length, 0, 'ningún programa adjunta PDF');
+  // Con dos programas, el digest segmenta por programa (rótulo 📦) — cada uno con su copy.
+  const digest = h.wa.sent[0].text;
+  assert.match(digest, /📦 \*Operaciones Escalables con IA\*/);
+  assert.match(digest, /📦 \*Instagram & TikTok\*/);
 });
 
-test('Push 2 NO adjunta el brochure (su copy no anuncia materiales)', async () => {
-  const today = new Date();
-  const y = today.getFullYear();
-  const mo = String(today.getMonth() + 1).padStart(2, '0');
-  const d = String(today.getDate()).padStart(2, '0');
-  const events = [
-    makeEvent({ uuid: 'p2', startIso: `${y}-${mo}-${d}T19:00:00.000Z`, closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Ana Gómez' }),
-  ];
-  const nowMs = Date.parse(`${y}-${mo}-${d}T11:30:00.000Z`);
-  const h = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs });
-
-  await scheduler.runPush2();
-  assert.equal(h.wa.sent.length, 1);
-  assert.equal(h.wa.docs.length, 0, 'el brochure es exclusivo del Push 1');
-});
-
-test('Push 1 sin opt-in: no se manda el digest NI el brochure (anti-ban)', async () => {
+test('Push 1 sin opt-in: no se manda el digest (anti-ban)', async () => {
   const events = [
     makeEvent({ uuid: 'n1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Ana Gómez' }),
   ];
@@ -428,5 +396,5 @@ test('Push 1 sin opt-in: no se manda el digest NI el brochure (anti-ban)', async
 
   await scheduler.runPush1();
   assert.equal(h.wa.sent.length, 0);
-  assert.equal(h.wa.docs.length, 0, 'sin hilo establecido, el PDF tampoco puede salir en frío');
+  assert.equal(h.wa.docs.length, 0);
 });

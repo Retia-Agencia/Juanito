@@ -268,36 +268,3 @@ test('la agencia #2 no agenda Push 4 (alcance v1: solo pushes precall)', async (
     scheduler.__resetDeps();
   });
 });
-
-// ─── Aislamiento del brochure adjunto ─────────────────────────────────────────
-
-test('el brochure adjunto respeta el dry-run de la cuenta del closer', async () => {
-  await withAgencia2(async () => {
-    // deliverBrochures NO pasa por deliver() (manda un documento, no texto), así que lee el
-    // dry-run por su cuenta. Sin el gate por cuenta, una agencia muda igual recibiría el PDF.
-    ACCOUNTS[ACCT2].eventTypes = { [ET2]: 'operaciones' }; // el único programa con PDF adjunto
-    const now = Date.parse('2026-07-16T23:00:00Z');
-    const { wa } = installHarness(scheduler, {
-      nowMs: now,
-      accounts: [realAccount(), ACCOUNTS[ACCT2]],
-      optins: optinsDeAmbos(),
-      events: [
-        makeEvent({
-          uuid: 'e-a2-ops',
-          startIso: new Date(now + 20 * 60 * MIN).toISOString(),
-          closerEmail: CLOSER_A2.email,
-          eventType: ET2,
-          nowMs: now,
-          account: ACCT2,
-        }),
-      ],
-    });
-
-    await scheduler.runPush1();
-
-    assert.equal(wa.docs.length, 0, 'la agencia #2 está en dry-run: el PDF no puede salir');
-    assert.equal(wa.sent.length, 0, 'ni el digest');
-
-    scheduler.__resetDeps();
-  });
-});
