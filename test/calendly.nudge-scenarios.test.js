@@ -29,6 +29,8 @@ beforeEach(() => {
   process.env.CALENDLY_CALL_DURATION_MIN = '30';
   process.env.CALENDLY_PUSH4_GRACE_MIN = '5';
   delete process.env.HUBSPOT_NUDGE_ENABLED;
+  delete process.env.HUBSPOT_AGENDA_HARVEST;
+  delete process.env.CALENDLY_RESCHEDULE_ENABLED;
   delete process.env.HUBSPOT_PROGRAM_PIPELINES; // usa los defaults (second_brain cubierto)
   __resetHealth();
   scheduler.__resetDeps();
@@ -128,4 +130,105 @@ test('programa NO cubierto (developers) → clásico aunque el flag esté ON; ni
   assert.match(h.wa.sent.at(-1).text, /¿Cómo te fue/, 'developers → Push 4 clásico');
   assert.equal(h.store._outcomes[0].reminded, 0);
   assert.equal(h.matchCalls.length, 0, 'no se consultó HubSpot para un programa no cubierto');
+});
+
+// ─── Cosecha por agenda_status (§18.AG) ───────────────────────────────────────
+
+test('harvest: agenda_status COMPLETED → outcome "show" cosechado, sin preguntar', async () => {
+  process.env.HUBSPOT_AGENDA_HARVEST = 'true';
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'h1', startInMin: 20, closerEmail: SALAZAR, prospectName: 'Ana Gómez', nowMs: now })];
+  const h = installHarness(scheduler, {
+    events, optins: [SALAZAR_PHONE], nowMs: now,
+    match: { covered: true, agendaStatus: 'COMPLETED', deal: { id: '55' } },
+  });
+  await pollThenDeliver(h, now);
+
+  assert.equal(push4Msgs(h.wa).length, 0, 'no se mandó nada (cosecha silenciosa)');
+  const o = h.store._outcomes[0];
+  assert.equal(o.asistencia, 'show');
+  assert.equal(o.status, 'auto', 'registrado como automático, no pendiente');
+  assert.equal(h.store._rows.find((r) => r.push_n === 4).status, 'sent');
+});
+
+test('harvest: NO_SHOW → outcome "no_show" cosechado (lo que la etapa no daba)', async () => {
+  process.env.HUBSPOT_AGENDA_HARVEST = 'true';
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'h2', startInMin: 20, closerEmail: SALAZAR, nowMs: now })];
+  const h = installHarness(scheduler, {
+    events, optins: [SALAZAR_PHONE], nowMs: now,
+    match: { covered: true, agendaStatus: 'NO_SHOW', deal: { id: '7' } },
+  });
+  await pollThenDeliver(h, now);
+
+  assert.equal(push4Msgs(h.wa).length, 0);
+  assert.equal(h.store._outcomes[0].asistencia, 'no_show');
+  assert.equal(h.store._outcomes[0].status, 'auto');
+});
+
+test('harvest: SCHEDULED vencida sin cita futura → nudge con link (único caso que molesta)', async () => {
+  process.env.HUBSPOT_AGENDA_HARVEST = 'true';
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'h3', startInMin: 20, closerEmail: SALAZAR, prospectName: 'Ana Gómez', nowMs: now })];
+  const h = installHarness(scheduler, {
+    events, optins: [SALAZAR_PHONE], nowMs: now,
+    match: { covered: true, agendaStatus: 'SCHEDULED', deal: { id: '55' } },
+  });
+  await pollThenDeliver(h, now);
+
+  const msg = h.wa.sent.at(-1).text;
+  assert.match(msg, /Agendado/, 'es el nudge');
+  assert.match(msg, /deal\/55/, 'con deep-link al deal');
+  assert.equal(h.store._outcomes[0].reminded, 1, 'pendiente activo con reminded=1');
+});
+
+test('harvest: SCHEDULED con cita FUTURA → silencio (reagenda no marcada / segunda call)', async () => {
+  process.env.HUBSPOT_AGENDA_HARVEST = 'true';
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'h4', startInMin: 20, closerEmail: SALAZAR, nowMs: now })];
+  const future = new Date(now + 3 * 24 * 60 * MIN).toISOString();
+  const h = installHarness(scheduler, {
+    events, optins: [SALAZAR_PHONE], nowMs: now,
+    match: { covered: true, agendaStatus: 'SCHEDULED', nextMeetingStart: future, deal: { id: '55' } },
+  });
+  await pollThenDeliver(h, now);
+
+  assert.equal(push4Msgs(h.wa).length, 0, 'no molesta: hay cita futura');
+  assert.equal(h.store._outcomes.length, 0, 'ni pendiente');
+  assert.equal(h.store._rows.find((r) => r.push_n === 4).status, 'sent');
+});
+
+test('harvest: RESCHEDULED → cosecha "reagendado" + agenda la call nueva desde next_meeting', async () => {
+  process.env.HUBSPOT_AGENDA_HARVEST = 'true';
+  process.env.CALENDLY_RESCHEDULE_ENABLED = 'true';
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'h5', startInMin: 20, closerEmail: SALAZAR, prospectName: 'Ana Gómez', nowMs: now })];
+  const future = new Date(now + 3 * 24 * 60 * MIN).toISOString();
+  const h = installHarness(scheduler, {
+    events, optins: [SALAZAR_PHONE], nowMs: now,
+    match: { covered: true, agendaStatus: 'RESCHEDULED', nextMeetingStart: future, deal: { id: '55' } },
+  });
+  await pollThenDeliver(h, now);
+
+  assert.equal(push4Msgs(h.wa).length, 0, 'la reagenda se cosecha en silencio');
+  const o = h.store._outcomes[0];
+  assert.equal(o.asistencia, 'reagendado');
+  assert.equal(o.status, 'auto');
+  // Se agendó la call nueva con uuid sintético (mismo mecanismo que la reagenda manual).
+  const manual = h.store._rows.filter((r) => String(r.event_uuid).startsWith('manual:'));
+  assert.ok(manual.some((r) => r.push_n === 4), 'agendó el Push 4 de la call nueva');
+});
+
+test('harvest OFF por default → agenda_status ignorado, Push 4 clásico (regresión)', async () => {
+  // Ni NUDGE ni HARVEST → no se toca HubSpot para el outcome.
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'h6', startInMin: 20, closerEmail: SALAZAR, prospectName: 'Ana Gómez', nowMs: now })];
+  const h = installHarness(scheduler, {
+    events, optins: [SALAZAR_PHONE], nowMs: now,
+    match: { covered: true, agendaStatus: 'COMPLETED', deal: { id: '55' } },
+  });
+  await pollThenDeliver(h, now);
+
+  assert.match(h.wa.sent.at(-1).text, /¿Cómo te fue/, 'sin flags → pregunta clásica');
+  assert.equal(h.store._outcomes[0].status, 'pending');
 });

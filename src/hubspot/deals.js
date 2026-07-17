@@ -76,6 +76,40 @@ function normalizeLabel(s) {
     .toLowerCase();
 }
 
+// ─── Cosecha por `agenda_status` (§18.AG) ─────────────────────────────────────
+// El deal trae un campo `agenda_status` (enum) hecho a propósito que encodea DIRECTO el
+// estado de la call — incluye el no-show y la reagenda, que la ETAPA del deal no distingue.
+// Valores internos (HubSpot) → asistencia de call_outcomes. La venta (Ganado/Perdido) es un
+// eje aparte que sigue viniendo de la etapa; acá solo va la ASISTENCIA.
+export const AGENDA_TO_ASISTENCIA = {
+  COMPLETED: 'show', // Terminada  → asistió
+  NO_SHOW: 'no_show', // No asistió
+  CANCELED: 'cancelado', // Cancelada
+};
+
+// Traduce el `agenda_status` de un deal en una acción para el motor del Push 4. Puro.
+//   { action:'harvest', asistencia } → registrar el outcome sin preguntar (COMPLETED/NO_SHOW/CANCELED)
+//   { action:'reschedule' }          → reagenda: cosechar 'reagendado' + agendar la call nueva
+//   { action:'skip', reason:'upcoming' } → sigue Programada pero hay una cita FUTURA → no molestar
+//   { action:'nudge' }               → Programada y la call ya venció, sin cita futura → picar al closer
+//   { action:'ask', reason }         → sin estado / valor desconocido → cae a Push 4 clásico (red de seguridad)
+export function decideFromAgenda({ agendaStatus, nextMeetingStart, now = Date.now() } = {}) {
+  const s = String(agendaStatus || '').trim().toUpperCase();
+  if (!s) return { action: 'ask', reason: 'no_agenda_status' };
+  if (Object.prototype.hasOwnProperty.call(AGENDA_TO_ASISTENCIA, s)) {
+    return { action: 'harvest', asistencia: AGENDA_TO_ASISTENCIA[s] };
+  }
+  if (s === 'RESCHEDULED') return { action: 'reschedule', asistencia: 'reagendado' };
+  if (s === 'SCHEDULED') {
+    // "Programada" tras vencer la call es ambiguo: o el closer no cerró el estado (→ nudge),
+    // o hay una cita nueva futura (reagenda sin marcar / segunda call → no molestar).
+    const nextMs = Date.parse(nextMeetingStart || '');
+    if (nextMs && nextMs > now) return { action: 'skip', reason: 'upcoming' };
+    return { action: 'nudge' };
+  }
+  return { action: 'ask', reason: 'unknown_status' };
+}
+
 // De una lista de deals de un contacto, elige el más relevante para el pipeline dado:
 // el del pipeline correcto, y entre varios, el modificado más recientemente.
 export function pickDealForPipeline(deals = [], pipelineId) {

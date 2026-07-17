@@ -172,7 +172,19 @@ export async function getPipelineStages(pipelineId) {
 }
 
 // Deals asociados a un contacto, con las props que necesita el matcher. [] si falla.
-const DEAL_PROPS = ['dealname', 'pipeline', 'dealstage', 'hs_lastmodifieddate', 'hubspot_owner_id'];
+// `agenda_status` + `hs_next_meeting_*` alimentan la cosecha por estado de agenda (§18.AG):
+// agenda_status da show/no-show/reagenda directo; next_meeting_start_time distingue una
+// "Programada" vencida (nudge) de una con cita futura (no molestar).
+const DEAL_PROPS = [
+  'dealname',
+  'pipeline',
+  'dealstage',
+  'hs_lastmodifieddate',
+  'hubspot_owner_id',
+  'agenda_status',
+  'hs_next_meeting_start_time',
+  'hs_next_meeting_name',
+];
 
 export async function getContactDeals(contactId) {
   if (!isEnabled() || !contactId) return [];
@@ -210,7 +222,18 @@ export async function matchCallToDeal({ email, programKey }) {
     if (!deal) return { covered: true, contact, deal: null, reason: 'no_deal', pipelineId };
     const stages = await getPipelineStages(pipelineId);
     const status = classifyDealStage(deal.properties?.dealstage, stages);
-    return { covered: true, contact, deal, status, pipelineId };
+    // §18.AG: campos de agenda para la cosecha por estado (la evolución del nudge).
+    const props = deal.properties || {};
+    return {
+      covered: true,
+      contact,
+      deal,
+      status,
+      pipelineId,
+      agendaStatus: props.agenda_status || null,
+      nextMeetingStart: props.hs_next_meeting_start_time || null,
+      nextMeetingName: props.hs_next_meeting_name || null,
+    };
   } catch (e) {
     console.warn(`[HubSpot] matchCallToDeal(${email}, ${programKey}) falló: ${e.message}`);
     return { covered: true, error: e.message };

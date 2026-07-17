@@ -43,9 +43,9 @@ import {
   buildReschedulePromptMessage,
 } from '../calendly/index.js';
 import { computePush3Schedule, decidePush0 } from '../calendly/push-logic.js';
-import { pickSupersededPushes, isManualUuid } from '../calendly/reschedule-logic.js';
-import { isCoveredProgram } from '../hubspot/deals.js';
-import { decideNudgeAction, buildDealNudgeMessage, buildCreateDealNudgeMessage } from '../hubspot/nudge.js';
+import { pickSupersededPushes, isManualUuid, planRescheduledPushes } from '../calendly/reschedule-logic.js';
+import { isCoveredProgram, decideFromAgenda } from '../hubspot/deals.js';
+import { decideNudgeAction, buildDealNudgeMessage, buildCreateDealNudgeMessage, dealUrl } from '../hubspot/nudge.js';
 import { resolveCloser, isIgnoredCloser, accountOfCloser } from '../calendly/closers.js';
 import { accountOf, activeAccounts, DEFAULT_ACCOUNT } from '../calendly/accounts.js';
 import { BROCHURE_FILES } from '../calendly/index.js';
@@ -94,6 +94,16 @@ const PUSH4_GRACE_MIN = () => Number(process.env.CALENDLY_PUSH4_GRACE_MIN || 5);
 // (no preguntar lo que HubSpot ya sabe). Apagado por default → rollout controlado; sin
 // el flag, TODO sigue en Push 4 clásico. Requiere HUBSPOT_PAT configurado.
 const NUDGE_ENABLED = () => process.env.HUBSPOT_NUDGE_ENABLED === 'true';
+// Cosecha por estado de agenda (§18.AG): la evolución del nudge. En vez de leer la ETAPA
+// del deal (proxy tosco), lee `agenda_status` (COMPLETED/NO_SHOW/RESCHEDULED/CANCELED/
+// SCHEDULED) y DERIVA el outcome directo a call_outcomes sin preguntar; solo pica al closer
+// si la call venció y sigue "Programada". Apagado por default; sin el flag, sigue el nudge
+// por etapa (o el Push 4 clásico). Requiere HUBSPOT_PAT + programa cubierto.
+const HARVEST_ENABLED = () => process.env.HUBSPOT_AGENDA_HARVEST === 'true';
+// Params de la reagenda (para agendar la call nueva desde hs_next_meeting_start_time).
+// Espejo de los defaults de calendly/reschedule.js.
+const RESCHED_LEAD_MIN = () => Number(process.env.CALENDLY_PUSH3_LEAD_MIN || 25);
+const RESCHED_MAX_CHAIN = () => Number(process.env.CALENDLY_RESCHEDULE_MAX_CHAIN || 3);
 const OUTCOME_REMIND_AFTER_MIN = () => Number(process.env.CALENDLY_OUTCOME_REMIND_MIN || 30);
 const OUTCOME_EXPIRE_AFTER_MIN = () => Number(process.env.CALENDLY_OUTCOME_EXPIRE_MIN || 30);
 const OUTCOME_CRON = () => process.env.CALENDLY_OUTCOME_CRON || '*/10 * * * *';
@@ -221,12 +231,15 @@ function pendingOutcomeFrom(p, extra = {}) {
   };
 }
 
-// Modelo nudge (§18.AF): decide qué hacer con un Push 4 de un programa cubierto. Saca el
-// email del lead de Calendly (la fila del push no lo guarda), matchea el deal y traduce a
-// un plan. Devuelve:
-//   { handled:false }                       → cae a Push 4 clásico (preguntar) — red de seguridad
-//   { handled:true, silent:true, reason }    → el closer ya avanzó el deal → no molestar
-//   { handled:true, message }                → mandar el nudge (update o create)
+// Modelo nudge/cosecha (§18.AF/AG): decide qué hacer con un Push 4 de un programa cubierto.
+// Saca el email del lead de Calendly (la fila del push no lo guarda), matchea el deal y
+// traduce a un plan. Con HARVEST_ENABLED prefiere `agenda_status` (deriva el outcome sin
+// preguntar); si no, cae al nudge por etapa. Devuelve:
+//   { handled:false }                        → cae a Push 4 clásico (preguntar) — red de seguridad
+//   { handled:true, harvest:'show'|… }        → registrar el outcome sin preguntar (cosecha)
+//   { handled:true, reschedule:true, nextMeetingStart } → reagenda: cosechar + agendar la nueva
+//   { handled:true, silent:true, reason }     → no molestar (deal ya avanzado / cita futura)
+//   { handled:true, message }                 → mandar el nudge (link al deal / crear)
 async function planNudge(d, p) {
   if (!d.matchCallToDeal) return { handled: false };
   // Email del lead desde Calendly (no está en la fila del push).
@@ -240,9 +253,28 @@ async function planNudge(d, p) {
   if (!email) return { handled: false };
 
   const match = await d.matchCallToDeal({ email, programKey: p.program });
-  const decision = decideNudgeAction(match);
   const lead = fullNameFrom(p.prospect_name);
 
+  // §18.AG — cosecha por estado de agenda (evolución del nudge). Solo si el flag está y el
+  // deal trae `agenda_status`; si no, cae al modelo por etapa de abajo (red de seguridad).
+  if (HARVEST_ENABLED() && match && !match.error && match.agendaStatus) {
+    const a = decideFromAgenda({
+      agendaStatus: match.agendaStatus,
+      nextMeetingStart: match.nextMeetingStart,
+      now: d.now(),
+    });
+    if (a.action === 'harvest') return { handled: true, harvest: a.asistencia, reason: match.agendaStatus };
+    if (a.action === 'reschedule')
+      return { handled: true, reschedule: true, nextMeetingStart: match.nextMeetingStart, reason: 'RESCHEDULED' };
+    if (a.action === 'skip') return { handled: true, silent: true, reason: a.reason };
+    if (a.action === 'nudge')
+      return { handled: true, message: buildDealNudgeMessage({ name: lead, url: dealUrl(match.deal?.id) }) };
+    // a.action === 'ask' → sin estado claro → cae al modelo por etapa / clásico.
+  }
+
+  // Modelo por etapa (§18.AF): fallback. Solo activo con HUBSPOT_NUDGE_ENABLED.
+  if (!NUDGE_ENABLED()) return { handled: false };
+  const decision = decideNudgeAction(match);
   if (decision.action === 'silent') return { handled: true, silent: true, reason: match.status };
   if (decision.action === 'nudge_update')
     return { handled: true, message: buildDealNudgeMessage({ name: lead, url: decision.dealUrl }) };
@@ -686,21 +718,58 @@ export async function runCalendlyDelivery() {
             continue;
           }
 
-          // ── Modelo nudge (§18.AF): programas cubiertos por HubSpot ──
-          // En vez de preguntar el outcome, revisa el deal y solo pica al closer si sigue
-          // en "Agendado". Cae a Push 4 clásico ante cualquier duda (programa no cubierto,
-          // sin email, error del matcher, etapa no clasificable) para no perder el dato.
+          // ── Modelo nudge/cosecha (§18.AF/AG): programas cubiertos por HubSpot ──
+          // Con HARVEST: lee `agenda_status` y DERIVA el outcome a call_outcomes sin preguntar
+          // (show/no-show/reagenda/cancel); solo pica al closer si la call venció y sigue
+          // "Programada". Con NUDGE (sin harvest): modelo por etapa. Cae a Push 4 clásico ante
+          // cualquier duda (programa no cubierto, sin email, error, estado no clasificable).
           let outcomeMsg = null; // si queda != null, es el texto del nudge
           let remindedFlag = 0; // el nudge lo pone en 1 → suprime el recordatorio clásico
           if (
-            NUDGE_ENABLED() &&
+            (NUDGE_ENABLED() || HARVEST_ENABLED()) &&
             d.hubspotEnabled?.() &&
             !isManualUuid(p.event_uuid) &&
             isCoveredProgram(p.program)
           ) {
             const plan = await planNudge(d, p);
+            // §18.AG — cosecha directa: registra el outcome desde HubSpot, sin preguntar.
+            if (plan.handled && plan.harvest) {
+              if (d.recordAutoOutcome) d.recordAutoOutcome(pendingOutcomeFrom(p, { asistencia: plan.harvest }));
+              d.markCalendlyPushSent(p.id);
+              console.log(
+                `[Calendly] Push 4 #${p.id}: agenda_status=${plan.reason} → outcome '${plan.harvest}' cosechado de HubSpot (sin preguntar)`
+              );
+              procesados++;
+              continue;
+            }
+            // §18.AG — reagenda registrada en HubSpot: cosecha 'reagendado' + agenda la call
+            // nueva desde hs_next_meeting_start_time (mismo mecanismo que la reagenda manual).
+            if (plan.handled && plan.reschedule) {
+              if (d.recordAutoOutcome) d.recordAutoOutcome(pendingOutcomeFrom(p, { asistencia: 'reagendado' }));
+              let extra = '';
+              const startMs = Date.parse(plan.nextMeetingStart || '');
+              if (RESCHEDULE_ENABLED() && startMs && startMs > d.now()) {
+                const rp = planRescheduledPushes(pendingOutcomeFrom(p), new Date(startMs), {
+                  nowMs: d.now(),
+                  leadMin: RESCHED_LEAD_MIN(),
+                  durationMin: CALL_DURATION_MIN(),
+                  graceMin: PUSH4_GRACE_MIN(),
+                  maxChain: RESCHED_MAX_CHAIN(),
+                });
+                if (rp.ok) {
+                  for (const push of rp.pushes) d.scheduleCalendlyPush(push);
+                  extra = ` → nueva call agendada (${rp.pushes.map((x) => `push${x.push_n}`).join(', ')})`;
+                } else {
+                  extra = ` → no agendé la nueva (${rp.reason})`;
+                }
+              }
+              d.markCalendlyPushSent(p.id);
+              console.log(`[Calendly] Push 4 #${p.id}: agenda_status=RESCHEDULED → reagenda cosechada${extra}`);
+              procesados++;
+              continue;
+            }
             if (plan.handled && plan.silent) {
-              // El closer ya avanzó el deal → no molestar. No se crea pendiente.
+              // El closer ya avanzó el deal / hay cita futura → no molestar. Sin pendiente.
               d.markCalendlyPushSent(p.id);
               console.log(`[Calendly] Push 4 #${p.id}: deal ya actualizado en HubSpot (${plan.reason}) → sin preguntar`);
               procesados++;

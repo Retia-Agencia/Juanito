@@ -8,6 +8,8 @@ import {
   isCoveredProgram,
   programPipelines,
   pickDealForPipeline,
+  decideFromAgenda,
+  AGENDA_TO_ASISTENCIA,
 } from '../src/hubspot/deals.js';
 
 // Etapas reales de AI Second Brain (pipeline 904247681).
@@ -92,6 +94,49 @@ test('pickDeal: sin deal en el pipeline → null', () => {
   const deals = [{ id: '3', properties: { pipeline: '999' } }];
   assert.equal(pickDealForPipeline(deals, '904247681'), null);
   assert.equal(pickDealForPipeline([], '904247681'), null);
+});
+
+// ─── Cosecha por agenda_status (§18.AG) ───────────────────────────────────────
+
+test('agenda: COMPLETED/NO_SHOW/CANCELED → harvest con la asistencia mapeada', () => {
+  assert.deepEqual(decideFromAgenda({ agendaStatus: 'COMPLETED' }), { action: 'harvest', asistencia: 'show' });
+  assert.deepEqual(decideFromAgenda({ agendaStatus: 'NO_SHOW' }), { action: 'harvest', asistencia: 'no_show' });
+  assert.deepEqual(decideFromAgenda({ agendaStatus: 'CANCELED' }), { action: 'harvest', asistencia: 'cancelado' });
+  // El mapa expuesto no incluye estados que no son cosecha directa.
+  assert.equal(AGENDA_TO_ASISTENCIA.RESCHEDULED, undefined);
+  assert.equal(AGENDA_TO_ASISTENCIA.SCHEDULED, undefined);
+});
+
+test('agenda: normaliza mayúsculas/espacios y valores desconocidos → ask', () => {
+  assert.equal(decideFromAgenda({ agendaStatus: ' completed ' }).action, 'harvest');
+  assert.deepEqual(decideFromAgenda({ agendaStatus: 'WHATEVER' }), { action: 'ask', reason: 'unknown_status' });
+  assert.deepEqual(decideFromAgenda({ agendaStatus: '' }), { action: 'ask', reason: 'no_agenda_status' });
+  assert.deepEqual(decideFromAgenda({ agendaStatus: null }), { action: 'ask', reason: 'no_agenda_status' });
+});
+
+test('agenda: RESCHEDULED → reschedule', () => {
+  assert.deepEqual(decideFromAgenda({ agendaStatus: 'RESCHEDULED' }), {
+    action: 'reschedule',
+    asistencia: 'reagendado',
+  });
+});
+
+test('agenda: SCHEDULED vencida sin cita futura → nudge', () => {
+  assert.deepEqual(decideFromAgenda({ agendaStatus: 'SCHEDULED', now: Date.now() }), { action: 'nudge' });
+});
+
+test('agenda: SCHEDULED con cita FUTURA → skip (no molestar)', () => {
+  const now = Date.parse('2026-07-17T12:00:00Z');
+  const future = '2026-07-21T15:30:00Z';
+  assert.deepEqual(decideFromAgenda({ agendaStatus: 'SCHEDULED', nextMeetingStart: future, now }), {
+    action: 'skip',
+    reason: 'upcoming',
+  });
+  // Una cita en el PASADO no cuenta como futura → sigue siendo nudge.
+  assert.deepEqual(
+    decideFromAgenda({ agendaStatus: 'SCHEDULED', nextMeetingStart: '2026-07-10T00:00:00Z', now }),
+    { action: 'nudge' }
+  );
 });
 
 // ─── Guardrail multi-cuenta (§ segunda cuenta de Calendly) ────────────────────
