@@ -78,6 +78,13 @@ export async function handleCommand({ text, sender, role }, deps = {}) {
     return wantsMetrics(cmd) ? handleMetricas(deps) : handleReporte(deps);
   }
 
+  // /reportejefe — scorecard consolidado (todos los programas + closers) desde call_outcomes.
+  // On-demand, independiente del cron diario (que está apagado). Para el JEFE y admins.
+  if (cmd === '/reportejefe' || cmd === '/reporte-jefe' || cmd.startsWith('/reportejefe ')) {
+    if (role !== 'admin' && role !== 'boss') return 'Ese comando es solo para el jefe o el equipo 🙂';
+    return handleReporteJefe(deps);
+  }
+
   // /persona — personalidad específica por grupo (se inyecta en el prompt de ese
   // grupo). SOLO admins: la persona moldea cómo responde el bot, mismo criterio
   // que save_memory.
@@ -585,6 +592,7 @@ function buildHelp(role) {
       '• /negocio [pendientes|ok|no|olvida <id>] — contexto del negocio',
       '• /calendly [on|off] [closer] — pushes precall',
       '• /reportes [leads|metricas] — preview (en grupo lo publica; jefe/admin)',
+      '• /reportejefe — scorecard consolidado (todos los programas + closers)',
       '• /status — estado del sistema',
       '• /whoami · /id — tu ID y rol',
     ].join('\n');
@@ -621,6 +629,18 @@ async function handleReporte({ buildSheetsReport } = {}) {
     return message;
   } catch (e) {
     return `No pude generar el reporte ahora: ${e.message}`;
+  }
+}
+
+async function handleReporteJefe({ buildBossReport } = {}) {
+  if (!buildBossReport) {
+    return 'El reporte del jefe no está disponible ahora.';
+  }
+  try {
+    const message = buildBossReport({});
+    return message || 'No hubo calls hoy para reportar.';
+  } catch (e) {
+    return `No pude generar el reporte del jefe ahora: ${e.message}`;
   }
 }
 

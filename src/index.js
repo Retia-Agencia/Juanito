@@ -51,6 +51,7 @@ import { getHealth } from './calendly/health.js';
 import { enforceGroup, reevaluateGroup, onSelfRemoved, sweepGroups } from './bot/group-guard.js';
 import { buildSheetsReport } from './scheduler/sheets-report.js';
 import { buildMetricsReport } from './scheduler/sheets-metrics.js';
+import { buildBossReport } from './scheduler/boss-report.js';
 
 // ─── Add a un grupo: autorizar (boss/admin) o salir (default-deny) ────────────
 // Si lo agrega directamente un boss/admin, autoriza sin más. En cualquier otro
@@ -160,6 +161,8 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
         buildSheetsReport,
         // /metricas — preview on-demand del reporte de métricas de desempeño
         buildMetricsReport,
+        // /reportejefe — scorecard consolidado del jefe (todos los programas + closers)
+        buildBossReport,
         // /persona — personalidad por grupo
         setGroupPersona,
         getGroupPersona,

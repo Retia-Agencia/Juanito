@@ -10,6 +10,7 @@ import { startCalendlyJobs } from './calendly.js';
 import { startSheetsReportJob } from './sheets-report.js';
 import { startSheetsMetricsJob } from './sheets-metrics.js';
 import { startOutcomeReportJob } from './outcome-report.js';
+import { startBossReportJob } from './boss-report.js';
 import { startStripeAlertsJob } from './stripe-alerts.js';
 import { startGroupMessagesJob } from './group-messages.js';
 import { startGroupRepliesJob } from './group-replies.js';
@@ -90,6 +91,14 @@ export async function startAllJobs() {
     startOutcomeReportJob();
   } catch (err) {
     console.warn('[Scheduler] Reporte de calls no disponible:', err.message);
+  }
+
+  // Reporte del JEFE (Dani): scorecard consolidado de todos los programas por DM. APAGADO
+  // por default (BOSS_REPORT_ENABLED != true); el comando /reportejefe funciona igual.
+  try {
+    startBossReportJob();
+  } catch (err) {
+    console.warn('[Scheduler] Reporte del jefe no disponible:', err.message);
   }
 
   // El job de resúmenes lo aporta el Track B. Mientras no exista en la rama,
