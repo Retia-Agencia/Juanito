@@ -85,6 +85,10 @@ hardening) tiene default seguro.
 - Docker instalado y corriendo; este repo se despliega aquí
 - La IP fija es crítica — no migrar sin planificarlo
 - Número del agente: SIM física, conecta via Baileys al arrancar
+- **Acceso SSH:** `root@157.230.152.202`, auth por password. La contraseña es `VPS_KEY` del `.env`
+  local. No hay clave pública cargada → usar **`plink`** (PuTTY, ya instalado en
+  `C:\Program Files\PuTTY\`): `plink -ssh -batch -pw "<VPS_KEY>" root@157.230.152.202 "<cmd>"`.
+  Deploy de archivos con `pscp` (mismo `-pw`). Ojo: `/root/juanito` **no es git** — se copia con `pscp`.
 
 ## Historia técnica importante
 
