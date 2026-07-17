@@ -118,7 +118,24 @@ const PAYMENTS = [
 test('windowTotals junta funnel + pagos Stripe de una ventana', () => {
   const win = { startMs: Date.UTC(2026, 5, 1), endMs: Date.UTC(2026, 5, 8) };
   const t = windowTotals(ROWS, SETTEO_ROWS, win, PAYMENTS);
-  assert.deepEqual(t, { total: 2, calendly: 1, reached: 1, paid: 1, payments: 1 });
+  // Sin selfCheckoutNaiveMs: `auto` cae al tag del Sheet (paid=1); call = payments − auto.
+  assert.deepEqual(t, { total: 2, calendly: 1, reached: 1, paid: 1, payments: 1, auto: 1, call: 0 });
+});
+
+test('windowTotals: con selfCheckoutNaiveMs, auto sale del link y call = total − auto', () => {
+  const win = { startMs: Date.UTC(2026, 5, 1), endMs: Date.UTC(2026, 5, 8) };
+  // Link sin pagos en la ventana → auto=0 aunque el Sheet tenga el tag; call = 1 − 0.
+  const t = windowTotals(ROWS, SETTEO_ROWS, win, PAYMENTS, []);
+  assert.equal(t.auto, 0);
+  assert.equal(t.call, 1);
+  assert.equal(t.paid, 1); // el tag del Sheet sigue disponible como métrica de funnel
+});
+
+test('windowTotals sin Stripe deja call=null (no hay total del cual restar)', () => {
+  const win = { startMs: Date.UTC(2026, 5, 1), endMs: Date.UTC(2026, 5, 8) };
+  const t = windowTotals(ROWS, SETTEO_ROWS, win, null);
+  assert.equal(t.call, null);
+  assert.equal(t.auto, 1); // fallback al tag del Sheet
 });
 
 test('windowTotals sin datos de Stripe deja payments=null (fallback al tag del Sheet)', () => {
@@ -161,77 +178,117 @@ test('buildWeeklySections marca historyOk=false si el Sheet no cubre la ventana 
 
 // ─── formatWeeklySections / formatReport extendido ────────────────────────────
 
-test('formatWeeklySections: promedio diario con deltas firmados y 4 semanas viejo→nuevo', () => {
-  const w = buildWeeklySections(ROWS, SETTEO_ROWS, WED, PAYMENTS);
+// Helpers para armar un `weekly` sintético con N semanas parciales y control total de
+// las métricas (evita depender de las divisiones ÷2.83 de los fixtures).
+function metricsOf({ total = 0, calendly = 0, reached = 0, auto = 0, call = null, payments = null }) {
+  return { total, calendly, reached, paid: auto, auto, call, payments };
+}
+function weeklyOf(perWeek, { paymentsSource = 'stripe', historyOk = true } = {}) {
+  const wins = partialWeekWindows(WED, { weeks: perWeek.length });
+  return {
+    partialWeeks: wins.map((win, i) => ({ win, metrics: metricsOf(perWeek[i]) })),
+    historyOk,
+    paymentsSource,
+  };
+}
+
+test('formatWeeklySections: bloque único, etiquetas relativas y % vs semana anterior', () => {
+  // Tendencia creciente (nuevo→viejo). Bases altas en leads/cal/chk → sí muestran %.
+  const w = weeklyOf([
+    { total: 17, calendly: 9, reached: 5, auto: 2, call: 1, payments: 3 }, // week
+    { total: 14, calendly: 8, reached: 4, auto: 1, call: 1, payments: 2 }, // week-1
+    { total: 11, calendly: 7, reached: 4, auto: 1, call: 1, payments: 2 }, // week-2
+    { total: 9, calendly: 6, reached: 3, auto: 1, call: 1, payments: 2 }, // week-3
+    { total: 8, calendly: 6, reached: 3, auto: 1, call: 0, payments: 1 }, // week-4 (base, sin %)
+  ]);
   const msg = formatWeeklySections(w);
+  const lines = msg.split('\n');
 
-  // Semana pasada lun 1/6 → dom 7/6, en promedio POR DÍA (÷7) con delta vs la anterior.
-  assert.match(msg, /📅 Semana pasada \(lun 1\/6 → dom 7\/6\)/);
-  assert.match(msg, /• Leads: 0\.3\/día \(ant: 0\.1, \+0\.2\)/); // 2/7 vs 1/7
-  assert.match(msg, /• Calendly: 0\.1\/día \(ant: 0\.0, \+0\.1\)/);
-  assert.match(msg, /• Pagos: 0\.1\/día \(ant: 0\.1, \+0\.0\)/);
+  // Un solo bloque compacto: nada del viejo diseño de dos secciones.
+  assert.match(msg, /📈 Tendencia semanal · promedio diario · lun → mié 8:00pm/);
+  assert.doesNotMatch(msg, /Semana pasada/);
+  assert.doesNotMatch(msg, /Últimas \d+ semanas/);
 
-  // 4 semanas like-for-like en tasa diaria (÷2.83 días: lun 00:00 → mié 20:00),
-  // rótulo con el día actual y corte 8pm, viejo→nuevo.
-  assert.match(msg, /📈 Últimas 4 semanas — lun → mié 8:00pm/);
-  const bullets = msg.split('\n').filter((l) => / leads\/d · /.test(l));
-  assert.equal(bullets.length, 4);
-  assert.match(bullets[0], /^• 18\/5: 0\.4 leads\/d · 0\.0 cal\/d · 0\.0 chk\/d · 0\.0 pagos\/d$/);
-  assert.match(bullets[3], /^• 8\/6 \(en curso\): 0\.4 leads\/d · 0\.0 cal\/d · 0\.4 chk\/d · 0\.4 pagos\/d$/);
+  // Etiquetas relativas, week arriba (en curso) → week-4 (la más vieja).
+  assert.match(msg, /• week \(en curso\): /);
+  assert.match(msg, /• week-4: /);
+
+  // Split de pagos con leyenda.
+  assert.match(msg, /💳 [\d.]+ auto/);
+  assert.match(msg, /📞 [\d.]+ call/);
+  assert.match(msg, /💳 auto = checkout automático · 📞 call = cerrado en llamada · \(%\) vs\. semana anterior/);
+
+  // La fila en curso trae % (base de la semana anterior ≥ 1.0/día).
+  const wk = lines.find((l) => l.startsWith('• week (en curso):'));
+  assert.match(wk, /\(\+\d+%\)/);
+  // La más vieja (week-4) NO trae % — es la base de la comparación.
+  const wk4 = lines.find((l) => l.startsWith('• week-4:'));
+  assert.doesNotMatch(wk4, /%/);
 
   assert.match(msg, /Pagos: Stripe \(solo conteo\)/);
   assert.doesNotMatch(msg, /histórico/); // historyOk=true → sin advertencia
   assert.doesNotMatch(msg, /\$\d/); // jamás montos de dinero
 });
 
-test('formatWeeklySections: delta negativo con signo y fallback al tag del Sheet', () => {
-  // Semana pasada peor que la anterior, sin Stripe.
-  const win = (s, e) => ({ startMs: s, endMs: e });
-  const metrics = (total, paid) => ({ total, calendly: 0, reached: 0, paid, payments: null });
-  const w = {
-    lastWeek: {
-      win: win(Date.UTC(2026, 5, 1), Date.UTC(2026, 5, 8)),
-      metrics: metrics(3, 1),
-      prev: { win: win(Date.UTC(2026, 4, 25), Date.UTC(2026, 5, 1)), metrics: metrics(7, 4) },
-    },
-    partialWeeks: partialWeekWindows(WED).map((pw) => ({ win: pw, metrics: metrics(0, 0) })),
-    historyOk: false,
-    paymentsSource: 'sheet',
-  };
+test('formatWeeklySections: % se omite en bases chicas (< 1.0/día), sin "+100%" espurios', () => {
+  // Pagos que saltan 0→1→1: en tasa diaria quedan < 1.0, así que NO deben mostrar %.
+  const w = weeklyOf([
+    { total: 40, calendly: 0, reached: 0, auto: 1, call: 1, payments: 2 }, // week
+    { total: 20, calendly: 0, reached: 0, auto: 0, call: 1, payments: 1 }, // week-1
+    { total: 10, calendly: 0, reached: 0, auto: 0, call: 0, payments: 0 }, // week-2
+  ]);
   const msg = formatWeeklySections(w);
-  assert.match(msg, /• Leads: 0\.4\/día \(ant: 1\.0, -0\.6\)/); // 3/7 vs 7/7
-  assert.match(msg, /• Pagos: 0\.1\/día \(ant: 0\.6, -0\.5\)/); // sin Stripe usa el paid del Sheet
+  const wk = msg.split('\n').find((l) => l.startsWith('• week (en curso):'));
+  // leads (base alta) sí muestra %, pero auto (base < 1.0/día) no.
+  assert.match(wk, /leads \(\+\d+%\)/);
+  assert.doesNotMatch(wk, /auto \([+-]/);
+});
+
+test('formatWeeklySections sin Stripe: call sale n/d y auto viene del tag del Sheet', () => {
+  const w = weeklyOf(
+    [
+      { total: 20, calendly: 0, reached: 0, auto: 2, call: null, payments: null },
+      { total: 10, calendly: 0, reached: 0, auto: 1, call: null, payments: null },
+    ],
+    { paymentsSource: 'sheet', historyOk: false }
+  );
+  const msg = formatWeeklySections(w);
+  assert.match(msg, /📞 call: n\/d \(Stripe no respondió\)/);
   assert.match(msg, /Pagos: tag del Sheet/);
+  assert.match(msg, /💳 [\d.]+ auto/); // auto sí sale (del Sheet)
+  assert.doesNotMatch(msg, /· 📞 [\d.]+ call/); // pero no hay columna call por fila
   assert.match(msg, /⚠️ El histórico del Sheet no cubre todas las semanas/);
 });
 
-test('formatReport anexa la línea de Stripe del día y el bloque semanal', () => {
+test('formatReport conserva las métricas del día y anexa el bloque de tendencia semanal', () => {
   const win = { startMs: Date.UTC(2026, 5, 9, 20), endMs: Date.UTC(2026, 5, 10, 20) };
   const summary = {
     ...summarize([row({ submittedAt: '10/6/2026 9:00:00' })], win),
     selfCheckout: { reached: 2, paid: 1 },
     stripeToday: 3,
-    weekly: buildWeeklySections(ROWS, SETTEO_ROWS, WED, PAYMENTS),
+    weekly: buildWeeklySections(ROWS, SETTEO_ROWS, WED, PAYMENTS, { weeks: 5 }),
   };
   const msg = formatReport(summary, win);
+  // Bloque del día: intacto respecto al formato clásico.
   assert.match(msg, /💰 Pagos confirmados \(Stripe\): 3/);
-  assert.match(msg, /📅 Semana pasada/);
-  assert.match(msg, /📈 Últimas 4 semanas/);
-  // La línea de self-checkout del Sheet se mantiene como métrica de funnel.
   assert.match(msg, /Llegaron al self-checkout: 2 \(pagaron: 1\)/);
+  // Bloque semanal: nuevo diseño.
+  assert.match(msg, /📈 Tendencia semanal/);
+  assert.match(msg, /• week \(en curso\): /);
+  assert.doesNotMatch(msg, /Semana pasada|Últimas \d+ semanas/);
 });
 
-test('formatReport con día vacío igual muestra pagos y comparativas semanales', () => {
+test('formatReport con día vacío igual muestra pagos y la tendencia semanal', () => {
   const win = { startMs: Date.UTC(2026, 5, 9, 20), endMs: Date.UTC(2026, 5, 10, 20) };
   const summary = {
     ...summarize([], win),
     stripeToday: 1,
-    weekly: buildWeeklySections(ROWS, SETTEO_ROWS, WED, PAYMENTS),
+    weekly: buildWeeklySections(ROWS, SETTEO_ROWS, WED, PAYMENTS, { weeks: 5 }),
   };
   const msg = formatReport(summary, win);
   assert.match(msg, /No llegaron postulaciones/);
   assert.match(msg, /💰 Pagos confirmados \(Stripe\): 1/);
-  assert.match(msg, /📅 Semana pasada/);
+  assert.match(msg, /📈 Tendencia semanal/);
 });
 
 test('formatReport sin weekly ni stripeToday queda idéntico al formato clásico', () => {

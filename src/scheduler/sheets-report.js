@@ -9,13 +9,12 @@
 
 import { CronJob } from 'cron';
 import { sendMessage, resolveGroupByName } from '../whatsapp/index.js';
-import { hasDmThread, getOutcomesInWindow } from '../db/index.js';
+import { hasDmThread } from '../db/index.js';
 import { fetchLeadRows, fetchSetteoRows } from '../sheets/index.js';
 import { computeWindow, toNaiveMs } from '../sheets/window.js';
-import { summarize, countSelfCheckout, averagePriorDays } from '../sheets/aggregate.js';
+import { summarize, countSelfCheckout } from '../sheets/aggregate.js';
 import { buildWeeklySections } from '../sheets/weekly.js';
 import { formatReport } from '../sheets/report.js';
-import { formatEstadoxAdminReport, invBreakdown } from '../sheets/estadox-report.js';
 import {
   STRIPE_API_KEY,
   fetchSucceededPaymentTimestamps,
@@ -59,8 +58,11 @@ async function resolveTarget() {
   return g?.id || null;
 }
 
-// Entrega el reporte a quien corresponda: el grupo (solo si está habilitado) + los DMs.
-// Devuelve cuántos envíos salieron.
+// Entrega EL MISMO reporte a todos (unificado 2026-07-17): el grupo (solo si está
+// habilitado) + la unión de SHEETS_REPORT_DM y SHEETS_REPORT_ESTADOX_DM. Antes esas dos
+// listas recibían mensajes distintos (estándar vs. 5 métricas); ahora ambas reciben el
+// reporte estándar rediseñado. Dedup por si un JID está en las dos listas. Devuelve
+// cuántos envíos salieron.
 async function deliverReport(message) {
   let enviados = 0;
 
@@ -75,7 +77,8 @@ async function deliverReport(message) {
     }
   }
 
-  enviados += await deliverToDMs(message, DM_RECIPIENTS());
+  const dmTargets = [...new Set([...DM_RECIPIENTS(), ...ESTADOX_DM_RECIPIENTS()])];
+  enviados += await deliverToDMs(message, dmTargets);
   return enviados;
 }
 
@@ -102,11 +105,16 @@ async function deliverToDMs(message, recipients, tag = 'Sheets') {
   return enviados;
 }
 
+// Payment Link del self-checkout de EstadoX. Si está vacío, el split auto/call cae al tag
+// del Sheet — regla del repo: ningún job se cae por falta de config.
+const SELF_CHECKOUT_PLINK = () => (process.env.STRIPE_SELF_CHECKOUT_PLINK || '').trim();
+
 // Núcleo orquestador (sin cron): lee → cuenta → formatea. Devuelve el mensaje y el
 // resumen para que el caller (o una prueba) decida qué hacer.
-// Días de historial a pedirle a Stripe: cubre la semana previa a la pasada (~21d)
-// y la parcial más vieja (~27d), con margen.
-const STRIPE_LOOKBACK_DAYS = 35;
+// Días de historial a pedirle a Stripe: con 5 semanas like-for-like la parcial más
+// vieja queda a ~32d (lun de hace 4 semanas), y la prev-week del historyOk a ~14d.
+// 42d (6 semanas) las cubre con margen. Volumen bajo → el tope de paginación holgado.
+const STRIPE_LOOKBACK_DAYS = 42;
 
 export async function buildSheetsReport({ now = new Date() } = {}) {
   const win = computeWindow(now);
@@ -120,11 +128,26 @@ export async function buildSheetsReport({ now = new Date() } = {}) {
   // Pagos reales (PaymentIntents succeeded) si hay key; si Stripe falla, el reporte
   // sale igual con el tag manual del Sheet — nunca tumba el job.
   let paymentsNaive = null;
+  let selfCheckoutNaive = null;
   if (STRIPE_API_KEY()) {
     try {
       const createdGteSec = Math.floor(now.getTime() / 1000) - STRIPE_LOOKBACK_DAYS * 24 * 3600;
       const secs = await fetchSucceededPaymentTimestamps({ createdGteSec });
       paymentsNaive = secs.map((s) => toNaiveMs(new Date(s * 1000)));
+
+      // Self-checkout atribuido por Payment Link (§18.AD): subconjunto de `paymentsNaive`
+      // que permite partir los pagos del bloque semanal en 💳 auto (checkout automático)
+      // vs 📞 call (cerrado en llamada = total − auto). Si no hay link configurado o Stripe
+      // falla acá, `auto` cae al tag del Sheet — el bloque sale igual (regla del repo).
+      const plink = SELF_CHECKOUT_PLINK();
+      if (plink) {
+        try {
+          const scSecs = await fetchSucceededPaymentTimestampsForLink({ paymentLink: plink, createdGteSec });
+          selfCheckoutNaive = scSecs.map((s) => toNaiveMs(new Date(s * 1000)));
+        } catch (e) {
+          console.warn('[Sheets] self-checkout por link falló, "auto" cae al tag del Sheet:', e.message);
+        }
+      }
     } catch (e) {
       console.warn('[Sheets] Stripe falló, uso el tag del Sheet:', e.message);
     }
@@ -132,117 +155,14 @@ export async function buildSheetsReport({ now = new Date() } = {}) {
   if (paymentsNaive) {
     summary.stripeToday = paymentsNaive.filter((ms) => ms >= win.startMs && ms < win.endMs).length;
   }
-  // Comparativas: semana pasada completa (lun-dom) + últimas 4 semanas like-for-like.
-  summary.weekly = buildWeeklySections(rows, setteoRows, now, paymentsNaive);
+  // Tendencia semanal compacta: últimas 5 semanas like-for-like (lun → corte de hoy),
+  // pagos partidos en auto/call por el Payment Link del self-checkout.
+  summary.weekly = buildWeeklySections(rows, setteoRows, now, paymentsNaive, {
+    weeks: 5,
+    selfCheckoutNaiveMs: selfCheckoutNaive,
+  });
 
   return { message: formatReport(summary, win), summary, win };
-}
-
-// Bogotá es UTC-5 fijo (sin DST). La ventana de window.js viene en epoch "naive"
-// (hora de pared de Bogotá); sumarle 5h da el instante UTC real, que es como
-// call_outcomes guarda `call_start` (toSqliteUtc → ISO UTC "YYYY-MM-DD HH:MM:SS").
-const BOGOTA_OFFSET_MS = 5 * 3600 * 1000;
-const naiveToSqliteUtc = (naiveMs) =>
-  new Date(naiveMs + BOGOTA_OFFSET_MS).toISOString().slice(0, 19).replace('T', ' ');
-
-// Llamadas efectivas del día = calls del programa `program` cuyo call_start cae en la
-// ventana y el closer marcó "Show" en el Push 4. ⚠️ Solo cuenta calls de closers con
-// Push 4 activo (allowlist CALENDLY_PUSH4_CLOSERS); si un closer de abogados no está
-// en esa lista, su call no aparece acá.
-function countEfectivas(win, program = 'abogados') {
-  const fromUtc = naiveToSqliteUtc(win.startMs);
-  const toUtc = naiveToSqliteUtc(win.endMs);
-  let efectivas = 0;
-  for (const r of getOutcomesInWindow(fromUtc, toUtc)) {
-    if (program && r.program !== program) continue;
-    if (r.asistencia === 'show') efectivas += 1;
-  }
-  return efectivas;
-}
-
-// Payment Link del self-checkout de EstadoX (§18.AD). Si está vacío, el conteo por Stripe
-// se apaga solo y el reporte sigue con el tag del Sheet — regla del repo: ningún job se
-// cae por falta de config.
-const SELF_CHECKOUT_PLINK = () => (process.env.STRIPE_SELF_CHECKOUT_PLINK || '').trim();
-
-// Margen hacia atrás al listar Checkout Sessions: se filtra por el `created` de la Session
-// pero se cuenta por el del PaymentIntent, que es posterior. Una Session de payment link
-// expira a las 24h → 48h de margen cubre cualquier pago de la ventana con holgura. El
-// exceso lo descarta el filtro de ventana de abajo; solo cuesta unas filas de más.
-const SESSION_LOOKBACK_SEC = 48 * 3600;
-
-// Pagos por self-checkout dentro de la ventana, atribuidos por Payment Link en vez de por
-// el tag manual del Sheet. Devuelve null si no hay key/link o si Stripe falla — el caller
-// trata null como "no se pudo medir", que NO es lo mismo que cero.
-async function countSelfCheckoutFromStripe(win) {
-  const plink = SELF_CHECKOUT_PLINK();
-  if (!STRIPE_API_KEY() || !plink) return null;
-  try {
-    // win.startMs es epoch "naive" (hora de pared de Bogotá); +5h lo lleva al instante UTC
-    // real, que es la escala en la que Stripe filtra `created`.
-    const createdGteSec =
-      Math.floor((win.startMs + BOGOTA_OFFSET_MS) / 1000) - SESSION_LOOKBACK_SEC;
-    const secs = await fetchSucceededPaymentTimestampsForLink({
-      paymentLink: plink,
-      createdGteSec,
-    });
-    const naive = secs.map((s) => toNaiveMs(new Date(s * 1000)));
-    return naive.filter((ms) => ms >= win.startMs && ms < win.endMs).length;
-  } catch (e) {
-    console.warn('[Sheets][EstadoX] self-checkout por link falló:', e.message);
-    return null;
-  }
-}
-
-// Reporte ADMIN de EstadoX (§18.AD) — el mensaje DISTINTO que pidió Mariana. Reusa las
-// mismas fuentes que el reporte estándar (Sheet de leads + tab Setteo + Stripe) más los
-// outcomes del Push 4 para las llamadas efectivas. Devuelve mensaje + data para pruebas.
-export async function buildEstadoxAdminReport({ now = new Date() } = {}) {
-  const win = computeWindow(now);
-  const [rows, setteoRows] = await Promise.all([fetchLeadRows(), fetchSetteoRows()]);
-
-  const today = summarize(rows, win); // total + desglose inversión + calendlyBooked
-  const avg30 = averagePriorDays(rows, setteoRows, now, 30).total;
-  const sc = countSelfCheckout(setteoRows, win);
-
-  // Total de pagos Stripe del día (para derivar "fuera de self-checkout" = total − SC).
-  // Si Stripe falla, stripeToday queda null y el formatter muestra "n/d".
-  let stripeToday = null;
-  if (STRIPE_API_KEY()) {
-    try {
-      const createdGteSec = Math.floor(now.getTime() / 1000) - STRIPE_LOOKBACK_DAYS * 24 * 3600;
-      const secs = await fetchSucceededPaymentTimestamps({ createdGteSec });
-      const naive = secs.map((s) => toNaiveMs(new Date(s * 1000)));
-      stripeToday = naive.filter((ms) => ms >= win.startMs && ms < win.endMs).length;
-    } catch (e) {
-      console.warn('[Sheets][EstadoX] Stripe falló, "fuera de self-checkout" saldrá n/d:', e.message);
-    }
-  }
-
-  // EN OBSERVACIÓN (desde 2026-07-16): el mensaje sigue usando el tag manual del Sheet
-  // (`sc.paid`); el conteo por Payment Link corre al lado y solo se loguea. Cuando el log
-  // muestre varios días sin DIFF, `scPaid` pasa a ser `scPaidStripe`, el tag deja de leerse
-  // para esta métrica y esto se borra. Si aparece DIFF, el log dice cuál de los dos miente
-  // ANTES de que el número llegue a Mariana.
-  const scPaidStripe = await countSelfCheckoutFromStripe(win);
-  if (scPaidStripe != null) {
-    const ok = scPaidStripe === sc.paid;
-    console.log(
-      `[EstadoX] scPaid — sheet:${sc.paid} stripe:${scPaidStripe} ${ok ? '✓' : '⚠ DIFF'}`
-    );
-  }
-
-  const data = {
-    total: today.total,
-    avg30,
-    inv: invBreakdown(today.breakdown),
-    agendadas: today.calendlyBooked,
-    efectivas: countEfectivas(win, 'abogados'),
-    scPaid: sc.paid,
-    scPaidStripe, // en observación, todavía no sale en el mensaje — ver nota arriba
-    stripeToday,
-  };
-  return { message: formatEstadoxAdminReport(data, win), data, win };
 }
 
 export function startSheetsReportJob() {
@@ -251,31 +171,21 @@ export function startSheetsReportJob() {
     return;
   }
 
-  const dms = DM_RECIPIENTS();
-  const estadoxDms = ESTADOX_DM_RECIPIENTS();
+  // Unión de destinatarios de DM (unificado 2026-07-17): las dos listas reciben el MISMO
+  // reporte, así que se deduplican. SHEETS_REPORT_ESTADOX_DM se conserva como alias para
+  // no romper la config del VPS; funcionalmente ya es equivalente a SHEETS_REPORT_DM.
+  const dms = [...new Set([...DM_RECIPIENTS(), ...ESTADOX_DM_RECIPIENTS()])];
   const grupo = GROUP_ENABLED() && TARGET();
-  if (!dms.length && !estadoxDms.length && !grupo) {
+  if (!dms.length && !grupo) {
     console.warn(
       '[Sheets] sin destinatarios (grupo apagado, sin SHEETS_REPORT_DM ni SHEETS_REPORT_ESTADOX_DM) → reporte diario desactivado'
     );
     return;
   }
 
-  // Los dos reportes son EXCLUYENTES por destinatario: quien está en la lista de EstadoX
-  // recibe el mensaje admin EN LUGAR del estándar. Estar en ambas listas no rompe nada,
-  // pero le llegan dos reportes el mismo día — casi siempre es un error de config.
-  const enAmbas = estadoxDms.filter((j) => dms.includes(j));
-  if (enAmbas.length) {
-    console.warn(
-      `[Sheets] ⚠️ ${enAmbas.join(', ')} está en SHEETS_REPORT_DM y en SHEETS_REPORT_ESTADOX_DM → recibirá los DOS reportes. ¿Querías solo el admin?`
-    );
-  }
-
   new CronJob(
     CRON(),
     async () => {
-      // Los dos reportes van en try/catch separados a propósito: si el admin de EstadoX
-      // falla (Stripe caído, Sheet raro), el reporte estándar sale igual, y al revés.
       try {
         const { message, summary } = await buildSheetsReport();
         const n = await deliverReport(message);
@@ -283,21 +193,12 @@ export function startSheetsReportJob() {
       } catch (e) {
         console.error('[Sheets] error en el reporte diario:', e.message);
       }
-
-      if (!ESTADOX_DM_RECIPIENTS().length) return;
-      try {
-        const { message, data } = await buildEstadoxAdminReport();
-        const n = await deliverToDMs(message, ESTADOX_DM_RECIPIENTS(), 'EstadoX');
-        console.log(`[EstadoX] reporte admin: ${n} envío(s) (${data.total} typeforms)`);
-      } catch (e) {
-        console.error('[EstadoX] error en el reporte admin:', e.message);
-      }
     },
     null,
     true,
     TZ()
   );
   console.log(
-    `[Sheets] Job de reporte diario activo ✅ (cron "${CRON()}", grupo: ${grupo ? `"${TARGET()}"` : 'APAGADO'}, DMs: ${dms.length}, DMs admin EstadoX: ${estadoxDms.length})`
+    `[Sheets] Job de reporte diario activo ✅ (cron "${CRON()}", grupo: ${grupo ? `"${TARGET()}"` : 'APAGADO'}, DMs: ${dms.length})`
   );
 }

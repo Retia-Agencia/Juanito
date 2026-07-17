@@ -14,66 +14,85 @@ const DAY_MS = 24 * 3600 * 1000;
 const DOW = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
 const dow = (ms) => DOW[new Date(ms).getUTCDay()];
 
-// Bloque de comparativas semanales (§18.B). Recibe el resultado de
-// buildWeeklySections (weekly.js). Todo en PROMEDIO DIARIO (pedido del owner
-// 2026-07-09): total de la ventana / días exactos de la ventana — la semana
-// completa divide entre 7 y las parciales comparten duración, así que siguen
-// siendo comparables entre sí. Viñetas por línea (las tablas alineadas se rompen
-// en WhatsApp móvil), orden viejo→nuevo, deltas con signo sobre los valores YA
-// redondeados (para que el delta cuadre con lo que se ve).
+// Debajo de esta tasa diaria NO se muestra el % de cambio: en números chicos un
+// 0.1→0.2 se leería como "+100%" (ruido), y una base 0 haría div/0. Se muestra
+// solo el valor. (redesign 2026-07-17)
+const PCT_MIN_BASE = 1.0;
+
+// Bloque de tendencia semanal (§18.B, redesign 2026-07-17). Recibe el resultado de
+// buildWeeklySections (weekly.js). UN solo bloque compacto (antes eran dos secciones
+// que duplicaban la semana pasada), todo en PROMEDIO DIARIO, like-for-like: cada
+// semana medida lun → el MISMO corte de hoy (parciales de weekly.js), así el "en
+// curso" se compara contra tramos iguales, no contra semanas completas.
+//
+// Etiquetas RELATIVAS (week, week-1…), nuevo→viejo. Cada métrica trae el % de cambio
+// vs la semana inmediatamente anterior (la de abajo), sobre las tasas YA redondeadas
+// para que el % cuadre con lo que se ve. Viñetas por línea (las tablas alineadas se
+// rompen en WhatsApp móvil).
+//
+// Pagos partidos en dos: 💳 auto (checkout automático / self-checkout) y 📞 call
+// (cerrado en llamada = total Stripe − auto). Sin Stripe no hay total → `call` sale
+// n/d y solo se muestra `auto` (del tag del Sheet).
 export function formatWeeklySections(weekly) {
   if (!weekly) return '';
-  const { lastWeek, partialWeeks, historyOk, paymentsSource } = weekly;
-  // Pagos: Stripe si hay dato; si no, el tag manual del Sheet.
-  const pay = (m) => (m.payments != null ? m.payments : m.paid);
+  const { partialWeeks, historyOk, paymentsSource } = weekly;
+  const hasStripe = paymentsSource === 'stripe';
 
   const days = (win) => (win.endMs - win.startMs) / DAY_MS;
   const d1 = (n) => n.toFixed(1);
-  // Las 4 tasas diarias de una ventana, redondeadas a 1 decimal.
+  // Tasas diarias de una ventana (redondeadas a 1 decimal). `call` puede ser null.
   const rates = (m, win) => ({
     leads: d1(m.total / days(win)),
     cal: d1(m.calendly / days(win)),
     chk: d1(m.reached / days(win)),
-    pagos: d1(pay(m) / days(win)),
+    auto: d1(m.auto / days(win)),
+    call: m.call != null ? d1(m.call / days(win)) : null,
   });
-  const fmtDelta = (cur, prev) => {
-    let s = (parseFloat(cur) - parseFloat(prev)).toFixed(1);
-    if (s === '-0.0') s = '0.0';
-    return s.startsWith('-') ? s : `+${s}`;
+
+  // % de cambio vs la semana anterior, sobre las tasas redondeadas. Devuelve '' (sin
+  // sufijo) cuando no hay base con qué comparar o la base es < PCT_MIN_BASE.
+  const pct = (cur, prev) => {
+    if (cur == null || prev == null) return '';
+    const p = parseFloat(prev);
+    if (!(p >= PCT_MIN_BASE)) return '';
+    const r = Math.round(((parseFloat(cur) - p) / p) * 100);
+    return ` (${r >= 0 ? '+' : ''}${r}%)`;
   };
 
-  const lines = ['──────────'];
-
-  const lw = rates(lastWeek.metrics, lastWeek.win);
-  const pv = rates(lastWeek.prev.metrics, lastWeek.prev.win);
-  const row = (label, cur, prev) => `• ${label}: ${cur}/día (ant: ${prev}, ${fmtDelta(cur, prev)})`;
-  lines.push(
-    `📅 Semana pasada (lun ${dm(lastWeek.win.startMs)} → dom ${dm(lastWeek.win.endMs - DAY_MS)})`,
-    row('Leads', lw.leads, pv.leads),
-    row('Calendly', lw.cal, pv.cal),
-    row('Self-checkout', lw.chk, pv.chk),
-    row('Pagos', lw.pagos, pv.pagos)
-  );
-
-  // Últimas N semanas, lunes → día/corte de hoy. partialWeeks viene con índice 0 =
-  // semana en curso; se imprime viejo→nuevo para leer la tendencia.
   const cur = partialWeeks[0].win;
   const cutH = new Date(cur.endMs).getUTCHours();
   const cutLabel = cutH === 0 ? '12:00am' : `${cutH > 12 ? cutH - 12 : cutH}:00${cutH >= 12 ? 'pm' : 'am'}`;
-  lines.push('', `📈 Últimas ${partialWeeks.length} semanas — lun → ${dow(cur.endMs)} ${cutLabel}`);
-  for (let i = partialWeeks.length - 1; i >= 0; i--) {
-    const { win, metrics: m } = partialWeeks[i];
-    const r = rates(m, win);
-    const enCurso = i === 0 ? ' (en curso)' : '';
-    lines.push(
-      `• ${dm(win.startMs)}${enCurso}: ${r.leads} leads/d · ${r.cal} cal/d · ${r.chk} chk/d · ${r.pagos} pagos/d`
-    );
+
+  const lines = [
+    '──────────',
+    `📈 Tendencia semanal · promedio diario · lun → ${dow(cur.endMs)} ${cutLabel}`,
+    '',
+  ];
+
+  // Índice 0 = semana en curso ("week"); k = "week-k". El % de cada fila compara
+  // contra la de abajo (una semana más vieja); la más vieja no lleva %.
+  for (let i = 0; i < partialWeeks.length; i++) {
+    const r = rates(partialWeeks[i].metrics, partialWeeks[i].win);
+    const older = partialWeeks[i + 1]
+      ? rates(partialWeeks[i + 1].metrics, partialWeeks[i + 1].win)
+      : null;
+    const p = (key) => (older ? pct(r[key], older[key]) : '');
+    const label = i === 0 ? 'week (en curso)' : `week-${i}`;
+    const parts = [
+      `${r.leads} leads${p('leads')}`,
+      `${r.cal} cal${p('cal')}`,
+      `${r.chk} chk${p('chk')}`,
+      `💳 ${r.auto} auto${p('auto')}`,
+    ];
+    if (r.call != null) parts.push(`📞 ${r.call} call${p('call')}`);
+    lines.push(`• ${label}: ${parts.join(' · ')}`);
   }
 
-  lines.push(
-    '',
-    paymentsSource === 'stripe' ? 'Pagos: Stripe (solo conteo)' : 'Pagos: tag del Sheet'
-  );
+  lines.push('', '💳 auto = checkout automático · 📞 call = cerrado en llamada · (%) vs. semana anterior');
+  if (!hasStripe) {
+    lines.push('📞 call: n/d (Stripe no respondió) — 💳 auto sale del tag del Sheet');
+  }
+  lines.push(hasStripe ? 'Pagos: Stripe (solo conteo)' : 'Pagos: tag del Sheet');
   if (!historyOk) {
     lines.push('⚠️ El histórico del Sheet no cubre todas las semanas; los conteos viejos pueden quedar cortos.');
   }

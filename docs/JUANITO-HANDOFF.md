@@ -1356,6 +1356,26 @@ cron de 8pm SIGUE APAGADO** (pedido del jefe 2026-07-08; Alejandro decidió mant
   calcula sobre los valores YA redondeados para que cuadre con lo mostrado. Tests actualizados,
   36/36 verde.
 
+**✅ REDISEÑO DEL BLOQUE SEMANAL (2026-07-17, pedido de Alejandro para el reporte de Mariana):**
+`formatWeeklySections` pasó de DOS secciones (📅 Semana pasada lun-dom + 📈 Últimas 4 semanas) a
+**UN solo bloque compacto** — la semana pasada aparecía duplicada y la comparación mezclaba semana
+completa contra parcial. Cambios:
+- **Etiquetas relativas** en vez de fechas absolutas: `week (en curso)`, `week-1` … `week-4`
+  (5 semanas, nuevo→viejo). `buildWeeklySections` se llama con `{ weeks: 5 }`.
+- **Todo like-for-like:** las 5 semanas se miden lun → el MISMO corte de hoy (parciales de
+  `window.js`). Se eliminó el render del bloque de semana completa; `lastWeek` sigue calculándose
+  solo para `historyOk`.
+- **Diferencias en %** vs. la semana inmediatamente anterior (la de abajo), sobre las tasas ya
+  redondeadas. Se **omite** el % cuando la base es `< 1.0/día` (`PCT_MIN_BASE` en `report.js`) para
+  no mostrar `+100%` espurios en números chicos ni dividir por cero. La semana más vieja no lleva %.
+- **Pagos partidos en dos:** `💳 auto` (checkout automático = self-checkout, atribuido por **Payment
+  Link** en Stripe vía `fetchSucceededPaymentTimestampsForLink` — misma fuente que el total) y
+  `📞 call` (cerrado en llamada = total Stripe − auto, ≥0 por construcción). Sin Stripe: `call` sale
+  `n/d` y `auto` cae al tag del Sheet. `windowTotals` ahora devuelve `auto`/`call`; el scheduler
+  cosecha el link una sola vez (junto al total) y `STRIPE_LOOKBACK_DAYS` subió a 42 (cubre 5 semanas).
+- El **bloque del día NO se tocó** (Total, Calendly, self-checkout, Pagos Stripe intactos). Tests
+  actualizados: `test/sheets-weekly.test.js` 20/20, suite de sheets+stripe verde.
+
 ### 18.C 🔵 Aviso de "nueva call agendada" a los closers (idea Sebas — 2026-06-10)
 
 **Pedido de Sebas (textual):** *"Si nosotros borramos y generamos espacio en agenda, siguiendo el
@@ -2733,107 +2753,15 @@ cierra solo a los 3 días. En `call_outcomes` sobreviven **2 campos y ambos SON 
 **Pendiente:** el reporte histórico anterior a este cambio sigue teniendo el doble conteo (no se hizo backfill);
 si alguien compara semanas, el volumen de calls baja legítimamente al activarlo.
 
-### 18.AD 🟡 Reporte ADMIN de EstadoX para Mariana Cerón (2026-07-15 · self-checkout cableado 2026-07-16)
+### 18.AD ⚫ RETIRADA — Reporte ADMIN de EstadoX de 5 métricas (2026-07-15 → 2026-07-17)
 
-**Qué es:** un mensaje **distinto** al reporte estándar de leads (§18.B), con las 5 métricas que pidió
-Mariana el 2026-07-15. Misma ventana 8pm→8pm. Sin PII — solo conteos. Formatter puro en
-`src/sheets/estadox-report.js`; el builder (`buildEstadoxAdminReport`) vive en `scheduler/sheets-report.js`.
-
-**Las 5 métricas y de dónde salen:**
-1. **Typeforms del día** + promedio diario de los 30 previos → Sheet de leads (`summarize` + `averagePriorDays`).
-2. **Desglose "dispuesto a invertir"** sí / sí financiado / no → mismo Sheet (`invBreakdown`).
-3. **Llamadas agendadas** → leads de hoy que reservaron Calendly. **Efectivas** → `Show` en el Push 4
-   (§18.AB), programa `abogados`. ⚠️ Solo cuenta closers con Push 4 activo (`CALENDLY_PUSH4_CLOSERS`).
-4. **Pagos self-checkout** → ver abajo.
-5. **Pagos fuera de self-checkout** = `stripeToday − scPaid`. Si Stripe no responde, sale `n/d`.
-
-**El self-checkout: por qué pasa por Checkout Sessions.** Hasta el 2026-07-16 este conteo salía del
-**tag manual** del Sheet (col G del tab "📞 Setteo Pendiente"). El owner entregó el Payment Link real
-(`STRIPE_SELF_CHECKOUT_PLINK`, un `plink_…` — **no** la URL `buy.stripe.com`, que es solo la cara
-pública; se resuelve listando `/v1/payment_links` y matcheando por `url`). Con él, el conteo se
-atribuye por link vía `fetchSucceededPaymentTimestampsForLink`.
-
-Tres decisiones de ese lector que **no son gratuitas** y conviene no revertir por "simplificar":
-- **El PaymentIntent NO sabe de qué link vino.** Esa relación solo existe en la Checkout Session → hay
-  que listar sessions del link y expandir su PI (`expand[]=data.payment_intent`).
-- **Se cuenta con el `created` del PI, no el de la Session.** Medido sobre la cuenta real, el pago
-  ocurre **3-6 min después** de que nace el carrito. Con el reloj de la Session, un pago iniciado 7:57pm
-  y pagado 8:01pm caería en un día distinto al que le da `fetchSucceededPaymentTimestamps` — y como el
-  formatter hace `Math.max(0, stripeToday − scPaid)`, la resta negativa se **taparía en silencio**.
-- **Mismo predicado `status === 'succeeded'`** que el conteo total ⇒ el self-checkout es por construcción
-  un **subconjunto** del total, y la resta nunca puede dar negativo.
-- **Margen de 48h hacia atrás** al listar sessions: el filtro `created[gte]` aplica al `created` de la
-  **Session**, que es anterior al del PI. Una session de payment link expira a las 24h → 48h cubre de
-  sobra. El exceso lo descarta el filtro de ventana; en la práctica cada consulta trae 3-8 filas (1 página).
-
-**🟡 EN OBSERVACIÓN — las dos fuentes corren en paralelo.** El mensaje **todavía usa el tag del Sheet**
-(`sc.paid`); el conteo por link se calcula al lado y solo se **loguea**:
-`[EstadoX] scPaid — sheet:N stripe:M ✓|⚠ DIFF`. Cuando pasen varios días sin `DIFF`, `scPaid` pasa a ser
-`scPaidStripe`, el tag deja de leerse para esta métrica y se borra el bloque. Si aparece `DIFF`, el log
-dice cuál de los dos miente **antes** de que el número le llegue a Mariana.
-
-**Verificado contra la cuenta real (2026-07-16):** los 5 pagos del link caen en las ventanas correctas
-— 2 el 07-08, 1 el 07-09, 2 el 07-10. `test/stripe.test.js` 9/9 verde (incluye el test de que se usa el
-reloj del PI y no el de la session).
-
-**⚠️ Ojo con los montos.** El link lista **$1000 USD** pero los pagos reales fueron $900/$800 (promo
-codes o precios ajustados). Para un **conteo** da igual; si algún día el reporte muestra **montos**, el
-precio del link **no sirve** como proxy — hay que leer el `amount` real.
-
-**Contexto del negocio:** hay **23 payment links** en la cuenta; el owner clasificó 3 (self-checkout
-$1000 · "mitad" $500 · "Masterclasses" $800). Los otros 20 caen en "fuera de self-checkout", que es
-correcto para el split de 2 baldes que pidió Mariana. Los 2 links de **ventas** están identificados pero
-**sin usar** — se decidió (2026-07-16) no abrir una tercera línea que ella no pidió. Último pago por
-self-checkout: **2026-07-10** → el número que verá la mayoría de los días es `0`, y **es real, no un bug**.
-
-**Envío (cableado 2026-07-16).** Corre en el **mismo cron** que el reporte estándar (`SHEETS_REPORT_CRON`,
-default `0 20 * * *` = justo al cerrar la ventana). Los destinatarios salen de `SHEETS_REPORT_ESTADOX_DM`
-(CSV de JIDs) y reciben el mensaje admin **EN LUGAR** del estándar — son listas excluyentes; si un JID
-está en las dos, arranca con un warn porque recibirá los dos reportes. Los dos reportes van en
-**try/catch separados**: si el admin falla, el estándar sale igual, y al revés. Vacío → el admin no sale
-y el job sigue vivo para el estándar (regla del repo: autodesactivable).
-
-⚠️ **Anti-ban (§18.D):** el JID debe ser aquel desde el que la persona **le escribió** a Juanito
-(`/whoami` se lo dice). Sin hilo previo `deliverToDMs` lo **omite con warn** y no entrega. Mariana tiene
-que escribirle a Juanito **antes** de que esto sirva de algo.
-
-**Env:** `STRIPE_SELF_CHECKOUT_PLINK` (vacío → el conteo por link se apaga solo y sigue el tag) ·
-`SHEETS_REPORT_ESTADOX_DM`. ⚠️ La `rk_` necesita permiso **read sobre Checkout Sessions** además de
-PaymentIntents, o el conteo por link cae al `catch` y sigue con el tag **en silencio**.
-
-**✅ Deploy 2026-07-17 00:17 UTC (19:17 Bogotá) — EN VIVO y verificado.** Copiado SELECTIVO de 3
-archivos (`stripe/client.js`, `scheduler/sheets-report.js`, `sheets/estadox-report.js`) + el
-`docker-compose.yml`, con md5 comparados uno a uno. **Mariana quedó movida**: salió de
-`SHEETS_REPORT_DM` (que quedó vacío → el reporte estándar ya no le llega a nadie) y entró a
-`SHEETS_REPORT_ESTADOX_DM`. Log de arranque:
-`[Sheets] Job de reporte diario activo ✅ (cron "0 20 * * *", grupo: APAGADO, DMs: 0, DMs admin EstadoX: 1)`.
-WA reconectó **sin QR**. Ejercitado dentro del contenedor antes del cron: mensaje real correcto (72
-typeforms, prom. 30d 64.3, 11/22/20, 4 agendadas) y el log de observación **disparó**:
-`[EstadoX] scPaid — sheet:0 stripe:0 ✓`.
-**Rollback:** `/root/juanito-backup-20260717-001229.tar.gz` (incluye `.env`) + `.env.bak-20260717-001229`
-+ imagen `juanito-agent:pre-estadox-20260717-001229`.
-
-**🪤 Dos trampas nuevas del deploy, ambas silenciosas — anotarlas junto a las de §12:**
-1. **El compose declara cada var una por una en `environment:`.** Una var que existe en el `.env` del VPS
-   pero no está listada ahí **no llega al contenedor** y la feature muere sin un solo error en los logs
-   (mismo bug que `0bc6540` con HubSpot). Faltaban las dos nuevas; se agregaron en `7064b3a`.
-2. **Comentario inline sobre un valor VACÍO = el comentario ES el valor.** `SHEETS_REPORT_DM=   # nota`
-   hizo que `docker compose config` reportara `SHEETS_REPORT_DM: '# vaciado 2026-07-16: Mariana pasó…'`
-   → `DM_RECIPIENTS()` habría parseado esa frase como destinatario. Con valor no-vacío el comentario SÍ
-   se recorta bien (`STRIPE_API_KEY` lleva años así). **Regla:** si el valor va vacío, el comentario va en
-   su propia línea.
-
-**⚠️ El `✓` del 2026-07-17 es débil:** `sheet:0 stripe:0` — coinciden porque **ambos son cero** (el último
-pago por self-checkout fue el 07-10). Prueba que el camino corre, **no** que las fuentes concuerden. La
-evidencia real solo llega un día con pagos; no cerrar la observación hasta entonces.
-
-**Pendientes:** cerrar el periodo de observación (ver arriba); `/reporte` **no** dispara el admin (solo el
-cron); `buildSheetsReport` sigue corriendo en el cron aunque ya no tenga destinatarios (pega a Sheets y
-Stripe para nada — inofensivo, pero es trabajo tirado); `efectivas: 0` conviene contrastarlo contra la
-agenda real (solo cuenta closers con Push 4 activo, §18.AB).
-
-⚠️ **Al desplegar:** `sheets-report.js` **importa `estadox-report.js` arriba del módulo**, así que copiar
-uno sin el otro es crash al arrancar → backoff de `entrypoint.sh` → riesgo de softban. Van juntos o no van.
+**Retirada el 2026-07-17:** el reporte de 5 métricas que pedía Mariana Cerón se **unificó dentro
+del reporte estándar rediseñado** (§18.B). Ya no hay dos mensajes: grupo y todos los DMs
+(`SHEETS_REPORT_DM` + `SHEETS_REPORT_ESTADOX_DM`, ahora alias) reciben el MISMO reporte. Se
+borraron `src/sheets/estadox-report.js`, `buildEstadoxAdminReport` y sus helpers
+(`countEfectivas`, `countSelfCheckoutFromStripe`). La atribución de self-checkout por Payment
+Link sobrevive: ahora alimenta el split 💳 auto / 📞 call del bloque semanal (§18.B). Historia
+completa en git (commits de §18.AD originales + el de la unificación).
 
 ### 18.AF 🔵 HubSpot read-only: fill de teléfono precall + modelo nudge (2026-07-15)
 
