@@ -259,7 +259,8 @@ async function planNudge(d, p) {
       nextMeetingStart: match.nextMeetingStart,
       now: d.now(),
     });
-    if (a.action === 'harvest') return { handled: true, harvest: a.asistencia, reason: match.agendaStatus };
+    if (a.action === 'harvest')
+      return { handled: true, harvest: a.asistencia, reason: match.agendaStatus, won: match.won };
     if (a.action === 'reschedule')
       return { handled: true, reschedule: true, nextMeetingStart: match.nextMeetingStart, reason: 'RESCHEDULED' };
     if (a.action === 'skip') return { handled: true, silent: true, reason: a.reason };
@@ -649,11 +650,17 @@ export async function runCalendlyDelivery() {
           ) {
             const plan = await planNudge(d, p);
             // §18.AG — cosecha directa: registra el outcome desde HubSpot, sin preguntar.
+            // §18.AG+venta — eje aparte de la asistencia: un 'show' con el deal ya en la
+            // etapa Ganado cosecha también el resultado, para que el conteo de ventas no
+            // salga corto en los programas cosechados en silencio (sin esto dependía de
+            // que el closer, ya sin nada que contestar, lo cargara aparte — no pasaba).
             if (plan.handled && plan.harvest) {
-              if (d.recordAutoOutcome) d.recordAutoOutcome(pendingOutcomeFrom(p, { asistencia: plan.harvest }));
+              const resultado = plan.harvest === 'show' && plan.won ? 'venta_cerrada' : null;
+              if (d.recordAutoOutcome)
+                d.recordAutoOutcome(pendingOutcomeFrom(p, { asistencia: plan.harvest, resultado }));
               d.markCalendlyPushSent(p.id);
               console.log(
-                `[Calendly] Push 4 #${p.id}: agenda_status=${plan.reason} → outcome '${plan.harvest}' cosechado de HubSpot (sin preguntar)`
+                `[Calendly] Push 4 #${p.id}: agenda_status=${plan.reason} → outcome '${plan.harvest}'${resultado ? ` + resultado='${resultado}'` : ''} cosechado de HubSpot (sin preguntar)`
               );
               procesados++;
               continue;

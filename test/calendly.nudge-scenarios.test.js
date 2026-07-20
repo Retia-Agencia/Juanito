@@ -151,6 +151,48 @@ test('harvest: agenda_status COMPLETED → outcome "show" cosechado, sin pregunt
   assert.equal(h.store._rows.find((r) => r.push_n === 4).status, 'sent');
 });
 
+test('harvest: COMPLETED + deal en etapa Ganado → cosecha también resultado="venta_cerrada"', async () => {
+  process.env.HUBSPOT_AGENDA_HARVEST = 'true';
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'h1w', startInMin: 20, closerEmail: SALAZAR, prospectName: 'Ana Gómez', nowMs: now })];
+  const h = installHarness(scheduler, {
+    events, optins: [SALAZAR_PHONE], nowMs: now,
+    match: { covered: true, agendaStatus: 'COMPLETED', won: true, deal: { id: '55' } },
+  });
+  await pollThenDeliver(h, now);
+
+  const o = h.store._outcomes[0];
+  assert.equal(o.asistencia, 'show');
+  assert.equal(o.resultado, 'venta_cerrada', 'la venta se cosecha junto con la asistencia, sin preguntar');
+});
+
+test('harvest: COMPLETED sin el deal en Ganado → resultado null (no se inventa una venta)', async () => {
+  process.env.HUBSPOT_AGENDA_HARVEST = 'true';
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'h1n', startInMin: 20, closerEmail: SALAZAR, prospectName: 'Ana Gómez', nowMs: now })];
+  const h = installHarness(scheduler, {
+    events, optins: [SALAZAR_PHONE], nowMs: now,
+    match: { covered: true, agendaStatus: 'COMPLETED', won: false, deal: { id: '55' } },
+  });
+  await pollThenDeliver(h, now);
+
+  assert.equal(h.store._outcomes[0].resultado, null);
+});
+
+test('harvest: NO_SHOW con deal en Ganado igual → resultado null (solo "show" cosecha venta)', async () => {
+  process.env.HUBSPOT_AGENDA_HARVEST = 'true';
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'h2w', startInMin: 20, closerEmail: SALAZAR, nowMs: now })];
+  const h = installHarness(scheduler, {
+    events, optins: [SALAZAR_PHONE], nowMs: now,
+    match: { covered: true, agendaStatus: 'NO_SHOW', won: true, deal: { id: '7' } },
+  });
+  await pollThenDeliver(h, now);
+
+  assert.equal(h.store._outcomes[0].asistencia, 'no_show');
+  assert.equal(h.store._outcomes[0].resultado, null, 'un no-show no es venta aunque el deal ya diga Ganado');
+});
+
 test('harvest: NO_SHOW → outcome "no_show" cosechado (lo que la etapa no daba)', async () => {
   process.env.HUBSPOT_AGENDA_HARVEST = 'true';
   const now = Date.now();

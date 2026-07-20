@@ -68,6 +68,19 @@ export function classifyDealStage(dealStageId, stages = []) {
   return cur.displayOrder > agendado.displayOrder ? 'resolved' : 'stale';
 }
 
+// ¿La etapa actual del deal es el cierre GANADO? Distinta de `classifyDealStage`: esa
+// solo dice si la call ya se registró (cualquier etapa pasado Agendado); esto ubica
+// específicamente el cierre exitoso, por label (tolerante a acentos/mayúsculas — labels
+// reales como "Ganado Pagado Completo" varían por pipeline) + `isClosed` para no confundir
+// con una etapa abierta que mencione "ganado" de pasada.
+export function isWonStage(dealStageId, stages = []) {
+  if (!dealStageId || !stages.length) return false;
+  const byId = new Map(stages.map((s) => [String(s.stageId), s]));
+  const cur = byId.get(String(dealStageId));
+  if (!cur) return false;
+  return Boolean(cur.isClosed) && normalizeLabel(cur.label).includes('ganado');
+}
+
 function normalizeLabel(s) {
   return String(s || '')
     .normalize('NFD')

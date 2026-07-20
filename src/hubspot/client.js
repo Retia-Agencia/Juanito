@@ -15,7 +15,7 @@
 // API falla, devuelve null/[] y loguea —nunca tira, para no romper el flujo que lo llama
 // (ej. el push precall debe salir aunque HubSpot esté caído).
 
-import { pipelineForProgram, pickDealForPipeline, classifyDealStage } from './deals.js';
+import { pipelineForProgram, pickDealForPipeline, classifyDealStage, isWonStage } from './deals.js';
 
 const BASE = 'https://api.hubapi.com';
 const PAK = () => process.env.HUBSPOT_PAT || '';
@@ -233,6 +233,9 @@ export async function matchCallToDeal({ email, programKey }) {
       agendaStatus: props.agenda_status || null,
       nextMeetingStart: props.hs_next_meeting_start_time || null,
       nextMeetingName: props.hs_next_meeting_name || null,
+      // Cosecha de venta: eje aparte de la asistencia (agenda_status). Alimenta `resultado`
+      // cuando la cosecha marca 'show' — un show con el deal ya en Ganado es una venta.
+      won: isWonStage(deal.properties?.dealstage, stages),
     };
   } catch (e) {
     console.warn(`[HubSpot] matchCallToDeal(${email}, ${programKey}) falló: ${e.message}`);

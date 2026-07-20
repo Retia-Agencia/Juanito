@@ -10,6 +10,7 @@ import {
   pickDealForPipeline,
   decideFromAgenda,
   AGENDA_TO_ASISTENCIA,
+  isWonStage,
 } from '../src/hubspot/deals.js';
 
 // Etapas reales de AI Second Brain (pipeline 904247681).
@@ -94,6 +95,27 @@ test('pickDeal: sin deal en el pipeline → null', () => {
   const deals = [{ id: '3', properties: { pipeline: '999' } }];
   assert.equal(pickDealForPipeline(deals, '904247681'), null);
   assert.equal(pickDealForPipeline([], '904247681'), null);
+});
+
+// ─── Cosecha de venta: ¿la etapa actual es el cierre Ganado? ──────────────────
+
+test('isWonStage: etapa cerrada con label "Ganado…" → true (aunque el label traiga más texto)', () => {
+  assert.equal(isWonStage('1368121624', SB_STAGES), true); // "Ganado Pagado Completo"
+});
+
+test('isWonStage: cierre perdido → false (cerrada, pero no es Ganado)', () => {
+  assert.equal(isWonStage('1368121625', SB_STAGES), false); // "Cierre perdido"
+});
+
+test('isWonStage: etapas abiertas (incl. Atendido/Compromiso Verbal) → false', () => {
+  assert.equal(isWonStage('1368121620', SB_STAGES), false); // Agendado
+  assert.equal(isWonStage('1368121622', SB_STAGES), false); // Compromiso Verbal
+});
+
+test('isWonStage: stage inexistente, sin etapas, o sin dealStageId → false', () => {
+  assert.equal(isWonStage('999', SB_STAGES), false);
+  assert.equal(isWonStage('1368121624', []), false);
+  assert.equal(isWonStage(null, SB_STAGES), false);
 });
 
 // ─── Cosecha por agenda_status (§18.AG) ───────────────────────────────────────
