@@ -41,6 +41,12 @@ const DEVELOPERS_ET = 'https://api.calendly.com/event_types/dff3e48a-4859-417a-9
 const OPERACIONES_ET = 'https://api.calendly.com/event_types/8462e92a-8210-4bb2-8e2b-583aa3c3d877';
 const INSTAGRAM_ET = 'https://api.calendly.com/event_types/d33075cb-d349-43ef-be43-6f80f9c5da03';
 
+// Retia — event_type del programa "Postulación: De Cero a Tactical Investor" (tipo POOL, no sale
+// en el query /event_types; derivado de reservas reales el 2026-07-21 con
+// scripts/calendly-account-derive.js). Es el ÚNICO ET que pusheamos de esa cuenta: los otros
+// tipos de reunión (Revisión de Portafolio, Asesoría, etc.) NO son postulaciones de venta.
+const TACTICAL_INVESTOR_ET = 'https://api.calendly.com/event_types/0049872a-7a3f-4e9c-a7d2-d9f88bfc1927';
+
 export const DEFAULT_ACCOUNT = '30x';
 
 export const ACCOUNTS = {
@@ -71,31 +77,36 @@ export const ACCOUNTS = {
     hubspot: true,
   },
 
-  // TTrading — agencia #2 (2026-07-16). ⚠️ STAGED, NO OPERATIVA.
+  // Retia — agencia #2. ⚠️ STAGED: configurada y verificada (2026-07-21), pero INERTE hasta que
+  // se despliegue el código nuevo + los closers hagan opt-in (arranca muda de todos modos).
   //
-  // Sin CALENDLY_TOKEN_TTRADING la cuenta no entra en activeAccounts() → Juanito se
-  // comporta EXACTAMENTE como si no existiera. Los closers de abajo (closers.js) quedan
-  // registrados pero inertes: no hay poll que los alcance.
+  // ⚠️ MODELO IMPORTANTE: este token/org es de UN Calendly que Retia usa SOLO para el programa
+  // "De Cero a Tactical Investor". Retia NO tiene un Calendly unificado — es UN CALENDLY POR
+  // PROGRAMA. Si Retia suma otro programa, será OTRO token/org → OTRA entrada acá (a diferencia
+  // de 30x, cuyo único Calendly sirve 6 programas). Esta asimetría es la que motiva el refactor
+  // empresa/programa/closer (ver handoff §18.AJ).
   //
-  // PENDIENTE antes de activarla (nada de esto se puede inventar):
-  //   1. Token de la cuenta → CALENDLY_TOKEN_TTRADING.
-  //   2. Org URI real → GET /users/me con ese token → `current_organization`.
-  //   3. event_types reales → leerlos del `event_type` de reservas reales en
-  //      /scheduled_events (los pool NO se enumeran por API), y su programKey.
-  //   4. Copy de cada programa en PROGRAM_PITCH (index.js). Sin copy, el push degrada a
-  //      "mándalo manual" — nunca al pitch de otra empresa.
-  //   5. VERIFICAR que los emails de closers.js coincidan EXACTO con el
-  //      `event_memberships[0].user_email` de sus citas: si no, cada poll alerta
-  //      "closer sin mapear" y esas citas no reciben push.
-  ttrading: {
-    key: 'ttrading',
-    label: 'TTrading',
-    token: () => process.env.CALENDLY_TOKEN_TTRADING || '',
-    orgUri: () => process.env.CALENDLY_ORG_URI_TTRADING || '',
-    eventTypes: {}, // ← pendiente (paso 3): sin ETs no se filtra ninguna cita
+  // Vieira (Juan Pablo Vieira) es la CARA que VENDE el programa (va en el copy del pitch en
+  // index.js), NO un closer. Tomó citas en el pasado (12 en la ventana) pero YA NO → está en
+  // IGNORED_CLOSERS para no spamear "closer sin mapear". Los closers reales son los de
+  // closers.js con account:'retia' (Dana, Andrea, Sebastian Rodriguez).
+  retia: {
+    key: 'retia',
+    label: 'Retia',
+    token: () => process.env.CALENDLY_TOKEN_RETIA || '',
+    // Org derivada 2026-07-21 (GET /users/me). Hardcodeada como default igual que 30x — el env
+    // var CALENDLY_ORG_URI_RETIA es override opcional, no hace falta setearlo.
+    orgUri: () =>
+      process.env.CALENDLY_ORG_URI_RETIA ||
+      'https://api.calendly.com/organizations/fa27fb07-a83b-4a40-9807-6a619b1f652c',
+    // Solo el ET de la postulación (pool). Los otros tipos de reunión de este Calendly (Revisión
+    // de Portafolio, Asesoría, etc.) NO son ventas → no se pushean.
+    eventTypes: {
+      [TACTICAL_INVESTOR_ET]: 'tactical_investor',
+    },
     // Arranca MUDA: la #2 solo loguea mientras 30X sigue enviando en vivo. Poner
-    // CALENDLY_DRY_RUN_TTRADING=false recién tras validar un ciclo completo.
-    dryRun: () => process.env.CALENDLY_DRY_RUN_TTRADING !== 'false',
+    // CALENDLY_DRY_RUN_RETIA=false recién tras validar un ciclo completo.
+    dryRun: () => process.env.CALENDLY_DRY_RUN_RETIA !== 'false',
     // v1: solo pushes precall (0-3). El registro de outcomes se prende acá, no por env.
     push4: () => false,
     // Su CRM no es el HubSpot que Juanito tiene conectado (ese es de 30X).

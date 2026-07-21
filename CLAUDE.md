@@ -48,7 +48,7 @@ Regla clave: **todo envío sale del proceso principal y pasa por la cola anti-ba
 | `src/whatsapp/` | Baileys (`index.js`), cola anti-ban (`send-queue.js`), cache de subjects |
 | `src/common/roles.js` | Resolución de rol por LID (jefe / admin / closer) |
 | `src/scheduler/` | Cron jobs — `index.js` los arranca y lista todos |
-| `src/calendly/` | Recordatorios precall a closers. `accounts.js` = registro **multi-cuenta** (una por empresa): token, org, event_types, dry-run. Fuente única — todo lo demás se deriva de ahí |
+| `src/calendly/` | Recordatorios precall a closers. `accounts.js` = registro **multi-cuenta** (una entrada por **conexión de Calendly**, NO por empresa: 30x sirve 6 programas, Retia 1 por programa): token, org, event_types, dry-run. Fuente única — todo lo demás se deriva de ahí. Refactor empresa/programa/closer pendiente: handoff §18.AJ |
 | `src/sheets/` | Reporte diario de leads desde Google Sheets |
 | `src/db/` | SQLite: operaciones (`index.js`) + migración idempotente (`migrate.js`) |
 | `entrypoint.sh` | Backoff exponencial entre crashes (softban) |

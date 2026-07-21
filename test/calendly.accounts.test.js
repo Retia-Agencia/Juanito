@@ -52,10 +52,13 @@ test('los 6 programas de la cuenta 30x siguen mapeando a su programKey', () => {
   }
 });
 
-test('PROGRAM_EVENT_TYPES sale del registro y trae los 6 ETs', () => {
+test('PROGRAM_EVENT_TYPES sale del registro y trae los ETs de TODAS las cuentas', () => {
   const ets = PROGRAM_EVENT_TYPES();
-  assert.equal(ets.length, 6);
-  assert.deepEqual([...ets].sort(), Object.keys(ACCOUNTS['30x'].eventTypes).sort());
+  // Unión de los ETs de cada cuenta (30x: 6; retia: 1). Derivado del registro para que sumar
+  // un programa/cuenta no requiera tocar este número a mano.
+  const all = Object.values(ACCOUNTS).flatMap((a) => Object.keys(a.eventTypes));
+  assert.equal(ets.length, all.length);
+  assert.deepEqual([...ets].sort(), all.sort());
 });
 
 test('un event_type desconocido no resuelve a ningún programa', () => {
@@ -138,9 +141,9 @@ test('una cuenta CON token está completamente configurada', () => {
 });
 
 test('las cuentas staged (sin token) están inertes', () => {
-  withEnv({ CALENDLY_TOKEN: 'tok-30x', CALENDLY_TOKEN_TTRADING: undefined }, () => {
+  withEnv({ CALENDLY_TOKEN: 'tok-30x', CALENDLY_TOKEN_RETIA: undefined }, () => {
     const activas = activeAccounts().map((a) => a.key);
-    assert.ok(!activas.includes('ttrading'), 'ttrading no debe estar activa sin su token');
+    assert.ok(!activas.includes('retia'), 'retia no debe estar activa sin su token');
     assert.deepEqual(activas, ['30x']);
   });
 });

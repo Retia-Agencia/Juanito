@@ -93,15 +93,26 @@ test('CLOSER_LIDS apunta solo a emails que existen en CLOSERS', () => {
 
 // ─── resolveCloserByPushName: la ambigüedad que rompe el opt-in en silencio ────
 
-test('NINGÚN closer con nombre completo es ambiguo por pushName', () => {
-  // resolveCloserByPushName devuelve null ante ambigüedad → el opt-in falla SIN LOG y
-  // `/calendly off <nombre>` responde "no reconozco al closer". Ya pasó con los dos
-  // Sebastians. Al sumar closers de otra empresa, un homónimo rompe a AMBOS. Este test
-  // es la red: falla en CI el día que alguien agregue un nombre que choque.
+// Nombres que se repiten a propósito en el roster (declarados acá). "Sebastian Rodriguez" es la
+// MISMA persona en 30x [sebastian@30x.com] y en retia [sebasrr321@gmail.com]: un closer con dos
+// programas → dos entradas hasta el refactor (§18.AJ). La repetición hace que pushName resuelva a
+// null (ambiguo = SEGURO); entra por teléfono/LID. Cualquier choque que NO esté acá debe romper CI.
+const HOMONIMOS_OK = new Set(['Sebastian Rodriguez']);
+
+test('NINGÚN closer con nombre completo es ambiguo por pushName (salvo homónimos conocidos)', () => {
+  // resolveCloserByPushName devuelve null ante ambigüedad → el opt-in por nombre falla SIN LOG y
+  // `/calendly off <nombre>` responde "no reconozco al closer". Este test es la red: falla en CI
+  // el día que alguien agregue un nombre que choque SIN declararlo intencional en HOMONIMOS_OK.
   for (const [email, c] of Object.entries(CLOSERS)) {
     if (c.name.trim().split(/\s+/).length < 2) continue; // los de una palabra: test aparte
     const hit = resolveCloserByPushName(c.name);
-    assert.ok(hit, `"${c.name}" (${email}) no resuelve por pushName — ¿homónimo en el roster?`);
+    if (HOMONIMOS_OK.has(c.name)) {
+      // Homónimo intencional: DEBE ser ambiguo (null). Si de repente resuelve, es que dejó de
+      // haber choque (revisar) o que resolveCloserByPushName cambió.
+      assert.equal(hit, null, `"${c.name}" está en HOMONIMOS_OK pero resolvió a ${hit?.email} — revisar`);
+      continue;
+    }
+    assert.ok(hit, `"${c.name}" (${email}) no resuelve por pushName — ¿homónimo nuevo? Si es intencional, agrégalo a HOMONIMOS_OK.`);
     assert.equal(hit.email, email, `"${c.name}" resuelve al closer equivocado (${hit.email})`);
   }
 });

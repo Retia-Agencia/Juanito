@@ -627,7 +627,11 @@ QR, `[Calendly] Jobs activos ✅ (DRY-RUN: false)`. Los Push 3 pendientes ya sal
 
 ### 11.11 🟡 Multi-cuenta: una segunda agencia con su propio Calendly (2026-07-16)
 
-**Por qué:** entró una segunda agencia (**TTrading**) con su **propia cuenta de Calendly** (otra
+> **Nota (2026-07-21):** "TTrading" era el nombre placeholder. La empresa real es **Retia** y su
+> programa es **"De Cero a Tactical Investor"** (lo vende Vieira). Todas las keys/vars se renombraron
+> `ttrading`→`retia` / `*_TTRADING`→`*_RETIA`. El estado vivo está en §18.AH.
+
+**Por qué:** entró una segunda agencia (**Retia**) con su **propia cuenta de Calendly** (otra
 organización, otro token). Hasta acá todo era singleton: un `CALENDLY_TOKEN`, un `ORG_URI`, una lista
 de event_types. El objetivo es darle a sus closers los mismos pushes precall **sin que 30X se entere
 de nada**.
@@ -721,15 +725,15 @@ la otra durante 6h, y la alerta ahora **nombra la cuenta** en vez de un 401 anó
 
 #### Rollout (pendiente de ejecutar, ver §18.AH)
 
-1. Deploy **sin** `CALENDLY_TOKEN_TTRADING` → riesgo cero, valida el refactor con 30X en vivo.
-2. Encender TTrading **muda** (`CALENDLY_DRY_RUN_TTRADING=true`) ≥1 ciclo completo (un Push 1 de 7pm
-   y un Push 2 de 6:30am). Verificar `[Calendly][DRY-RUN:ttrading]` con citas y closers reales.
+1. Deploy **sin** `CALENDLY_TOKEN_RETIA` → riesgo cero, valida el refactor con 30X en vivo.
+2. Encender Retia **muda** (`CALENDLY_DRY_RUN_RETIA=true`) ≥1 ciclo completo (un Push 1 de 7pm
+   y un Push 2 de 6:30am). Verificar `[Calendly][DRY-RUN:retia]` con citas y closers reales.
 3. Onboarding humano de closers (receta §18.A, Pasos 0-5). **Hoy están EN FRÍO**: ninguno le ha
    escrito a Juanito → sin opt-in, la entrega estricta los omite. Son dos candados, no uno.
 4. Piloto con **un** closer en vivo, el resto pausado con `/calendly off <nombre>`.
 
-**Rollback:** `CALENDLY_DRY_RUN_TTRADING=true` + `docker compose up -d` (sin `--build`) deja a
-TTrading muda en ~1 min sin tocar 30X.
+**Rollback:** `CALENDLY_DRY_RUN_RETIA=true` + `docker compose up -d` (sin `--build`) deja a
+Retia muda en ~1 min sin tocar 30X.
 
 > ⚠️ `/calendly off` **sin argumento sigue siendo GLOBAL** y apagaría a las DOS empresas. Falta
 > `/calendly off <cuenta>` (§18.AH).
@@ -822,9 +826,9 @@ plink -pw <PW> root@157.230.152.202 "cd /root/juanito && docker compose up -d --
 | `CALENDLY_REQUIRE_OPTIN` | — | `true` | `true` = solo envía a closers con opt-in previo. Aplica a **todas** las cuentas. |
 | `CALENDLY_ORG_URI` | — | hardcoded | Organización de la cuenta `30x`. Vive en el registro (`accounts.js`). |
 | `CALENDLY_EVENT_TYPES` | — | 6 en el registro | CSV de event_types a vigilar. ⚠️ **REEMPLAZA** la lista entera y **NO distingue cuentas** → sirve para acotar una prueba, no para sumar una cuenta. |
-| `CALENDLY_TOKEN_TTRADING` | — | — | PAT de la cuenta **TTrading** (agencia #2). **Pendiente** (§18.AH). Sin él, TTrading está inerte. |
-| `CALENDLY_ORG_URI_TTRADING` | — | — | Organización de TTrading. **Pendiente**: sale de `GET /users/me` con su token. |
-| `CALENDLY_DRY_RUN_TTRADING` | — | `true` | Dry-run **solo** de TTrading. Permite que 30X siga en vivo mientras la #2 arranca muda. |
+| `CALENDLY_TOKEN_RETIA` | — | — | PAT del Calendly de "De Cero a Tactical Investor" (agencia **Retia**). **En el `.env` live desde 2026-07-21**; falta desplegar el código nuevo para que surta efecto (§18.AH). Sin él, Retia inerte. |
+| `CALENDLY_ORG_URI_RETIA` | — | hardcoded | Organización de Retia. Ya **hardcodeada** en `accounts.js` (derivada 2026-07-21). Este env es override opcional, no hace falta setearlo. |
+| `CALENDLY_DRY_RUN_RETIA` | — | `true` | Dry-run **solo** de Retia. Permite que 30X siga en vivo mientras la #2 arranca muda. |
 | `CALENDLY_PUSH3_LEAD_MIN` | — | `25` | Minutos antes de la llamada para Push 3 |
 | `CALENDLY_PUSH1_CRON` | — | `0 19 * * *` | Cron Push 1 (7:00pm) |
 | `CALENDLY_PUSH2_CRON` | — | `30 6 * * *` | Cron Push 2 (6:30am) |
@@ -2918,50 +2922,71 @@ imagen; y `listProgramEvents` **desde el contenedor** devolvió para mañana: `i
 **Rollback:** `/root/juanito-backup-20260716-225521.tar.gz` + imagen
 `juanito-agent:pre-brochure-20260716-225521`.
 
-### 18.AH 🟡 Segunda cuenta de Calendly — agencia TTrading (2026-07-16)
+### 18.AH 🟡 Segunda cuenta de Calendly — agencia Retia (2026-07-16 · configurada y verificada 2026-07-21)
 
-**Qué hay hecho:** toda la refactorización multi-cuenta. Ver **§11.11** para el diseño, los tres
-bugs que salieron en el camino (fuga cross-tenant de HubSpot, brochure saltándose el dry-run,
-secuestro de pushes por nombre de una palabra) y la verificación (199/199, copy byte-idéntico).
-Código en la rama `feat/calendly-multi-cuenta`. **No desplegado todavía.**
+**Estado: CONFIGURADO Y VERIFICADO contra la cuenta real (rama `feat/calendly-retia`).** Falta solo,
+en manos del owner y escalonado en el tiempo: (1) desplegar el código nuevo, (2) opt-in de los 3
+closers, (3) validar un ciclo muda y quitar el dry-run. La refactorización multi-cuenta base ya está
+en `main` (commit `a875b88`; ver **§11.11** para el diseño y los tres bugs del camino).
 
-**Estado de TTrading: STAGED e INERTE.** Registrada en `accounts.js` y sus 3 closers en
-`closers.js`, pero sin token no entra a `activeAccounts()` → Juanito se comporta como si no
-existiera. Doble candado: además **ningún closer le ha escrito a Juanito** (están EN FRÍO), así que
-tampoco tienen opt-in y la entrega estricta los omitiría.
+**Qué es Retia:** empresa (era el placeholder "TTrading"). Su programa es **"De Cero a Tactical
+Investor"**, que **vende Juan Pablo Vieira** — Vieira es la CARA (va en el copy del pitch), **NO un
+closer**; tomó citas en el pasado (12) pero YA NO → está en `IGNORED_CLOSERS`. Los closers son 3
+(abajo). Keys/vars: `retia`, `*_RETIA` (renombrado desde `ttrading`/`*_TTRADING`).
 
-**Closers (dictados por el jefe el 2026-07-16, SIN VERIFICAR contra la cuenta real):**
+⚠️ **Modelo: un Calendly POR PROGRAMA.** El token/org de Retia es de un Calendly que usa SOLO para
+"De Cero a Tactical Investor" — Retia NO tiene un Calendly unificado. Si suma otro programa, será
+otro token/org → **otra** entrada en `accounts.js`. (30x es al revés: un Calendly sirve 6 programas.)
+Esta asimetría "cuenta ≠ empresa" es lo que motiva el refactor → **§18.AJ**.
 
-| Nombre | Email (host de Calendly) | WhatsApp |
-|---|---|---|
-| Dana | `equipo@ttrading.co` | +57 316 9835624 |
-| Andrea | `registro@ttrading.co` | +57 313 2484664 |
-| Alejo Carvajal | `alejocarpa1108@gmail.com` | +57 301 5893896 |
+**Derivado 2026-07-21** con `scripts/calendly-account-derive.js retia` (lee el token del env, NO lo
+imprime; reusable para cualquier agencia futura), hardcodeado en `accounts.js`:
+- Org URI: `…/organizations/fa27fb07-a83b-4a40-9807-6a619b1f652c`
+- event_type (pool): `…/event_types/0049872a-7a3f-4e9c-a7d2-d9f88bfc1927` · "Postulación: De Cero a
+  Tactical Investor" (137 citas). Es el ÚNICO ET que se pushea — los otros tipos de ese Calendly
+  (Revisión de Portafolio, Asesoría, etc.) no son ventas.
 
-**Bloqueantes (nada de esto se puede inventar):**
+**Closers (verificados contra la agenda real — los emails matchean el host del evento):**
 
-- [ ] **Token de TTrading** (`CALENDLY_TOKEN_TTRADING`). Desbloquea: org URI (`GET /users/me` →
-      `current_organization`), los event_types reales (los *pool* se leen del `event_type` de
-      reservas reales en `/scheduled_events`), y **verificar que los 3 emails coincidan exacto**
-      con `event_memberships[0].user_email` — si no, cada poll alerta "closer sin mapear" y esas
-      citas no reciben push.
-- [ ] **Copy de cada programa** (`PROGRAM_PITCH` + `MATERIAL_LINKS`): es el mensaje que el closer le
-      manda al lead. Lo dicta el owner. Sin copy el push degrada a "mándalo manual" — nunca al pitch
-      de otra empresa (red de seguridad deliberada, ver §11.11).
+| Nombre | Email (host Calendly) | WhatsApp | Estado |
+|---|---|---|---|
+| Dana Rodriguez | `equipo@ttrading.co` | +57 316 9835624 | activa (correo de rol) |
+| Andrea Machado | `registro@ttrading.co` | +57 313 2484664 | activa (correo de rol) |
+| Sebastian Rodriguez | `sebasrr321@gmail.com` | +57 300 8037326 | entró 2026-07-21 |
+| ~~Alejo Carvajal~~ | `alejocarpa1108@gmail.com` | — | salió → `IGNORED_CLOSERS` |
 
-**Preguntas abiertas al jefe:**
+- `equipo@`/`registro@` son correos **de rol** de la empresa: si sale la closer, el correo pasa al
+  siguiente → al rotar, actualizar el teléfono en `closers.js` (patrón "Equipo EstadoX" → Mateo).
+- ⚠️ **Mismo closer, dos programas:** "Sebastian Rodriguez" es la **MISMA persona** que
+  `sebastian@30x.com` — cierra para 30X **y** para Retia, con host/número distinto en cada Calendly.
+  El modelo actual (closer → 1 conexión) lo obliga a DOS entradas; el refactor §18.AJ lo unifica. Por
+  pushName resuelve a null (ambiguo = seguro), pero **NO lo bloquea**: el opt-in resuelve por teléfono
+  ANTES que por nombre → entra por su número (retia: +57 300 8037326; 30x: su LID). Opt-ins en filas
+  separadas (teléfonos distintos) → la PK `calendly_optins.phone` no choca. Fijado por `HOMONIMOS_OK`.
+  Ojo: `/calendly off "Sebastian Rodriguez"` sería ambiguo → usar por número.
 
-- [ ] **Apellido de Dana y Andrea.** Hoy solo hay nombre de pila, y un nombre de una palabra NO se
-      resuelve por pushName **a propósito** (§11.11, bug 3): sin apellido dependen de escribir desde
-      su número canónico o de mapear su LID en `CLOSER_LIDS`. Confirmado que **NO** son la
-      `dana@30x.com` ni la `andrea.machado@30x.com` que están en `IGNORED_CLOSERS` — razón de más
-      para tener el apellido y no confundirlas.
-- [ ] **¿`equipo@ttrading.co` y `registro@ttrading.co` son de ellas, o los maneja más de una
-      persona?** Si son compartidos, pedir un correo personal: hoy todos los pushes que hostee esa
-      cuenta le llegan a una sola. El mismo patrón en EstadoX (`equipo@estadox.com`,
-      `registro@estadox.com`) está en `IGNORED_CLOSERS` justo por eso ("cuenta compartida", "cuenta
-      de sistema — nunca fue un closer"); enrutar un rol a una persona ya se hizo con
-      "Equipo EstadoX" → Mateo.
+**Copy** (`index.js`): `PROGRAM_PITCH` / `MATERIAL_LINKS` / `PROGRAM_LABELS` de `tactical_investor`
+puestos y verificados renderizando los 3 pushes. Push 1 = video (`youtu.be/YQwmGRCBlF0`) + brochure
+(Drive), **en ese orden** (`materialsBlock` respeta `order`; default sigue brochure→video para 30x).
+Push 2/3 son byte-idénticos al template compartido. Pitch: "de Juan Pablo Vieira en JP Tactical".
+
+**Para prender (escalonado por el owner):**
+- [x] **Token en el `.env` live** (subido 2026-07-21; backup `/root/juanito/.env.bak-20260721-110812`).
+      Org URI y ET van hardcodeados, no como env. `CALENDLY_DRY_RUN_RETIA=true` (arranca muda).
+- [ ] **Desplegar el código nuevo** (`feat/calendly-retia`). `/root/juanito` **NO es git** → copiar
+      los archivos cambiados con `pscp`/`scp` (accounts.js, closers.js, index.js, scripts/) y luego
+      `docker compose up -d --build`. OJO: el runtime desplegado HOY es `main` con la cuenta vieja
+      `ttrading` (ignora `CALENDLY_TOKEN_RETIA`) → retia sigue inerte hasta desplegar el código.
+- [ ] **Opt-in de los 3 closers**: el owner ya les pidió que le escriban a Juanito (2026-07-21).
+      Auto-registro por número canónico. ⚠️ **Sebastian** cierra para 30X y Retia (misma persona): su
+      opt-in de retia debe quedar keyeado a **+57 300 8037326** — si escribe desde su device de 30x
+      (LID de `CLOSER_LIDS`) solo se registra el de 30X y hay que backfillear el de retia con
+      `scripts/calendly-optin-set.js "sebasrr321@gmail.com" "<contact_jid>"`. Verificar en logs.
+- [ ] **Validar 1 ciclo muda** (`[Calendly][DRY-RUN:retia]` con citas/closers reales, 0 "sin mapear")
+      → recién ahí `CALENDLY_DRY_RUN_RETIA=false`.
+
+**Resuelto 2026-07-21:** los closers son 3 (Dana, Andrea, Sebastian). **Vieira ya NO toma citas** →
+queda en `IGNORED_CLOSERS`, no recibe pushes (correcto).
 
 **Deuda asumida (documentada, no construida):**
 
@@ -2969,15 +2994,18 @@ tampoco tienen opt-in y la entrega estricta los omitiría.
 - `health.js` y el throttle `_lastCall` son estado global de módulo → `/status` mezcla la salud de
   ambas cuentas, y las llamadas se serializan de más (el rate limit de Calendly es **por token**).
   Convertir `_lastCall` en `Map<token, ms>` son ~3 líneas si molesta.
-- `notifyAdmins` manda todo a los `ADMIN_LID` globales: los closers sin mapear de TTrading alertan al
+- `notifyAdmins` manda todo a los `ADMIN_LID` globales: los closers sin mapear de Retia alertan al
   equipo de dev de 30X, no al de ellos.
-- Sin reporte diario de outcomes para TTrading (fuera de alcance v1; su Push 4 está apagado en el
+- Sin reporte diario de outcomes para Retia (fuera de alcance v1; su Push 4 está apagado en el
   registro). Nota: `developers`/`operaciones` **ya** registran outcomes que nunca se publican (§18.AE).
-- **Closer compartido entre empresas:** hoy la invariante es *un teléfono = un closer = una cuenta*
-  (fijada por test). Si algún día una misma persona cierra para las dos, no alcanza con el campo
-  `account`: hay que migrar `calendly_optins` a clave compuesta `(phone, account)` — tabla nueva +
-  copia + rename, porque SQLite no permite alterar una PK. También `getActiveOutcomeForCloser(phone)`
-  y `pickSupersededPushes` (matchea por últimos 8 dígitos) enrutan solo por teléfono.
+- **Closer compartido entre empresas — YA PASÓ (Sebastian Rodriguez, 30X + Retia).** Hoy la
+  invariante es *un teléfono = un closer = una cuenta* (fijada por test). Sebastian **funciona** porque
+  usa **host/número distinto** en cada Calendly → son DOS entradas en `CLOSERS` y DOS filas de
+  `calendly_optins` (teléfonos distintos), sin choque de PK. El problema solo aparecería si una misma
+  persona cerrara para dos con el **MISMO teléfono**: ahí sí habría que migrar `calendly_optins` a
+  clave compuesta `(phone, account)` — tabla nueva + copia + rename (SQLite no altera una PK). También
+  `getActiveOutcomeForCloser(phone)` y `pickSupersededPushes` (últimos 8 dígitos) enrutan solo por
+  teléfono. El refactor §18.AJ (closer → varios programas) es la solución limpia.
 
 ### 18.AI 🔵 Segmentación por programa en los pushes + brochure de Operaciones por link (2026-07-17)
 
@@ -3015,6 +3043,71 @@ cubren la segmentación por programa. **187/187 puros de Calendly verdes** (los 
 por `better-sqlite3` sin compilar en el entorno local — preexistente).
 
 **Pendiente de deploy.** El brochure ya está público en Drive; el resto es código.
+
+### 18.AJ 🟡 Refactor: modelo empresa / programa / closer de primera clase (diseño 2026-07-21, ejecutar próxima sesión)
+
+**Por qué.** Al activar Retia (§18.AH) quedó claro que el modelo actual conflaciona tres cosas
+distintas y que "programa" no es un objeto: hay que tocar **5 lugares en 2 archivos** para sumar uno,
+sin nada que valide consistencia. Además Retia probó que **"cuenta de Calendly" ≠ "empresa"**:
+
+| Topología real | Conexión Calendly | Programas | Empresa/marca |
+|---|---|---|---|
+| 30x | 1 (token+org) | 6 (Second Brain, Abogados, LinkedIn, Developers, Operaciones, Instagram) | 30X + EstadoX |
+| Retia | 1 (token+org) | 1 (De Cero a Tactical Investor) | Retia / JP Tactical |
+
+O sea: una conexión sirve **N** programas (30x) o **1** (Retia); una empresa tiene **N** programas
+repartidos en **N** conexiones. Hoy el código asume "1 cuenta = 1 empresa" y deriva el programa del
+event_type — lo que funciona pero no deja "agregar/mover/activar" programas y empresas a gusto.
+
+**Meta (lo que pidió el owner):** que sumar/modificar/mover/activar/desactivar una **empresa**, un
+**programa** o un **closer** sea editar **UNA** entrada.
+
+**Objeto que falta = `Program` (primera clase).** Un registro único `PROGRAMS` keyeado por
+programKey, cada entrada con todo lo del programa junto:
+
+```
+tactical_investor: {
+  label: 'De Cero a Tactical Investor',
+  company: 'retia',                 // marca de cara a labels/agrupación
+  connection: 'retia',              // qué conexión Calendly lo hostea
+  eventType: 'https://api.calendly.com/event_types/0049872a-…',
+  pitch: { from: 'de Juan Pablo Vieira en JP Tactical', program: 'programa De Cero a Tactical Investor' },
+  materials: { video: '…', brochure: '…', order: ['video','brochure'] },
+  active: true,
+}
+```
+
+De ahí se **derivan** (no se duplican) los mapas de hoy:
+`eventTypeToProgram`, los `eventTypes` de cada conexión, `PROGRAM_LABELS`, `PROGRAM_PITCH`,
+`MATERIAL_LINKS`. Es **reshaping de datos, no de lógica** → bajo riesgo, y los ~200 tests de Calendly
+(copy byte-idéntico incluido) son la red.
+
+**Los otros dos objetos:**
+- **`Connection`** = lo que hoy es "account" en `accounts.js` (`{ key, token, orgUri, dryRun, push4,
+  hubspot }`), renombrado a lo que realmente es: una **conexión de Calendly** (auth + polling), no
+  una empresa. Auto-desactivación por token, igual que hoy.
+- **`Company`** = registro liviano `{ key, label }` (30X, EstadoX, Retia). Sirve para labels y para
+  agrupar programas; hoy la marca vive implícita en `pitch.from`.
+- **`Closer`** pasa a listar sus **programas** (no una "account"). El dry-run/push4/hubspot de un
+  envío se resuelven por la **conexión del programa de la cita**, no por un campo del closer.
+  **Caso concreto que lo motiva: Sebastian Rodriguez** cierra para 30X *y* Retia. Hoy son DOS
+  entradas en `CLOSERS` (una por conexión) con nombre repetido → pushName ambiguo. Con el modelo
+  nuevo sería UN closer con dos programas; el reto de diseño es enrutar su opt-in/entrega por
+  (programa/conexión) sin reabrir el bug de secuestro por nombre.
+
+**Riesgos / a cuidar en la ejecución:**
+- **Copy byte-idéntico:** re-render de los 3 pushes de CADA programa antes/después (ya hay tests).
+- **Invariante `calendly_optins.phone` = PK:** un closer que cierre en DOS conexiones (cross-empresa)
+  sigue necesitando migrar a `(phone, account/connection)` — tabla nueva + copia + rename (SQLite no
+  altera PK). Documentado; no lo desbloquea este refactor salvo que se decida hacerlo.
+- **Tests acoplados a `ACCOUNTS`/`CLOSERS`:** o se migran a `PROGRAMS`/`CONNECTIONS`, o se dejan
+  exports de compat finos que derivan del nuevo registro.
+- **`/calendly off <cuenta>`** (deuda de §18.AH) encaja natural acá: apagar por empresa/programa/
+  conexión en vez del global de hoy.
+
+**No empezar sin grillar el modelo** (`/grill-with-docs`): resolver primero si `Company` amerita ser
+objeto o basta el label, y cómo se expresa "un closer en varios programas" sin reabrir el bug de
+secuestro de pushes.
 
 ### 🟢 Baja prioridad / Nice-to-have
 
