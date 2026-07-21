@@ -154,6 +154,10 @@ services:
       - HUBSPOT_ENABLED=${HUBSPOT_ENABLED:-}
       - HUBSPOT_PORTAL_ID=${HUBSPOT_PORTAL_ID:-50929115}
       - HUBSPOT_NUDGE_ENABLED=${HUBSPOT_NUDGE_ENABLED:-false}
+      # Cosecha por agenda_status (§18.AG) — evolución del nudge: en vez de picar al closer
+      # por la etapa del deal, deriva el outcome directo de agenda_status. Off por default,
+      # mismo patrón que NUDGE_ENABLED arriba (se prende aparte tras validar el deploy).
+      - HUBSPOT_AGENDA_HARVEST=${HUBSPOT_AGENDA_HARVEST:-false}
       - HUBSPOT_PROGRAM_PIPELINES=${HUBSPOT_PROGRAM_PIPELINES:-}
       # QR web server — solo durante la vinculación inicial.
       # Descomentar la línea de abajo y agregar QR_PORT=3001 al .env.
