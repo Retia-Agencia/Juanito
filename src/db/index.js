@@ -558,6 +558,40 @@ export function expireUnansweredOutcomes(minMinutes = 30) {
     .run(`-${Number(minMinutes)} minutes`);
 }
 
+// ─── Barrido periódico de cosecha (§18.AH) ────────────────────────────────────
+// El harvest en planNudge es UNA sola foto en el momento del Push 4 (call_end + gracia):
+// si el closer todavía no había actualizado el deal en HubSpot en ese instante, la fila
+// cae al nudge y, sin respuesta por WhatsApp, cierra sola como 'no_answer' — sin que nadie
+// vuelva a mirar HubSpot después, aunque el closer sí actualice un rato más tarde. Este
+// barrido re-consulta esas filas abandonadas. `maxAgeHours` es el tope: pasado ese tiempo
+// se deja de perseguir una fila muerta (queda "sin registrar" definitivo).
+export function getStaleHarvestCandidates({ maxAgeHours = 72 } = {}) {
+  return db
+    .prepare(`
+      SELECT * FROM call_outcomes
+      WHERE status IN ('pending', 'no_answer')
+        AND asistencia IS NULL
+        AND program IS NOT NULL
+        AND event_uuid NOT LIKE 'manual:%'
+        AND call_start >= datetime('now', ?)
+      ORDER BY call_start ASC
+    `)
+    .all(`-${Number(maxAgeHours)} hours`);
+}
+
+// Aplica un outcome recuperado por el barrido: cierra la fila como 'auto' sin importar si
+// venía 'pending' o ya había expirado a 'no_answer'. El guard `asistencia IS NULL` la hace
+// idempotente frente a corridas superpuestas del barrido.
+export function applyHarvestedOutcome(id, { asistencia, resultado = null } = {}) {
+  return db
+    .prepare(`
+      UPDATE call_outcomes
+      SET asistencia = ?, resultado = ?, status = 'auto', answered_at = datetime('now')
+      WHERE id = ? AND asistencia IS NULL
+    `)
+    .run(asistencia, resultado, id);
+}
+
 // Filas de outcomes en una ventana UTC (para el reporte). La agregación por
 // programa/closer se hace en JS puro (outcome-report.js) para poder testearla.
 export function getOutcomesInWindow(fromUtc, toUtc) {

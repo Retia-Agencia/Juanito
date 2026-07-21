@@ -433,6 +433,30 @@ export function makeStore({ optins = [], nowRef } = {}) {
       }
       return { changes };
     },
+
+    // ─── Barrido periódico de cosecha (§18.AH) ────────────────────────────────
+    getStaleHarvestCandidates({ maxAgeHours = 72 } = {}) {
+      const cutoff = now() - maxAgeHours * 3600000;
+      return outcomes
+        .filter(
+          (x) =>
+            (x.status === 'pending' || x.status === 'no_answer') &&
+            x.asistencia == null &&
+            x.program != null &&
+            !String(x.event_uuid).startsWith('manual:') &&
+            sqliteUtcToMs(x.call_start) >= cutoff
+        )
+        .map((x) => ({ ...x }));
+    },
+    applyHarvestedOutcome(id, { asistencia, resultado = null } = {}) {
+      const o = outcomes.find((x) => x.id === id);
+      if (o && o.asistencia == null) {
+        o.asistencia = asistencia;
+        o.resultado = resultado;
+        o.status = 'auto';
+        o.answered_at = now();
+      }
+    },
   };
 }
 
@@ -502,6 +526,9 @@ export function installHarness(
     getDueOutcomeReminders: store.getDueOutcomeReminders,
     markOutcomeReminded: store.markOutcomeReminded,
     expireUnansweredOutcomes: store.expireUnansweredOutcomes,
+    // §18.AH: barrido periódico de cosecha.
+    getStaleHarvestCandidates: store.getStaleHarvestCandidates,
+    applyHarvestedOutcome: store.applyHarvestedOutcome,
     // §18.AC: reagendas.
     getPendingManualPushes: store.getPendingManualPushes,
     supersedeManualPushes: store.supersedeManualPushes,

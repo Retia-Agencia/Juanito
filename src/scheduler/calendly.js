@@ -96,6 +96,14 @@ const NUDGE_ENABLED = () => process.env.HUBSPOT_NUDGE_ENABLED === 'true';
 // si la call venció y sigue "Programada". Apagado por default; sin el flag, sigue el nudge
 // por etapa (o el Push 4 clásico). Requiere HUBSPOT_PAT + programa cubierto.
 const HARVEST_ENABLED = () => process.env.HUBSPOT_AGENDA_HARVEST === 'true';
+// Barrido periódico de cosecha (§18.AH): el harvest de arriba es una sola foto en el
+// momento del Push 4; si el closer actualiza el deal DESPUÉS, nadie vuelve a mirar y la
+// fila cierra sola como 'no_answer'. Este barrido re-consulta HubSpot para esas filas
+// abandonadas, cada N horas, solo mientras HARVEST_ENABLED. Apagable aparte por si acaso,
+// sin tocar el harvest en vivo.
+const HARVEST_SWEEP_ENABLED = () => process.env.HUBSPOT_HARVEST_SWEEP_ENABLED !== 'false'; // default true
+const HARVEST_SWEEP_CRON = () => process.env.HUBSPOT_HARVEST_SWEEP_CRON || '0 8-22/2 * * *'; // cada 2h, 8am-10pm
+const HARVEST_SWEEP_MAX_AGE_HOURS = () => Number(process.env.HUBSPOT_HARVEST_SWEEP_MAX_AGE_HOURS || 72);
 // Params de la reagenda (para agendar la call nueva desde hs_next_meeting_start_time).
 // Espejo de los defaults de calendly/reschedule.js.
 const RESCHED_LEAD_MIN = () => Number(process.env.CALENDLY_PUSH3_LEAD_MIN || 25);
@@ -168,6 +176,9 @@ async function deps() {
     getDueOutcomeReminders: db.getDueOutcomeReminders,
     markOutcomeReminded: db.markOutcomeReminded,
     expireUnansweredOutcomes: db.expireUnansweredOutcomes,
+    // §18.AH: barrido periódico de cosecha (re-chequea filas abandonadas al nudge).
+    getStaleHarvestCandidates: db.getStaleHarvestCandidates,
+    applyHarvestedOutcome: db.applyHarvestedOutcome,
     // §18.AC: reagendas — dedup contra Calendly + insistencia por la fecha.
     getPendingManualPushes: db.getPendingManualPushes,
     supersedeManualPushes: db.supersedeManualPushes,
@@ -965,6 +976,81 @@ export async function runReschedulePrompts() {
   return sent;
 }
 
+// ─── Barrido periódico de cosecha (§18.AH) ────────────────────────────────────
+// El harvest de planNudge es una sola foto en el momento del Push 4 (call_end + gracia).
+// Si el closer todavía no había actualizado el deal en HubSpot en ese instante, la fila
+// cae al nudge y —sin respuesta por WhatsApp— cierra sola como 'no_answer' 30 min después,
+// sin que nadie vuelva a mirar HubSpot. Este job re-consulta esas filas abandonadas cada
+// N horas (HARVEST_SWEEP_CRON): si para entonces el closer YA actualizó el deal, se recupera
+// el outcome en silencio (sin re-mandar el nudge). Si sigue igual, se deja para el próximo
+// barrido hasta el tope de `maxAgeHours` (después queda "sin registrar" definitivo).
+export async function runHarvestSweep() {
+  const d = await deps();
+  if (!d.hubspotEnabled?.() || !d.getStaleHarvestCandidates || !d.applyHarvestedOutcome) return 0;
+
+  const candidatos = d.getStaleHarvestCandidates({ maxAgeHours: HARVEST_SWEEP_MAX_AGE_HOURS() });
+  let recuperados = 0;
+  for (const o of candidatos) {
+    if (!isCoveredProgram(o.program)) continue;
+
+    // Reconstruye un "push" a partir de la fila guardada: planNudge solo necesita
+    // event_uuid (para pedirle el invitee a Calendly), program y los datos del lead/closer.
+    const pseudoP = {
+      event_uuid: o.event_uuid,
+      program: o.program,
+      closer_email: o.closer_email,
+      closer_phone: o.closer_phone,
+      prospect_name: o.lead_name,
+      prospect_phone: o.lead_phone,
+      call_start: o.call_start,
+    };
+
+    let plan;
+    try {
+      plan = await planNudge(d, pseudoP);
+    } catch (e) {
+      console.error(`[Calendly] harvest-sweep #${o.id}: error re-consultando HubSpot:`, e.message);
+      continue;
+    }
+
+    if (plan.handled && plan.harvest) {
+      const resultado = plan.harvest === 'show' && plan.won ? 'venta_cerrada' : null;
+      d.applyHarvestedOutcome(o.id, { asistencia: plan.harvest, resultado });
+      recuperados++;
+      console.log(
+        `[Calendly] harvest-sweep #${o.id}: agenda_status=${plan.reason} → '${plan.harvest}'${resultado ? ` + resultado='${resultado}'` : ''} recuperado (el closer ya había actualizado HubSpot)`
+      );
+      continue;
+    }
+
+    if (plan.handled && plan.reschedule) {
+      d.applyHarvestedOutcome(o.id, { asistencia: 'reagendado' });
+      recuperados++;
+      const startMs = Date.parse(plan.nextMeetingStart || '');
+      if (RESCHEDULE_ENABLED() && startMs && startMs > d.now()) {
+        const rp = planRescheduledPushes(pendingOutcomeFrom(pseudoP), new Date(startMs), {
+          nowMs: d.now(),
+          leadMin: RESCHED_LEAD_MIN(),
+          durationMin: CALL_DURATION_MIN(),
+          graceMin: PUSH4_GRACE_MIN(),
+          maxChain: RESCHED_MAX_CHAIN(),
+        });
+        if (rp.ok) for (const push of rp.pushes) d.scheduleCalendlyPush(push);
+      }
+      console.log(`[Calendly] harvest-sweep #${o.id}: RESCHEDULED → reagenda recuperada`);
+      continue;
+    }
+
+    // silent / nudge / ask / uncovered → el closer sigue sin actualizar (o el deal no da
+    // estado claro). No se reintenta el mensaje de WhatsApp: se deja para el próximo barrido.
+  }
+
+  if (recuperados) {
+    console.log(`[Calendly] Harvest sweep: ${recuperados} outcome(s) recuperado(s) de closers que actualizaron HubSpot tarde`);
+  }
+  return recuperados;
+}
+
 // ─── Arranque de los jobs ─────────────────────────────────────────────────────
 
 export function startCalendlyJobs() {
@@ -985,9 +1071,11 @@ export function startCalendlyJobs() {
   if (PUSH4_ENABLED()) job(OUTCOME_CRON(), runOutcomeReminders, 'outcomes');
   if (PUSH4_ENABLED() && RESCHEDULE_ENABLED())
     job(RESCHEDULE_PROMPT_CRON(), runReschedulePrompts, 'reagendas');
+  if (HARVEST_ENABLED() && HARVEST_SWEEP_ENABLED())
+    job(HARVEST_SWEEP_CRON(), runHarvestSweep, 'harvest-sweep');
 
   console.log(
-    `[Calendly] Jobs activos ✅  (reagendas: ${RESCHEDULE_ENABLED()}) — cuentas: ` +
+    `[Calendly] Jobs activos ✅  (reagendas: ${RESCHEDULE_ENABLED()}, harvest-sweep: ${HARVEST_ENABLED() && HARVEST_SWEEP_ENABLED()}) — cuentas: ` +
       accounts.map((a) => `${a.key}[dry-run:${a.dryRun()}, push4:${a.push4()}]`).join(' · ')
   );
 }
