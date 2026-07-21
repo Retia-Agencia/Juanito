@@ -1,96 +1,125 @@
 // src/calendly/closers.js
-// Mapeo precargado: email de Calendly (host del evento) → WhatsApp del closer.
+// Roster de closers keyeado por PERSONA. Cada persona tiene una o más IDENTIDADES, una por
+// Conexión de Calendly (ver ADR 0001): su email de host (event_memberships[0].user_email de
+// sus citas ES el closer), su teléfono canónico y, si aplica, su LID de trabajo. De este
+// roster se DERIVAN, con estructura idéntica a la de antes:
+//   · CLOSERS      — mapa email → { name, phone, account? }  (una entrada por IDENTIDAD)
+//   · CLOSER_LIDS  — mapa lid → email                        (de las identidades con workLid)
+// El resto del código consume esos dos mapas; la persona es solo la unidad de autoría, para que
+// sumar/mover un closer sea editar UNA entrada aunque cierre para dos empresas.
 //
-// Notas de la validación contra la cuenta real (grupo "Negociación"):
-//  - El "organizado por" del evento (event_memberships[0].user_email) ES el closer.
-//
-// Para cambiar un número o un closer, editar este mapa.
-//
-// EQUIPO — lista dictada por el jefe el 2026-07-14 y validada contra la cuenta real de
-// Calendly. Estos 7 son TODO el equipo: quien no esté acá, no se gestiona.
-//
+// EQUIPO — lista dictada por el jefe el 2026-07-14 y validada contra la cuenta real de Calendly.
+// Estos son TODO el equipo: quien no esté acá, no se gestiona. (Los pools a los que pertenece
+// hoy cada uno son informativos; el PROGRAMA de cada cita se deriva de su event_type, no se
+// configura acá, así que un closer queda cubierto en TODOS sus programas sin tocar nada más.)
 //   Pablo Lozano        AI Second Brain · AI For Developers
-//   Sebastian Rodriguez AI Second Brain
+//   Sebastian Rodriguez AI Second Brain (30X) · De Cero a Tactical Investor (Retia)
 //   Sebastian Marin     LinkedIn Sales  · Instagram & TikTok
 //   Lucas Mendoza       LinkedIn Sales  · Operaciones Escalables
 //   Pablo Suarez        AI For Developers
 //   Daniela Camacho     EstadoX (IA para Abogados) · Instagram & TikTok · Operaciones Escalables
 //   Sebastian Salazar   EstadoX (IA para Abogados)
+//   Dana Rodriguez      Retia — De Cero a Tactical Investor
+//   Andrea Machado      Retia — De Cero a Tactical Investor
 //
-// Actualizado 2026-07-16 contra la agenda real: Instagram & TikTok lo hostean Marin y
-// Camacho (no Lucas); Operaciones lo hostean Lucas y Camacho (no solo Lucas). El programa
-// "/Media" que se anticipaba no existe en Calendly.
+// La CONEXIÓN de Calendly se configura en cada identidad con `connection` (ver accounts.js).
+// La identidad cuya connection es la default ('30x') NO emite el campo `account` en el CLOSERS
+// derivado (idéntico al roster histórico); las demás sí.
 //
-// El PROGRAMA no se configura acá: se deriva del event_type de cada cita (programKeyOf),
-// así que un closer queda cubierto en TODOS los programas sin tocar nada más. La columna
-// de arriba es informativa (a qué pools pertenece hoy), no la usa el código.
-//
-// La CUENTA de Calendly sí se configura acá, con el campo `account` (ver accounts.js).
-// Sin campo → cuenta default ('30x'), que es el caso de todo el equipo de arriba.
-//
-// ⚠️ INVARIANTE: un teléfono = un closer = UNA cuenta. La DB la asume en varios lados:
-// `calendly_optins.phone` es PRIMARY KEY (una fila por persona),
-// `getActiveOutcomeForCloser(phone)` enruta la respuesta del closer solo por teléfono, y
-// `pickSupersededPushes` matchea por los últimos 8 dígitos sin scope de cuenta. Si alguna
-// vez una MISMA persona cierra para dos empresas, no alcanza con ponerle otro `account`:
-// hay que migrar `calendly_optins` a clave compuesta (phone, account) — tabla nueva +
-// copia + rename, porque SQLite no permite alterar una PK.
-export const CLOSERS = {
-  'daniela.camacho@30x.com':  { name: 'Daniela Camacho',     phone: '+573103062287' },
-  'sebastian@30x.com':        { name: 'Sebastian Rodriguez', phone: '+573102212005' },
-  'sebastian.salazar@30x.com':{ name: 'Sebastian Salazar',   phone: '+573054312905' },
-  'pablo.lozano@30x.com':     { name: 'Pablo Lozano',        phone: '+573046131437' },
-  'sebastian.marin@30x.com':  { name: 'Sebastian Marin',     phone: '+573212100048' },
-  'lucas.mendoza@30x.com':    { name: 'Lucas Mendoza',       phone: '+573014477044' },
-  // Entró 2026-07-14. OJO: su email NO lleva punto (pablosuarez@), a diferencia de
-  // pablo.lozano@ — son personas distintas y ambas están activas.
-  'pablosuarez@30x.com':      { name: 'Pablo Suarez',        phone: '+573152573103' },
+// ⚠️ INVARIANTE: un teléfono = una IDENTIDAD = una Conexión. La DB la asume:
+// `calendly_optins.phone` es PRIMARY KEY, `getActiveOutcomeForCloser(phone)` enruta por
+// teléfono y `pickSupersededPushes` matchea por los últimos 8 dígitos sin scope de cuenta.
+// Una persona con dos identidades usa DOS teléfonos distintos → dos filas de opt-in, sin choque
+// de PK. Solo si una misma persona cerrara para dos Conexiones con el MISMO teléfono habría que
+// migrar `calendly_optins` a clave compuesta (phone, connection) — tabla nueva + copia + rename,
+// porque SQLite no permite alterar una PK. Hoy no pasa (ADR 0001).
 
+import { phonesMatch } from '../common/utils.js';
+import { DEFAULT_ACCOUNT } from './accounts.js';
+
+const PEOPLE = {
+  daniela_camacho: {
+    name: 'Daniela Camacho',
+    identities: [{ connection: '30x', email: 'daniela.camacho@30x.com', phone: '+573103062287' }],
+  },
+  // Sebastian Rodriguez: UNA persona, DOS identidades. Cierra AI Second Brain en 30X y "De Cero a
+  // Tactical Investor" en Retia, con host/teléfono distinto en cada Calendly. Antes eran dos
+  // entradas con nombre repetido; ahora es una sola (ADR 0001). resolveCloserByPushName ve el
+  // nombre repetido en el CLOSERS derivado (dos teléfonos) → null (ambiguo = SEGURO); NO lo
+  // bloquea: el opt-in resuelve por TELÉFONO/LID antes que por pushName, así que cada identidad
+  // entra por lo suyo (30x por su LID de trabajo; retia por su celular +57 300 8037326).
+  sebastian_rodriguez: {
+    name: 'Sebastian Rodriguez',
+    identities: [
+      // workLid: su pushName de trabajo NO trae "Rodriguez"; el LID PINNEA la entrega al hilo
+      // de trabajo aunque escriba desde otro dispositivo. NUNCA un LID personal (recrearía el
+      // bug de pushes al número equivocado).
+      { connection: '30x', email: 'sebastian@30x.com', phone: '+573102212005', workLid: '158025419608301' },
+      // Gmail = su host en el Calendly de retia (9 citas verificadas). Entró 2026-07-21
+      // (reemplazó a Alejo Carvajal → IGNORED_CLOSERS).
+      { connection: 'retia', email: 'sebasrr321@gmail.com', phone: '+573008037326' },
+    ],
+  },
+  sebastian_salazar: {
+    name: 'Sebastian Salazar',
+    identities: [{ connection: '30x', email: 'sebastian.salazar@30x.com', phone: '+573054312905' }],
+  },
+  pablo_lozano: {
+    name: 'Pablo Lozano',
+    identities: [{ connection: '30x', email: 'pablo.lozano@30x.com', phone: '+573046131437' }],
+  },
+  sebastian_marin: {
+    name: 'Sebastian Marin',
+    identities: [{ connection: '30x', email: 'sebastian.marin@30x.com', phone: '+573212100048' }],
+  },
+  lucas_mendoza: {
+    name: 'Lucas Mendoza',
+    identities: [{ connection: '30x', email: 'lucas.mendoza@30x.com', phone: '+573014477044' }],
+  },
+  // OJO: su email NO lleva punto (pablosuarez@), a diferencia de pablo.lozano@ — personas
+  // distintas, ambas activas. Entró 2026-07-14.
+  pablo_suarez: {
+    name: 'Pablo Suarez',
+    identities: [{ connection: '30x', email: 'pablosuarez@30x.com', phone: '+573152573103' }],
+  },
   // ─── Retia (agencia #2) — programa "De Cero a Tactical Investor" ───────────
-  // Vieira vende el programa (es la CARA, va en el copy del pitch en index.js), NO es closer.
-  // Estos 3 son los closers reales de Retia.
-  //
-  // Estado: INERTES por partida doble. (1) La cuenta 'retia' no tiene token → no hay poll que
-  // los alcance. (2) Ninguno le ha escrito a Juanito todavía (están EN FRÍO), así que no
-  // tienen opt-in y la entrega estricta los omitiría igual.
-  //
-  // ⚠️ SIN VERIFICAR contra la cuenta real (falta el token): los emails TIENEN que coincidir
-  // exacto con el `event_memberships[0].user_email` de sus citas o cada poll alerta "closer
-  // sin mapear" y esas citas no reciben push.
-  //
-  // Apellidos confirmados 2026-07-21; los 3 emails verificados contra la cuenta real (script
-  // calendly-account-derive). OJO dos choques de nombre, ambos INOCUOS hoy:
-  //  · "Andrea Machado": existe otra (andrea.machado@30x.com, DEPARTIDA) en IGNORED_CLOSERS —
-  //    persona DISTINTA, no está en CLOSERS, así que no confunde a resolveCloserByPushName.
-  //  · "Sebastian Rodriguez": es la MISMA PERSONA que sebastian@30x.com — un closer con DOS
-  //    programas en DOS Calendly distintos (30X y retia), por eso DOS entradas (el modelo actual
-  //    ata un closer a UNA conexión; el refactor §18.AJ lo arregla). resolveCloserByPushName ve el
-  //    nombre repetido → null (ambiguo = seguro); NO lo bloquea, porque el opt-in resuelve por
-  //    TELÉFONO antes que por pushName: cada identidad entra por lo suyo (el de 30x por su LID en
-  //    CLOSER_LIDS, el de retia por su celular +57 300 8037326). Sus opt-ins son filas separadas
-  //    (teléfonos distintos) → la PK `calendly_optins.phone` no choca.
-  //
+  // Vieira VENDE el programa (la CARA del pitch), NO es closer → está en IGNORED_CLOSERS.
   // equipo@ / registro@ son correos DE LA EMPRESA (rol, no personales): si sacan a la closer, el
-  // correo pasa al siguiente. Implica que los pushes van a quien tenga el rol; al rotar, actualizar
-  // el teléfono acá (mismo patrón que "Equipo EstadoX" → Mateo).
-  'equipo@ttrading.co':       { name: 'Dana Rodriguez',      phone: '+573169835624', account: 'retia' },
-  'registro@ttrading.co':     { name: 'Andrea Machado',      phone: '+573132484664', account: 'retia' },
-  // Sebastian Rodriguez: MISMA persona que sebastian@30x.com (ver nota de choque arriba), ahora
-  // también en Tactical Investor (entró 2026-07-21, reemplazó a Alejo Carvajal → IGNORED_CLOSERS).
-  // Gmail = su host en el Calendly de retia (9 citas verificadas). Key en MINÚSCULA (el match
-  // lowercasea el email entrante).
-  'sebasrr321@gmail.com':     { name: 'Sebastian Rodriguez', phone: '+573008037326', account: 'retia' },
+  // correo pasa al siguiente → al rotar, actualizar el teléfono acá (patrón "Equipo EstadoX").
+  // "Andrea Machado" choca de nombre con andrea.machado@30x.com (DEPARTIDA, en IGNORED_CLOSERS):
+  // persona DISTINTA, no está en el roster → no confunde a resolveCloserByPushName.
+  dana_rodriguez: {
+    name: 'Dana Rodriguez',
+    identities: [{ connection: 'retia', email: 'equipo@ttrading.co', phone: '+573169835624' }],
+  },
+  andrea_machado: {
+    name: 'Andrea Machado',
+    identities: [{ connection: 'retia', email: 'registro@ttrading.co', phone: '+573132484664' }],
+  },
 };
 
-// LIDs de TRABAJO conocidos de closers cuyo número/nombre de WhatsApp NO permite el match por las
-// otras vías (ej: Sebas Rodriguez escribe desde un @lid que no mapea a su teléfono canónico y su
-// pushName no incluye "Rodriguez"). Mapear aquí su LID de trabajo hace que el bot lo reconozca y
-// que su contact_jid se AUTOCORRIJA al hilo correcto en vez de driftear al número equivocado.
-// REGLA: solo LIDs de TRABAJO confirmados. NUNCA poner un LID personal — recrearía el bug de
-// pushes al número equivocado. Clave = solo los dígitos del LID (sin @lid). Valor = email del closer.
-export const CLOSER_LIDS = {
-  '158025419608301': 'sebastian@30x.com', // Sebastian Rodriguez (su pushName de trabajo no trae "Rodriguez")
-};
+// ─── Derivación: mapa email → { name, phone, account? } (una entrada por IDENTIDAD) ──────────
+// account se emite SOLO cuando la connection no es la default → el CLOSERS resultante es idéntico
+// al roster histórico (las identidades 30x sin campo `account`, las de retia con account:'retia').
+export const CLOSERS = Object.fromEntries(
+  Object.values(PEOPLE).flatMap((person) =>
+    person.identities.map((id) => {
+      const entry = { name: person.name, phone: id.phone };
+      if (id.connection !== DEFAULT_ACCOUNT) entry.account = id.connection;
+      return [id.email.toLowerCase(), entry];
+    })
+  )
+);
+
+// LIDs de TRABAJO conocidos (derivados de las identidades con `workLid`): para closers cuyo @lid
+// no mapea a su teléfono canónico y cuyo pushName no permite el match. Mapear el LID de trabajo
+// hace que el bot lo reconozca y que su contact_jid se AUTOCORRIJA al hilo correcto en vez de
+// driftear al número equivocado. Clave = solo dígitos del LID (sin @lid); valor = email del closer.
+export const CLOSER_LIDS = Object.fromEntries(
+  Object.values(PEOPLE).flatMap((person) =>
+    person.identities.filter((id) => id.workLid).map((id) => [id.workLid, id.email.toLowerCase()])
+  )
+);
 
 // Hosts de Calendly que aparecen en el query org-wide pero que DELIBERADAMENTE NO
 // gestionamos con pushes. Se saltan en SILENCIO — sin alerta de "closer sin mapear" al admin.
@@ -123,9 +152,6 @@ export function isIgnoredCloser(email) {
   if (!email) return false;
   return IGNORED_CLOSERS.has(String(email).toLowerCase().trim());
 }
-
-import { phonesMatch } from '../common/utils.js';
-import { DEFAULT_ACCOUNT } from './accounts.js';
 
 // Devuelve { name, phone } | null
 export function resolveCloser(email) {

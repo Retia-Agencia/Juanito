@@ -3049,7 +3049,37 @@ por `better-sqlite3` sin compilar en el entorno local — preexistente).
 
 **Pendiente de deploy.** El brochure ya está público en Drive; el resto es código.
 
-### 18.AJ 🟡 Refactor: modelo empresa / programa / closer de primera clase (diseño 2026-07-21, ejecutar próxima sesión)
+### 18.AJ ✅ Refactor: modelo empresa / programa / closer de primera clase (diseño + EJECUTADO 2026-07-21)
+
+**Estado: IMPLEMENTADO y verificado local (2026-07-21).** Reshape puro: cero cambio de
+comportamiento, **copy byte-idéntico** en los 7 programas (diff before/after vacío) y suite completa
+sin regresiones (593 pass / 50 fallos SOLO ambientales por better-sqlite3+pdfkit, idéntico al
+baseline stasheado). Se grilló el modelo antes (`/grill-with-docs`) → decisiones en
+**[ADR 0001](adr/0001-modelo-empresa-programa-closer.md)** + glosario nuevo en
+**[docs/agents/context.md](agents/context.md)**.
+
+**Qué se hizo (las 6 decisiones del grill):**
+- **`Program` de primera clase** → nuevo `src/calendly/programs.js`: registro `PROGRAMS` (label,
+  company, connection, eventType, pitch, materials, active). De él se **derivan** con firma idéntica
+  `eventTypeToProgram`, los `eventTypes` por conexión, `PROGRAM_LABELS`, `PROGRAM_PITCH`,
+  `MATERIAL_LINKS`. Sumar/mover/activar un programa = editar UNA entrada.
+- **Company = label** (campo en Program + lookup `COMPANIES`), no objeto. Ninguna lógica se bifurca
+  por marca. Empresa ≠ conexión: `abogados` es marca EstadoX hosteada en la conexión 30x.
+- **Closer = persona con identidades** (`src/calendly/closers.js`): roster interno `PEOPLE` keyeado
+  por persona; cada identidad `{connection, email, phone, workLid?}`. De ahí se derivan `CLOSERS`
+  (por email, estructura byte-idéntica: 30x sin campo `account`, retia con él) y `CLOSER_LIDS`.
+  **Sebastian Rodriguez = UNA entrada, dos identidades** (30x + retia).
+- **`connection` solo en código nuevo**; `ACCOUNTS`/`accountOf*`/`activeAccounts` se conservan como
+  capa derivada/compat (renombre total = phase 2 opcional).
+- **Reshape puro**: la deuda de §18.AH (off por cuenta, throttle por token, notifyAdmins por
+  conexión) queda como follow-up. Regla: `/calendly off <cuenta>` debe aterrizar **antes** de sacar
+  a Retia de dry-run (hoy el off global apagaría ambas empresas).
+- **PK `calendly_optins.phone` NO se migra**: cada identidad tiene teléfono distinto → sin choque.
+  Clave compuesta `(phone, connection)` documentada solo como contingencia (ADR 0001).
+
+**Pendiente:** deploy al VPS (copiar `src/calendly/` + `docker compose up -d --build`).
+
+<details><summary>Diseño original (por qué se hizo) — histórico</summary>
 
 **Por qué.** Al activar Retia (§18.AH) quedó claro que el modelo actual conflaciona tres cosas
 distintas y que "programa" no es un objeto: hay que tocar **5 lugares en 2 archivos** para sumar uno,
@@ -3113,6 +3143,8 @@ De ahí se **derivan** (no se duplican) los mapas de hoy:
 **No empezar sin grillar el modelo** (`/grill-with-docs`): resolver primero si `Company` amerita ser
 objeto o basta el label, y cómo se expresa "un closer en varios programas" sin reabrir el bug de
 secuestro de pushes.
+
+</details>
 
 ### 🟢 Baja prioridad / Nice-to-have
 

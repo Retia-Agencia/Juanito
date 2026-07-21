@@ -18,7 +18,11 @@ const TZ = () => process.env.TZ || 'America/Bogota';
 // Los event_types, las organizaciones y los tokens viven en el REGISTRO DE CUENTAS
 // (accounts.js): desde que hay más de una cuenta de Calendly, ese tuple dejó de ser un
 // singleton. Acá solo se derivan las vistas que el resto del código ya consumía.
-import { ACCOUNTS, eventTypeToProgram, accountOf, DEFAULT_ACCOUNT } from './accounts.js';
+import { eventTypeToProgram, accountOf, DEFAULT_ACCOUNT } from './accounts.js';
+// El copy (pitch, materiales) y los rótulos de cada programa viven en el registro PROGRAMS
+// (programs.js), del que se derivan. Se importan acá para armar los mensajes y se re-exportan
+// más abajo para no romper importadores del surface viejo.
+import { PROGRAM_LABELS, PROGRAM_PITCH, MATERIAL_LINKS } from './programs.js';
 
 // Organización de la cuenta por default. Se conserva para callers viejos (scripts);
 // el poll usa la org de cada cuenta del registro.
@@ -224,104 +228,18 @@ export function formatLeadTime(startIso, tz = TZ()) {
 // el Push 1 cambia el intro y el nombre del programa; el Push 3 solo cambia por el
 // link de la llamada (se inyecta por cita).
 
-// ▼▼▼ EDITA AQUÍ: links de materiales por producto (los entrega el owner). ▼▼▼
-// Mientras estén vacíos, el bloque de materiales se OMITE solo (no se manda link roto).
-// Brochures: pueden ser un HTML auto-contenido en GitHub Pages (repo público
-// Agencia-Dani/juanito-brochures, p. ej. abogados) o un archivo en Google Drive
-// (p. ej. second_brain). Ambos abren renderizados en celular y compu al dar
-// click. Videos: YouTube.
-export const MATERIAL_LINKS = {
-  second_brain: {
-    brochure: 'https://drive.google.com/file/d/1ucwv-ANi7J7u6sXwAC4Azuj7qtI3kX_P/view',
-    video: 'https://www.youtube.com/watch?v=DGA0nf0geN0',
-  },
-  abogados: {
-    brochure: 'https://drive.google.com/file/d/1TN5HfX7r8ViM2JXuOmFOnvBSI3xyeLwR/view',
-    video: 'https://www.youtube.com/watch?v=88W1z_M9tCg',
-  },
-  linkedin: {
-    brochure: 'https://drive.google.com/file/d/1MO5jP7rnbWKUyDWao3Q1-vfF1fzR-h3O/view',
-    video: 'https://youtu.be/J9LDlmtQeHs',
-  },
-  // Programas nuevos (2026-07-14). Todavía SIN video: el bloque de materiales se arma
-  // igual, solo con el brochure (materialsBlock omite la línea que falte).
-  developers: {
-    brochure: 'https://drive.google.com/file/d/1VEUK_yF1UxwrkiCQJP1VHFW-nG9d426I/view',
-  },
-  operaciones: {
-    brochure: 'https://drive.google.com/file/d/16NbFnJq1gCYSfQA0a2sfLbGuEBxVc8Yp/view',
-  },
-  // Instagram & TikTok (2026-07-16). El video es una landing de 30x.com, no YouTube.
-  instagram: {
-    brochure: 'https://drive.google.com/file/d/1VvP9kCMldKaVs3wwXHLZFk7I6Spu-JZS/view',
-    video: 'https://30x.com/instagram-tiktok',
-  },
-  // Retia — "De Cero a Tactical Investor". Los archivos NO se adjuntan al push (es texto que el
-  // closer reenvía por wa.me): van como LINK. `order` fuerza video ANTES del brochure para este
-  // programa (el resto usa el default brochure→video); ver materialsBlock.
-  tactical_investor: {
-    video: 'https://youtu.be/YQwmGRCBlF0',
-    brochure: 'https://drive.google.com/file/d/1ec7QyeXF95r1mhEDbzaqxlZENJT_1mJ2/view?usp=drive_link',
-    order: ['video', 'brochure'],
-  },
-};
-// ▲▲▲ EDITA AQUÍ ▲▲▲
-
-// Etiqueta CORTA y legible de cada programa. Fuente única — la usan los mensajes al
-// CLOSER (Push 0/3 y digest) para segmentar a qué programa pertenece cada push (un mismo
-// closer puede tener citas de dos programas), y el caption del brochure en el scheduler.
-// Distinta de PROGRAM_PITCH.program (frase larga que ve el LEAD): esto es un rótulo interno.
-export const PROGRAM_LABELS = {
-  second_brain: 'AI Second Brain',
-  abogados: 'IA para Abogados',
-  linkedin: 'LinkedIn Sales',
-  developers: 'AI for Developers',
-  operaciones: 'Operaciones Escalables con IA',
-  instagram: 'Instagram & TikTok',
-  // Retia (agencia #2). Copy completo abajo (PROGRAM_PITCH + MATERIAL_LINKS). Su ET aún no está
-  // cableado en accounts.js (falta el token), así que este rótulo no se alcanza hasta derivarlo.
-  tactical_investor: 'De Cero a Tactical Investor',
-};
+// Los links de materiales (MATERIAL_LINKS) y los rótulos cortos (PROGRAM_LABELS) de cada
+// programa se derivan del registro PROGRAMS (programs.js) — editá un programa AHÍ, no acá.
+// Se re-exportan para no romper importadores del surface viejo (antes eran `export const`
+// en este archivo). PROGRAM_LABELS es distinta de PROGRAM_PITCH.program (la frase larga que
+// ve el LEAD): PROGRAM_LABELS es el rótulo interno que segmenta los mensajes al CLOSER.
+export { PROGRAM_LABELS, MATERIAL_LINKS };
 
 // Rótulo del programa para los headers/líneas al closer. Devuelve '' si el programa es
 // desconocido (así el mensaje no muestra un tag vacío ni una clave cruda).
 export function programLabelOf(programKey) {
   return PROGRAM_LABELS[programKey] || '';
 }
-
-const PROGRAM_PITCH = {
-  second_brain: {
-    from: 'de Andrés Bilbao en 30X',
-    program:
-      'programa de implementación de tecnología AI Second Brain para ti y tus proyectos',
-  },
-  abogados: {
-    from: 'de EstadoX',
-    program: 'programa de IA para Abogados de EstadoX',
-  },
-  linkedin: {
-    from: 'de 30X',
-    program: 'programa de LinkedIn Sales de 30X',
-  },
-  developers: {
-    from: 'de 30X',
-    program: 'programa de AI for Developers de 30X',
-  },
-  operaciones: {
-    from: 'de 30X',
-    program: 'programa de Operaciones Escalables con AI de 30X',
-  },
-  instagram: {
-    from: 'de 30X',
-    program: 'programa de Instagram & TikTok for Business de 30X',
-  },
-  // Retia (agencia #2). "de <from>" → cara del programa (Juan Pablo Vieira) + marca de cara al
-  // lead (JP Tactical); la empresa interna es Retia (label de la cuenta). "al <program>".
-  tactical_investor: {
-    from: 'de Juan Pablo Vieira en JP Tactical',
-    program: 'programa De Cero a Tactical Investor',
-  },
-};
 
 function materialsBlock(programKey) {
   const links = MATERIAL_LINKS[programKey] || {};
