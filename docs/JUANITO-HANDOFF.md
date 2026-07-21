@@ -2928,8 +2928,9 @@ imagen; y `listProgramEvents` **desde el contenedor** devolvió para mañana: `i
 `retia[dry-run:true, push4:false]`. Falta solo, en manos del owner: (1) opt-in de los 3 closers (ya
 les pidió que escriban), (2) validar un ciclo muda y quitar el dry-run. La refactorización
 multi-cuenta base ya está en `main` (commit `a875b88`; ver **§11.11** para el diseño y los tres bugs
-del camino). Código en `feat/calendly-retia` (pusheado; **falta merge a `main`** — hoy `main` no lo
-tiene, el VPS corre los archivos copiados).
+del camino). **Ya mergeado a `main`** (merge `e5a9ae8`; la rama `feat/calendly-retia` se borró). El
+VPS corre los archivos copiados + `docker-compose.yml` = `main` (coexiste con el harvest-sweep de
+HubSpot que `main` traía; verificado que ambos features conviven, sin conflicto).
 
 **Qué es Retia:** empresa (era el placeholder "TTrading"). Su programa es **"De Cero a Tactical
 Investor"**, que **vende Juan Pablo Vieira** — Vieira es la CARA (va en el copy del pitch), **NO un
