@@ -256,6 +256,14 @@ export const MATERIAL_LINKS = {
     brochure: 'https://drive.google.com/file/d/1VvP9kCMldKaVs3wwXHLZFk7I6Spu-JZS/view',
     video: 'https://30x.com/instagram-tiktok',
   },
+  // Retia — "De Cero a Tactical Investor". Los archivos NO se adjuntan al push (es texto que el
+  // closer reenvía por wa.me): van como LINK. `order` fuerza video ANTES del brochure para este
+  // programa (el resto usa el default brochure→video); ver materialsBlock.
+  tactical_investor: {
+    video: 'https://youtu.be/YQwmGRCBlF0',
+    brochure: 'https://drive.google.com/file/d/1ec7QyeXF95r1mhEDbzaqxlZENJT_1mJ2/view?usp=drive_link',
+    order: ['video', 'brochure'],
+  },
 };
 // ▲▲▲ EDITA AQUÍ ▲▲▲
 
@@ -270,6 +278,9 @@ export const PROGRAM_LABELS = {
   developers: 'AI for Developers',
   operaciones: 'Operaciones Escalables con IA',
   instagram: 'Instagram & TikTok',
+  // Retia (agencia #2). Copy completo abajo (PROGRAM_PITCH + MATERIAL_LINKS). Su ET aún no está
+  // cableado en accounts.js (falta el token), así que este rótulo no se alcanza hasta derivarlo.
+  tactical_investor: 'De Cero a Tactical Investor',
 };
 
 // Rótulo del programa para los headers/líneas al closer. Devuelve '' si el programa es
@@ -304,13 +315,24 @@ const PROGRAM_PITCH = {
     from: 'de 30X',
     program: 'programa de Instagram & TikTok for Business de 30X',
   },
+  // Retia (agencia #2). "de <from>" → cara del programa (Juan Pablo Vieira) + marca de cara al
+  // lead (JP Tactical); la empresa interna es Retia (label de la cuenta). "al <program>".
+  tactical_investor: {
+    from: 'de Juan Pablo Vieira en JP Tactical',
+    program: 'programa De Cero a Tactical Investor',
+  },
 };
 
 function materialsBlock(programKey) {
   const links = MATERIAL_LINKS[programKey] || {};
+  const labels = { brochure: '📄 Brochure', video: '🎥 Video' };
+  // Default brochure→video (histórico, byte-idéntico para 30x). Un programa puede fijar su propio
+  // orden con `order` (ej: tactical_investor pide video antes que brochure).
+  const order = links.order || ['brochure', 'video'];
   const lines = [];
-  if (links.brochure) lines.push(`📄 Brochure: ${links.brochure}`);
-  if (links.video) lines.push(`🎥 Video: ${links.video}`);
+  for (const kind of order) {
+    if (links[kind]) lines.push(`${labels[kind]}: ${links[kind]}`);
+  }
   if (!lines.length) return ''; // sin links → no incluimos el bloque
   return `\n\nEs MUY IMPORTANTE que puedas ver estos materiales sí o sí antes de nuestra llamada:\n\n${lines.join('\n')}`;
 }

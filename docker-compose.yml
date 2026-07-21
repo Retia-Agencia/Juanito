@@ -106,6 +106,11 @@ services:
       - CALENDLY_RESCHEDULE_AI=${CALENDLY_RESCHEDULE_AI:-true}
       - CALENDLY_RESCHEDULE_MODEL=${CALENDLY_RESCHEDULE_MODEL:-}
       - CALENDLY_RESCHEDULE_AI_TIMEOUT_MS=${CALENDLY_RESCHEDULE_AI_TIMEOUT_MS:-8000}
+      # Cuenta Retia (agencia #2, programa "De Cero a Tactical Investor"). El registro pasa env
+      # EXPLÍCITAMENTE → sin estas líneas el token del .env NO llega al contenedor y retia no entra
+      # a activeAccounts(). Org URI y event_type van hardcodeados en accounts.js (no por env).
+      - CALENDLY_TOKEN_RETIA=${CALENDLY_TOKEN_RETIA:-}
+      - CALENDLY_DRY_RUN_RETIA=${CALENDLY_DRY_RUN_RETIA:-true}
       # Cuánto sigue "caliente" un outcome a medio flujo antes de ceder la respuesta del
       # closer al Push 4 más reciente (§18.AC).
       - OUTCOME_REPLY_WINDOW_MIN=${OUTCOME_REPLY_WINDOW_MIN:-120}

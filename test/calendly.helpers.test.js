@@ -87,12 +87,14 @@ test('resolveCloserByPushName resuelve por nombre completo e ignora ambigüedade
   assert.equal(resolveCloserByPushName('Lucas Mendoza').email, 'lucas.mendoza@30x.com');
   // Case insensitive y con emojis
   assert.equal(resolveCloserByPushName('pablo lozano 📞').phone, '+573046131437');
-  // Tres Sebastians (Rodriguez, Salazar, Marin) — "Sebastian" solo es ambiguo → null
+  // Varios Sebastians — "Sebastian" solo es ambiguo → null
   assert.equal(resolveCloserByPushName('Sebastian'), null);
-  // Con apellido → resuelve unívocamente
+  // Con apellido → resuelve unívocamente...
   assert.equal(resolveCloserByPushName('Sebastian Salazar').email, 'sebastian.salazar@30x.com');
-  assert.equal(resolveCloserByPushName('Sebastian Rodriguez').email, 'sebastian@30x.com');
   assert.equal(resolveCloserByPushName('Sebastian Marin').email, 'sebastian.marin@30x.com');
+  // ...EXCEPTO "Sebastian Rodriguez": MISMA persona, dos programas → dos entradas (sebastian@30x.com
+  // [30x] y sebasrr321@gmail.com [retia]) → ambiguo → null (entra por teléfono/LID, no por nombre).
+  assert.equal(resolveCloserByPushName('Sebastian Rodriguez'), null);
   // Mateo salió → ya no se reconoce
   assert.equal(resolveCloserByPushName('Mateo Leon'), null);
   // No reconocido → null
@@ -325,10 +327,13 @@ test('buildPrecallText Push 1 distingue producto (intro + nombre del programa)',
 test('buildPrecallText Push 1 incrusta el bloque de materiales del producto correcto', () => {
   for (const prog of Object.keys(MATERIAL_LINKS)) {
     const txt = buildPrecallText({ programKey: prog, pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
+    // La línea 328 ya garantiza que aparezca ≥1 material (si no hubiera ninguno, materialsBlock
+    // omite el bloque entero y este match fallaría).
     assert.match(txt, /Es MUY IMPORTANTE que puedas ver estos materiales/);
-    // El brochure viaja como link dentro del copy — el lead lo abre sin depender de reenvíos.
-    assert.ok(txt.includes(MATERIAL_LINKS[prog].brochure), `${prog}: falta su brochure`);
-    // El video es opcional: los programas nuevos (developers, operaciones) todavía no tienen.
+    // Brochure y video son AMBOS opcionales, pero si el programa declara uno, tiene que viajar en
+    // el copy. developers/operaciones lanzaron con solo brochure; tactical_investor con solo video
+    // (deck PDF pendiente). El link va dentro del copy — el lead lo abre sin depender de reenvíos.
+    if (MATERIAL_LINKS[prog].brochure) assert.ok(txt.includes(MATERIAL_LINKS[prog].brochure), `${prog}: falta su brochure`);
     if (MATERIAL_LINKS[prog].video) assert.ok(txt.includes(MATERIAL_LINKS[prog].video), `${prog}: falta su video`);
   }
 

@@ -46,31 +46,40 @@ export const CLOSERS = {
   // pablo.lozano@ — son personas distintas y ambas están activas.
   'pablosuarez@30x.com':      { name: 'Pablo Suarez',        phone: '+573152573103' },
 
-  // ─── TTrading (agencia #2) — datos del jefe 2026-07-16 ─────────────────────
-  // Estado: INERTES por partida doble. (1) La cuenta 'ttrading' no tiene token → no hay
-  // poll que los alcance. (2) Ninguno le ha escrito a Juanito todavía (están EN FRÍO), así
-  // que no tienen opt-in y la entrega estricta los omitiría igual.
+  // ─── Retia (agencia #2) — programa "De Cero a Tactical Investor" ───────────
+  // Vieira vende el programa (es la CARA, va en el copy del pitch en index.js), NO es closer.
+  // Estos 3 son los closers reales de Retia.
+  //
+  // Estado: INERTES por partida doble. (1) La cuenta 'retia' no tiene token → no hay poll que
+  // los alcance. (2) Ninguno le ha escrito a Juanito todavía (están EN FRÍO), así que no
+  // tienen opt-in y la entrega estricta los omitiría igual.
   //
   // ⚠️ SIN VERIFICAR contra la cuenta real (falta el token): los emails TIENEN que coincidir
   // exacto con el `event_memberships[0].user_email` de sus citas o cada poll alerta "closer
   // sin mapear" y esas citas no reciben push.
   //
-  // PENDIENTE (jefe, 2026-07-16):
-  //  · Nombre COMPLETO de Dana y Andrea. Hoy solo tenemos el de pila, y un nombre de una
-  //    palabra NO se resuelve por pushName a propósito (ver resolveCloserByPushName): sin
-  //    apellido dependen de escribir desde su número canónico o de mapear su LID acá abajo.
-  //    NO son la Dana ni la Andrea de 30X que están en IGNORED_CLOSERS (confirmado) — razón
-  //    de más para tener el apellido y no confundirlas.
-  //  · Preguntar si equipo@ / registro@ son de ellas o los maneja MÁS DE UNA persona. Si es
-  //    compartido, pedir un correo personal: hoy todos los pushes de esa cuenta le llegan a
-  //    una sola. El mismo patrón en EstadoX (equipo@estadox.com, registro@estadox.com) está
-  //    en IGNORED_CLOSERS justo por eso ("cuenta compartida", "cuenta de sistema — nunca fue
-  //    un closer"); enrutar un rol a una persona ya se hizo con "Equipo EstadoX" → Mateo.
-  'equipo@ttrading.co':       { name: 'Dana',   phone: '+573169835624', account: 'ttrading' },
-  'registro@ttrading.co':     { name: 'Andrea', phone: '+573132484664', account: 'ttrading' },
-  // Gmail personal: es el email con el que hostea en Calendly, que es lo único que importa
-  // acá (el match es contra el host del evento, no contra el dominio de la empresa).
-  'alejocarpa1108@gmail.com': { name: 'Alejo Carvajal', phone: '+573015893896', account: 'ttrading' },
+  // Apellidos confirmados 2026-07-21; los 3 emails verificados contra la cuenta real (script
+  // calendly-account-derive). OJO dos choques de nombre, ambos INOCUOS hoy:
+  //  · "Andrea Machado": existe otra (andrea.machado@30x.com, DEPARTIDA) en IGNORED_CLOSERS —
+  //    persona DISTINTA, no está en CLOSERS, así que no confunde a resolveCloserByPushName.
+  //  · "Sebastian Rodriguez": es la MISMA PERSONA que sebastian@30x.com — un closer con DOS
+  //    programas en DOS Calendly distintos (30X y retia), por eso DOS entradas (el modelo actual
+  //    ata un closer a UNA conexión; el refactor §18.AJ lo arregla). resolveCloserByPushName ve el
+  //    nombre repetido → null (ambiguo = seguro); NO lo bloquea, porque el opt-in resuelve por
+  //    TELÉFONO antes que por pushName: cada identidad entra por lo suyo (el de 30x por su LID en
+  //    CLOSER_LIDS, el de retia por su celular +57 300 8037326). Sus opt-ins son filas separadas
+  //    (teléfonos distintos) → la PK `calendly_optins.phone` no choca.
+  //
+  // equipo@ / registro@ son correos DE LA EMPRESA (rol, no personales): si sacan a la closer, el
+  // correo pasa al siguiente. Implica que los pushes van a quien tenga el rol; al rotar, actualizar
+  // el teléfono acá (mismo patrón que "Equipo EstadoX" → Mateo).
+  'equipo@ttrading.co':       { name: 'Dana Rodriguez',      phone: '+573169835624', account: 'retia' },
+  'registro@ttrading.co':     { name: 'Andrea Machado',      phone: '+573132484664', account: 'retia' },
+  // Sebastian Rodriguez: MISMA persona que sebastian@30x.com (ver nota de choque arriba), ahora
+  // también en Tactical Investor (entró 2026-07-21, reemplazó a Alejo Carvajal → IGNORED_CLOSERS).
+  // Gmail = su host en el Calendly de retia (9 citas verificadas). Key en MINÚSCULA (el match
+  // lowercasea el email entrante).
+  'sebasrr321@gmail.com':     { name: 'Sebastian Rodriguez', phone: '+573008037326', account: 'retia' },
 };
 
 // LIDs de TRABAJO conocidos de closers cuyo número/nombre de WhatsApp NO permite el match por las
@@ -104,6 +113,10 @@ export const IGNORED_CLOSERS = new Set([
   'yuli@30x.com',             // idem Dana
   'equipo@estadox.com',       // cuenta compartida de EstadoX — standby
   'registro@estadox.com',     // cuenta de sistema de EstadoX — nunca fue un closer
+  // Retia (2026-07-21):
+  'jvieira@ttrading.co',      // Juan Pablo Vieira VENDE el programa (cara), no es closer. Tomó citas
+                              // en el pasado (12 en la ventana) pero YA NO → skip silencioso.
+  'alejocarpa1108@gmail.com', // salió de Tactical Investor 2026-07-21; lo reemplazó Sebastian Rodriguez.
 ]);
 
 export function isIgnoredCloser(email) {
