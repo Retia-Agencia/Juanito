@@ -35,7 +35,7 @@
 // porque SQLite no permite alterar una PK. Hoy no pasa (ADR 0001).
 
 import { phonesMatch } from '../common/utils.js';
-import { DEFAULT_ACCOUNT } from './accounts.js';
+import { DEFAULT_ACCOUNT, accountOf } from './accounts.js';
 
 const PEOPLE = {
   daniela_camacho: {
@@ -246,6 +246,31 @@ export function resolveCloserByPushName(pushName) {
     }
   }
   return seen.size === 1 ? [...seen.values()][0] : null;
+}
+
+// TODAS las identidades cuyo nombre de closer matchea `name` (nombre completo). A diferencia de
+// resolveCloserByPushName —que colapsa a null ante ambigüedad para NO auto-registrar al closer
+// equivocado—, acá devolvemos la LISTA completa a propósito: la usa `/calendly on|off <closer>`
+// para desambiguar por CONEXIÓN cuando una persona tiene 1+ identidades (ej: Sebastian Rodriguez
+// en 30x y en retia). Cada elemento: { email, name, phone, account, accountLabel }, con
+// account = key de la Conexión (DEFAULT_ACCOUNT para la identidad default). Dedup por teléfono
+// (una identidad = un teléfono, invariante del roster). Vacío si no matchea nadie.
+export function resolveIdentitiesByName(name) {
+  if (!name) return [];
+  const words = nameWords(name);
+  if (!words.length) return [];
+  const out = [];
+  const seenPhone = new Set();
+  for (const [email, c] of Object.entries(CLOSERS)) {
+    const closerWords = nameWords(c.name);
+    if (closerWords.length < 2) continue; // un nombre de una palabra no identifica a nadie
+    if (!closerWords.every((w) => words.includes(w))) continue;
+    if (seenPhone.has(c.phone)) continue;
+    seenPhone.add(c.phone);
+    const account = c.account || DEFAULT_ACCOUNT;
+    out.push({ email, name: c.name, phone: c.phone, account, accountLabel: accountOf(account)?.label || account });
+  }
+  return out;
 }
 
 // ¿El JID desde el que un closer se registró apunta a un número DISTINTO al canónico de

@@ -7,6 +7,7 @@
 // (recurring-logic es PURO — seguro de importar.)
 
 import { csvToDayLabels, zonedNowParts } from '../scheduler/recurring-logic.js';
+import { accountOf } from '../calendly/accounts.js';
 
 // Reconoce el comando unificado de reportes y sus alias (/reportes, /reporte, /metricas).
 // `cmd` es el texto en minúsculas y sin espacios al borde. Exportado para que el router
@@ -590,7 +591,7 @@ function buildHelp(role) {
       'Operación:',
       '• /tareas [ver|hecha|descartar <id>] — órdenes del jefe por hacer',
       '• /negocio [pendientes|ok|no|olvida <id>] — contexto del negocio',
-      '• /calendly [on|off] [closer] — pushes precall',
+      '• /calendly [on|off] [closer] [cuenta|todo] — pushes precall',
       '• /reportes [leads|metricas] — preview (en grupo lo publica; jefe/admin)',
       '• /reportejefe — scorecard consolidado (todos los programas + closers)',
       '• /status — estado del sistema',
@@ -736,39 +737,101 @@ function shortId(id) {
   return String(id).split('@')[0];
 }
 
-// /calendly                  → estado global + closers pausados
-// /calendly on|off           → reactiva / pausa TODOS los pushes (global)
-// /calendly on|off <closer>  → reactiva / pausa solo a ese closer (nombre completo)
+// /calendly                        → estado global + closers pausados
+// /calendly on|off                 → reactiva / pausa TODOS los pushes (global)
+// /calendly on|off <closer>        → una IDENTIDAD del closer (si es unívoco); si tiene 1+
+//                                    identidades (una por Conexión de Calendly), lista y pide cuenta
+// /calendly on|off <closer> <cta>  → esa identidad puntual (ej: `... Sebastian Rodriguez retia`)
+// /calendly on|off <closer> todo   → TODAS las identidades del closer (no le llega de ningún programa)
+//
+// Por qué la desambiguación (ADR 0001 / §18.AK): tras el refactor una PERSONA puede tener varias
+// identidades, una por Conexión, cada una con su propio opt-in (fila por teléfono). "Pausar a
+// Sebastian Rodriguez" es ambiguo → el dev tiene que decir CUÁL, o `todo` para las dos.
 function handleCalendly(text, deps = {}) {
-  const { isCalendlyPaused, setCalendlyPaused, setCloserPaused, resolveCloserByPushName } = deps;
-  const parts = (text || '').trim().split(/\s+/); // [ '/calendly', action?, ...nombre ]
+  const { setCalendlyPaused, setCloserPaused, resolveIdentitiesByName } = deps;
+  const parts = (text || '').trim().split(/\s+/); // [ '/calendly', action?, ...nombre, scope? ]
   const action = (parts[1] || 'status').toLowerCase();
-  const closerName = parts.slice(2).join(' ').trim();
 
   if (action === 'status') return buildCalendlyStatus(deps);
   if (action !== 'on' && action !== 'off') {
-    return 'Uso: /calendly [on|off] [nombre completo del closer]';
+    return 'Uso: /calendly [on|off] [nombre del closer] [cuenta|todo]';
   }
   const pause = action === 'off';
 
-  // Por-closer.
-  if (closerName) {
-    const closer = resolveCloserByPushName ? resolveCloserByPushName(closerName) : null;
-    if (!closer) {
-      return `No reconozco al closer "${closerName}". Usa el nombre completo (ej: Pablo Lozano).`;
-    }
-    const changes = setCloserPaused ? setCloserPaused(closer.phone, pause) : 0;
-    if (!changes) {
-      return `${closer.name} aún no tiene opt-in registrado, no hay nada que ${pause ? 'pausar' : 'reactivar'}.`;
-    }
-    return `Pushes de ${closer.name}: ${pause ? 'PAUSADOS ⏸️' : 'reactivados ▶️'}`;
+  // El último token tras on/off puede ser un SCOPE: una key de cuenta ('30x'/'retia') o
+  // 'todo'/'all' (todas las identidades). Si no lo es, forma parte del nombre. Los nombres de
+  // personas nunca son una key de cuenta ni "todo", así que la heurística no colisiona.
+  const rest = parts.slice(2);
+  let scope = null; // 'all' | <accountKey>
+  if (rest.length) {
+    const last = rest[rest.length - 1].toLowerCase();
+    if (last === 'todo' || last === 'todos' || last === 'all') scope = 'all';
+    else if (accountOf(last)) scope = last;
+    if (scope) rest.pop();
+  }
+  const closerName = rest.join(' ').trim();
+
+  // Sin nombre: acción GLOBAL. (Un scope suelto sin closer no tiene sentido → guía de uso.)
+  if (!closerName) {
+    if (scope) return 'Uso: /calendly ' + action + ' <nombre del closer> [cuenta|todo]';
+    if (setCalendlyPaused) setCalendlyPaused(pause);
+    return pause
+      ? 'Pushes de Calendly: PAUSADOS ⏸️ (global) — no se enviará nada hasta `/calendly on`.'
+      : 'Pushes de Calendly: reactivados ▶️ (global).';
   }
 
-  // Global.
-  if (setCalendlyPaused) setCalendlyPaused(pause);
-  return pause
-    ? 'Pushes de Calendly: PAUSADOS ⏸️ (global) — no se enviará nada hasta `/calendly on`.'
-    : 'Pushes de Calendly: reactivados ▶️ (global).';
+  const identities = resolveIdentitiesByName ? resolveIdentitiesByName(closerName) : [];
+  if (!identities.length) {
+    return `No reconozco al closer "${closerName}". Usa el nombre completo (ej: Pablo Lozano).`;
+  }
+  const who = identities[0].name;
+
+  // ¿Qué identidades toco?
+  let targets;
+  if (scope === 'all') {
+    targets = identities;
+  } else if (scope) {
+    targets = identities.filter((i) => i.account === scope);
+    if (!targets.length) {
+      const cuentas = identities.map((i) => i.account).join(', ');
+      return `${who} no tiene identidad en la cuenta "${scope}". Cuentas donde cierra: ${cuentas}.`;
+    }
+  } else if (identities.length === 1) {
+    targets = identities; // unívoco: comportamiento de siempre
+  } else {
+    // Ambiguo: 1+ identidades y el dev no dijo cuál. Listar y pedir que precise.
+    const lista = identities.map((i) => `• ${i.account} — ${i.accountLabel}`).join('\n');
+    return (
+      `"${who}" tiene ${identities.length} identidades (una por cuenta de Calendly):\n${lista}\n\n` +
+      `Precisá cuál:  /calendly ${action} ${who} <cuenta>\n` +
+      `O todas:       /calendly ${action} ${who} todo`
+    );
+  }
+
+  // Aplicar por identidad. setCloserPaused devuelve 0 si esa identidad aún no tiene opt-in.
+  const done = [];
+  const skipped = [];
+  for (const t of targets) {
+    const changes = setCloserPaused ? setCloserPaused(t.phone, pause) : 0;
+    (changes ? done : skipped).push(t);
+  }
+
+  const estado = pause ? 'PAUSADOS ⏸️' : 'reactivados ▶️';
+  const nada = pause ? 'pausar' : 'reactivar';
+
+  // Una sola identidad objetivo: respuesta directa (nombra la cuenta para que el dev sepa cuál).
+  if (targets.length === 1) {
+    const t = targets[0];
+    return done.length
+      ? `Pushes de ${t.name} · ${t.accountLabel} (${t.account}): ${estado}`
+      : `${t.name} · ${t.accountLabel} (${t.account}) aún no tiene opt-in registrado, no hay nada que ${nada}.`;
+  }
+
+  // Varias (scope 'todo'): desglose por identidad.
+  const lines = [`${who} — ${done.length}/${targets.length} identidades ${pause ? 'pausadas ⏸️' : 'reactivadas ▶️'}:`];
+  for (const t of done) lines.push(`• ${t.account} (${t.accountLabel}) ✓`);
+  for (const t of skipped) lines.push(`• ${t.account} (${t.accountLabel}) — sin opt-in, nada que ${nada}`);
+  return lines.join('\n');
 }
 
 function buildCalendlyStatus({ isCalendlyPaused, listOptins } = {}) {

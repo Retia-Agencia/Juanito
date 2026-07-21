@@ -203,12 +203,23 @@ Botón de pánico de los pushes a closers.
 | `/calendly` | Estado global + closers pausados |
 | `/calendly off` | Pausa **todos** los pushes (global) |
 | `/calendly on` | Reactiva los pushes |
-| `/calendly off <closer>` | Pausa solo a ese closer (nombre completo, ej: `Pablo Lozano`) |
-| `/calendly on <closer>` | Reactiva solo a ese closer |
+| `/calendly off <closer>` | Pausa a ese closer. Si tiene **una sola** identidad, la apaga directo |
+| `/calendly off <closer> <cuenta>` | Pausa **una identidad puntual** (ej: `... Sebastian Rodriguez retia`) |
+| `/calendly off <closer> todo` | Pausa **todas** las identidades del closer (no le llega de ningún programa) |
+| `/calendly on <closer> [cuenta\|todo]` | Igual, para reactivar |
 
-> ⚠️ **`/calendly off` a secas es GLOBAL y apaga a TODAS las empresas**, no solo a una. Juanito
-> puede atender varias cuentas de Calendly (una por agencia). Para cortarle a una sola, usá
-> `/calendly off <closer>` uno por uno. Un `/calendly off <empresa>` está pendiente.
+> **Un closer puede tener varias identidades** (una por cuenta de Calendly — ej: Sebastian
+> Rodriguez cierra en **30x** y en **retia**). Cada identidad se pausa por separado. Por eso:
+> - `/calendly off <closer>` de un closer con **una** identidad → la apaga directo.
+> - `/calendly off <closer>` de un closer con **varias** → Juanito **lista las cuentas y te pide
+>   cuál** (no adivina). Precisás con `/calendly off <closer> <cuenta>` o `todo` para todas.
+> - `<cuenta>` es la key corta: `30x` o `retia`.
+>
+> La respuesta **siempre nombra la cuenta** que tocó (ej: *"Pushes de Sebastian Rodriguez ·
+> Retia (retia): PAUSADOS ⏸️"*), para que sepas exactamente qué identidad quedó apagada.
+
+> ⚠️ **`/calendly off` a secas sigue siendo GLOBAL** y apaga a TODAS las empresas/programas, no
+> solo a una.
 
 > `<closer>` va con **nombre completo**. Un closer registrado solo con nombre de pila no se
 > reconoce acá (es a propósito: un nombre de una palabra es ambiguo y podría apuntar a la persona
@@ -270,7 +281,7 @@ línea `🔁 movidas` del reporte, y el lead cuenta **una sola vez**: el día qu
 /persona <n|nombre> | <texto>            ← tono por grupo
 /programados [off <id>]                  ← recurrentes
 /aprobaciones [ver|aprobar|rechazar <id>]← borradores generados
-/calendly [on|off] [closer]              ← pushes precall
+/calendly [on|off] [closer] [cuenta|todo]← pushes precall (cuenta = 30x/retia; todo = todas)
 /reportes [leads|metricas]               ← reporte (DM=preview · en grupo lo publica)
 /status · /whoami · /id                  ← diagnóstico e identidad
 /help · /ayuda · /comandos               ← ayuda según tu rol

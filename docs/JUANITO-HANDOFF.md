@@ -3077,7 +3077,9 @@ baseline stasheado). Se grilló el modelo antes (`/grill-with-docs`) → decisio
 - **PK `calendly_optins.phone` NO se migra**: cada identidad tiene teléfono distinto → sin choque.
   Clave compuesta `(phone, connection)` documentada solo como contingencia (ADR 0001).
 
-**Pendiente:** deploy al VPS (copiar `src/calendly/` + `docker compose up -d --build`).
+**Deploy:** ✅ desplegado al VPS (2026-07-21). El `/root/juanito/src/calendly/` del VPS ya tiene
+`programs.js` y el roster por-persona. El follow-up de `/calendly off` por identidad se hizo y
+desplegó junto en **§18.AK**.
 
 <details><summary>Diseño original (por qué se hizo) — histórico</summary>
 
@@ -3138,13 +3140,52 @@ De ahí se **derivan** (no se duplican) los mapas de hoy:
 - **Tests acoplados a `ACCOUNTS`/`CLOSERS`:** o se migran a `PROGRAMS`/`CONNECTIONS`, o se dejan
   exports de compat finos que derivan del nuevo registro.
 - **`/calendly off <cuenta>`** (deuda de §18.AH) encaja natural acá: apagar por empresa/programa/
-  conexión en vez del global de hoy.
+  conexión en vez del global de hoy. → **Resuelto a nivel de IDENTIDAD/closer en §18.AK**; falta solo
+  el barrido por conexión entera (apagar de un tiro a TODOS los closers de retia).
 
 **No empezar sin grillar el modelo** (`/grill-with-docs`): resolver primero si `Company` amerita ser
 objeto o basta el label, y cómo se expresa "un closer en varios programas" sin reabrir el bug de
 secuestro de pushes.
 
 </details>
+
+### 18.AK ✅ `/calendly off` por identidad + closer completo (2026-07-21)
+
+**Estado: IMPLEMENTADO, verificado local y DESPLEGADO al VPS (2026-07-21).** Cierra la ambigüedad que
+dejó §18.AJ: como ahora una PERSONA puede tener varias identidades (una por Conexión, cada una con su
+propio opt-in por teléfono), un `/calendly off Sebastian Rodriguez` a secas ya no sabía cuál apagar
+—de hecho `resolveCloserByPushName` colapsaba a null y el comando respondía "no reconozco al closer",
+dejándolo **imposible de pausar**.
+
+**Qué se hizo:**
+- **Nuevo resolver `resolveIdentitiesByName(name)`** en `src/calendly/closers.js`: donde
+  `resolveCloserByPushName` colapsa a null ante ambigüedad (a propósito, para no auto-registrar al
+  closer equivocado), este devuelve la **lista completa** de identidades, cada una enriquecida con
+  `{ email, phone, account, accountLabel }`. Sigue exigiendo nombre completo (un nombre de una palabra
+  no identifica a nadie) y dedup por teléfono.
+- **`handleCalendly` reescrito** (`src/bot/commands.js`) con parseo de un SCOPE opcional al final:
+  - `/calendly off <closer>` → si tiene **una** identidad, la apaga directo (comportamiento de
+    siempre). Si tiene **varias**, **lista las cuentas y pide precisar** (no adivina, no toca nada).
+  - `/calendly off <closer> <cuenta>` → apaga **esa identidad puntual** (`30x` | `retia`).
+  - `/calendly off <closer> todo` → apaga **todas** las identidades (no le llega de ningún programa),
+    con desglose por identidad y aviso de las que no tenían opt-in.
+  - Simétrico para `on`. La respuesta **siempre nombra la cuenta** tocada, así el dev sabe exactamente
+    qué identidad quedó apagada (requisito del pedido).
+  - El SCOPE se detecta porque el último token es una key de cuenta conocida (`accountOf`) o
+    `todo`/`all`; los nombres de personas nunca colisionan con eso.
+- **Tests:** 3 nuevos en `calendly.closers.test.js` (el resolver) + 6 en `commands.test.js`
+  (unívoco, ambiguo→lista, por-cuenta, cuenta-inexistente, `todo` con desglose parcial, `on`).
+  100/100 en esos dos archivos; los 50 fallos de la suite siguen siendo SOLO los ambientales de
+  better-sqlite3 (idénticos al baseline stasheado).
+
+**Lo que NO cubre (follow-up chico):** apagar de un tiro a TODOS los closers de una **conexión**
+entera (`/calendly off retia` como barrido de empresa). Hoy se hace closer por closer con `todo`.
+
+**Nota de infra (verificado en este mismo cambio):** el `.env` del VPS y el local tienen las **44
+keys idénticas y todos los valores coinciden** (incluido `GOOGLE_SA_KEY`, byte-idéntico tras
+normalizar comillas). `VPS_KEY` vive **solo en el `.env` local** —es la contraseña SSH del VPS, no
+la consume el contenedor— y no debe copiarse al `.env` del VPS. Deploy: `pscp`/`scp` de `src/` +
+`docker compose up -d --build` (el `/root/juanito` del VPS **no es git**).
 
 ### 🟢 Baja prioridad / Nice-to-have
 

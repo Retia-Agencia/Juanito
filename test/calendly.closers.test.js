@@ -14,6 +14,7 @@ const {
   resolveCloserByPhone,
   resolveCloserByLid,
   resolveCloserByPushName,
+  resolveIdentitiesByName,
   isIgnoredCloser,
   IGNORED_CLOSERS,
 } = await import('../src/calendly/closers.js');
@@ -152,6 +153,36 @@ test('resolveCloserByPushName exige el nombre COMPLETO', () => {
   assert.equal(resolveCloserByPushName(''), null);
   assert.equal(resolveCloserByPushName(null), null);
   assert.equal(resolveCloserByPushName('Persona Inexistente'), null);
+});
+
+// ─── resolveIdentitiesByName: la LISTA que usa /calendly para desambiguar ──────
+
+test('resolveIdentitiesByName devuelve TODAS las identidades de una persona multi-cuenta', () => {
+  // Donde resolveCloserByPushName colapsa a null (ambiguo), este devuelve la lista para que el
+  // dev elija cuenta. Sebastian Rodriguez cierra en 30x y en retia → dos identidades.
+  const ids = resolveIdentitiesByName('Sebastian Rodriguez');
+  assert.equal(ids.length, 2, 'Sebastian Rodriguez debe tener 2 identidades');
+  const cuentas = ids.map((i) => i.account).sort();
+  assert.deepEqual(cuentas, ['30x', 'retia']);
+  // Cada identidad trae el label de su Conexión (para que el dev sepa cuál apaga).
+  for (const i of ids) {
+    assert.ok(i.email && i.phone && i.accountLabel, 'identidad incompleta');
+    assert.equal(i.accountLabel, ACCOUNTS[i.account].label);
+  }
+});
+
+test('resolveIdentitiesByName de un closer de identidad única devuelve exactamente una', () => {
+  const ids = resolveIdentitiesByName('Pablo Lozano');
+  assert.equal(ids.length, 1);
+  assert.equal(ids[0].email, 'pablo.lozano@30x.com');
+  assert.equal(ids[0].account, DEFAULT_ACCOUNT); // la default nunca queda sin account acá
+});
+
+test('resolveIdentitiesByName exige nombre completo y tolera desconocidos', () => {
+  assert.deepEqual(resolveIdentitiesByName('Sebastian'), []); // una palabra: ambiguo → nada
+  assert.deepEqual(resolveIdentitiesByName('Persona Inexistente'), []);
+  assert.deepEqual(resolveIdentitiesByName(''), []);
+  assert.deepEqual(resolveIdentitiesByName(null), []);
 });
 
 // ─── Los otros resolvers ──────────────────────────────────────────────────────

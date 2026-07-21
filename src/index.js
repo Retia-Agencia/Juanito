@@ -46,7 +46,7 @@ import {
   getBusinessFact,
   setBusinessFactStatus,
 } from './db/index.js';
-import { resolveCloserByPushName } from './calendly/closers.js';
+import { resolveCloserByPushName, resolveIdentitiesByName } from './calendly/closers.js';
 import { getHealth } from './calendly/health.js';
 import { enforceGroup, reevaluateGroup, onSelfRemoved, sweepGroups } from './bot/group-guard.js';
 import { buildSheetsReport } from './scheduler/sheets-report.js';
@@ -151,6 +151,7 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
         setCalendlyPaused,
         setCloserPaused,
         resolveCloserByPushName,
+        resolveIdentitiesByName,
         // /grupos — visibilidad y control remoto de los grupos de Juanito
         listGroups,
         listAuthorizedGroups,
