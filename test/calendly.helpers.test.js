@@ -114,8 +114,14 @@ test('resolveCloserByLid: LID de trabajo conocido → resuelve al closer', () =>
   assert.equal(resolveCloserByLid('158025419608301').email, 'sebastian@30x.com');
 });
 
+// Sebastian Rodriguez tiene DOS identidades reales (una por conexión, cada una en su propio
+// número): 30x (158025419608301@lid) y retia (20671711162446@lid). Confirmado 2026-07-21.
+test('resolveCloserByLid: identidad de retia (segundo LID de la misma persona) → resuelve', () => {
+  assert.equal(resolveCloserByLid('20671711162446@lid').email, 'sebasrr321@gmail.com');
+  assert.equal(resolveCloserByLid('20671711162446@lid').name, 'Sebastian Rodriguez');
+});
+
 test('resolveCloserByLid: LID desconocido / vacío → null', () => {
-  assert.equal(resolveCloserByLid('20671711162446@lid'), null); // LID personal: NO debe mapear
   assert.equal(resolveCloserByLid('999999999@lid'), null);
   assert.equal(resolveCloserByLid(''), null);
   assert.equal(resolveCloserByLid(null), null);
