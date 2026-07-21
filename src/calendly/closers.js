@@ -57,7 +57,11 @@ const PEOPLE = {
       { connection: '30x', email: 'sebastian@30x.com', phone: '+573102212005', workLid: '158025419608301' },
       // Gmail = su host en el Calendly de retia (9 citas verificadas). Entró 2026-07-21
       // (reemplazó a Alejo Carvajal → IGNORED_CLOSERS).
-      { connection: 'retia', email: 'sebasrr321@gmail.com', phone: '+573008037326' },
+      // workLid capturado 2026-07-21: escribió "Hola bro" a Juanito desde su WhatsApp de retia y
+      // WhatsApp lo presentó como 20671711162446@lid (contacts lo liga a +573008037326). Sin este
+      // mapeo su opt-in caía a null: el pushName "Sebastian Rodriguez" es ambiguo (2 identidades),
+      // así que resolveCloserByLid es la única vía. PINNEA la entrega a su device de retia.
+      { connection: 'retia', email: 'sebasrr321@gmail.com', phone: '+573008037326', workLid: '20671711162446' },
     ],
   },
   sebastian_salazar: {
