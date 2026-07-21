@@ -7,11 +7,16 @@
 // su PROPIA cuenta de Calendly, ese tuple deja de ser único → se vuelve una tabla.
 //
 // Cómo se agrega una cuenta nueva:
-//   1. Resolver org URI y event_types contra la cuenta real (los ETs tipo pool NO se
-//      enumeran por API: se leen del `event_type` de reservas reales en /scheduled_events).
+//   1. Resolver org URI y event_types contra la cuenta real. Atajo: con el token en el .env,
+//      `node scripts/calendly-account-derive.js <key>` imprime org URI, los event_types (incluye
+//      los tipo POOL, que NO salen por API — se leen de reservas reales) y los hosts para verificar
+//      closers. Hardcodear org URI + ET acá (como 30x/retia).
 //   2. Agregar la entrada acá con su token por env.
-//   3. Agregar sus closers en closers.js con `account: '<key>'`.
-//   4. Agregar el copy de sus programas (PROGRAM_PITCH / MATERIAL_LINKS en index.js).
+//   3. ⚠️ Pasar sus env (CALENDLY_TOKEN_<KEY>, CALENDLY_DRY_RUN_<KEY>) en docker-compose.yml: el
+//      compose pasa env EXPLÍCITAMENTE → sin esas líneas el token del .env NO llega al contenedor
+//      y la cuenta no entra a activeAccounts(). (Nos pasó con retia el 2026-07-21.)
+//   4. Agregar sus closers en closers.js con `account: '<key>'`.
+//   5. Agregar el copy de sus programas (PROGRAM_PITCH / MATERIAL_LINKS en index.js).
 //      Sin copy, el push degrada a "mándalo manual" — nunca al pitch de otra empresa.
 //
 // AUTO-DESACTIVACIÓN: `activeAccounts()` filtra por token presente, igual que todos los

@@ -2924,10 +2924,12 @@ imagen; y `listProgramEvents` **desde el contenedor** devolvió para mañana: `i
 
 ### 18.AH 🟡 Segunda cuenta de Calendly — agencia Retia (2026-07-16 · configurada y verificada 2026-07-21)
 
-**Estado: CONFIGURADO Y VERIFICADO contra la cuenta real (rama `feat/calendly-retia`).** Falta solo,
-en manos del owner y escalonado en el tiempo: (1) desplegar el código nuevo, (2) opt-in de los 3
-closers, (3) validar un ciclo muda y quitar el dry-run. La refactorización multi-cuenta base ya está
-en `main` (commit `a875b88`; ver **§11.11** para el diseño y los tres bugs del camino).
+**Estado: DESPLEGADO Y CORRIENDO MUDA en el VPS (2026-07-21).** Los logs muestran
+`retia[dry-run:true, push4:false]`. Falta solo, en manos del owner: (1) opt-in de los 3 closers (ya
+les pidió que escriban), (2) validar un ciclo muda y quitar el dry-run. La refactorización
+multi-cuenta base ya está en `main` (commit `a875b88`; ver **§11.11** para el diseño y los tres bugs
+del camino). Código en `feat/calendly-retia` (pusheado; **falta merge a `main`** — hoy `main` no lo
+tiene, el VPS corre los archivos copiados).
 
 **Qué es Retia:** empresa (era el placeholder "TTrading"). Su programa es **"De Cero a Tactical
 Investor"**, que **vende Juan Pablo Vieira** — Vieira es la CARA (va en el copy del pitch), **NO un
@@ -2973,10 +2975,12 @@ Push 2/3 son byte-idénticos al template compartido. Pitch: "de Juan Pablo Vieir
 **Para prender (escalonado por el owner):**
 - [x] **Token en el `.env` live** (subido 2026-07-21; backup `/root/juanito/.env.bak-20260721-110812`).
       Org URI y ET van hardcodeados, no como env. `CALENDLY_DRY_RUN_RETIA=true` (arranca muda).
-- [ ] **Desplegar el código nuevo** (`feat/calendly-retia`). `/root/juanito` **NO es git** → copiar
-      los archivos cambiados con `pscp`/`scp` (accounts.js, closers.js, index.js, scripts/) y luego
-      `docker compose up -d --build`. OJO: el runtime desplegado HOY es `main` con la cuenta vieja
-      `ttrading` (ignora `CALENDLY_TOKEN_RETIA`) → retia sigue inerte hasta desplegar el código.
+- [x] **Código desplegado 2026-07-21** (commits `59b3ed7` + `9e43678`). Se copiaron `src/calendly/`,
+      `scripts/` y `docker-compose.yml` al VPS (no es git) + `docker compose up -d --build`. ⚠️ Hubo
+      que agregar `CALENDLY_TOKEN_RETIA`/`CALENDLY_DRY_RUN_RETIA` al `environment:` de
+      `docker-compose.yml` (el compose pasa env **explícito**, no `env_file` → sin eso el token del
+      `.env` no llegaba al contenedor). Backups en VPS: `.env.bak-*`, `docker-compose.yml.bak-*`,
+      `juanito-codebak-20260721-113408`. Verificado: `retia[dry-run:true, push4:false]`, RestartCount=0.
 - [ ] **Opt-in de los 3 closers**: el owner ya les pidió que le escriban a Juanito (2026-07-21).
       Auto-registro por número canónico. ⚠️ **Sebastian** cierra para 30X y Retia (misma persona): su
       opt-in de retia debe quedar keyeado a **+57 300 8037326** — si escribe desde su device de 30x
