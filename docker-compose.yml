@@ -159,6 +159,12 @@ services:
       # mismo patrón que NUDGE_ENABLED arriba (se prende aparte tras validar el deploy).
       - HUBSPOT_AGENDA_HARVEST=${HUBSPOT_AGENDA_HARVEST:-false}
       - HUBSPOT_PROGRAM_PIPELINES=${HUBSPOT_PROGRAM_PIPELINES:-}
+      # Barrido periódico de cosecha (§18.AH): re-consulta HubSpot para filas que cayeron
+      # al nudge y cerraron como 'no_answer' antes de que el closer alcanzara a actualizar
+      # el deal. ON por default en cuanto HARVEST está prendido (ver .env.example).
+      - HUBSPOT_HARVEST_SWEEP_ENABLED=${HUBSPOT_HARVEST_SWEEP_ENABLED:-true}
+      - HUBSPOT_HARVEST_SWEEP_CRON=${HUBSPOT_HARVEST_SWEEP_CRON:-0 8-22/2 * * *}
+      - HUBSPOT_HARVEST_SWEEP_MAX_AGE_HOURS=${HUBSPOT_HARVEST_SWEEP_MAX_AGE_HOURS:-72}
       # QR web server — solo durante la vinculación inicial.
       # Descomentar la línea de abajo y agregar QR_PORT=3001 al .env.
       # Volver a comentar una vez vinculado.
