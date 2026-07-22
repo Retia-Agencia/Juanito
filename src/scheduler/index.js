@@ -11,6 +11,7 @@ import { startSheetsReportJob } from './sheets-report.js';
 import { startSheetsMetricsJob } from './sheets-metrics.js';
 import { startOutcomeReportJob } from './outcome-report.js';
 import { startBossReportJob } from './boss-report.js';
+import { startDailyReportsJob } from './daily-reports.js';
 import { startStripeAlertsJob } from './stripe-alerts.js';
 import { startGroupMessagesJob } from './group-messages.js';
 import { startGroupRepliesJob } from './group-replies.js';
@@ -99,6 +100,14 @@ export async function startAllJobs() {
     startBossReportJob();
   } catch (err) {
     console.warn('[Scheduler] Reporte del jefe no disponible:', err.message);
+  }
+
+  // Los 3 reportes diarios por DM (agenda 7am · progreso 12pm · cierre 9pm). APAGADO por
+  // default (DAILY_REPORTS_ENABLED != true); se autodesactiva sin DAILY_REPORTS_DM.
+  try {
+    startDailyReportsJob();
+  } catch (err) {
+    console.warn('[Scheduler] Reportes diarios por DM no disponibles:', err.message);
   }
 
   // El job de resúmenes lo aporta el Track B. Mientras no exista en la rama,

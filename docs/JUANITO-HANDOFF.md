@@ -3187,6 +3187,41 @@ normalizar comillas). `VPS_KEY` vive **solo en el `.env` local** —es la contra
 la consume el contenedor— y no debe copiarse al `.env` del VPS. Deploy: `pscp`/`scp` de `src/` +
 `docker compose up -d --build` (el `/root/juanito` del VPS **no es git**).
 
+### 18.AL 🔵 3 reportes diarios por DM: agenda 7am · progreso 12pm · cierre 9pm (2026-07-22)
+
+**Estado: IMPLEMENTADO y probado local; falta desplegar + resolver el JID.** Pedido del jefe: partir
+el reporte diario en **tres entregas por DM** (por ahora a su propio número **+573174428980**, modo
+prueba — no a los grupos ni al DM de Dani):
+
+1. **07:00 — Agenda del día.** Cuántas calls tiene agendada cada closer HOY, por programa (aún sin
+   resultados). Es la foto de lo que viene.
+2. **12:00 — Progreso.** Scorecard consolidado con lo resuelto hasta el mediodía.
+3. **21:00 — Cierre.** Scorecard consolidado final del día.
+
+**Todo sale de `call_outcomes`** (misma fuente que el reporte del jefe §18.AH, alimentada por el
+`agenda_status` de HubSpot vía Push 4). A las 7am las filas ya existen en estado `pending` porque cada
+Push crea la fila al reservar la call → la agenda es fiable salvo reservas del mismo día hechas después
+de las 7am (aceptado: es una foto).
+
+**Qué se hizo:**
+- **`src/calendly/agenda-report.js`** (PURO): `formatAgendaScorecard(rows, {dateLabel})` — reusa
+  `buildBossScorecard` y solo cuenta el volumen (`total`, que ya excluye movidas §18.AC). Ordena
+  closers por volumen. `null` si no hay calls.
+- **`src/calendly/boss-report.js`**: `formatBossScorecard` ahora acepta `{ heading }` (default
+  `'Reporte Juanito'`) para reusarlo como "Progreso del día" / "Cierre del día" sin tocar
+  `/reportejefe` ni el boss-report diario.
+- **`src/scheduler/daily-reports.js`**: 3 CronJobs (`buildAgendaReport`/`buildProgressReport`/
+  `buildFinalReport` exportados para preview/test). APAGADO por default: requiere
+  `DAILY_REPORTS_ENABLED=true` + `DAILY_REPORTS_DM`. Crons configurables (`DAILY_REPORT_AM/MID/PM_CRON`).
+  Wired en `startAllJobs`.
+- **Tests:** `test/calendly.agenda-report.test.js` (4) + boss-report sigue 7/7 con el `heading`.
+
+**Pendiente de deploy (misma trampa de siempre, [[juanito-dm-recipient-lid]]):** el valor de
+`DAILY_REPORTS_DM` NO es el teléfono ni lo que muestra `/whoami` — es el **`@lid` del hilo persistido**
+desde el que el jefe le escribió a Juanito. Receta: que mande un mensaje NORMAL (no comando), buscar
+su `chat_id … @lid` en `messages` (VPS), ponerlo en el `.env`, `docker compose config` para verificar,
+reiniciar. Sin hilo previo, `sendMessage` se omite en silencio (anti-ban).
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):

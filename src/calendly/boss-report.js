@@ -65,13 +65,13 @@ const plural = (n, sing, plu = sing + 's') => (n === 1 ? sing : plu);
 
 // Formatea el DM del jefe. `rows` = call_outcomes de la ventana. Devuelve el texto, o null
 // si no hubo ninguna call en el período.
-export function formatBossScorecard(rows = [], { dateLabel = 'hoy' } = {}) {
+export function formatBossScorecard(rows = [], { dateLabel = 'hoy', heading = 'Reporte Juanito' } = {}) {
   const { company, programs } = buildBossScorecard(rows);
   if (!programs.length) return null;
 
   const movidas = company.reagendado + company.cancelado;
   const head =
-    `📊 *Reporte Juanito — ${dateLabel}*\n` +
+    `📊 *${heading} — ${dateLabel}*\n` +
     `${company.total} ${plural(company.total, 'call')} · ` +
     `${company.show} show · ${company.no_show} no-show · show ${company.show_rate}%\n` +
     `🎯 ${company.venta_cerrada} ${plural(company.venta_cerrada, 'venta')}` +
