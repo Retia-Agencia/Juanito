@@ -784,19 +784,36 @@ export async function runCalendlyDelivery() {
         let message = p.message;
         if (ev) {
           const closer = resolveCloser(p.closer_email);
+          // El teléfono pudo quedar null al agendar (Calendly sin número Y HubSpot aún sin
+          // el contacto/teléfono en ESE instante). Los digests Push 1/2 lo re-resuelven en
+          // vivo cada mañana, pero el Push 3/0 usaba el `prospect_phone` CONGELADO del poll
+          // → salía "sin teléfono, mándalo manual" aunque HubSpot ya lo tenga. Reintentar el
+          // fallback AQUÍ (solo si sigue vacío) sana la fila sin costo extra en el caso normal.
+          // Guardrail por empresa: la cuenta del CLOSER (accountOfCloser) decide si se busca
+          // en el HubSpot conectado — igual que el resto del flujo de envío.
+          let phone = p.prospect_phone;
+          if (!phone) {
+            try {
+              const acct = accountOf(accountOfCloser(p.closer_email));
+              const invitee = await d.getFirstInvitee(ev.uri, { token: acct?.token?.() });
+              phone = await resolvePhone(d, invitee, acct);
+            } catch {
+              /* sin invitee → queda null → "mándalo manual", exactamente como hoy */
+            }
+          }
           message =
             p.push_n === 0
               ? buildPush0Message({
                   name: fullNameFrom(p.prospect_name),
                   firstName: firstNameFrom(p.prospect_name),
-                  phone: p.prospect_phone,
+                  phone,
                   startIso: ev.start_time,
                   programKey: programKeyOf(ev.event_type),
                 })
               : buildPush3Message({
                   name: fullNameFrom(p.prospect_name),
                   firstName: firstNameFrom(p.prospect_name),
-                  phone: p.prospect_phone,
+                  phone,
                   startIso: ev.start_time,
                   programKey: programKeyOf(ev.event_type),
                   closer: closer ? firstNameFrom(closer.name) : '',
