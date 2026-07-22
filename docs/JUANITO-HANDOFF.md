@@ -3189,9 +3189,10 @@ la consume el contenedor— y no debe copiarse al `.env` del VPS. Deploy: `pscp`
 
 ### 18.AL 🔵 3 reportes diarios por DM: agenda 7am · progreso 12pm · cierre 9pm (2026-07-22)
 
-**Estado: IMPLEMENTADO y probado local; falta desplegar + resolver el JID.** Pedido del jefe: partir
-el reporte diario en **tres entregas por DM** (por ahora a su propio número **+573174428980**, modo
-prueba — no a los grupos ni al DM de Dani):
+**Estado: ✅ DESPLEGADO y en producción (2026-07-22).** En el VPS con `DAILY_REPORTS_ENABLED=true` y
+`DAILY_REPORTS_DM=129446371655733@lid` (el `@lid` del jefe ya resuelto). Primer envío confirmado en
+logs: `progreso 12pm enviado a 1 DM`. Pedido del jefe: partir el reporte diario en **tres entregas por
+DM** (por ahora a su propio número **+573174428980**, modo prueba — no a los grupos ni al DM de Dani):
 
 1. **07:00 — Agenda del día.** Cuántas calls tiene agendada cada closer HOY, por programa (aún sin
    resultados). Es la foto de lo que viene.
@@ -3216,11 +3217,16 @@ de las 7am (aceptado: es una foto).
   Wired en `startAllJobs`.
 - **Tests:** `test/calendly.agenda-report.test.js` (4) + boss-report sigue 7/7 con el `heading`.
 
-**Pendiente de deploy (misma trampa de siempre, [[juanito-dm-recipient-lid]]):** el valor de
-`DAILY_REPORTS_DM` NO es el teléfono ni lo que muestra `/whoami` — es el **`@lid` del hilo persistido**
-desde el que el jefe le escribió a Juanito. Receta: que mande un mensaje NORMAL (no comando), buscar
-su `chat_id … @lid` en `messages` (VPS), ponerlo en el `.env`, `docker compose config` para verificar,
-reiniciar. Sin hilo previo, `sendMessage` se omite en silencio (anti-ban).
+**Nota del JID (resuelto, misma trampa de siempre [[juanito-dm-recipient-lid]]):** `DAILY_REPORTS_DM`
+NO es el teléfono ni lo que muestra `/whoami` — es el **`@lid` del hilo persistido** desde el que el
+jefe le escribió a Juanito. Ya quedó resuelto en `129446371655733@lid`. Si hay que agregar otro
+destinatario: que mande un mensaje NORMAL (no comando), buscar su `chat_id … @lid` en `messages` (VPS),
+sumarlo al CSV, `docker compose config` para verificar, reiniciar.
+
+**Salvedad operativa:** cada cron dispara solo si el contenedor ya estaba arriba a esa hora. Si el
+contenedor se reinicia después de las 7am, la agenda de ese día NO sale (no es bug — cron no ejecuta
+horarios pasados). Pasó el 2026-07-22: arrancó ~11:48 Bogotá, así que ese día solo salieron progreso y
+cierre.
 
 ### 🟢 Baja prioridad / Nice-to-have
 
