@@ -84,7 +84,8 @@ const PEOPLE = {
   // distintas, ambas activas. Entró 2026-07-14.
   pablo_suarez: {
     name: 'Pablo Suarez',
-    identities: [{ connection: '30x', email: 'pablosuarez@30x.com', phone: '+573152573103' }],
+    // Teléfono actualizado 2026-07-21 (jefe): +573152573103 → +573189248507.
+    identities: [{ connection: '30x', email: 'pablosuarez@30x.com', phone: '+573189248507' }],
   },
   // ─── Retia (agencia #2) — programa "De Cero a Tactical Investor" ───────────
   // Vieira VENDE el programa (la CARA del pitch), NO es closer → está en IGNORED_CLOSERS.
