@@ -142,9 +142,11 @@ test('texto que no es comando devuelve null', async () => {
 
 // ─── /calendly (botón de pánico, admin-only) ──────────────────────────────────
 
-// Pablo Lozano: UNA identidad (30x). Sebastian Rodriguez: DOS (30x + retia), como en el roster
-// real tras el refactor — es el caso que motiva la desambiguación por cuenta. `+570000000000`
-// (retia de Sebas) simula una identidad SIN opt-in registrado para probar el desglose parcial.
+// Pablo Lozano: UNA identidad (30x). Sebastian Rodriguez: DOS (30x + retia) con TELÉFONOS
+// distintos — motiva la desambiguación por cuenta; `+570000000000` (retia de Sebas) simula una
+// identidad SIN opt-in para probar el desglose parcial. Sebastian Salazar: DOS identidades con el
+// MISMO teléfono (30x + retia desde una línea) — el caso que exige que el pause sea por EMAIL, no
+// por teléfono, para apagar un programa sin el otro.
 const IDENTITIES = {
   'pablo lozano': [
     { email: 'pablo.lozano@30x.com', name: 'Pablo Lozano', phone: '+573046131437', account: '30x', accountLabel: '30X / EstadoX' },
@@ -153,19 +155,26 @@ const IDENTITIES = {
     { email: 'sebastian@30x.com', name: 'Sebastian Rodriguez', phone: '+573102212005', account: '30x', accountLabel: '30X / EstadoX' },
     { email: 'sebasrr321@gmail.com', name: 'Sebastian Rodriguez', phone: '+570000000000', account: 'retia', accountLabel: 'Retia' },
   ],
+  'sebastian salazar': [
+    { email: 'sebastian.salazar@30x.com', name: 'Sebastian Salazar', phone: '+573054312905', account: '30x', accountLabel: '30X / EstadoX' },
+    { email: 'sebastiansalazar1410@gmail.com', name: 'Sebastian Salazar', phone: '+573054312905', account: 'retia', accountLabel: 'Retia' },
+  ],
 };
-const HAS_OPTIN = new Set(['+573046131437', '+573102212005']); // +570000000000 = sin opt-in
+// Con opt-in registrado (por teléfono). +570000000000 (retia de Sebas Rodriguez) NO lo tiene.
+const HAS_OPTIN = new Set(['+573046131437', '+573102212005', '+573054312905']);
 
 function calendlyDeps() {
-  const state = { global: false, closers: {} };
+  const state = { global: false, closers: {} }; // closers keyed por EMAIL (pause por identidad)
+  const byEmail = {};
+  for (const ids of Object.values(IDENTITIES)) for (const i of ids) byEmail[i.email] = i;
   return {
     _state: state,
     isCalendlyPaused: () => state.global,
     setCalendlyPaused: (v) => { state.global = !!v; },
-    setCloserPaused: (phone, v) => { state.closers[phone] = !!v; return HAS_OPTIN.has(phone) ? 1 : 0; },
-    listOptins: () => [
-      { phone: '+573046131437', name: 'Pablo Lozano', paused: state.closers['+573046131437'] ? 1 : 0 },
-    ],
+    isOptedIn: (phone) => HAS_OPTIN.has(phone),
+    setCloserPaused: (email, v) => { state.closers[email] = !!v; return 1; },
+    listCloserPauses: () => Object.keys(state.closers).filter((e) => state.closers[e]),
+    resolveCloser: (email) => byEmail[email] || null,
     resolveIdentitiesByName: (n) => {
       const words = String(n).toLowerCase().trim().split(/\s+/);
       return Object.entries(IDENTITIES)
@@ -199,7 +208,7 @@ test('/calendly off <closer> de identidad única pausa esa identidad (nombra la 
   const deps = calendlyDeps();
   const out = await handleCommand({ text: '/calendly off Pablo Lozano', sender: 'a@lid', role: 'admin' }, deps);
   assert.match(out, /Pushes de Pablo Lozano · 30X \/ EstadoX \(30x\): PAUSADOS ⏸️/);
-  assert.equal(deps._state.closers['+573046131437'], true);
+  assert.equal(deps._state.closers['pablo.lozano@30x.com'], true);
 });
 
 test('/calendly off <closer> con 1+ identidades → lista y pide desambiguar (no pausa nada)', async () => {
@@ -218,8 +227,8 @@ test('/calendly off <closer> <cuenta> pausa SOLO esa identidad', async () => {
   const deps = calendlyDeps();
   const out = await handleCommand({ text: '/calendly off Sebastian Rodriguez 30x', sender: 'a@lid', role: 'admin' }, deps);
   assert.match(out, /Pushes de Sebastian Rodriguez · 30X \/ EstadoX \(30x\): PAUSADOS ⏸️/);
-  assert.equal(deps._state.closers['+573102212005'], true);
-  assert.equal(deps._state.closers['+570000000000'], undefined); // la de retia intacta
+  assert.equal(deps._state.closers['sebastian@30x.com'], true);
+  assert.equal(deps._state.closers['sebasrr321@gmail.com'], undefined); // la de retia intacta
 });
 
 test('/calendly off <closer> <cuenta> donde no cierra → lo dice, no pausa nada', async () => {
@@ -235,14 +244,31 @@ test('/calendly off <closer> todo pausa TODAS las identidades (desglose parcial 
   assert.match(out, /Sebastian Rodriguez — 1\/2 identidades pausadas ⏸️/);
   assert.match(out, /30x \(30X \/ EstadoX\) ✓/);
   assert.match(out, /retia \(Retia\) — sin opt-in, nada que pausar/);
-  assert.equal(deps._state.closers['+573102212005'], true);
+  assert.equal(deps._state.closers['sebastian@30x.com'], true);
 });
 
 test('/calendly on <closer> <cuenta> reactiva esa identidad', async () => {
   const deps = calendlyDeps();
   const out = await handleCommand({ text: '/calendly on Sebastian Rodriguez 30x', sender: 'a@lid', role: 'admin' }, deps);
   assert.match(out, /reactivados ▶️/);
-  assert.equal(deps._state.closers['+573102212005'], false);
+  assert.equal(deps._state.closers['sebastian@30x.com'], false);
+});
+
+test('/calendly off <closer> <cuenta> con teléfono compartido pausa SOLO ese programa (Salazar)', async () => {
+  // Salazar: 30x + retia desde el MISMO teléfono. Apagar retia NO debe apagar 30x — el pause es
+  // por identidad (email), no por teléfono. Es el caso que motivó mover el pause a `settings`.
+  const deps = calendlyDeps();
+  const out = await handleCommand({ text: '/calendly off Sebastian Salazar retia', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /Pushes de Sebastian Salazar · Retia \(retia\): PAUSADOS ⏸️/);
+  assert.equal(deps._state.closers['sebastiansalazar1410@gmail.com'], true, 'retia pausado');
+  assert.equal(deps._state.closers['sebastian.salazar@30x.com'], undefined, '30x intacto');
+});
+
+test('/calendly status muestra la identidad pausada con su cuenta (Salazar retia)', async () => {
+  const deps = calendlyDeps();
+  await handleCommand({ text: '/calendly off Sebastian Salazar retia', sender: 'a@lid', role: 'admin' }, deps);
+  const out = await handleCommand({ text: '/calendly', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /Closers pausados: Sebastian Salazar \(retia\)/);
 });
 
 test('/calendly off con closer desconocido → mensaje de ayuda, no pausa nada', async () => {

@@ -157,6 +157,9 @@ export function makeStore({ optins = [], nowRef } = {}) {
   let nextOutcomeId = 1;
   let globalPaused = false;
   const optinMap = new Map(); // phone normalizado → { phone, contact_jid, source, paused }
+  const closerPauses = new Set(); // pausa por-closer, por IDENTIDAD (email) — igual que en prod
+                                  // (settings `calendly_pause:<email>`). NO por teléfono: una
+                                  // persona con dos identidades se apaga por programa.
   for (const o of optins) {
     const obj = typeof o === 'string' ? { phone: o } : o;
     const p = normalizePhone(obj.phone);
@@ -247,11 +250,16 @@ export function makeStore({ optins = [], nowRef } = {}) {
     setCalendlyPaused(paused) {
       globalPaused = !!paused;
     },
-    setCloserPaused(phone, paused) {
-      const p = normalizePhone(phone);
-      const o = p ? optinMap.get(p) : null;
-      if (o) o.paused = paused ? 1 : 0;
-      return o ? 1 : 0;
+    // Pausa por-closer, por IDENTIDAD (email), igual que db.setCloserPaused/isCloserPaused.
+    setCloserPaused(email, paused) {
+      const e = String(email || '').toLowerCase().trim();
+      if (!e) return 0;
+      if (paused) closerPauses.add(e);
+      else closerPauses.delete(e);
+      return 1;
+    },
+    isCloserPaused(email) {
+      return closerPauses.has(String(email || '').toLowerCase().trim());
     },
 
     // ─── Outcomes post-call (§18.AB) ──────────────────────────────────────────
@@ -517,6 +525,7 @@ export function installHarness(
     isOptedIn: store.isOptedIn,
     getOptin: store.getOptin,
     isCalendlyPaused: store.isCalendlyPaused,
+    isCloserPaused: store.isCloserPaused,
     sendMessage: wa.sendMessage,
     sendDocument: wa.sendDocument,
     now: () => clock.ms,

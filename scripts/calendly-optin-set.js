@@ -20,7 +20,7 @@
 
 import 'dotenv/config';
 import { resolveCloserByPhone, resolveCloserByPushName } from '../src/calendly/closers.js';
-import { registerOptin, getOptin, setCloserPaused } from '../src/db/index.js';
+import { registerOptin, getOptin, setCloserPaused, isCloserPaused } from '../src/db/index.js';
 
 const [idArg, contactJid] = process.argv.slice(2);
 
@@ -45,13 +45,14 @@ registerOptin({
   contactJid,
 });
 
-// Backfill implica activar: si la fila estaba pausada, la despausamos.
-const cleared = setCloserPaused(closer.phone, false);
+// Backfill implica activar: si esa identidad estaba pausada, la despausamos. La pausa es por
+// EMAIL/identidad (no por teléfono): despausamos la del closer resuelto.
+setCloserPaused(closer.email, false);
 
 const row = getOptin(closer.phone);
 console.log(`\n✅ Opt-in actualizado para ${closer.name} (${closer.phone}):`);
 console.log(`   source:      ${row.source}   ${row.source === 'self' ? '(habilita entrega)' : '⚠️ NO habilita'}`);
 console.log(`   contact_jid: ${row.contact_jid || '⚠️ vacío (no entregará)'}`);
-console.log(`   paused:      ${row.paused}${cleared ? '  (despausado)' : ''}`);
+console.log(`   paused:      ${isCloserPaused(closer.email) ? 'sí' : 'no'}  (${closer.email})`);
 console.log('');
 process.exit(0);

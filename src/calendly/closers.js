@@ -18,21 +18,29 @@
 //   Lucas Mendoza       LinkedIn Sales  · Operaciones Escalables
 //   Pablo Suarez        AI For Developers
 //   Daniela Camacho     EstadoX (IA para Abogados) · Instagram & TikTok · Operaciones Escalables
-//   Sebastian Salazar   EstadoX (IA para Abogados)
-//   Dana Rodriguez      Retia — De Cero a Tactical Investor
+//   Sebastian Salazar   EstadoX (IA para Abogados) · De Cero a Tactical Investor (Retia)
 //   Andrea Machado      Retia — De Cero a Tactical Investor
 //
 // La CONEXIÓN de Calendly se configura en cada identidad con `connection` (ver accounts.js).
 // La identidad cuya connection es la default ('30x') NO emite el campo `account` en el CLOSERS
 // derivado (idéntico al roster histórico); las demás sí.
 //
-// ⚠️ INVARIANTE: un teléfono = una IDENTIDAD = una Conexión. La DB la asume:
-// `calendly_optins.phone` es PRIMARY KEY, `getActiveOutcomeForCloser(phone)` enruta por
-// teléfono y `pickSupersededPushes` matchea por los últimos 8 dígitos sin scope de cuenta.
-// Una persona con dos identidades usa DOS teléfonos distintos → dos filas de opt-in, sin choque
-// de PK. Solo si una misma persona cerrara para dos Conexiones con el MISMO teléfono habría que
-// migrar `calendly_optins` a clave compuesta (phone, connection) — tabla nueva + copia + rename,
-// porque SQLite no permite alterar una PK. Hoy no pasa (ADR 0001).
+// ⚠️ INVARIANTE (revisada 2026-07-22): un teléfono = una PERSONA, nunca dos personas distintas.
+// Una misma persona SÍ puede tener dos identidades con el MISMO teléfono en Conexiones distintas
+// (Sebastian Salazar: 30x + retia desde una sola línea de WhatsApp). NO necesita la migración a
+// clave compuesta que antes se temía, porque:
+//   · La CUENTA/dry-run/HubSpot se resuelven por EMAIL (accountOfCloser), distinto por identidad
+//     → cada programa cae a lo suyo sin ambigüedad.
+//   · El OPT-IN es lo único keyed por teléfono (`calendly_optins.phone` PK, contact_jid). UNA
+//     sola fila sirve a las dos identidades y es CORRECTO: es el mismo WhatsApp. `registerOptin`
+//     hace upsert por teléfono → una fila, nunca choca la PK.
+//   · `pickSupersededPushes` matchea por (teléfono, MISMO lead): un lead postula a un solo
+//     programa, así que no se pisan pushes entre programas.
+//   · El PAUSE por-closer es por IDENTIDAD (email, en la tabla `settings`), no por teléfono → se
+//     apaga un programa sin el otro. Ver setCloserPaused/isCloserPaused y `/calendly off <closer>
+//     <cuenta>`.
+// Lo que SÍ rompería la DB es dos PERSONAS distintas con el mismo teléfono (se pisarían el
+// opt-in). El test "un teléfono = una persona" en calendly.closers.test.js lo bloquea.
 
 import { phonesMatch } from '../common/utils.js';
 import { DEFAULT_ACCOUNT, accountOf } from './accounts.js';
@@ -64,9 +72,20 @@ const PEOPLE = {
       { connection: 'retia', email: 'sebasrr321@gmail.com', phone: '+573008037326', workLid: '20671711162446' },
     ],
   },
+  // UNA persona, DOS identidades con el MISMO teléfono (excepción al patrón de Sebastian
+  // Rodriguez, que usa dos números). Cierra IA para Abogados en 30x y "De Cero a Tactical
+  // Investor" en Retia desde la misma línea de WhatsApp. Comparten opt-in (una fila por teléfono)
+  // — correcto: es el mismo hilo. La cuenta/dry-run se resuelve por EMAIL, distinto en cada
+  // identidad, así que cada programa cae a lo suyo. El pause es por-identidad (por email, en
+  // `settings`), no por teléfono → se apaga un programa sin el otro (`/calendly off Sebastian
+  // Salazar retia`). Reemplazó a Dana en Retia (2026-07-22). El nombre queda corto ("Sebastian
+  // Salazar", no "Juan Sebastian Salazar") para no romper el match por pushName de su hilo 30x.
   sebastian_salazar: {
     name: 'Sebastian Salazar',
-    identities: [{ connection: '30x', email: 'sebastian.salazar@30x.com', phone: '+573054312905' }],
+    identities: [
+      { connection: '30x', email: 'sebastian.salazar@30x.com', phone: '+573054312905' },
+      { connection: 'retia', email: 'sebastiansalazar1410@gmail.com', phone: '+573054312905' },
+    ],
   },
   pablo_lozano: {
     name: 'Pablo Lozano',
@@ -89,14 +108,12 @@ const PEOPLE = {
   },
   // ─── Retia (agencia #2) — programa "De Cero a Tactical Investor" ───────────
   // Vieira VENDE el programa (la CARA del pitch), NO es closer → está en IGNORED_CLOSERS.
-  // equipo@ / registro@ son correos DE LA EMPRESA (rol, no personales): si sacan a la closer, el
-  // correo pasa al siguiente → al rotar, actualizar el teléfono acá (patrón "Equipo EstadoX").
+  // registro@ es un correo DE LA EMPRESA (rol, no personal): si sacan a la closer, el correo pasa
+  // al siguiente → al rotar, actualizar el teléfono acá (patrón "Equipo EstadoX").
   // "Andrea Machado" choca de nombre con andrea.machado@30x.com (DEPARTIDA, en IGNORED_CLOSERS):
   // persona DISTINTA, no está en el roster → no confunde a resolveCloserByPushName.
-  dana_rodriguez: {
-    name: 'Dana Rodriguez',
-    identities: [{ connection: 'retia', email: 'equipo@ttrading.co', phone: '+573169835624' }],
-  },
+  // Dana salió (2026-07-22): la reemplazó Sebastian Salazar con email PROPIO (ver arriba), no
+  // heredó el buzón-rol → equipo@ttrading.co quedó retirado (IGNORED_CLOSERS).
   andrea_machado: {
     name: 'Andrea Machado',
     identities: [{ connection: 'retia', email: 'registro@ttrading.co', phone: '+573132484664' }],
@@ -151,6 +168,8 @@ export const IGNORED_CLOSERS = new Set([
   'jvieira@ttrading.co',      // Juan Pablo Vieira VENDE el programa (cara), no es closer. Tomó citas
                               // en el pasado (12 en la ventana) pero YA NO → skip silencioso.
   'alejocarpa1108@gmail.com', // salió de Tactical Investor 2026-07-21; lo reemplazó Sebastian Rodriguez.
+  'equipo@ttrading.co',       // buzón-rol de Dana; salió 2026-07-22, la reemplazó Sebastian Salazar
+                              // con email propio → buzón retirado (no lo hereda nadie).
 ]);
 
 export function isIgnoredCloser(email) {
@@ -265,14 +284,19 @@ export function resolveIdentitiesByName(name) {
   const words = nameWords(name);
   if (!words.length) return [];
   const out = [];
-  const seenPhone = new Set();
+  // Dedup por (teléfono, cuenta): una persona puede tener DOS identidades con el MISMO teléfono en
+  // cuentas distintas (Sebastian Salazar: 30x + retia) → hay que listar AMBAS para que el dev
+  // desambigüe por cuenta. Solo colapsa un duplicado real (mismo teléfono Y misma cuenta, que no
+  // debería existir en el roster).
+  const seen = new Set();
   for (const [email, c] of Object.entries(CLOSERS)) {
     const closerWords = nameWords(c.name);
     if (closerWords.length < 2) continue; // un nombre de una palabra no identifica a nadie
     if (!closerWords.every((w) => words.includes(w))) continue;
-    if (seenPhone.has(c.phone)) continue;
-    seenPhone.add(c.phone);
     const account = c.account || DEFAULT_ACCOUNT;
+    const key = `${c.phone}|${account}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     out.push({ email, name: c.name, phone: c.phone, account, accountLabel: accountOf(account)?.label || account });
   }
   return out;

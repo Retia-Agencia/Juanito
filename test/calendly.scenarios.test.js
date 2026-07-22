@@ -236,7 +236,7 @@ test('guard de obsolescencia: pausa larga → al despausar NO se envían recorda
   const now = Date.now();
   const events = [makeEvent({ uuid: 'old', startInMin: 20, closerEmail: SALAZAR, nowMs: now })];
   const h = installHarness(scheduler, { events, optins: [SALAZAR_PHONE], nowMs: now });
-  h.store.setCloserPaused(SALAZAR_PHONE, true);
+  h.store.setCloserPaused(SALAZAR, true);
 
   await scheduler.runCalendlyPoll();
   await scheduler.runCalendlyDelivery();
@@ -245,7 +245,7 @@ test('guard de obsolescencia: pausa larga → al despausar NO se envían recorda
 
   // Pasa el tiempo: la llamada ya ocurrió (now + 60 min > call_start = now + 20 min).
   h.clock.ms = now + 60 * MIN;
-  h.store.setCloserPaused(SALAZAR_PHONE, false);
+  h.store.setCloserPaused(SALAZAR, false);
   await scheduler.runCalendlyDelivery();
 
   assert.equal(h.wa.sent.length, 0, 'no se envía un recordatorio de una llamada que ya pasó');
@@ -264,7 +264,7 @@ test('pausa por-closer: solo se corta al closer pausado, los demás reciben', as
     optins: [SALAZAR_PHONE, '+573102212005'], // Salazar + Rodriguez, ambos con hilo
     nowMs: now,
   });
-  h.store.setCloserPaused(SALAZAR_PHONE, true);
+  h.store.setCloserPaused(SALAZAR, true);
 
   await scheduler.runCalendlyPoll();
   await scheduler.runCalendlyDelivery();

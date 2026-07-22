@@ -12,10 +12,12 @@ import { roleOf, isPrivileged } from './common/roles.js';
 import { maskJid } from './common/utils.js';
 import {
   listOptins,
+  isOptedIn,
   markIfNew,
   isCalendlyPaused,
   setCalendlyPaused,
   setCloserPaused,
+  listCloserPauses,
   isDmApprovalOn,
   setDmApproval,
   authorizeGroup,
@@ -46,7 +48,7 @@ import {
   getBusinessFact,
   setBusinessFactStatus,
 } from './db/index.js';
-import { resolveCloserByPushName, resolveIdentitiesByName } from './calendly/closers.js';
+import { resolveCloser, resolveCloserByPushName, resolveIdentitiesByName } from './calendly/closers.js';
 import { getHealth } from './calendly/health.js';
 import { enforceGroup, reevaluateGroup, onSelfRemoved, sweepGroups } from './bot/group-guard.js';
 import { buildSheetsReport } from './scheduler/sheets-report.js';
@@ -145,11 +147,14 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
       { text, sender, role },
       {
         listOptins,
+        isOptedIn,
         isConnected,
         getHealth,
         isCalendlyPaused,
         setCalendlyPaused,
         setCloserPaused,
+        listCloserPauses,
+        resolveCloser,
         resolveCloserByPushName,
         resolveIdentitiesByName,
         // /grupos — visibilidad y control remoto de los grupos de Juanito

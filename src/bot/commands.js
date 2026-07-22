@@ -7,7 +7,7 @@
 // (recurring-logic es PURO — seguro de importar.)
 
 import { csvToDayLabels, zonedNowParts } from '../scheduler/recurring-logic.js';
-import { accountOf } from '../calendly/accounts.js';
+import { accountOf, DEFAULT_ACCOUNT } from '../calendly/accounts.js';
 
 // Reconoce el comando unificado de reportes y sus alias (/reportes, /reporte, /metricas).
 // `cmd` es el texto en minúsculas y sin espacios al borde. Exportado para que el router
@@ -748,7 +748,7 @@ function shortId(id) {
 // identidades, una por Conexión, cada una con su propio opt-in (fila por teléfono). "Pausar a
 // Sebastian Rodriguez" es ambiguo → el dev tiene que decir CUÁL, o `todo` para las dos.
 function handleCalendly(text, deps = {}) {
-  const { setCalendlyPaused, setCloserPaused, resolveIdentitiesByName } = deps;
+  const { setCalendlyPaused, setCloserPaused, resolveIdentitiesByName, isOptedIn } = deps;
   const parts = (text || '').trim().split(/\s+/); // [ '/calendly', action?, ...nombre, scope? ]
   const action = (parts[1] || 'status').toLowerCase();
 
@@ -808,12 +808,18 @@ function handleCalendly(text, deps = {}) {
     );
   }
 
-  // Aplicar por identidad. setCloserPaused devuelve 0 si esa identidad aún no tiene opt-in.
+  // Aplicar por identidad. La pausa vive por EMAIL (así una persona con dos identidades —misma
+  // línea, dos Calendly— se apaga por programa). Igual que antes, solo tiene efecto si la identidad
+  // ya tiene opt-in: sin él no hay nada que pausar todavía (el closer aún no le ha escrito).
   const done = [];
   const skipped = [];
   for (const t of targets) {
-    const changes = setCloserPaused ? setCloserPaused(t.phone, pause) : 0;
-    (changes ? done : skipped).push(t);
+    if (isOptedIn && isOptedIn(t.phone)) {
+      if (setCloserPaused) setCloserPaused(t.email, pause);
+      done.push(t);
+    } else {
+      skipped.push(t);
+    }
   }
 
   const estado = pause ? 'PAUSADOS ⏸️' : 'reactivados ▶️';
@@ -834,7 +840,7 @@ function handleCalendly(text, deps = {}) {
   return lines.join('\n');
 }
 
-function buildCalendlyStatus({ isCalendlyPaused, listOptins } = {}) {
+function buildCalendlyStatus({ isCalendlyPaused, listCloserPauses, resolveCloser } = {}) {
   let paused = false;
   try {
     paused = isCalendlyPaused ? isCalendlyPaused() : false;
@@ -843,12 +849,15 @@ function buildCalendlyStatus({ isCalendlyPaused, listOptins } = {}) {
   }
   const lines = ['📅 Calendly — pushes precall', `Estado global: ${paused ? 'PAUSADO ⏸️' : 'activo ▶️'}`];
   try {
-    const optins = listOptins ? listOptins() : [];
-    const pausados = optins.filter((o) => o.paused);
+    // La pausa por-closer es por IDENTIDAD (email). Mostramos nombre + cuenta para que se vea CUÁL
+    // programa de una persona con dos identidades quedó apagado (ej: "Sebastian Salazar (retia)").
+    const emails = listCloserPauses ? listCloserPauses() : [];
+    const etiquetas = emails.map((email) => {
+      const c = resolveCloser ? resolveCloser(email) : null;
+      return c ? `${c.name} (${c.account || DEFAULT_ACCOUNT})` : email;
+    });
     lines.push(
-      pausados.length
-        ? `Closers pausados: ${pausados.map((o) => o.name || o.phone).join(', ')}`
-        : 'Closers pausados: ninguno'
+      etiquetas.length ? `Closers pausados: ${etiquetas.join(', ')}` : 'Closers pausados: ninguno'
     );
   } catch {
     /* opcional */

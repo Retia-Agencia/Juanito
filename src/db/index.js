@@ -792,14 +792,34 @@ export function setDmApproval(on) {
   return setSetting('dm_approval', on ? '1' : '0');
 }
 
-// Pausa por-closer: marca la fila del opt-in. Devuelve el # de filas afectadas
-// (0 si el closer no tiene opt-in registrado todavía).
-export function setCloserPaused(phone, paused) {
-  const p = normalizePhone(phone);
-  if (!p) return 0;
+// Pausa por-closer, por IDENTIDAD (email). Vive en la tabla `settings` (key
+// `calendly_pause:<email>`), NO en la fila del opt-in: una persona con dos identidades comparte
+// UN solo opt-in (mismo teléfono) pero se pausa por programa (email distinto por Conexión). Ver
+// la invariante en src/calendly/closers.js. `/calendly off <closer> <cuenta>` apaga una identidad,
+// `todo` apaga todas. deliver() consulta isCloserPaused(closerEmail) de la CITA. Devuelve 1
+// (siempre aplica; el comando decide, con isOptedIn, si además tenía sentido — ver commands.js).
+const pauseKey = (email) => `calendly_pause:${String(email || '').toLowerCase().trim()}`;
+
+export function setCloserPaused(email, paused) {
+  const e = String(email || '').toLowerCase().trim();
+  if (!e) return 0;
+  setSetting(pauseKey(e), paused ? '1' : '0');
+  return 1;
+}
+
+export function isCloserPaused(email) {
+  const e = String(email || '').toLowerCase().trim();
+  if (!e) return false;
+  return getSetting(pauseKey(e), '0') === '1';
+}
+
+// Emails de las identidades pausadas hoy (para el estado de /calendly). Lee las keys
+// `calendly_pause:%` con valor '1'.
+export function listCloserPauses() {
   return db
-    .prepare(`UPDATE calendly_optins SET paused = ? WHERE phone = ?`)
-    .run(paused ? 1 : 0, p).changes;
+    .prepare(`SELECT key FROM settings WHERE key LIKE 'calendly_pause:%' AND value = '1'`)
+    .all()
+    .map((r) => r.key.slice('calendly_pause:'.length));
 }
 
 // ─── Grupos autorizados (default-deny anti-secuestro) ─────────────────────────

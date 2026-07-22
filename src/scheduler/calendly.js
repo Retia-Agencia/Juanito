@@ -192,6 +192,8 @@ async function deps() {
     getOptin: db.getOptin,
     // Botón de pánico global (`/calendly off`): apaga TODOS los envíos al instante.
     isCalendlyPaused: db.isCalendlyPaused,
+    // Pausa por-closer, por identidad/email (`/calendly off <closer> <cuenta>`).
+    isCloserPaused: db.isCloserPaused,
     sendMessage: whatsapp.sendMessage,
     // Brochure adjunto del Push 1 (Operaciones): pasa por la MISMA cola anti-ban.
     sendDocument: whatsapp.sendDocument,
@@ -368,8 +370,9 @@ function dryRunForCloser(closerEmail) {
 // a un número que jamás escribió (el patrón que dispara softbans).
 //
 // Botón de pánico (Item 2, `/calendly on|off`, admin): la pausa GLOBAL corta todo; la
-// pausa por-closer (`optin.paused`) corta solo a ese closer. Es ortogonal a DRY_RUN
-// (master dev-only del .env) y se controla en caliente desde la DB, sin redeploy.
+// pausa por-closer (por IDENTIDAD/email, `isCloserPaused`) corta solo ese programa de ese
+// closer. Es ortogonal a DRY_RUN (master dev-only del .env) y se controla en caliente desde
+// la DB, sin redeploy.
 //
 // `closerEmail` decide la CUENTA (accountOfCloser) y con ella el dry-run: así una agencia
 // puede estar en vivo mientras la otra solo loguea. REGLA para quien agregue un canal
@@ -387,9 +390,12 @@ async function deliver(d, to, text, tag, closerEmail) {
     return 'skipped-optin';
   }
   const optin = d.getOptin ? d.getOptin(to) : null;
-  // 3) Pausa por-closer.
-  if (optin?.paused) {
-    console.log(`[Calendly] PAUSADO (closer ${to}): omito (${tag})`);
+  // 3) Pausa por-closer, por IDENTIDAD (email de la CITA): una persona con dos identidades (misma
+  //    línea, dos Calendly) se apaga por programa. El opt-in se comparte por teléfono, pero la
+  //    pausa vive por email en `settings`. Ver isCloserPaused/setCloserPaused y la invariante en
+  //    src/calendly/closers.js.
+  if (d.isCloserPaused && d.isCloserPaused(closerEmail)) {
+    console.log(`[Calendly] PAUSADO (closer ${closerEmail}): omito (${tag})`);
     return 'paused-closer';
   }
   // 4) Entrega estricta: solo a un hilo YA establecido (contact_jid). Sin él, no se envía.

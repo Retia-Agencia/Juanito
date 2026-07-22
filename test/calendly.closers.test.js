@@ -59,14 +59,18 @@ test('toda cuenta declarada por un closer existe en el registro', () => {
 
 // ─── Integridad del roster ────────────────────────────────────────────────────
 
-test('INVARIANTE: un teléfono = un closer = una cuenta', () => {
-  // La DB la asume: calendly_optins.phone es PRIMARY KEY y getActiveOutcomeForCloser
-  // enruta solo por teléfono. Dos closers con el mismo número se pisan el opt-in.
-  const porTelefono = new Map();
+test('INVARIANTE: un teléfono = una PERSONA (nunca dos personas distintas)', () => {
+  // La DB asume calendly_optins.phone como PRIMARY KEY: DOS personas distintas con el mismo número
+  // se pisarían el opt-in. UNA misma persona SÍ puede repetir teléfono en dos identidades de
+  // Conexiones distintas (Sebastian Salazar: 30x + retia desde una sola línea) — válido, y una
+  // sola fila de opt-in les sirve. Ver la invariante revisada en closers.js.
+  const porTelefono = new Map(); // phone → nombre de la persona
   for (const [email, c] of Object.entries(CLOSERS)) {
     const prev = porTelefono.get(c.phone);
-    assert.ok(!prev, `${email} y ${prev} comparten el teléfono ${c.phone}`);
-    porTelefono.set(c.phone, email);
+    if (prev) {
+      assert.equal(prev, c.name, `${email} comparte el teléfono ${c.phone} con OTRA persona (${prev}) — se pisarían el opt-in`);
+    }
+    porTelefono.set(c.phone, c.name);
   }
 });
 
@@ -94,27 +98,37 @@ test('CLOSER_LIDS apunta solo a emails que existen en CLOSERS', () => {
 
 // ─── resolveCloserByPushName: la ambigüedad que rompe el opt-in en silencio ────
 
-// Nombres que se repiten a propósito en el roster (declarados acá). "Sebastian Rodriguez" es la
-// MISMA persona en 30x [sebastian@30x.com] y en retia [sebasrr321@gmail.com]: un closer con dos
-// programas → dos entradas hasta el refactor (§18.AJ). La repetición hace que pushName resuelva a
-// null (ambiguo = SEGURO); entra por teléfono/LID. Cualquier choque que NO esté acá debe romper CI.
+// Nombres AMBIGUOS a propósito: mismo nombre en TELÉFONOS DISTINTOS → pushName resuelve a null
+// (seguro), el closer entra por teléfono/LID. "Sebastian Rodriguez" es la misma persona en 30x
+// [sebastian@30x.com] y retia [sebasrr321@gmail.com] con DOS números → ambiguo.
+// OJO: "Sebastian Salazar" también repite nombre, pero con el MISMO teléfono (30x + retia desde
+// una línea) → NO es ambiguo: resuelve a esa persona única. Por eso NO va acá. Cualquier choque
+// con teléfonos distintos que NO esté declarado acá debe romper CI.
 const HOMONIMOS_OK = new Set(['Sebastian Rodriguez']);
 
-test('NINGÚN closer con nombre completo es ambiguo por pushName (salvo homónimos conocidos)', () => {
-  // resolveCloserByPushName devuelve null ante ambigüedad → el opt-in por nombre falla SIN LOG y
-  // `/calendly off <nombre>` responde "no reconozco al closer". Este test es la red: falla en CI
-  // el día que alguien agregue un nombre que choque SIN declararlo intencional en HOMONIMOS_OK.
+test('resolveCloserByPushName: nombre completo resuelve a la persona correcta (o null si es ambiguo)', () => {
+  // resolveCloserByPushName devuelve null ante ambigüedad REAL (mismo nombre, teléfonos distintos)
+  // → el opt-in por nombre falla SIN LOG y `/calendly off <nombre>` responde "no reconozco". Este
+  // test es la red: falla en CI si aparece un choque con teléfonos distintos sin declarar, o si un
+  // nombre único deja de resolver.
+  const porNombre = new Map(); // name → Set<phone>
+  for (const c of Object.values(CLOSERS)) {
+    if (!porNombre.has(c.name)) porNombre.set(c.name, new Set());
+    porNombre.get(c.name).add(c.phone);
+  }
   for (const [email, c] of Object.entries(CLOSERS)) {
     if (c.name.trim().split(/\s+/).length < 2) continue; // los de una palabra: test aparte
     const hit = resolveCloserByPushName(c.name);
-    if (HOMONIMOS_OK.has(c.name)) {
-      // Homónimo intencional: DEBE ser ambiguo (null). Si de repente resuelve, es que dejó de
-      // haber choque (revisar) o que resolveCloserByPushName cambió.
-      assert.equal(hit, null, `"${c.name}" está en HOMONIMOS_OK pero resolvió a ${hit?.email} — revisar`);
-      continue;
+    if (porNombre.get(c.name).size > 1) {
+      // Mismo nombre en teléfonos DISTINTOS → ambiguo → null (debe estar declarado intencional).
+      assert.ok(HOMONIMOS_OK.has(c.name), `"${c.name}" choca con teléfonos distintos sin declararse en HOMONIMOS_OK`);
+      assert.equal(hit, null, `"${c.name}" es ambiguo (teléfonos distintos) → debe resolver a null, resolvió a ${hit?.email}`);
+    } else {
+      // Nombre único, o mismo nombre pero MISMO teléfono (una persona, varias Conexiones):
+      // resuelve a esa persona (un teléfono, un opt-in). Verificamos por TELÉFONO, no por email.
+      assert.ok(hit, `"${c.name}" (${email}) no resuelve por pushName — ¿homónimo nuevo con teléfono distinto? Si es intencional, agrégalo a HOMONIMOS_OK.`);
+      assert.equal(hit.phone, c.phone, `"${c.name}" resuelve a otra persona (${hit.email})`);
     }
-    assert.ok(hit, `"${c.name}" (${email}) no resuelve por pushName — ¿homónimo nuevo? Si es intencional, agrégalo a HOMONIMOS_OK.`);
-    assert.equal(hit.email, email, `"${c.name}" resuelve al closer equivocado (${hit.email})`);
   }
 });
 
@@ -171,6 +185,26 @@ test('resolveIdentitiesByName devuelve TODAS las identidades de una persona mult
   }
 });
 
+test('resolveIdentitiesByName lista las DOS identidades aunque compartan teléfono (Sebastian Salazar)', () => {
+  // Salazar cierra en 30x y retia desde la MISMA línea. El dedup es por (teléfono, cuenta), no por
+  // teléfono, así que aparecen las dos → `/calendly off Sebastian Salazar retia` puede apagar solo
+  // una. (Si el dedup volviera a ser por teléfono, esto devolvería 1 y el comando no podría
+  // desambiguar por cuenta.)
+  const ids = resolveIdentitiesByName('Sebastian Salazar');
+  assert.equal(ids.length, 2, 'Sebastian Salazar debe tener 2 identidades');
+  assert.deepEqual(ids.map((i) => i.account).sort(), ['30x', 'retia']);
+  assert.equal(new Set(ids.map((i) => i.phone)).size, 1, 'ambas identidades comparten teléfono');
+  assert.deepEqual(
+    ids.map((i) => i.email).sort(),
+    ['sebastian.salazar@30x.com', 'sebastiansalazar1410@gmail.com']
+  );
+});
+
+test('Dana salió: equipo@ttrading.co queda ignorado y fuera de CLOSERS', () => {
+  assert.ok(isIgnoredCloser('equipo@ttrading.co'), 'equipo@ debe estar en IGNORED_CLOSERS');
+  assert.ok(!CLOSERS['equipo@ttrading.co'], 'equipo@ no debe seguir en CLOSERS');
+});
+
 test('resolveIdentitiesByName de un closer de identidad única devuelve exactamente una', () => {
   const ids = resolveIdentitiesByName('Pablo Lozano');
   assert.equal(ids.length, 1);
@@ -195,9 +229,15 @@ test('resolveCloser resuelve por email y tolera mayúsculas/espacios', () => {
   assert.equal(resolveCloser(null), null);
 });
 
-test('resolveCloserByPhone encuentra a cada closer por su número canónico', () => {
+test('resolveCloserByPhone encuentra a la PERSONA correcta por su número canónico', () => {
+  // Para identidades que comparten teléfono (una persona, dos Conexiones: Sebastian Salazar)
+  // resuelve a UNA de ellas — la misma persona —: correcto, porque el opt-in que crearía va por
+  // ese teléfono y sirve a las dos. Verificamos por teléfono + nombre, no por email.
   for (const [email, c] of Object.entries(CLOSERS)) {
-    assert.equal(resolveCloserByPhone(c.phone)?.email, email);
+    const hit = resolveCloserByPhone(c.phone);
+    assert.ok(hit, `${email} no resuelve por su teléfono ${c.phone}`);
+    assert.equal(hit.phone, c.phone);
+    assert.equal(hit.name, c.name, `${c.phone} resuelve a otra persona (${hit.name})`);
   }
   assert.equal(resolveCloserByPhone('+573009998877'), null);
   assert.equal(resolveCloserByPhone(null), null);

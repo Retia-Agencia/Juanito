@@ -70,15 +70,22 @@ test('botón de pánico global: isCalendlyPaused / setCalendlyPaused', () => {
   assert.equal(db.isCalendlyPaused(), false);
 });
 
-test('pausa por-closer: setCloserPaused marca la fila y getOptin lo expone', () => {
-  db.registerOptin({ phone: '+57 300 222 0001', name: 'C', source: 'self', contactJid: 'c@lid' });
-  assert.equal(db.getOptin('573002220001').paused, 0, 'arranca activo');
-  assert.equal(db.setCloserPaused('+57 300 222 0001', true), 1, 'afecta 1 fila');
-  assert.equal(db.getOptin('573002220001').paused, 1, 'queda pausado');
-  db.setCloserPaused('573002220001', false);
-  assert.equal(db.getOptin('573002220001').paused, 0, 'se reactiva');
-  // Closer sin opt-in → 0 filas afectadas
-  assert.equal(db.setCloserPaused('+57 300 999 9999', true), 0, 'sin fila → no afecta nada');
+test('pausa por-closer: setCloserPaused/isCloserPaused por IDENTIDAD (email) y listCloserPauses', () => {
+  // El pause es por email (identidad), en la tabla `settings` — no por teléfono. Así una persona
+  // con dos identidades (mismo teléfono, dos Conexiones) se apaga por programa. Ver closers.js.
+  const A = 'sebastian.salazar@30x.com';
+  const B = 'sebastiansalazar1410@gmail.com'; // misma persona, otra Conexión (retia)
+  assert.equal(db.isCloserPaused(A), false, 'arranca activo');
+  assert.equal(db.setCloserPaused(B, true), 1);
+  assert.equal(db.isCloserPaused(B), true, 'retia queda pausado');
+  assert.equal(db.isCloserPaused(A), false, '30x intacto: el pause NO es por teléfono compartido');
+  assert.deepEqual(db.listCloserPauses(), [B], 'lista solo la identidad pausada');
+  // Normaliza (minúsculas/espacios) y reactiva.
+  assert.equal(db.isCloserPaused(`  ${B.toUpperCase()} `), true);
+  db.setCloserPaused(B, false);
+  assert.equal(db.isCloserPaused(B), false, 'se reactiva');
+  assert.deepEqual(db.listCloserPauses(), []);
+  assert.equal(db.setCloserPaused('', true), 0, 'email vacío → no hace nada');
 });
 
 test('opt-in anti-ban: source self vs seeded e isVerifiedOptedIn', () => {
