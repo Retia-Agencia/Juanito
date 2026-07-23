@@ -86,6 +86,14 @@ export async function handleCommand({ text, sender, role }, deps = {}) {
     return handleReporteJefe(deps);
   }
 
+  // /setteos — conteo de setteos por closer (leads tocados sin cita) desde HubSpot en vivo.
+  // On-demand, corre SIEMPRE (independiente de SETTEO_REPORT_ENABLED, que solo gatea el anexo al
+  // reporte del jefe). Para el JEFE y admins.
+  if (cmd === '/setteos' || cmd === '/setteo' || cmd.startsWith('/setteos ')) {
+    if (role !== 'admin' && role !== 'boss') return 'Ese comando es solo para el jefe o el equipo 🙂';
+    return handleSetteos(deps);
+  }
+
   // /persona — personalidad específica por grupo (se inyecta en el prompt de ese
   // grupo). SOLO admins: la persona moldea cómo responde el bot, mismo criterio
   // que save_memory.
@@ -594,6 +602,7 @@ function buildHelp(role) {
       '• /calendly [on|off] [closer] [cuenta|todo] — pushes precall',
       '• /reportes [leads|metricas] — preview (en grupo lo publica; jefe/admin)',
       '• /reportejefe — scorecard consolidado (todos los programas + closers)',
+      '• /setteos — conteo de setteos por closer (leads tocados sin cita)',
       '• /status — estado del sistema',
       '• /whoami · /id — tu ID y rol',
     ].join('\n');
@@ -633,15 +642,33 @@ async function handleReporte({ buildSheetsReport } = {}) {
   }
 }
 
-async function handleReporteJefe({ buildBossReport } = {}) {
+async function handleReporteJefe({ buildBossReport, buildSetteoBlock, isSetteoReportEnabled } = {}) {
   if (!buildBossReport) {
     return 'El reporte del jefe no está disponible ahora.';
   }
   try {
-    const message = buildBossReport({});
-    return message || 'No hubo calls hoy para reportar.';
+    const boss = buildBossReport({});
+    // Anexa el bloque de setteo SOLO si está prendido (default off → reporte idéntico a hoy).
+    let setteo = null;
+    if (isSetteoReportEnabled && isSetteoReportEnabled() && buildSetteoBlock) {
+      setteo = await buildSetteoBlock({}).catch(() => null);
+    }
+    const parts = [boss, setteo].filter(Boolean);
+    return parts.length ? parts.join('\n\n') : 'No hubo calls hoy para reportar.';
   } catch (e) {
     return `No pude generar el reporte del jefe ahora: ${e.message}`;
+  }
+}
+
+async function handleSetteos({ buildSetteoBlock } = {}) {
+  if (!buildSetteoBlock) {
+    return 'El conteo de setteos no está disponible ahora (falta HubSpot).';
+  }
+  try {
+    const message = await buildSetteoBlock({});
+    return message || 'No hay setteos registrados en la ventana (o el scope está vacío).';
+  } catch (e) {
+    return `No pude generar el conteo de setteos ahora: ${e.message}`;
   }
 }
 

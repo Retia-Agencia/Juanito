@@ -12,6 +12,7 @@ import { sendMessage } from '../whatsapp/index.js';
 import { getOutcomesInWindow } from '../db/index.js';
 import { formatBossScorecard } from '../calendly/boss-report.js';
 import { dayRangeUtc } from '../calendly/index.js';
+import { buildSetteoBlock, isSetteoReportEnabled } from './setteo.js';
 
 const TZ = () => process.env.TZ || 'America/Bogota';
 const CRON = () => process.env.BOSS_REPORT_CRON || '30 20 * * *'; // 20:30 Bogotá, tras las calls del día
@@ -59,7 +60,15 @@ export function startBossReportJob() {
     CRON(),
     async () => {
       try {
-        const message = buildBossReport({});
+        let message = buildBossReport({});
+        // Anexa el bloque de setteo SOLO si está prendido (default off → reporte idéntico a hoy).
+        if (isSetteoReportEnabled()) {
+          const setteo = await buildSetteoBlock({}).catch((e) => {
+            console.error('[BossReport] bloque de setteo falló:', e.message);
+            return null;
+          });
+          if (setteo) message = message ? `${message}\n\n${setteo}` : setteo;
+        }
         if (!message) {
           console.log('[BossReport] sin calls hoy → no se envía el reporte del jefe');
           return;

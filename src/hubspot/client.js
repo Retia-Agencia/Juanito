@@ -243,6 +243,97 @@ export async function matchCallToDeal({ email, programKey }) {
   }
 }
 
+// ─── Setteo: dueños + contactos tocados (§18.AH) ──────────────────────────────
+// Fuente del conteo de setteos por closer. Todo read-only (owners.read + contacts.read, ya en
+// el scope del PAK). La lógica pura de agregación vive en setteo.js; acá solo el fetch.
+
+// Mapa { ownerId → email } de TODOS los owners del portal. Cachea en proceso (como los
+// pipelines) — el roster de owners casi nunca cambia. Tolerante a fallos → {}.
+let _ownersCache = null;
+
+export async function getOwnerEmailMap() {
+  if (_ownersCache) return _ownersCache;
+  if (!isEnabled()) return {};
+  try {
+    const map = {};
+    let after = null;
+    do {
+      const q = `/crm/v3/owners?limit=100${after ? `&after=${after}` : ''}`;
+      const data = await request(q);
+      for (const o of data.results || []) {
+        if (o.id && o.email) map[String(o.id)] = String(o.email).toLowerCase();
+      }
+      after = data.paging?.next?.after || null;
+    } while (after);
+    _ownersCache = map;
+    return map;
+  } catch (e) {
+    console.warn(`[HubSpot] getOwnerEmailMap falló: ${e.message}`);
+    return {};
+  }
+}
+
+// Contactos de un owner con actividad de contacto registrada (`notes_last_contacted`) dentro de
+// [sinceIso, untilIso). Uno por lead → dedup natural (la unidad "1 lead tocado = 1 setteo").
+// Pagina hasta agotar. Devuelve [{ id, ownerId, email, name, lastContacted }] o [] si falla.
+const TOUCHED_PROPS = ['firstname', 'lastname', 'email', 'hubspot_owner_id', 'notes_last_contacted', 'num_contacted_notes'];
+
+export async function searchTouchedContacts({ ownerId, sinceIso, untilIso }) {
+  if (!isEnabled() || !ownerId || !sinceIso || !untilIso) return [];
+  try {
+    const out = [];
+    let after = null;
+    do {
+      const data = await request('/crm/v3/objects/contacts/search', {
+        method: 'POST',
+        body: {
+          filterGroups: [
+            {
+              filters: [
+                { propertyName: 'hubspot_owner_id', operator: 'EQ', value: String(ownerId) },
+                {
+                  propertyName: 'notes_last_contacted',
+                  operator: 'BETWEEN',
+                  value: String(Date.parse(sinceIso)),
+                  highValue: String(Date.parse(untilIso)),
+                },
+              ],
+            },
+          ],
+          properties: TOUCHED_PROPS,
+          limit: 100,
+          ...(after ? { after } : {}),
+        },
+      });
+      for (const c of data.results || []) {
+        const p = c.properties || {};
+        out.push({
+          id: c.id,
+          ownerId: String(p.hubspot_owner_id || ownerId),
+          email: p.email || null,
+          name: `${p.firstname || ''} ${p.lastname || ''}`.trim(),
+          lastContacted: p.notes_last_contacted || null,
+        });
+      }
+      after = data.paging?.next?.after || null;
+    } while (after);
+    return out;
+  } catch (e) {
+    console.warn(`[HubSpot] searchTouchedContacts(${ownerId}) falló: ${e.message}`);
+    return [];
+  }
+}
+
+// Discriminador setteo vs. call: ¿alguno de los deals del contacto tiene `agenda_status`?
+// True = tiene (o tuvo) una cita → es lead de call, NO setteo. Reusa getContactDeals (trae
+// agenda_status en DEAL_PROPS). Ante error, false (no descartar de más: mejor contar un setteo
+// de sobra que perder la gestión).
+export async function contactHasScheduledDeal(contactId) {
+  if (!isEnabled() || !contactId) return false;
+  const deals = await getContactDeals(contactId);
+  return deals.some((d) => Boolean(d.properties?.agenda_status));
+}
+
 // ─── Diagnóstico ──────────────────────────────────────────────────────────────
 
 // Ping barato para el smoke/healthcheck: confirma que el PAK intercambia y que la API
