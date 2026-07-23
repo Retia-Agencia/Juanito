@@ -54,6 +54,7 @@ import { enforceGroup, reevaluateGroup, onSelfRemoved, sweepGroups } from './bot
 import { buildSheetsReport } from './scheduler/sheets-report.js';
 import { buildMetricsReport } from './scheduler/sheets-metrics.js';
 import { buildBossReport } from './scheduler/boss-report.js';
+import { buildSetteoBlock, isSetteoReportEnabled } from './scheduler/setteo.js';
 
 // ─── Add a un grupo: autorizar (boss/admin) o salir (default-deny) ────────────
 // Si lo agrega directamente un boss/admin, autoriza sin más. En cualquier otro
@@ -169,6 +170,9 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
         buildMetricsReport,
         // /reportejefe — scorecard consolidado del jefe (todos los programas + closers)
         buildBossReport,
+        // /setteos — conteo de setteos por closer + anexo (gated) al reporte del jefe
+        buildSetteoBlock,
+        isSetteoReportEnabled,
         // /persona — personalidad por grupo
         setGroupPersona,
         getGroupPersona,
