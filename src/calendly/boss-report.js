@@ -14,7 +14,17 @@
 // Regla de conteo (§18.AC), heredada de aggregateOutcomes: una call reagendada o cancelada
 // NO ocurrió → va a "movidas", no al volumen. Evita el doble conteo.
 
-import { aggregateOutcomes, PROGRAM_TO_COMPANY } from './outcome-report.js';
+import { aggregateOutcomes } from './outcome-report.js';
+import { PROGRAM_LABELS } from './programs.js';
+
+// Etiqueta del programa para el DM del jefe. Se toma del registro PROGRAMS (fuente única, ADR
+// 0001), NO de PROGRAM_TO_COMPANY: ese mapa vive en outcome-report.js y sus valores en
+// mayúsculas ("AI SECOND BRAIN") son claves de ENRUTAMIENTO a grupos (deben calzar con
+// COMPANIES/GROUP_ENV), no rótulos — y encima no lista instagram ni tactical_investor, así que
+// esos dos salían con su key técnica en crudo. Con PROGRAM_LABELS el reporte del jefe usa el
+// mismo rótulo que la agenda de las 7am ("Instagram & TikTok") y un programa nuevo queda
+// cableado solo. Fallback a la key para un programa aún sin label.
+const labelOf = (key) => PROGRAM_LABELS[key] || key;
 
 // Orden de presentación de los programas (los no listados van al final, alfabético).
 const PROGRAM_ORDER = ['second_brain', 'abogados', 'linkedin', 'developers', 'operaciones', 'instagram'];
@@ -41,7 +51,7 @@ export function buildBossScorecard(rows = []) {
     const closers = byProgram[prog];
     const pt = {
       key: prog,
-      company: PROGRAM_TO_COMPANY[prog] || prog,
+      company: labelOf(prog),
       ...Object.fromEntries(ACC_KEYS.map((k) => [k, 0])),
       closers: [],
     };
