@@ -92,8 +92,15 @@ export function formatBossScorecard(
     `🎯 ${company.venta_cerrada} ${plural(company.venta_cerrada, 'venta')}` +
     (movidas ? ` · 🔁 ${movidas} ${plural(movidas, 'movida')}` : '') +
     `\n📶 cobertura del dato: ${cobertura}%` +
-    (pendientes ? ` (${pendientes} ${plural(pendientes, 'call')} sin ocurrir aún)` : '') +
-    (company.sin_registrar ? ` (${company.sin_registrar} sin registrar)` : '');
+    // Un solo paréntesis: las dos razones por las que la cobertura no llega a 100% son
+    // distintas (aún no ocurrió vs. ocurrió y nadie la registró) y se leen juntas.
+    (() => {
+      const notas = [
+        pendientes ? `${pendientes} ${plural(pendientes, 'call')} sin ocurrir aún` : null,
+        company.sin_registrar ? `${company.sin_registrar} sin registrar` : null,
+      ].filter(Boolean);
+      return notas.length ? ` (${notas.join(' · ')})` : '';
+    })();
 
   const sections = programs.map((p) => {
     const closerLines = p.closers.map((s) => {

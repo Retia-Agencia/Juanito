@@ -31,6 +31,11 @@ after(() => rmSync(dir, { recursive: true, force: true }));
 // Ventana del 24-jul en Bogotá (UTC-5), igual que la que arma dayRangeUtc.
 const DIA = ['2026-07-24 05:00:00', '2026-07-25 05:00:00'];
 
+// `due_at` en el pasado remoto a propósito: así getDueCalendlyPushes() devuelve SIEMPRE los
+// pushes de prueba y el test no depende de la hora a la que se corra. La agenda filtra por
+// call_start, no por due_at, así que no afecta lo que se mide acá.
+const VENCIDO = '2020-01-01 00:00:00';
+
 const push = (over = {}) => ({
   event_uuid: 'evt-1',
   push_n: 3,
@@ -40,7 +45,7 @@ const push = (over = {}) => ({
   prospect_name: 'Ana Gómez',
   prospect_phone: '+573004445555',
   call_start: '2026-07-24 15:00:00',
-  due_at: '2026-07-24 14:35:00',
+  due_at: VENCIDO,
   message: 'push',
   ...over,
 });
@@ -76,14 +81,14 @@ test('un push ya ENVIADO mantiene la call en la agenda', () => {
 
 test('call con TODOS sus pushes skipped (cancelada/superseded) sale de la agenda', () => {
   db.scheduleCalendlyPush(push({ event_uuid: 'evt-cancel', push_n: 3 }));
-  db.scheduleCalendlyPush(push({ event_uuid: 'evt-cancel', push_n: 4, due_at: '2026-07-24 15:45:00' }));
+  db.scheduleCalendlyPush(push({ event_uuid: 'evt-cancel', push_n: 4 }));
   assert.ok(
     db.getScheduledCallsInWindow(...DIA).some((c) => c.event_uuid === 'evt-cancel'),
     'antes de saltarlos, cuenta'
   );
-  for (const p of db.getDueCalendlyPushes().filter((p) => p.event_uuid === 'evt-cancel')) {
-    db.markCalendlyPushSkipped(p.id, 'cita canceled');
-  }
+  const suyos = db.getDueCalendlyPushes().filter((p) => p.event_uuid === 'evt-cancel');
+  assert.equal(suyos.length, 2, 'los dos pushes de la call están por entregar');
+  for (const p of suyos) db.markCalendlyPushSkipped(p.id, 'cita canceled');
   assert.ok(
     !db.getScheduledCallsInWindow(...DIA).some((c) => c.event_uuid === 'evt-cancel'),
     'sin un solo push vivo, la call ya no va'
