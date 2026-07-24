@@ -82,6 +82,28 @@ test('boss: format incluye cobertura y advierte si <100%', () => {
   assert.match(msg, /Cobertura <100%/);
 });
 
+test('boss: rotula con el label de PROGRAMS, no con la key cruda ni el mapa de enrutamiento', () => {
+  // Regresión: PROGRAM_TO_COMPANY (mapa de enrutamiento a grupos) no lista instagram ni
+  // tactical_investor, así que ambos salían con su key técnica en el DM del jefe, mientras la
+  // agenda del mismo día ya decía "Instagram & TikTok". Ahora las dos superficies coinciden.
+  const rows = [
+    row({ program: 'instagram', closer: 'Marin', asistencia: 'show' }),
+    row({ program: 'tactical_investor', closer: 'JP', asistencia: 'show' }),
+    row({ program: 'second_brain', closer: 'Sebas', asistencia: 'show' }),
+  ];
+  const { programs } = buildBossScorecard(rows);
+  const labelByKey = Object.fromEntries(programs.map((p) => [p.key, p.company]));
+  assert.equal(labelByKey.instagram, 'Instagram & TikTok');
+  assert.equal(labelByKey.tactical_investor, 'De Cero a Tactical Investor');
+  assert.equal(labelByKey.second_brain, 'AI Second Brain');
+
+  const msg = formatBossScorecard(rows, { dateLabel: 'hoy' });
+  assert.match(msg, /\*Instagram & TikTok\*/);
+  assert.match(msg, /\*De Cero a Tactical Investor\*/);
+  assert.doesNotMatch(msg, /\*instagram\*/); // nunca la key cruda
+  assert.doesNotMatch(msg, /\*tactical_investor\*/);
+});
+
 test('boss: por closer, ordenado por ventas', () => {
   const rows = [
     row({ program: 'second_brain', closer: 'Ana', asistencia: 'show' }),
