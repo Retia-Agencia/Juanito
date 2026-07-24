@@ -24,6 +24,9 @@ import { getOutcomesInWindow, getScheduledCallsInWindow } from '../db/index.js';
 import { formatBossScorecard } from '../calendly/boss-report.js';
 import { formatAgendaScorecard } from '../calendly/agenda-report.js';
 import { dayRangeUtc } from '../calendly/index.js';
+import { CLOSERS } from '../calendly/closers.js';
+import { isEnabled as hubspotEnabled, searchMeetingsInWindow, getOwnerEmailMap } from '../hubspot/client.js';
+import { meetingsToCalls, mergeAgendaSources } from '../hubspot/meetings.js';
 
 const TZ = () => process.env.TZ || 'America/Bogota';
 const ENABLED = () => process.env.DAILY_REPORTS_ENABLED === 'true';
@@ -57,31 +60,70 @@ const windowForToday = (now) => {
 // Resultados de hoy (los que YA se registraron). Vacío hasta que termine la primera call.
 const rowsForToday = (now) => getOutcomesInWindow(...windowForToday(now));
 
-// Calls agendadas para hoy. Disponible desde que el poll las reserva → sirve a las 7am.
+// Calls agendadas para hoy según Calendly. Disponible desde que el poll las reserva → sirve
+// a las 7am. Es también la ÚNICA fuente de los programas que no viven en el HubSpot conectado
+// (abogados, tactical_investor/Retia), así que nunca se reemplaza: se le suma.
 const callsForToday = (now) => getScheduledCallsInWindow(...windowForToday(now));
 
+// Las citas que el closer agendó a mano DENTRO de HubSpot, que Calendly no ve. Read-only y
+// best-effort: si HubSpot está apagado o la API falla, devuelve [] y la agenda sale igual con
+// lo de Calendly (nunca se cae ni se queda sin enviar por esto).
+async function hubspotCallsForToday(now) {
+  if (!hubspotEnabled()) return [];
+  try {
+    const { minStartIso, maxStartIso } = dayRangeUtc(TZ(), 0, now);
+    const [meetings, ownerEmailById] = await Promise.all([
+      searchMeetingsInWindow({ fromIso: minStartIso, untilIso: maxStartIso }),
+      getOwnerEmailMap(),
+    ]);
+    return meetingsToCalls(meetings, {
+      ownerEmailById,
+      closerEmails: new Set(Object.keys(CLOSERS).map((e) => e.toLowerCase())),
+    });
+  } catch (e) {
+    console.warn(`[DailyReports] agenda: HubSpot no disponible (${e.message}) → solo Calendly`);
+    return [];
+  }
+}
+
+// LA agenda del día: unión de las dos fuentes, deduplicada. Ninguna es superconjunto de la
+// otra (ver hubspot/meetings.js), así que este es el único conteo real de calls del día — lo
+// usan los tres reportes, para que el denominador del mediodía coincida con lo que dijo el
+// de las 7am. `tag` solo rotula el log.
+async function agendaCallsForToday(now, tag) {
+  const calendly = callsForToday(now);
+  const hubspot = await hubspotCallsForToday(now);
+  const { calls, added, duplicates } = mergeAgendaSources(calendly, hubspot);
+  console.log(
+    `[DailyReports] ${tag}: ${calendly.length} calls de Calendly + ${added} solo-HubSpot ` +
+      `(${duplicates} ya estaban en Calendly) → ${calls.length} del día`
+  );
+  return calls;
+}
+
 // Builders impuros (leen la ventana de hoy). Exportados para test/preview.
-export function buildAgendaReport({ now = new Date() } = {}) {
-  return formatAgendaScorecard(callsForToday(now), { dateLabel: dateLabel(now) });
+export async function buildAgendaReport({ now = new Date() } = {}) {
+  const calls = await agendaCallsForToday(now, 'agenda 7am');
+  return formatAgendaScorecard(calls, { dateLabel: dateLabel(now) });
 }
 
 // El progreso y el cierre SÍ miden resultados → siguen leyendo call_outcomes. Se les pasa
 // `agendadas` (las calls del día) para que la cobertura se calcule contra el denominador real:
 // a mediodía hay ~19 calls registradas de ~46 agendadas, y sin ese dato el reporte decía
 // "19 calls · cobertura 100%" — cierto sobre lo registrado, engañoso sobre el día.
-export function buildProgressReport({ now = new Date() } = {}) {
+export async function buildProgressReport({ now = new Date() } = {}) {
   return formatBossScorecard(rowsForToday(now), {
     dateLabel: dateLabel(now),
     heading: 'Progreso del día',
-    agendadas: callsForToday(now).length,
+    agendadas: (await agendaCallsForToday(now, 'progreso 12pm')).length,
   });
 }
 
-export function buildFinalReport({ now = new Date() } = {}) {
+export async function buildFinalReport({ now = new Date() } = {}) {
   return formatBossScorecard(rowsForToday(now), {
     dateLabel: dateLabel(now),
     heading: 'Cierre del día',
-    agendadas: callsForToday(now).length,
+    agendadas: (await agendaCallsForToday(now, 'cierre 9pm')).length,
   });
 }
 
@@ -106,12 +148,14 @@ export function startDailyReportsJob() {
     console.warn('[DailyReports] DAILY_REPORTS_ENABLED=true pero sin DAILY_REPORTS_DM → nada que enviar, desactivado');
     return;
   }
+  // OJO: los builders son ASYNC (la agenda consulta HubSpot). Sin el `await` acá, `deliver`
+  // recibiría una Promise — que es truthy — y mandaría "[object Promise]" por WhatsApp.
   const mk = (cron, tag, builder) =>
     new CronJob(
       cron,
       async () => {
         try {
-          await deliver(tag, builder({}), recipients);
+          await deliver(tag, await builder({}), recipients);
         } catch (e) {
           console.error(`[DailyReports] error en ${tag}:`, e.message);
         }
