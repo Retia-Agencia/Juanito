@@ -1,62 +1,86 @@
 // Tests PUROS del reporte de la AGENDA del día (src/calendly/agenda-report.js): la foto de
 // las 7am — cuántas calls tiene agendada cada closer hoy, por programa, aún sin resultados.
+//
+// Fuente: `calendly_pushes` (una fila por call, vía getScheduledCallsInWindow), NO call_outcomes.
+// A las 7am esa otra tabla está vacía por diseño y el reporte nunca salía — ver el encabezado
+// del módulo. Estos tests fijan la fuente correcta para que la regresión no vuelva callada.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatAgendaScorecard } from '../src/calendly/agenda-report.js';
+import { formatAgendaScorecard, buildAgenda } from '../src/calendly/agenda-report.js';
 
-// Fila de call_outcomes mínima. A las 7am las calls están 'pending' (aún sin asistencia).
-function row({ program, closer, asistencia = null, status = 'pending', rescheduled_to = null }) {
-  return {
-    program,
-    closer_name: closer,
-    closer_email: `${closer}@30x.com`,
-    asistencia,
-    resultado: null,
-    status,
-    lead_name: 'Lead X',
-    rescheduled_to,
-  };
+// Fila de getScheduledCallsInWindow: una call agendada. `closer` es el EMAIL (el reporte
+// resuelve el nombre contra el roster) — se usan emails reales de src/calendly/closers.js.
+let n = 0;
+function call({ program, closer, call_start = '2026-07-24 15:00:00' }) {
+  return { event_uuid: `evt-${++n}`, program, closer_email: closer, prospect_name: 'Lead X', call_start };
 }
 
+const SEBAS = 'sebastian@30x.com';
+const PABLO = 'pablo.lozano@30x.com';
+const MARIN = 'sebastian.marin@30x.com';
+
 test('agenda: cuenta calls agendadas hoy por programa y closer', () => {
-  const rows = [
-    row({ program: 'second_brain', closer: 'Sebas' }),
-    row({ program: 'second_brain', closer: 'Sebas' }),
-    row({ program: 'second_brain', closer: 'Ana' }),
-    row({ program: 'linkedin', closer: 'Marin' }),
+  const calls = [
+    call({ program: 'second_brain', closer: SEBAS }),
+    call({ program: 'second_brain', closer: SEBAS }),
+    call({ program: 'second_brain', closer: PABLO }),
+    call({ program: 'instagram', closer: MARIN }),
   ];
-  const msg = formatAgendaScorecard(rows, { dateLabel: 'mié, 22 jul' });
-  assert.match(msg, /Agenda del día — mié, 22 jul/);
+  const msg = formatAgendaScorecard(calls, { dateLabel: 'vie, 24 jul' });
+  assert.match(msg, /Agenda del día — vie, 24 jul/);
   assert.match(msg, /4 calls agendadas · 2 programas/);
-  assert.match(msg, /\*Sebas\* — 2 calls/);
-  assert.match(msg, /\*Ana\* — 1 call/); // singular
-  assert.match(msg, /\*Marin\* — 1 call/);
+  assert.match(msg, /\*Sebastian Rodriguez\* — 2 calls/);
+  assert.match(msg, /\*Pablo Lozano\* — 1 call/); // singular
+  assert.match(msg, /\*Sebastian Marin\* — 1 call/);
+});
+
+test('agenda: usa el label del programa desde PROGRAMS, no la key cruda', () => {
+  // Regresión: el mapa viejo (PROGRAM_TO_COMPANY) no tenía instagram ni tactical_investor,
+  // así que dos programas activos habrían salido con su key técnica en el DM del jefe.
+  const msg = formatAgendaScorecard(
+    [call({ program: 'instagram', closer: MARIN }), call({ program: 'tactical_investor', closer: SEBAS })],
+    {}
+  );
+  assert.match(msg, /\*Instagram & TikTok\*/);
+  assert.match(msg, /\*De Cero a Tactical Investor\*/);
+  assert.doesNotMatch(msg, /tactical_investor/);
 });
 
 test('agenda: closers ordenados por volumen dentro del programa', () => {
-  const rows = [
-    row({ program: 'second_brain', closer: 'Ana' }),
-    row({ program: 'second_brain', closer: 'Sebas' }),
-    row({ program: 'second_brain', closer: 'Sebas' }),
+  const calls = [
+    call({ program: 'second_brain', closer: PABLO }),
+    call({ program: 'second_brain', closer: SEBAS }),
+    call({ program: 'second_brain', closer: SEBAS }),
   ];
-  const msg = formatAgendaScorecard(rows, {});
-  assert.ok(msg.indexOf('*Sebas*') < msg.indexOf('*Ana*'), 'el de más calls va primero');
+  const msg = formatAgendaScorecard(calls, {});
+  assert.ok(
+    msg.indexOf('*Sebastian Rodriguez*') < msg.indexOf('*Pablo Lozano*'),
+    'el de más calls va primero'
+  );
 });
 
-test('agenda: reagendada/cancelada antes de las 7am NO inflan la agenda', () => {
-  const rows = [
-    row({ program: 'linkedin', closer: 'Lucas' }),
-    row({ program: 'linkedin', closer: 'Lucas', asistencia: 'reagendado', status: 'auto', rescheduled_to: '2026-07-23 15:30:00' }),
-    row({ program: 'linkedin', closer: 'Lucas', asistencia: 'cancelado', status: 'auto' }),
+test('agenda: programas ordenados por volumen', () => {
+  const calls = [
+    call({ program: 'instagram', closer: MARIN }),
+    call({ program: 'second_brain', closer: SEBAS }),
+    call({ program: 'second_brain', closer: SEBAS }),
   ];
-  const msg = formatAgendaScorecard(rows, {});
-  assert.match(msg, /1 call agendada · 1 programa/);
-  assert.match(msg, /\*Lucas\* — 1 call/);
+  const { programs } = buildAgenda(calls);
+  assert.deepEqual(programs.map((p) => p.key), ['second_brain', 'instagram']);
+});
+
+test('agenda: un closer sin mapear igual aparece (no se pierde la cita)', () => {
+  const msg = formatAgendaScorecard([call({ program: 'second_brain', closer: 'nadie@ejemplo.com' })], {});
+  assert.match(msg, /nadie@ejemplo\.com/);
+});
+
+test('agenda: programa nuevo sin cablear cae a su key, no desaparece', () => {
+  const { programs } = buildAgenda([call({ program: 'programa_nuevo', closer: SEBAS })]);
+  assert.equal(programs.length, 1);
+  assert.equal(programs[0].label, 'programa_nuevo');
 });
 
 test('agenda: sin calls → null (no manda reporte vacío)', () => {
   assert.equal(formatAgendaScorecard([], {}), null);
-  // Solo movidas (nada que de verdad ocurra hoy) tampoco dispara reporte.
-  const soloMovidas = [row({ program: 'linkedin', closer: 'Lucas', asistencia: 'cancelado', status: 'auto' })];
-  assert.equal(formatAgendaScorecard(soloMovidas, {}), null);
+  assert.equal(formatAgendaScorecard(undefined, {}), null);
 });

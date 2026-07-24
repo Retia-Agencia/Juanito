@@ -1,9 +1,14 @@
 // src/scheduler/daily-reports.js
-// Los 3 reportes diarios por DM (pedido del jefe 2026-07-22), todos desde call_outcomes
-// (la fuente de verdad que alimenta el agenda_status de HubSpot vía Push 4):
+// Los 3 reportes diarios por DM (pedido del jefe 2026-07-22):
 //   1. 07:00 — AGENDA del día: calls agendadas hoy por closer/programa (aún sin resultados).
 //   2. 12:00 — PROGRESO: scorecard consolidado con lo resuelto hasta el momento.
 //   3. 21:00 — CIERRE: scorecard consolidado final del día.
+//
+// DOS fuentes, y la distinción importa (fix 2026-07-24): el 2 y el 3 miden RESULTADOS →
+// `call_outcomes`. El 1 mide lo que está AGENDADO → `calendly_pushes`. Nacieron los tres
+// leyendo call_outcomes, y por eso la agenda de las 7am nunca se envió: esa tabla se puebla
+// al ENTREGAR el Push 4 (~45 min después de cada call), así que a las 7am está vacía siempre.
+// Ver el encabezado de calendly/agenda-report.js.
 //
 // Los 2 y 3 son el mismo scorecard del jefe (calendly/boss-report.js) a distinta hora,
 // cambiando solo el título. El 1 usa el formatter de agenda (calendly/agenda-report.js).
@@ -15,7 +20,7 @@
 
 import { CronJob } from 'cron';
 import { sendMessage } from '../whatsapp/index.js';
-import { getOutcomesInWindow } from '../db/index.js';
+import { getOutcomesInWindow, getScheduledCallsInWindow } from '../db/index.js';
 import { formatBossScorecard } from '../calendly/boss-report.js';
 import { formatAgendaScorecard } from '../calendly/agenda-report.js';
 import { dayRangeUtc } from '../calendly/index.js';
@@ -44,22 +49,40 @@ function dateLabel(now) {
   }).format(now);
 }
 
-function rowsForToday(now) {
+const windowForToday = (now) => {
   const { minStartIso, maxStartIso } = dayRangeUtc(TZ(), 0, now);
-  return getOutcomesInWindow(toDbUtc(minStartIso), toDbUtc(maxStartIso));
-}
+  return [toDbUtc(minStartIso), toDbUtc(maxStartIso)];
+};
+
+// Resultados de hoy (los que YA se registraron). Vacío hasta que termine la primera call.
+const rowsForToday = (now) => getOutcomesInWindow(...windowForToday(now));
+
+// Calls agendadas para hoy. Disponible desde que el poll las reserva → sirve a las 7am.
+const callsForToday = (now) => getScheduledCallsInWindow(...windowForToday(now));
 
 // Builders impuros (leen la ventana de hoy). Exportados para test/preview.
 export function buildAgendaReport({ now = new Date() } = {}) {
-  return formatAgendaScorecard(rowsForToday(now), { dateLabel: dateLabel(now) });
+  return formatAgendaScorecard(callsForToday(now), { dateLabel: dateLabel(now) });
 }
 
+// El progreso y el cierre SÍ miden resultados → siguen leyendo call_outcomes. Se les pasa
+// `agendadas` (las calls del día) para que la cobertura se calcule contra el denominador real:
+// a mediodía hay ~19 calls registradas de ~46 agendadas, y sin ese dato el reporte decía
+// "19 calls · cobertura 100%" — cierto sobre lo registrado, engañoso sobre el día.
 export function buildProgressReport({ now = new Date() } = {}) {
-  return formatBossScorecard(rowsForToday(now), { dateLabel: dateLabel(now), heading: 'Progreso del día' });
+  return formatBossScorecard(rowsForToday(now), {
+    dateLabel: dateLabel(now),
+    heading: 'Progreso del día',
+    agendadas: callsForToday(now).length,
+  });
 }
 
 export function buildFinalReport({ now = new Date() } = {}) {
-  return formatBossScorecard(rowsForToday(now), { dateLabel: dateLabel(now), heading: 'Cierre del día' });
+  return formatBossScorecard(rowsForToday(now), {
+    dateLabel: dateLabel(now),
+    heading: 'Cierre del día',
+    agendadas: callsForToday(now).length,
+  });
 }
 
 async function deliver(tag, message, recipients) {
