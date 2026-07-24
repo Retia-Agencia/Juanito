@@ -175,6 +175,13 @@ services:
       # reporte del jefe. SETTEO_REPORT_CLOSERS vacío → cae al scope del nudge (PUSH4_CLOSERS).
       - SETTEO_REPORT_ENABLED=${SETTEO_REPORT_ENABLED:-false}
       - SETTEO_REPORT_CLOSERS=${SETTEO_REPORT_CLOSERS:-}
+      # Los 3 reportes diarios por DM (§18.AL): agenda 7am · progreso 12pm · cierre 9pm.
+      # Off por default; se prende con DAILY_REPORTS_ENABLED + al menos un DM destino.
+      - DAILY_REPORTS_ENABLED=${DAILY_REPORTS_ENABLED:-false}
+      - DAILY_REPORTS_DM=${DAILY_REPORTS_DM:-}
+      - DAILY_REPORT_AM_CRON=${DAILY_REPORT_AM_CRON:-0 7 * * *}
+      - DAILY_REPORT_MID_CRON=${DAILY_REPORT_MID_CRON:-0 12 * * *}
+      - DAILY_REPORT_PM_CRON=${DAILY_REPORT_PM_CRON:-0 21 * * *}
       # QR web server — solo durante la vinculación inicial.
       # Descomentar la línea de abajo y agregar QR_PORT=3001 al .env.
       # Volver a comentar una vez vinculado.
