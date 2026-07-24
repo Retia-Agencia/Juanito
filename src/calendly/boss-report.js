@@ -65,19 +65,42 @@ const plural = (n, sing, plu = sing + 's') => (n === 1 ? sing : plu);
 
 // Formatea el DM del jefe. `rows` = call_outcomes de la ventana. Devuelve el texto, o null
 // si no hubo ninguna call en el período.
-export function formatBossScorecard(rows = [], { dateLabel = 'hoy', heading = 'Reporte Juanito' } = {}) {
+//
+// `agendadas` (opcional) = calls AGENDADAS en la ventana, de calendly_pushes. Sin él, la
+// cobertura se mide contra las calls que ya tienen fila en call_outcomes — correcto al cierre
+// del día, pero a mediodía esa tabla solo tiene las calls ya terminadas, así que un reporte de
+// 19 filas se anunciaba como "19 calls · cobertura 100%" habiendo 46 agendadas. Pasándolo, el
+// denominador es el día completo y el encabezado dice cuántas faltan por ocurrir.
+export function formatBossScorecard(
+  rows = [],
+  { dateLabel = 'hoy', heading = 'Reporte Juanito', agendadas = null } = {}
+) {
   const { company, programs } = buildBossScorecard(rows);
   if (!programs.length) return null;
+
+  // Solo si `agendadas` es coherente: si viniera por debajo de lo ya registrado (una call
+  // cancelada sale de la agenda pero conserva su fila) el denominador real es el de siempre.
+  const totalDia = agendadas != null && agendadas > company.total ? agendadas : null;
+  const cobertura = totalDia ? pct(company.registrados, totalDia) : company.cobertura;
+  const pendientes = totalDia ? totalDia - company.total : 0;
 
   const movidas = company.reagendado + company.cancelado;
   const head =
     `📊 *${heading} — ${dateLabel}*\n` +
-    `${company.total} ${plural(company.total, 'call')} · ` +
+    `${company.total}${totalDia ? ` de ${totalDia}` : ''} ${plural(totalDia || company.total, 'call')} · ` +
     `${company.show} show · ${company.no_show} no-show · show ${company.show_rate}%\n` +
     `🎯 ${company.venta_cerrada} ${plural(company.venta_cerrada, 'venta')}` +
     (movidas ? ` · 🔁 ${movidas} ${plural(movidas, 'movida')}` : '') +
-    `\n📶 cobertura del dato: ${company.cobertura}%` +
-    (company.sin_registrar ? ` (${company.sin_registrar} sin registrar)` : '');
+    `\n📶 cobertura del dato: ${cobertura}%` +
+    // Un solo paréntesis: las dos razones por las que la cobertura no llega a 100% son
+    // distintas (aún no ocurrió vs. ocurrió y nadie la registró) y se leen juntas.
+    (() => {
+      const notas = [
+        pendientes ? `${pendientes} ${plural(pendientes, 'call')} sin ocurrir aún` : null,
+        company.sin_registrar ? `${company.sin_registrar} sin registrar` : null,
+      ].filter(Boolean);
+      return notas.length ? ` (${notas.join(' · ')})` : '';
+    })();
 
   const sections = programs.map((p) => {
     const closerLines = p.closers.map((s) => {
@@ -97,7 +120,7 @@ export function formatBossScorecard(rows = [], { dateLabel = 'hoy', heading = 'R
   });
 
   const footer =
-    company.cobertura < 100
+    cobertura < 100
       ? `\n\n_Cobertura <100%: las calls sin registrar no entran en show/ventas — el dato real puede ser mayor._`
       : '';
 

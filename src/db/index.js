@@ -674,6 +674,36 @@ export function getPendingManualPushes() {
     .all();
 }
 
+// Calls AGENDADAS en una ventana UTC — una fila por call (no por push). Es la fuente de la
+// AGENDA de las 7am: a esa hora `call_outcomes` está vacío por diseño (su fila nace recién
+// cuando se ENTREGA el Push 4, ~45 min DESPUÉS de cada call), así que preguntarle a esa tabla
+// qué hay agendado hoy siempre devolvía cero. `calendly_pushes` sí tiene las calls del día
+// desde que el poll las reserva → es la única fuente que existe a las 7am.
+//
+// Filtro `status IN ('scheduled','sent')`: descarta las calls cuyos pushes se saltaron, que es
+// exactamente la señal de "esta call ya no va" — cancelada (`skip: cita canceled`), reagendada,
+// o una reagenda manual superseded por el evento real de Calendly (supersedeManualPushes deja
+// todos sus pushes en 'skipped'). Sin ese filtro se contarían dos veces las reagendas.
+//
+// Ojo: una cancelación se detecta al ENTREGAR el push, no antes. Una cita cancelada de noche
+// puede seguir contada a las 7am; se auto-corrige cuando el Push 3 la salta.
+export function getScheduledCallsInWindow(fromUtc, toUtc) {
+  return db
+    .prepare(`
+      SELECT event_uuid,
+             MAX(program)       AS program,
+             MAX(closer_email)  AS closer_email,
+             MAX(prospect_name) AS prospect_name,
+             MIN(call_start)    AS call_start
+      FROM calendly_pushes
+      WHERE call_start >= ? AND call_start < ?
+        AND status IN ('scheduled', 'sent')
+      GROUP BY event_uuid
+      ORDER BY call_start
+    `)
+    .all(fromUtc, toUtc);
+}
+
 // La reagenda volvió a entrar por Calendly → el evento real manda. Se cancelan los
 // pushes sintéticos (así no se pregunta dos veces ni se cuenta dos veces) y el outcome
 // que los originó apunta al uuid real.

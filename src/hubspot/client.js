@@ -273,6 +273,50 @@ export async function getOwnerEmailMap() {
   }
 }
 
+// ─── Meetings (agenda del día, §18.AM) ────────────────────────────────────────
+// Meetings con `hs_meeting_start_time` en [fromIso, untilIso). Trae TODOS los de la cuenta —
+// el filtrado (owner ∈ closers, título → programa) es puro y vive en hubspot/meetings.js.
+// Pagina hasta agotar, con tope duro: un día entero de la empresa son ~220 meetings, así que
+// 1000 es holgado y evita que un rango mal calculado dispare cientos de requests.
+const MEETING_PROPS = ['hs_meeting_start_time', 'hs_meeting_title', 'hs_meeting_outcome', 'hubspot_owner_id'];
+const MEETINGS_HARD_CAP = 1000;
+
+export async function searchMeetingsInWindow({ fromIso, untilIso }) {
+  if (!isEnabled() || !fromIso || !untilIso) return [];
+  try {
+    const out = [];
+    let after = null;
+    do {
+      const data = await request('/crm/v3/objects/meetings/search', {
+        method: 'POST',
+        body: {
+          filterGroups: [
+            {
+              filters: [
+                {
+                  propertyName: 'hs_meeting_start_time',
+                  operator: 'BETWEEN',
+                  value: String(Date.parse(fromIso)),
+                  highValue: String(Date.parse(untilIso)),
+                },
+              ],
+            },
+          ],
+          properties: MEETING_PROPS,
+          limit: 100,
+          ...(after ? { after } : {}),
+        },
+      });
+      out.push(...(data.results || []));
+      after = data.paging?.next?.after || null;
+    } while (after && out.length < MEETINGS_HARD_CAP);
+    return out;
+  } catch (e) {
+    console.warn(`[HubSpot] searchMeetingsInWindow falló: ${e.message}`);
+    return []; // la agenda degrada a solo-Calendly, no se cae
+  }
+}
+
 // Contactos de un owner con actividad de contacto registrada (`notes_last_contacted`) dentro de
 // [sinceIso, untilIso). Uno por lead → dedup natural (la unidad "1 lead tocado = 1 setteo").
 // Pagina hasta agotar. Devuelve [{ id, ownerId, email, name, lastContacted }] o [] si falla.

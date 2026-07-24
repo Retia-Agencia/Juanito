@@ -94,3 +94,43 @@ test('boss: por closer, ordenado por ventas', () => {
 test('boss: sin filas → null (no manda reporte vacío)', () => {
   assert.equal(formatBossScorecard([], {}), null);
 });
+
+// ─── Denominador del día (`agendadas`) ────────────────────────────────────────
+// Sin este dato el reporte de mediodía decía "19 calls · cobertura 100%" habiendo 46 calls
+// agendadas: cierto sobre lo registrado, engañoso sobre el día. Pasando las agendadas, el
+// encabezado dice "de cuántas" y descuenta las que todavía no ocurrieron.
+
+test('boss: con `agendadas` la cobertura se mide contra el día completo', () => {
+  const rows = [
+    row({ program: 'second_brain', closer: 'Sebas', asistencia: 'show' }),
+    row({ program: 'second_brain', closer: 'Sebas', asistencia: 'no_show' }),
+  ];
+  const msg = formatBossScorecard(rows, { dateLabel: '24-jul', agendadas: 8 });
+  assert.match(msg, /2 de 8 calls/);
+  assert.match(msg, /cobertura del dato: 25%/); // 2 registradas de 8 del día
+  assert.match(msg, /6 calls sin ocurrir aún/);
+  assert.match(msg, /Cobertura <100%/);
+});
+
+test('boss: sin `agendadas` el encabezado y la cobertura no cambian (compat /reportejefe)', () => {
+  const rows = [
+    row({ program: 'second_brain', closer: 'Sebas', asistencia: 'show' }),
+    row({ program: 'second_brain', closer: 'Sebas', asistencia: 'no_show' }),
+  ];
+  const msg = formatBossScorecard(rows, { dateLabel: '24-jul' });
+  assert.match(msg, /^📊 \*Reporte Juanito — 24-jul\*\n2 calls · /);
+  assert.match(msg, /cobertura del dato: 100%/);
+  assert.doesNotMatch(msg, /sin ocurrir aún/);
+});
+
+test('boss: `agendadas` incoherente (≤ registradas) se ignora — no inventa denominador', () => {
+  // Al cierre del día una call cancelada sale de la agenda pero conserva su fila: las
+  // agendadas pueden quedar por debajo del total registrado. Ahí manda el denominador viejo.
+  const rows = [
+    row({ program: 'second_brain', closer: 'Sebas', asistencia: 'show' }),
+    row({ program: 'second_brain', closer: 'Sebas', asistencia: 'no_show' }),
+  ];
+  const msg = formatBossScorecard(rows, { agendadas: 1 });
+  assert.match(msg, /\n2 calls · /);
+  assert.match(msg, /cobertura del dato: 100%/);
+});

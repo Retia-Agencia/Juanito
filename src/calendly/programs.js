@@ -45,6 +45,9 @@ export const PROGRAMS = {
   second_brain: {
     key: 'second_brain',
     label: 'AI Second Brain',
+    // El título del meeting suele ser "Entrevista de Postulación Programa de Implementación
+    // AI Second Brain", pero también "Second Brain <> Lead" → el hint corto cubre las dos.
+    titleHints: ['second brain'],
     company: '30x',
     connection: '30x',
     eventType: SECOND_BRAIN_ET,
@@ -61,6 +64,7 @@ export const PROGRAMS = {
   abogados: {
     key: 'abogados',
     label: 'IA para Abogados',
+    titleHints: ['abogado'],
     company: 'estadox', // marca EstadoX, pero hosteado en la conexión 30x (empresa ≠ conexión)
     connection: '30x',
     eventType: ABOGADOS_ET,
@@ -77,6 +81,7 @@ export const PROGRAMS = {
   linkedin: {
     key: 'linkedin',
     label: 'LinkedIn Sales',
+    titleHints: ['linkedin'],
     company: '30x',
     connection: '30x',
     eventType: LINKEDIN_ET,
@@ -95,6 +100,7 @@ export const PROGRAMS = {
   developers: {
     key: 'developers',
     label: 'AI for Developers',
+    titleHints: ['developer'],
     company: '30x',
     connection: '30x',
     eventType: DEVELOPERS_ET,
@@ -110,6 +116,7 @@ export const PROGRAMS = {
   operaciones: {
     key: 'operaciones',
     label: 'Operaciones Escalables con IA',
+    titleHints: ['operaciones escalables'],
     company: '30x',
     connection: '30x',
     eventType: OPERACIONES_ET,
@@ -126,6 +133,7 @@ export const PROGRAMS = {
   instagram: {
     key: 'instagram',
     label: 'Instagram & TikTok',
+    titleHints: ['instagram'],
     company: '30x',
     connection: '30x',
     eventType: INSTAGRAM_ET,
@@ -146,6 +154,9 @@ export const PROGRAMS = {
   tactical_investor: {
     key: 'tactical_investor',
     label: 'De Cero a Tactical Investor',
+    // Retia no vive en el HubSpot conectado (es otra empresa): hoy este hint no matchea nada.
+    // Se declara igual para que el día que entre, el programa quede cableado solo.
+    titleHints: ['tactical investor'],
     company: 'retia',
     connection: 'retia',
     eventType: TACTICAL_INVESTOR_ET,
@@ -187,6 +198,33 @@ export const eventTypesForConnection = (connectionKey) =>
 // Conexión (key) que hostea un programa, o null. Lookup por key: NO filtra por active (sirve
 // para diagnóstico y para el guardrail de HubSpot aunque el programa esté desactivado).
 export const connectionOfProgram = (programKey) => PROGRAMS[programKey]?.connection || null;
+
+// Programa a partir del TÍTULO de un meeting de HubSpot. Las citas que se agendan fuera de
+// Calendly (el closer las crea a mano en HubSpot) no traen event_type: lo único que las
+// clasifica es cómo se llaman. Los títulos siguen el naming de los programas ("Entrevista de
+// Postulación Programa X"), y un título que no matchea ningún programa NO es una call de venta
+// — es una reunión interna ("30X <> Revisión con equipo de IT") y devolver null la descarta.
+// Medido sobre 7 días de datos reales: 281 de 284 meetings de closers quedan clasificados, y
+// los 3 restantes son justamente internas.
+const normalizeTitle = (s) =>
+  String(s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '') // sin acentos: "postulación" ≡ "postulacion"
+    .replace(/\s+/g, ' ')
+    .trim();
+
+// Hints declarados en PROGRAMS; sin ellos cae al label, que suele estar contenido en el título.
+const hintsOf = (p) => (p.titleHints?.length ? p.titleHints : [p.label]).map(normalizeTitle);
+
+export function programFromTitle(title) {
+  const t = normalizeTitle(title);
+  if (!t) return null;
+  for (const p of Object.values(PROGRAMS).filter(isActive)) {
+    if (hintsOf(p).some((h) => h && t.includes(h))) return p.key;
+  }
+  return null;
+}
 
 // Rótulo corto, pitch y materiales por programKey. Incluyen TODOS los programas (el copy es
 // estático e inofensivo si el programa está inactivo: sus callers no se ejecutan igual).
