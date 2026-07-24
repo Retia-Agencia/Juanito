@@ -10,9 +10,9 @@
 import { CronJob } from 'cron';
 import { sendMessage, resolveGroupByName } from '../whatsapp/index.js';
 import { hasDmThread } from '../db/index.js';
-import { fetchLeadRows, fetchSetteoRows } from '../sheets/index.js';
+import { fetchLeadRows, fetchSetteoRows, fetchCohortRows, COHORT_TAB, COHORT_LABEL } from '../sheets/index.js';
 import { computeWindow, toNaiveMs } from '../sheets/window.js';
-import { summarize, countSelfCheckout } from '../sheets/aggregate.js';
+import { summarize, countSelfCheckout, countCohortStudents } from '../sheets/aggregate.js';
 import { buildWeeklySections } from '../sheets/weekly.js';
 import { formatReport } from '../sheets/report.js';
 import {
@@ -124,6 +124,17 @@ export async function buildSheetsReport({ now = new Date() } = {}) {
   // "Dispuesto a invertir $1000 USD") y sin prom. 7d — la comparación histórica
   // ahora es el bloque semanal en promedio diario.
   const summary = { ...summarize(rows, win, []), selfCheckout: countSelfCheckout(setteoRows, win) };
+
+  // Estudiantes confirmados de la cohorte actual (§18.B). Solo si el tab está configurado;
+  // si la lectura falla, se omite la línea y el reporte sale igual (regla del repo).
+  if (COHORT_TAB()) {
+    try {
+      const cohortRows = await fetchCohortRows();
+      summary.cohort = { label: COHORT_LABEL(), count: countCohortStudents(cohortRows) };
+    } catch (e) {
+      console.warn('[Sheets] cohorte no disponible, se omite del reporte:', e.message);
+    }
+  }
 
   // Pagos reales (PaymentIntents succeeded) si hay key; si Stripe falla, el reporte
   // sale igual con el tag manual del Sheet — nunca tumba el job.

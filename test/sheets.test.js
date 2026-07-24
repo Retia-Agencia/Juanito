@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 
 import { parseSubmittedAt } from '../src/sheets/parse.js';
 import { computeWindow, zonedParts } from '../src/sheets/window.js';
-import { summarize, countSelfCheckout, averagePriorDays } from '../src/sheets/aggregate.js';
+import { summarize, countSelfCheckout, averagePriorDays, countCohortStudents } from '../src/sheets/aggregate.js';
 import { formatReport } from '../src/sheets/report.js';
 import { COL, SETTEO } from '../src/sheets/columns.js';
 
@@ -250,4 +250,23 @@ test('formatReport con ventana vacía dice que no llegaron postulaciones', () =>
   const msg = formatReport(summarize([], WIN), WIN);
   assert.match(msg, /Total de entradas: 0/);
   assert.match(msg, /No llegaron postulaciones/);
+});
+
+// ─── countCohortStudents ──────────────────────────────────────────────────────
+
+test('countCohortStudents cuenta filas con nombre y salta encabezado + plantilla', () => {
+  const rows = [
+    ['¿Cuál es tu nombre completo?', '¿Cuál es tu telefono?', 'Closer'], // encabezado
+    ['Ana Pérez', '300...', 'Sebas R'],
+    ['Luis Gómez', '', ''], // nombre presente aunque falte precio/closer → cuenta
+    ['', '', 'Pendiente'], // fila plantilla sin nombre → NO cuenta
+    ['  ', '', ''], // solo espacios → NO cuenta
+  ];
+  assert.equal(countCohortStudents(rows), 2);
+});
+
+test('countCohortStudents tolera vacío y filas cortas', () => {
+  assert.equal(countCohortStudents([]), 0);
+  assert.equal(countCohortStudents(null), 0);
+  assert.equal(countCohortStudents([['header']]), 0); // solo encabezado
 });

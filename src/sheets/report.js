@@ -115,6 +115,9 @@ export function formatReport(summary, { startMs, endMs } = {}) {
     if (summary.stripeToday != null) {
       lines.push(`💰 Pagos confirmados (Stripe): ${summary.stripeToday}`);
     }
+    if (summary.cohort != null) {
+      lines.push(`🎓 ${summary.cohort.label}: ${summary.cohort.count} confirmados`);
+    }
     if (summary.weekly) lines.push('', formatWeeklySections(summary.weekly));
     return lines.join('\n');
   }
@@ -131,6 +134,10 @@ export function formatReport(summary, { startMs, endMs } = {}) {
   // Pagos cobrados de verdad (PaymentIntents succeeded) — solo si Stripe respondió.
   if (summary.stripeToday != null) {
     lines.push(`💰 Pagos confirmados (Stripe): ${summary.stripeToday}`);
+  }
+  // Estudiantes ya confirmados para la cohorte actual (solo si el tab está configurado).
+  if (summary.cohort != null) {
+    lines.push(`🎓 ${summary.cohort.label}: ${summary.cohort.count} confirmados`);
   }
 
   for (const cat of summary.breakdown) {

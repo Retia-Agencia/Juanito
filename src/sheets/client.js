@@ -26,6 +26,11 @@ export const LEADS_TAB = () => process.env.SHEETS_LEADS_TAB || 'IA para abogados
 
 export const SETTEO_TAB = () => process.env.SHEETS_SETTEO_TAB || '📞 Setteo Pendiente';
 
+// Pestaña de la cohorte actual (estudiantes ya confirmados). Sin default: si no está
+// configurada, el conteo se omite del reporte. Rota cada mes → se cambia por env var.
+export const COHORT_TAB = () => (process.env.SHEETS_COHORT_TAB || '').trim();
+export const COHORT_LABEL = () => (process.env.SHEETS_COHORT_LABEL || 'Próxima cohorte').trim();
+
 // Resuelve GOOGLE_SA_KEY a las credenciales del service account.
 export function loadCredentials(raw = process.env.GOOGLE_SA_KEY) {
   if (!raw || !String(raw).trim()) {
@@ -107,6 +112,13 @@ export async function fetchLeadRows({ id = LEADS_ID(), tab = LEADS_TAB() } = {})
 
 // Filas del tab "📞 Setteo Pendiente" (fuente del conteo de self-checkout).
 export async function fetchSetteoRows({ id = LEADS_ID(), tab = SETTEO_TAB() } = {}) {
+  return fetchTab(tab, id);
+}
+
+// Filas del tab de la cohorte actual (estudiantes confirmados). Si no hay tab
+// configurado, devuelve [] sin tocar la red — el reporte omite la línea de cohorte.
+export async function fetchCohortRows({ id = LEADS_ID(), tab = COHORT_TAB() } = {}) {
+  if (!tab) return [];
   return fetchTab(tab, id);
 }
 

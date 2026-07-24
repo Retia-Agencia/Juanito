@@ -104,3 +104,11 @@ export function averagePriorDays(rows, setteoRows, now, days = 7) {
     paid: paid / days,
   };
 }
+
+// Cuenta estudiantes confirmados de la cohorte: filas con la columna A (nombre
+// completo) no vacía. Salta la fila 0 (encabezado del tab). Las filas plantilla del
+// Sheet (solo "Pendiente" en columnas de estado, sin nombre) NO cuentan. Sin PII:
+// solo devuelve el número.
+export function countCohortStudents(rows) {
+  return (rows || []).slice(1).filter((row) => String(row?.[0] ?? '').trim() !== '').length;
+}

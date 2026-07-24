@@ -21,8 +21,18 @@ export {
   lastFullWeekWindow,
   partialWeekWindows,
 } from './window.js';
-export { summarize, countSelfCheckout, averagePriorDays } from './aggregate.js';
+export { summarize, countSelfCheckout, countCohortStudents, averagePriorDays } from './aggregate.js';
 export { windowTotals, buildWeeklySections } from './weekly.js';
 export { formatReport, formatWeeklySections } from './report.js';
 export { formatMetrics, COMPANIES } from './metrics.js';
-export { fetchLeadRows, fetchSetteoRows, fetchSheetValues, LEADS_ID, LEADS_TAB, SETTEO_TAB } from './client.js';
+export {
+  fetchLeadRows,
+  fetchSetteoRows,
+  fetchCohortRows,
+  fetchSheetValues,
+  LEADS_ID,
+  LEADS_TAB,
+  SETTEO_TAB,
+  COHORT_TAB,
+  COHORT_LABEL,
+} from './client.js';
