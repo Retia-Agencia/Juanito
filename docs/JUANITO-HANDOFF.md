@@ -3189,10 +3189,11 @@ la consume el contenedor— y no debe copiarse al `.env` del VPS. Deploy: `pscp`
 
 ### 18.AL 🔵 3 reportes diarios por DM: agenda 7am · progreso 12pm · cierre 9pm (2026-07-22)
 
-**Estado: ✅ DESPLEGADO y en producción (2026-07-22).** En el VPS con `DAILY_REPORTS_ENABLED=true` y
-`DAILY_REPORTS_DM=129446371655733@lid` (el `@lid` del jefe ya resuelto). Primer envío confirmado en
-logs: `progreso 12pm enviado a 1 DM`. Pedido del jefe: partir el reporte diario en **tres entregas por
-DM** (por ahora a su propio número **+573174428980**, modo prueba — no a los grupos ni al DM de Dani):
+**Estado: ✅ DESPLEGADO y ACTIVO — pero recién desde 2026-07-23 23:19 (ver "Postmortem" abajo).**
+En el VPS con `DAILY_REPORTS_ENABLED=true` y `DAILY_REPORTS_DM=129446371655733@lid` (el `@lid` del jefe
+ya resuelto). Arranque verificado: `[DailyReports] Jobs activos ✅ (agenda "0 7 * * *" · progreso
+"0 12 * * *" · cierre "0 21 * * *", 1 DM)`. Pedido del jefe: partir el reporte diario en **tres entregas
+por DM** (por ahora a su propio número **+573174428980**, modo prueba — no a los grupos ni al DM de Dani):
 
 1. **07:00 — Agenda del día.** Cuántas calls tiene agendada cada closer HOY, por programa (aún sin
    resultados). Es la foto de lo que viene.
@@ -3225,8 +3226,64 @@ sumarlo al CSV, `docker compose config` para verificar, reiniciar.
 
 **Salvedad operativa:** cada cron dispara solo si el contenedor ya estaba arriba a esa hora. Si el
 contenedor se reinicia después de las 7am, la agenda de ese día NO sale (no es bug — cron no ejecuta
-horarios pasados). Pasó el 2026-07-22: arrancó ~11:48 Bogotá, así que ese día solo salieron progreso y
-cierre.
+horarios pasados). Y si el reinicio cae justo en el minuto del cron, ese reporte se pierde **en
+silencio**: no hay reintento, no hay catch-up, no hay log de que faltó. Ver "Riesgo abierto" abajo.
+
+#### Postmortem 2026-07-23 — el feature estuvo APAGADO desde el deploy hasta el 23-jul 23:19
+
+El jefe reportó que no le llegó ningún reporte. Causa: **`DAILY_REPORTS_*` estaba en el `.env` del VPS
+pero NUNCA en el `environment:` de `docker-compose.yml`** — ni en el repo ni en el VPS. Compose lee var
+por var con `${...}` (no usa `env_file:`), así que las vars no llegaban al contenedor y el job arrancaba
+apagado en cada boot, sin un solo error en los logs:
+
+```
+[DailyReports] reportes diarios por DM DESACTIVADOS (DAILY_REPORTS_ENABLED != true)
+```
+
+Es la **tercera vez** que muerde esta trampa (antes: HubSpot `0bc6540`, `STRIPE_SELF_CHECKOUT_PLINK` +
+`SHEETS_REPORT_ESTADOX_DM` `7064b3a`). El commit que trajo el feature (`3250fa6`) tocó el `.env` y el
+código, pero no el compose. **Regla: toda var nueva del `.env` se agrega también a `docker-compose.yml`,
+y se verifica con `docker compose config` — nunca con `grep` al `.env`.** Ver [[deploy-juanito-vps]].
+
+⚠️ **Corrección al registro:** la frase anterior "Primer envío confirmado en logs: `progreso 12pm
+enviado a 1 DM`" y la nota de que el 22-jul "solo salieron progreso y cierre" **no pueden haber venido
+del cron**, porque el job nunca se registró. Quedan como no verificadas.
+
+**Fix (2026-07-23 23:19):** 5 líneas al `environment:` del compose (`DAILY_REPORTS_ENABLED`,
+`DAILY_REPORTS_DM`, y los 3 `DAILY_REPORT_*_CRON`), `pscp` al VPS, `docker compose up -d`. Verificado:
+`docker compose config` muestra las 5, WA reconectó sin QR, el job arrancó activo, y los 3 builders se
+ejercitaron dentro del contenedor contra la DB real (32 calls, 4 programas, render OK) para no estrenar
+el código en el cron de las 7am. Backup: `juanito-backup-20260724-031907-pre-daily-reports.tar.gz`.
+
+#### Riesgo abierto — crash loop por `stream:error 503` de WhatsApp
+
+Durante el diagnóstico se encontró que el proceso se cayó **7 veces en 26h**, siempre por lo mismo:
+`stream:error code 503` (= `unavailableService` en el enum de Baileys, un transitorio del lado de WA) →
+`[WhatsApp] Conexión cerrada — razón: 503` → `[entrypoint] Crash (exit 1)`.
+
+Causa: `src/whatsapp/index.js:187` — una vez conectado (`hasConnected`), **cualquier** desconexión hace
+`process.exit(1)`; el único caso especial es `loggedOut`. Esto es **deliberado** (es el remedio del
+softban, ver §12) — no cambiar a la ligera.
+
+Dos efectos medidos el 23-jul:
+- La escalera del entrypoint trepó 30→60→120→240→300→300s ≈ **20 min de Juanito offline en el día**.
+- `ATTEMPT` en `entrypoint.sh` **no se resetea** con uptime sano: es monótono por vida del contenedor, así
+  que llegó a `Intento 7 de 8` aunque entre caídas aguantara horas. Al llegar a 8 cede a Docker
+  (`unless-stopped`, revive y el contador vuelve a 0).
+
+**Decidido (2026-07-23): no tocar la política de reconexión.** Camino acordado, en orden:
+1. Confirmar que la agenda de las 7am llega (primera corrida real del fix de arriba).
+2. **Resetear `ATTEMPT` tras N min de uptime sano** en `entrypoint.sh` (requiere `--build`). Baja el
+   costo de cada caída aislada de ~300s a ~30s: el offline diario estimado cae de ~20 min a ~6 min. Da
+   casi todo el beneficio de tocar la reconexión, **sin** tocarla.
+3. Sólo si el baseline muestra algo feo: reconexión en proceso con backoff para la familia transitoria
+   (503/428/408), dejando `exit(1)` para el resto. Archivado por ahora.
+4. **Catch-up al arrancar** (el fix estructural, vale más que 2 y 3 juntos): si pasó la hora de un
+   reporte hoy y nunca se envió, mandarlo tarde con nota. Hace que el downtime deje de importar para la
+   entrega.
+
+⚠️ Al recrear el contenedor se perdieron los logs anteriores, así que **no hay baseline** de si 7
+caídas/26h es lo normal. Los logs arrancaron limpios el 23-jul 23:19; en 24-48h hay dato.
 
 ### 🟢 Baja prioridad / Nice-to-have
 
