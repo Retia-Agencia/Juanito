@@ -40,6 +40,15 @@ test('programa derivado del título, con los naming reales de HubSpot', () => {
   assert.equal(programFromTitle('Entrevista de Postulación Programa AI for Developers 30X'), 'developers');
 });
 
+test('"Hardcore AI" es el nombre nuevo de AI for Developers → el mismo programa', () => {
+  // El rename (2026-07-27) ya ocurrió en los deals de HubSpot ("‹lead› | Hardcore AI") pero
+  // todavía no en los títulos de las citas. Este test fija que cuando llegue al event type de
+  // Calendly, esas calls NO desaparezcan en silencio de los pushes y de la agenda del jefe.
+  assert.equal(programFromTitle('Hardcore AI/Jose Luis Ruiz'), 'developers');
+  assert.equal(programFromTitle('Entrevista de Postulación Programa Hardcore AI 30X'), 'developers');
+  assert.equal(programFromTitle('HARDCORE AI'), 'developers');
+});
+
 test('programFromTitle ignora acentos y mayúsculas', () => {
   assert.equal(programFromTitle('ENTREVISTA POSTULACION PROGRAMA IA PARA ABOGADOS'), 'abogados');
   assert.equal(programFromTitle('entrevista de postulación programa ia para abogádos'), 'abogados');
