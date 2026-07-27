@@ -794,8 +794,10 @@ export function supersedeRescheduledPushes(closerEmail, callStartUtc, nuevaCallS
           skip_reason = 'rescheduled',
           message = COALESCE(message, '') || ' | skip: reagendada en HubSpot para ' || ?
       WHERE status = 'scheduled'
-        AND lower(closer_email) = lower(?)
-        AND substr(call_start, 1, 16) = substr(?, 1, 16)
+        -- trim además de lower: lower() sola deja pasar un email con espacios y el match falla
+        -- en silencio, que en esta consulta significa "el push rancio se manda igual".
+        AND trim(lower(closer_email)) = trim(lower(?))
+        AND substr(call_start, 1, 16) = substr(trim(?), 1, 16)
     `)
     .run(String(nuevaCallStart || '?'), String(closerEmail || ''), String(callStartUtc || ''));
   return info.changes;

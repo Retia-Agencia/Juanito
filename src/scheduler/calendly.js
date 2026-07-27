@@ -892,6 +892,17 @@ export async function runHubspotRescheduleScan({ preview = false } = {}) {
     console.log(`[HubSpot] reagenda en el CRM → ${n} push(es) cancelado(s): ${linea}`);
   }
 
+  // Señal de vida. Sin esto el scan solo habla cuando cancela algo —o sea, unas 5 veces por
+  // semana— y no habría forma de distinguir "no hubo reagendas" de "el job se murió". Solo se
+  // loguea cuando hubo citas nuevas que examinar, así que no ensucia los ciclos vacíos.
+  if (!preview) {
+    console.log(
+      `[HubSpot] scan de reagendas: ${nuevas.length} citas nuevas examinadas, ${superseded.length} reagendas, ` +
+        `${cancelados} push(es) cancelado(s) (${skipped.yaArranco} rebooks post-call, ` +
+        `${skipped.mismaTanda} de la misma tanda, ${skipped.mismoMinuto} duplicadas)`
+    );
+  }
+
   return preview ? superseded.length : cancelados;
 }
 
