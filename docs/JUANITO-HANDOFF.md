@@ -3334,15 +3334,38 @@ artefactos de la medición, no del dato — quedan escritas porque el error es r
   real mapea y todo valor del mapa existe en `CLOSERS`). Suite: 710 tests, mismos 55 rojos de
   base que ya fallaban en Windows por `better-sqlite3` sin compilar.
 
-**Verificado contra producción (read-only, 2026-07-27):** la agenda del día pasa de **78 → 86
-calls hoy** y **68 → 71 mañana**; las 11 nuevas son todas de Pablo Suarez / AI for Developers, un
-closer que la agenda del jefe no mostraba **nunca**. Ninguna fila queda con closer sin resolver.
+**Estado: ✅ DESPLEGADO 2026-07-27 15:43.** `src/` va HORNEADO en la imagen (el único volumen es
+`agent-data:/app/data`), así que `pscp` no alcanza: hay que `docker compose build` + `up -d`. Se
+construyó primero **sin tocar el contenedor vivo**, se hizo smoke test del módulo con
+`docker run --entrypoint node` (entrypoint anulado a propósito: correr la imagen normal habría
+abierto un SEGUNDO socket de WhatsApp) y recién ahí se recreó. WA reconectó sin QR.
+Backup: `juanito-backup-20260727-154045-pre-hubspot-alias.tar.gz`.
+
+**Medido en producción, con la agenda real del día:**
+- `meetingsToCalls` pasa de **78 → 86** filas hoy (78 → 71 mañana era 68 → 71). Ese es el conteo
+  ANTES de deduplicar, no la agenda.
+- **La agenda ya deduplicada pasa de 62 → 66 calls.** De las 8 filas de Pablo Suarez que aporta
+  HubSpot, 4 ya estaban en Calendly y 4 son calls que **solo** existían en HubSpot.
+- Pablo Suarez pasa de **4 a 8 calls visibles**, y AI for Developers aparece por primera vez como
+  programa en la agenda del jefe.
+- Contraprueba del doble conteo: Calendly tenía 4 suyas hoy, HubSpot 8, el reporte muestra **8**
+  (no 12). Sin la canonicalización habrían sido 12.
+- Retia sobrevive: "De Cero a Tactical Investor" sigue con sus 11 calls, que solo ve Calendly.
 
 **Fase 2 (diseñada, NO implementada):** poll de meetings como fuente de los Push 0-3 para los
-programas de 30x, con detección de reagenda **estructural**: guardando `meeting_id + hora`, si el
-mismo id cambia de hora es una reagenda, y si desaparece es una cancelación — sin depender de que
-nadie marque un campo. ⚠️ **Medir primero** si HubSpot conserva el `meeting id` cuando la reagenda
-entra sincronizada desde Calendly; eso decide el diseño.
+programas de 30x. La pregunta que bloqueaba el diseño **ya se midió** (2026-07-27, 12 deals con
+`agenda_status=RESCHEDULED` en 21 días), y la respuesta descarta la idea original:
+
+- **La reagenda NO mueve la hora del meeting: crea uno NUEVO.** 8 de 10 casos tienen 2+ meetings
+  para el mismo lead; solo 2 tienen uno solo. → La detección **no** puede ser "diff de hora del
+  mismo id"; tiene que ser **meeting nuevo para el mismo lead + el viejo que queda en el pasado**.
+- **El meeting viejo NO se borra.** Se queda con su hora original. Cualquier conteo de "calls del
+  día" que mire meetings crudos va a contar una call que nunca ocurrió → hay que aplicarle la
+  misma regla §18.AC (una reagendada no cuenta como volumen, cuenta como movida).
+- ⚠️ **HubSpot tiene registros DUPLICADOS de una misma call.** Caso real: Leidy Toledo con **3
+  meetings al mismo minuto** (2026-07-24 17:30). Por eso el merge ve 75 duplicados contra solo 55
+  filas de Calendly. El `dedupKey` por closer+minuto ya los colapsa — pero significa que un poll
+  HubSpot-nativo **no puede tratar `meeting.id` como equivalente a "una call"**.
 
 ### 🟢 Baja prioridad / Nice-to-have
 
