@@ -198,10 +198,18 @@ export const IGNORED_CLOSERS = new Set([
   'alejocarpa1108@gmail.com', // salió de Tactical Investor 2026-07-21; lo reemplazó Sebastian Rodriguez.
   'equipo@ttrading.co',       // buzón-rol de Dana; salió 2026-07-22, la reemplazó Sebastian Salazar
                               // con email propio → buzón retirado (no lo hereda nadie).
-  // Owner de HubSpot, NO de Calendly (2026-07-27): 383 meetings "Sesión Programa LinkedIn Sales
-  // 30X" en 30 días. El volumen (≈12/día) dice que son SESIONES del programa, no calls de cierre
-  // 1-a-1. Se ignora explícitamente para que, cuando el poll mire meetings, no dispare alertas de
-  // "closer sin mapear" ni le llene la agenda del jefe con sesiones. Decisión del jefe 2026-07-27.
+  // Owner de HubSpot, NO de Calendly. Decisión del jefe 2026-07-27: se ignora para que el poll de
+  // meetings no dispare alertas de "closer sin mapear" ni le meta sesiones a la agenda del jefe.
+  //
+  // ⚠️ CORRECCIÓN 2026-07-29 — la razón anotada acá ("383 meetings 'Sesión Programa LinkedIn
+  // Sales 30X' en 30 días ⇒ son sesiones grupales") NO se reproduce. Medido directo por ownerId
+  // (90154139), 30 días, paginado hasta agotar: 246 meetings, de los cuales "Sesión Programa
+  // LinkedIn Sales 30X" son 18, no 383. El grueso son ~200 "AI Second Brain Admisiones — <lead>",
+  // UNO por lead y con UN solo contacto asociado (75 de 100 en la muestra) → son calls 1-a-1,
+  // no sesiones. Las grupales (Office Hour, Sesión N, Networking Dinner) son ~32.
+  // O sea: el volumen 1-a-1 existe. Mantener o no la exclusión es decisión del jefe, no un dato
+  // técnico; mientras siga acá no recibe pushes —y de todos modos no podría, porque no está en el
+  // roster (sin teléfono) ni tiene opt-in ganado.
   'danieltovar@30x.com',
 ]);
 

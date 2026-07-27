@@ -47,7 +47,8 @@ import { pickSupersededPushes, isManualUuid, planRescheduledPushes } from '../ca
 import { isCoveredProgram, decideFromAgenda } from '../hubspot/deals.js';
 import { decideNudgeAction, buildDealNudgeMessage, buildCreateDealNudgeMessage, dealUrl } from '../hubspot/nudge.js';
 import { meetingsToCalls } from '../hubspot/meetings.js';
-import { pickMeetingsToSchedule, callStartToIso } from '../hubspot/agenda-poll.js';
+import { pickMeetingsToSchedule, callStartToIso, programLivesInThisHubspot } from '../hubspot/agenda-poll.js';
+import { pickRescheduledAway } from '../hubspot/reschedule-detect.js';
 import { resolveCloser, isIgnoredCloser, accountOfCloser, HUBSPOT_OWNER_TO_CLOSER } from '../calendly/closers.js';
 import { accountOf, activeAccounts, DEFAULT_ACCOUNT } from '../calendly/accounts.js';
 import {
@@ -108,6 +109,14 @@ const HARVEST_SWEEP_ENABLED = () => process.env.HUBSPOT_HARVEST_SWEEP_ENABLED !=
 // una cita de Calendly. Apagado por default porque manda mensajes REALES a closers — se estrena
 // con `runHubspotAgendaPoll({ preview:true })`, que solo dice qué haría.
 const HUBSPOT_POLL_ENABLED = () => process.env.HUBSPOT_AGENDA_POLL === 'true';
+// Detección de la reagenda hecha DENTRO del CRM (§18.AO). Va colgada del poll de HubSpot (sin
+// él no hay nada que mirar) pero con interruptor propio, porque su efecto es el opuesto: CANCELA
+// pushes en vez de crearlos, y un falso positivo deja a un closer sin aviso de una call real.
+const HUBSPOT_RESCHEDULE_SCAN = () => process.env.HUBSPOT_RESCHEDULE_SCAN !== 'false'; // default true
+// Cuánto hacia atrás se miran las citas recién creadas. El poll corre cada 5 min; 2h da margen
+// de sobra para un reinicio o un rato de HubSpot caído sin perderse una reagenda, y el barrido
+// es idempotente (re-cancelar una fila ya 'skipped' no cambia nada).
+const RESCHEDULE_SCAN_LOOKBACK_MIN = () => Number(process.env.HUBSPOT_RESCHEDULE_LOOKBACK_MIN || 120);
 const HARVEST_SWEEP_CRON = () => process.env.HUBSPOT_HARVEST_SWEEP_CRON || '0 8-22/2 * * *'; // cada 2h, 8am-10pm
 const HARVEST_SWEEP_MAX_AGE_HOURS = () => Number(process.env.HUBSPOT_HARVEST_SWEEP_MAX_AGE_HOURS || 72);
 // Params de la reagenda (para agendar la call nueva desde hs_next_meeting_start_time).
@@ -175,7 +184,14 @@ async function deps() {
     getOwnerEmailMap: hubspot.getOwnerEmailMap,
     getMeetingContact: hubspot.getMeetingContact,
     getScheduledCallsInWindow: db.getScheduledCallsInWindow,
+    getCallsWithAnyPushInWindow: db.getCallsWithAnyPushInWindow,
     supersedeHubspotPushes: db.supersedeHubspotPushes,
+    // §18.AO: la reagenda hecha dentro del CRM (crea meeting nuevo, deja el viejo con su push).
+    searchMeetingsCreatedSince: hubspot.searchMeetingsCreatedSince,
+    getContactsOfMeetings: hubspot.getContactsOfMeetings,
+    getMeetingsOfContacts: hubspot.getMeetingsOfContacts,
+    getMeetingsByIds: hubspot.getMeetingsByIds,
+    supersedeRescheduledPushes: db.supersedeRescheduledPushes,
     scheduleCalendlyPush: db.scheduleCalendlyPush,
     getDueCalendlyPushes: db.getDueCalendlyPushes,
     claimCalendlyPush: db.claimCalendlyPush,
@@ -623,6 +639,14 @@ export async function runCalendlyPoll() {
     console.error('[HubSpot] poll de agenda falló (los pushes de Calendly no se ven afectados):', e.message)
   );
 
+  // Y al final del todo, las reagendas hechas dentro del CRM. DESPUÉS de los dos polls, no antes:
+  // si cancelara primero, el poll de HubSpot vería la call vieja "sin push" y le crearía uno
+  // nuevo en el mismo tick —bajo otro event_uuid si venía de Calendly— resucitando justo lo que
+  // acabábamos de matar.
+  await runHubspotRescheduleScan().catch((e) =>
+    console.error('[HubSpot] scan de reagendas falló (ningún push se canceló):', e.message)
+  );
+
   return nuevos;
 }
 
@@ -650,7 +674,14 @@ export async function runHubspotAgendaPoll({ preview = false } = {}) {
     d.getOwnerEmailMap(),
   ]);
   const hubspotCalls = meetingsToCalls(meetings, { ownerEmailById, ownerToCloser: HUBSPOT_OWNER_TO_CLOSER });
-  const existingCalls = d.getScheduledCallsInWindow(toDb(minStartIso), toDb(maxStartIso));
+  // Dedup contra CUALQUIER fila de push, no solo las vivas: una call cuyo push se canceló por
+  // reagenda (§18.AO) tiene que seguir contando como "ya decidida", o el poll se la crearía de
+  // nuevo bajo otro event_uuid en el ciclo siguiente. Fallback a la consulta vieja para no
+  // romper los tests/mocks que solo inyectan `getScheduledCallsInWindow`.
+  const existingCalls = (d.getCallsWithAnyPushInWindow || d.getScheduledCallsInWindow)(
+    toDb(minStartIso),
+    toDb(maxStartIso)
+  );
   const { toSchedule, skipped, fueraDeHorario } = pickMeetingsToSchedule({
     hubspotCalls,
     existingCalls,
@@ -770,6 +801,98 @@ export async function runHubspotAgendaPoll({ preview = false } = {}) {
     );
   }
   return nuevos;
+}
+
+// ─── Reagendas hechas DENTRO del CRM (§18.AO) ─────────────────────────────────
+// Reagendar en HubSpot no mueve la cita: crea una nueva y deja la vieja intacta con su hora
+// original. La vieja se queda con su Push 3 ("arranca en 25 min") y su Push 4 ("¿cómo te fue?")
+// para una llamada que no va a ocurrir. Backtest de 21 días: ~4 pushes rancios por semana.
+//
+// La lógica de decisión —qué es reagenda y qué no— es pura y vive en hubspot/reschedule-detect.js
+// junto con la medición que fijó el umbral. Acá solo está el armado del grafo
+// (cita nueva → contacto → otras citas del lead) y el efecto sobre la DB.
+//
+// Cuesta 1 request por ciclo cuando no hay nada nuevo (~4 cuando sí), porque busca por
+// `hs_createdate` en vez de rastrear la agenda futura entera.
+const RESCHEDULE_SIBLING_CAP = 300;
+
+export async function runHubspotRescheduleScan({ preview = false } = {}) {
+  const d = await deps();
+  if (!preview && !HUBSPOT_RESCHEDULE_SCAN()) return 0;
+  if (!d.hubspotEnabled?.() || !d.searchMeetingsCreatedSince || !d.supersedeRescheduledPushes) return 0;
+
+  const nowMs = d.now();
+  const sinceIso = new Date(nowMs - RESCHEDULE_SCAN_LOOKBACK_MIN() * 60000).toISOString();
+  const esFutura = (c) => {
+    const iso = callStartToIso(c.call_start);
+    return Boolean(iso) && Date.parse(iso) > nowMs;
+  };
+  const deEsteCrm = (c) => programLivesInThisHubspot(c.program);
+
+  const [raw, ownerEmailById] = await Promise.all([
+    d.searchMeetingsCreatedSince({ sinceIso }),
+    d.getOwnerEmailMap(),
+  ]);
+  const recientes = meetingsToCalls(raw, { ownerEmailById, ownerToCloser: HUBSPOT_OWNER_TO_CLOSER })
+    .filter(deEsteCrm)
+    .filter(esFutura);
+  if (!recientes.length) return 0;
+
+  // cita nueva → su lead
+  const contactOf = await d.getContactsOfMeetings(recientes.map((c) => c.meeting_id));
+  const nuevas = recientes
+    .map((c) => ({ ...c, contact_id: contactOf[String(c.meeting_id)] }))
+    .filter((c) => c.contact_id);
+  if (!nuevas.length) return 0;
+
+  // lead → TODAS sus citas (ahí está la que quedó vieja, que puede caer fuera de cualquier
+  // ventana de agenda: por eso se llega a ella por el lead y no por rango de fechas)
+  const porContacto = await d.getMeetingsOfContacts([...new Set(nuevas.map((c) => c.contact_id))]);
+  const conocidas = new Map(nuevas.map((c) => [String(c.meeting_id), c]));
+  const faltantes = [...new Set(Object.values(porContacto).flat())].filter((id) => !conocidas.has(String(id)));
+  const hermanasRaw = faltantes.length ? await d.getMeetingsByIds(faltantes.slice(0, RESCHEDULE_SIBLING_CAP)) : [];
+  const hermanas = new Map(
+    meetingsToCalls(hermanasRaw, { ownerEmailById, ownerToCloser: HUBSPOT_OWNER_TO_CLOSER })
+      .filter(deEsteCrm)
+      .map((c) => [String(c.meeting_id), c])
+  );
+
+  const siblingsByContact = {};
+  for (const [cid, ids] of Object.entries(porContacto)) {
+    siblingsByContact[cid] = ids
+      .map((id) => hermanas.get(String(id)) || conocidas.get(String(id)))
+      .filter(Boolean);
+  }
+
+  const { superseded, skipped } = pickRescheduledAway({ nuevas, siblingsByContact, nowMs });
+
+  if (preview) {
+    console.log(
+      `[HubSpot] PREVIEW reagendas: ${raw.length} meetings creados desde ${sinceIso.slice(0, 16)} → ` +
+        `${nuevas.length} citas futuras de closer → ${superseded.length} calls viejas a cancelar ` +
+        `(descartes: ${skipped.mismaTanda} misma tanda de booking, ${skipped.yaArranco} ya arrancaron, ` +
+        `${skipped.mismoMinuto} duplicadas, ${skipped.otroPrograma} de otro programa)`
+    );
+  }
+
+  let cancelados = 0;
+  for (const { vieja, nueva, gapMin } of superseded) {
+    // Se loguea SIEMPRE, aunque no hubiera push pendiente que cancelar: es la única forma de
+    // auditar si la regla está tocando lo que debe. Un falso positivo acá deja a un closer sin
+    // aviso de una call real, así que el log lleva las dos horas y el gap que la clasificó.
+    const linea =
+      `${vieja.closer_email} · ${vieja.program} · ${vieja.call_start} UTC → ${nueva.call_start} UTC ` +
+      `(reagendada ${gapMin} min después de crearse la original; lead: ${String(nueva.prospect_name || '?').slice(0, 40)})`;
+    if (preview) {
+      console.log(`   · [preview] ${linea}`);
+      continue;
+    }
+    const n = d.supersedeRescheduledPushes(vieja.closer_email, vieja.call_start, nueva.call_start);
+    cancelados += n;
+    console.log(`[HubSpot] reagenda en el CRM → ${n} push(es) cancelado(s): ${linea}`);
+  }
+
+  return preview ? superseded.length : cancelados;
 }
 
 // ─── Entrega de Push 3 vencidos ───────────────────────────────────────────────
@@ -1293,7 +1416,8 @@ export function startCalendlyJobs() {
     job(HARVEST_SWEEP_CRON(), runHarvestSweep, 'harvest-sweep');
 
   console.log(
-    `[Calendly] Jobs activos ✅  (reagendas: ${RESCHEDULE_ENABLED()}, harvest-sweep: ${HARVEST_ENABLED() && HARVEST_SWEEP_ENABLED()}) — cuentas: ` +
+    `[Calendly] Jobs activos ✅  (reagendas: ${RESCHEDULE_ENABLED()}, harvest-sweep: ${HARVEST_ENABLED() && HARVEST_SWEEP_ENABLED()}` +
+      `, poll HubSpot: ${HUBSPOT_POLL_ENABLED()}, scan de reagendas: ${HUBSPOT_RESCHEDULE_SCAN()}) — cuentas: ` +
       accounts.map((a) => `${a.key}[dry-run:${a.dryRun()}, push4:${a.push4()}]`).join(' · ')
   );
 }

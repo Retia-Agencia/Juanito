@@ -3433,6 +3433,83 @@ descarta la idea original de detectar la reagenda por diff de hora:
   filas de Calendly. El `dedupKey` por closer+minuto ya los colapsa — pero significa que un poll
   HubSpot-nativo **no puede tratar `meeting.id` como equivalente a "una call"**.
 
+### 18.AO 🟢 La reagenda hecha DENTRO del CRM (2026-07-27)
+
+**El hueco.** Reagendar en HubSpot **no mueve la cita: crea una nueva y deja la vieja intacta**
+con su hora original (§18.AN lo midió: 8 de 10 casos). Así que la call vieja se quedaba con su
+**Push 3** ("tu call arranca en 25 min") y su **Push 4** ("¿cómo te fue?") para una llamada que no
+iba a ocurrir — y el Push 4 fantasma además ensucia `call_outcomes` y el reporte del jefe.
+Backtest sobre 21 días y 647 calls de closer: **~5 pushes rancios por semana**.
+
+⚠️ **Acá el riesgo se da vuelta.** En §18.AN el peligro era mandar dos pushes; acá es **cancelar
+el de una call que sí va a ocurrir** y dejar al closer entrando en frío a una llamada real. Por
+eso la regla se eligió con el dato en la mano.
+
+#### La medición que fijó el umbral
+
+Pares del MISMO contacto y programa, con distinta hora, donde la nueva se creó **antes** de que
+arrancara la vieja (21 días):
+
+| gap entre `hs_createdate` de las dos | n | outcome de la VIEJA |
+|---|---|---|
+| < 1 min (misma tanda de booking) | 19 | **5 COMPLETED** ← calls REALES |
+| 1-10 min | 1 | 1 NO_SHOW ← la hora ya había llegado |
+| ≥ 10 min | 13 | 7 SCHEDULED, 6 vacío, **0 COMPLETED** |
+
+El corte en **10 minutos** separa limpio: por encima ninguna de las viejas llegó a completarse
+(firma exacta de una call que no ocurrió); por debajo aparecen pares creados con segundos de
+diferencia —una misma tanda de booking que agenda dos citas **reales**— y 5 sí se completaron.
+Cancelarlas habría sido el error caro. Replay del scan completo contra HubSpot real (14 días):
+**11 cancelaciones, 0 sobre una call COMPLETED**.
+
+**Lo que NO sirvió, para que nadie lo reintente:**
+- `hs_meeting_outcome` de la vieja: HubSpot **no** la marca `RESCHEDULED` al reagendar; queda en
+  `SCHEDULED` o vacía. No es señal.
+- Diff de hora del mismo `meeting.id`: la hora del meeting viejo **no cambia**. No hay diff.
+
+#### Cómo funciona
+
+`runHubspotRescheduleScan()` corre al **final** del poll (cada 5 min), después de los dos polls
+—no antes: si cancelara primero, el poll de HubSpot vería la call vieja "sin push" y le crearía
+uno nuevo en el mismo tick. Busca por `hs_createdate` (**1 request por ciclo** cuando no hay nada
+nuevo, ~4 cuando sí) en vez de rastrear la agenda futura entera, arma el grafo
+*cita nueva → contacto → otras citas del lead* con las APIs batch v4/v3, y le pasa todo al módulo
+**puro** `src/hubspot/reschedule-detect.js`, que tiene la regla y sus 14 tests.
+
+Flags: `HUBSPOT_RESCHEDULE_SCAN` (default **true**, e independiente de `HUBSPOT_AGENDA_POLL` —una
+cita que entró por Calendly también se puede mover en el CRM) y `HUBSPOT_RESCHEDULE_LOOKBACK_MIN`
+(default 120). Preview: `runHubspotRescheduleScan({ preview: true })`.
+
+⚠️ **Tres consultas que parecen la misma y no lo son** (acá estaba el hueco fino):
+- `getScheduledCallsInWindow` — solo `scheduled`/`sent`. Alimenta la **agenda de las 7am**, así
+  que una call cancelada TIENE que desaparecer de ahí.
+- `getCallsWithAnyPushInWindow` (**nuevo**) — cualquier estado. Es el dedup del **poll**: una call
+  cancelada tiene que seguir contando como "ya decidida", o el poll se la recrea bajo otro
+  `event_uuid` (`hubspot:<id>` en vez del de Calendly) y resucita el push que se acababa de matar.
+- `getRescheduledAwayCalls` (**nuevo**, vía la columna `skip_reason='rescheduled'`) — para que el
+  **reporte** también la saque: la agenda une Calendly con meetings CRUDOS de HubSpot, y el
+  meeting viejo sigue ahí con su hora vieja (§18.AC: una reagendada no es volumen, es movida).
+
+#### Correcciones a lo que había anotado antes
+
+- **`danieltovar@30x.com` NO es "sesiones grupales".** La razón anotada en `IGNORED_CLOSERS`
+  ("383 meetings de Sesión Programa LinkedIn Sales en 30 días") **no se reproduce**. Medido
+  directo por `ownerId` (90154139), 30 días, paginado hasta agotar: **246 meetings**, de los
+  cuales "Sesión Programa LinkedIn Sales 30X" son **18**, no 383. El grueso son ~200
+  **"AI Second Brain Admisiones — ‹lead›"**, uno por lead y con **un solo contacto** asociado
+  (75 de 100 en la muestra) → son calls **1-a-1**. Las grupales (Office Hour, Sesión N,
+  Networking Dinner) son ~32. **El volumen 1-a-1 existe**; mantener la exclusión es decisión del
+  jefe, no un dato técnico. Mientras siga excluido no recibe pushes — y de todos modos no podría:
+  no está en el roster (sin teléfono) ni tiene opt-in ganado.
+- **`operaciones` no tiene un problema de mecanismo, tiene uno de respuesta.** Medido sobre 14
+  días: 31 outcomes, de los cuales **20 se cosecharon solos** de HubSpot (65%) y **11 quedaron en
+  `no_answer`** (35%) — Juanito preguntó y el closer no contestó. Comparación: `second_brain`
+  tiene 13% de `no_answer`. El nudge **sí muerde**; lo que falta es que el deal se cierre en
+  HubSpot o que el closer conteste. No hay nada que arreglar en código.
+- **`linkedin` faltaba en el `HUBSPOT_PROGRAM_PIPELINES` del VPS** aunque el default del código sí
+  lo trae. El env **reemplaza** el default entero (no lo completa), así que el programa quedaba
+  fuera del modelo nudge/cosecha. El pipeline `906259304` es real: **3360 deals en 60 días**.
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):

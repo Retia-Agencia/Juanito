@@ -336,6 +336,14 @@ addColumnIfMissing('calendly_optins', 'paused', 'INTEGER DEFAULT 0');
 // Filas viejas quedan NULL (eran Push 0/3, no se reportan como outcome).
 addColumnIfMissing('calendly_pushes', 'program', 'TEXT');
 
+// §18.AO: por qué se saltó una fila. Hasta ahora el motivo solo vivía concatenado al `message`,
+// que sirve para leer un log pero no para consultar. Se necesita consultable porque la agenda
+// del jefe arma sus calls uniendo Calendly + meetings CRUDOS de HubSpot, y el meeting de una
+// call reagendada dentro del CRM sigue ahí con su hora vieja: sin poder preguntar "¿esta call se
+// movió?" el reporte listaría una llamada que Juanito ya sabe que no va a ocurrir.
+// Valores: 'rescheduled' (se movió en el CRM) | NULL (todo lo demás, incluido lo ya existente).
+addColumnIfMissing('calendly_pushes', 'skip_reason', 'TEXT');
+
 // §18.AC: reagendas. Cuando el closer marca "Reagendó", Juanito le pregunta la fecha y
 // agenda por su cuenta la call nueva (Push 3 + Push 4 con un event_uuid sintético
 // 'manual:<uuid>:<n>'), venga o no de Calendly. Sobreviven solo los 2 campos que SON

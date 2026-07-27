@@ -174,6 +174,8 @@ services:
       - HUBSPOT_HARVEST_SWEEP_CRON=${HUBSPOT_HARVEST_SWEEP_CRON:-0 8-22/2 * * *}
       - HUBSPOT_HARVEST_SWEEP_MAX_AGE_HOURS=${HUBSPOT_HARVEST_SWEEP_MAX_AGE_HOURS:-72}
       - HUBSPOT_AGENDA_POLL=${HUBSPOT_AGENDA_POLL:-false}
+      - HUBSPOT_RESCHEDULE_SCAN=${HUBSPOT_RESCHEDULE_SCAN:-true}
+      - HUBSPOT_RESCHEDULE_LOOKBACK_MIN=${HUBSPOT_RESCHEDULE_LOOKBACK_MIN:-120}
       # Conteo de setteos por closer (§18.AI): leads TOCADOS sin cita, read-only. /setteos
       # on-demand corre siempre; SETTEO_REPORT_ENABLED off por default solo gatea el anexo al
       # reporte del jefe. SETTEO_REPORT_CLOSERS vacío → cae al scope del nudge (PUSH4_CLOSERS).

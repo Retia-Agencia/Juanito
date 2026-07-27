@@ -20,13 +20,14 @@
 
 import { CronJob } from 'cron';
 import { sendMessage } from '../whatsapp/index.js';
-import { getOutcomesInWindow, getScheduledCallsInWindow } from '../db/index.js';
+import { getOutcomesInWindow, getScheduledCallsInWindow, getRescheduledAwayCalls } from '../db/index.js';
 import { formatBossScorecard } from '../calendly/boss-report.js';
 import { formatAgendaScorecard } from '../calendly/agenda-report.js';
 import { dayRangeUtc } from '../calendly/index.js';
 import { HUBSPOT_OWNER_TO_CLOSER } from '../calendly/closers.js';
 import { isEnabled as hubspotEnabled, searchMeetingsInWindow, getOwnerEmailMap } from '../hubspot/client.js';
 import { meetingsToCalls, mergeAgendaSources } from '../hubspot/meetings.js';
+import { callKey } from '../hubspot/reschedule-detect.js';
 
 const TZ = () => process.env.TZ || 'America/Bogota';
 const ENABLED = () => process.env.DAILY_REPORTS_ENABLED === 'true';
@@ -90,10 +91,21 @@ async function hubspotCallsForToday(now) {
 async function agendaCallsForToday(now, tag) {
   const calendly = callsForToday(now);
   const hubspot = await hubspotCallsForToday(now);
-  const { calls, added, duplicates } = mergeAgendaSources(calendly, hubspot);
+
+  // Una call que se reagendó DENTRO del CRM (§18.AO) sale de `calendly` sola —su push quedó en
+  // 'skipped'— pero NO de `hubspot`: reagendar no borra el meeting viejo, lo deja con su hora
+  // original. Sin este filtro la agenda listaría una llamada que Juanito ya sabe que no va a
+  // ocurrir, y §18.AC es explícita: una reagendada no es volumen, es movida.
+  const movidas = new Set(
+    getRescheduledAwayCalls(...windowForToday(now)).map((c) => callKey(c.closer_email, c.call_start))
+  );
+  const vivas = movidas.size ? hubspot.filter((c) => !movidas.has(callKey(c.closer_email, c.call_start))) : hubspot;
+
+  const { calls, added, duplicates } = mergeAgendaSources(calendly, vivas);
   console.log(
     `[DailyReports] ${tag}: ${calendly.length} calls de Calendly + ${added} solo-HubSpot ` +
-      `(${duplicates} ya estaban en Calendly) → ${calls.length} del día`
+      `(${duplicates} ya estaban en Calendly` +
+      `${movidas.size ? `, ${hubspot.length - vivas.length} reagendadas fuera del día` : ''}) → ${calls.length} del día`
   );
   return calls;
 }

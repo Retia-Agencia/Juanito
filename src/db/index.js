@@ -779,6 +779,67 @@ export function supersedeHubspotPushes(closerEmail, callStartUtc, realUuid) {
   return info.changes;
 }
 
+// El lead se reagendó DENTRO del CRM (§18.AO) → la call vieja no va a ocurrir y sus pushes
+// pendientes sobran: el Push 3 mandaría a preparar una llamada fantasma y el Push 4 preguntaría
+// cómo fue. A diferencia de `supersedeHubspotPushes`, acá NO se filtra por 'hubspot:%': la cita
+// original bien puede haber entrado por Calendly y haberse movido después en HubSpot.
+//
+// Solo toca filas 'scheduled'. Una ya 'sent' se deja como está a propósito: el mensaje salió,
+// reescribir su estado no lo desmanda y solo perdería el rastro de que se envió.
+export function supersedeRescheduledPushes(closerEmail, callStartUtc, nuevaCallStart) {
+  const info = db
+    .prepare(`
+      UPDATE calendly_pushes
+      SET status = 'skipped',
+          skip_reason = 'rescheduled',
+          message = COALESCE(message, '') || ' | skip: reagendada en HubSpot para ' || ?
+      WHERE status = 'scheduled'
+        AND lower(closer_email) = lower(?)
+        AND substr(call_start, 1, 16) = substr(?, 1, 16)
+    `)
+    .run(String(nuevaCallStart || '?'), String(closerEmail || ''), String(callStartUtc || ''));
+  return info.changes;
+}
+
+// Las calls que se movieron dentro del CRM, en una ventana. La agenda del jefe une Calendly con
+// los meetings CRUDOS de HubSpot, y el meeting de una call reagendada sigue existiendo con su
+// hora vieja: sin esto el reporte listaría una llamada que Juanito ya descartó (y §18.AC es
+// explícita — una reagendada no es volumen, es movida).
+// Devuelve [{ closer_email, call_start }]; el consumidor filtra por closer + minuto.
+export function getRescheduledAwayCalls(fromUtc, toUtc) {
+  return db
+    .prepare(`
+      SELECT DISTINCT lower(closer_email) AS closer_email, call_start
+      FROM calendly_pushes
+      WHERE skip_reason = 'rescheduled'
+        AND call_start >= ? AND call_start < ?
+    `)
+    .all(fromUtc, toUtc);
+}
+
+// Calls que YA tienen fila de push en la ventana, sin importar su estado. Es la pregunta que
+// necesita el poll de HubSpot para deduplicar, y NO es la misma que `getScheduledCallsInWindow`
+// (que alimenta la agenda de las 7am y por eso solo cuenta 'scheduled'/'sent').
+//
+// La diferencia importa por un caso concreto: cuando el scan de reagendas cancela el push de una
+// call que había entrado por Calendly, esa call desaparece de `getScheduledCallsInWindow` y el
+// poll de HubSpot la ve "sin push" → le crearía uno nuevo bajo OTRO event_uuid ('hubspot:<id>'),
+// resucitando justo lo que se acababa de cancelar.
+export function getCallsWithAnyPushInWindow(fromUtc, toUtc) {
+  return db
+    .prepare(`
+      SELECT event_uuid,
+             MAX(program)       AS program,
+             MAX(closer_email)  AS closer_email,
+             MIN(call_start)    AS call_start
+      FROM calendly_pushes
+      WHERE call_start >= ? AND call_start < ?
+      GROUP BY event_uuid
+      ORDER BY call_start
+    `)
+    .all(fromUtc, toUtc);
+}
+
 // ─── Calendly: opt-in de closers (anti-baneo) ─────────────────────────────────
 // Solo se envía en frío a un closer cuyo opt-in fue GANADO: el closer le escribió a
 // Juanito (`source='self'`). Las filas sembradas/sin verificar (`source` null/'seeded')
