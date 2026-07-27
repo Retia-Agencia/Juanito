@@ -3285,6 +3285,65 @@ Dos efectos medidos el 23-jul:
 ⚠️ Al recrear el contenedor se perdieron los logs anteriores, así que **no hay baseline** de si 7
 caídas/26h es lo normal. Los logs arrancaron limpios el 23-jul 23:19; en 24-48h hay dato.
 
+### 18.AN 🟡 HubSpot como fuente de las llamadas — Fase 1: el puente (2026-07-27)
+
+**Pedido del jefe:** que las llamadas se tomen de HubSpot y no de Calendly, porque "HubSpot es la
+plataforma con toda la información real", y que Juanito quede pendiente de reagendas, calls ya
+hechas y estados. Alcance acotado por él a **los programas de 30x** (Retia queda en Calendly).
+
+**Lo que la medición mostró (y las tres veces que la primera medición mintió).** Antes de tocar
+nada se sondeó el portal real (`hubId 50929115`). Tres conclusiones iniciales resultaron ser
+artefactos de la medición, no del dato — quedan escritas porque el error es reproducible:
+
+1. **"`abogados` no existe en HubSpot" — FALSO.** La ventana de 7 días chocó con el tope de 1000
+   de `searchMeetingsInWindow`, que **truncaba en silencio**: los programas de bajo volumen
+   salían en cero. `abogados` tiene 10 meetings ("…Programa IA para Abogados EstadoX").
+   → Fix: el tope ahora loguea cuando corta.
+2. **"`developers` no existe en HubSpot" — FALSO.** Pablo Suarez es owner con **otro email**
+   (`pablosuarez+hubspot@30x.com`, owner 95239179), y `meetingsToCalls` lo descartaba por no estar
+   en el roster. Eran 28 meetings/mes tirados a la basura.
+   → Fix: `hubspotEmail` en la identidad + `HUBSPOT_OWNER_TO_CLOSER`.
+3. **"`agenda_status` está 97% vacío y `RESCHEDULED` no se usa" — FALSO.** Se midió sobre TODOS
+   los deals tocados en 14 días, que son casi todos leads que nunca tuvieron call. Medido sobre
+   calls reales: second_brain e instagram **100% con estado**, developers 75%, y `RESCHEDULED` sí
+   aparece. **HubSpot sí sabe de reagendas.**
+
+**Lo que sí se sostiene:**
+- **`hs_meeting_outcome` (por reunión) está muerto**: vacío o `SCHEDULED` en casi todo el volumen.
+  El estado vive en el **deal** (`agenda_status`), que es de donde ya lo cosecha el harvest §18.AG.
+- **Retia (`tactical_investor`) no está**: 0 meetings con "Tactical" en 30 días. Es el CRM de otra
+  empresa. La unión Calendly+HubSpot **no se puede volver reemplazo** sin perder ese programa.
+- **`operaciones` es el programa flojo, pero no por falta de deal.** Con el join correcto (contacto
+  → deals → `pickDealForPipeline`, el mismo de producción) solo 1 de 30 calls no tiene deal; lo que
+  pasa es que **19 de 30 quedan en `SCHEDULED` después de que la call ocurrió** — el closer no
+  cierra el estado. Cobertura utilizable: **33% en operaciones vs 75% en developers**. Ese caso ya
+  tiene mecanismo: es exactamente el nudge (venció y sigue Programada → picar al closer).
+
+**Qué se hizo (Fase 1 — solo el puente, sin tocar arquitectura):**
+- `calendly/closers.js`: campo `hubspotEmail` en la identidad + mapa derivado
+  `HUBSPOT_OWNER_TO_CLOSER` (owner de HubSpot → email canónico de Calendly). Hace de filtro y de
+  traductor. **La canonicalización no es cosmética:** `dedupKey` compara por email, así que una
+  fila que saliera con el email de HubSpot no deduplicaría contra su gemela de Calendly y la call
+  se contaría DOS veces.
+- `calendly/closers.js`: `danieltovar@30x.com` → `IGNORED_CLOSERS`. Tiene 383 meetings "Sesión
+  Programa LinkedIn Sales 30X" en 30 días (≈12/día ⇒ son sesiones del programa, no calls de
+  cierre). Se ignora explícitamente para que el poll de meetings no lo alerte como sin mapear.
+- `hubspot/meetings.js`: `meetingsToCalls` toma `ownerToCloser` en vez de un Set de emails.
+- `hubspot/client.js`: `searchMeetingsInWindow` avisa cuando trunca en el tope de 1000.
+- **Tests:** 3 nuevos en `hubspot.meetings.test.js` (alias reconocido · no-doble-conteo · el roster
+  real mapea y todo valor del mapa existe en `CLOSERS`). Suite: 710 tests, mismos 55 rojos de
+  base que ya fallaban en Windows por `better-sqlite3` sin compilar.
+
+**Verificado contra producción (read-only, 2026-07-27):** la agenda del día pasa de **78 → 86
+calls hoy** y **68 → 71 mañana**; las 11 nuevas son todas de Pablo Suarez / AI for Developers, un
+closer que la agenda del jefe no mostraba **nunca**. Ninguna fila queda con closer sin resolver.
+
+**Fase 2 (diseñada, NO implementada):** poll de meetings como fuente de los Push 0-3 para los
+programas de 30x, con detección de reagenda **estructural**: guardando `meeting_id + hora`, si el
+mismo id cambia de hora es una reagenda, y si desaparece es una cancelación — sin depender de que
+nadie marque un campo. ⚠️ **Medir primero** si HubSpot conserva el `meeting id` cuando la reagenda
+entra sincronizada desde Calendly; eso decide el diseño.
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):

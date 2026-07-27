@@ -7,10 +7,19 @@
 // real: 39 calls en Calendly, 58 meetings de closers en HubSpot, 49 en común → 8 calls de venta
 // que solo existían en HubSpot y no se contaban.
 //
-// ⚠️ Por qué UNIÓN y no reemplazo: HubSpot tampoco es superconjunto. Es el CRM de UNA empresa
-// (30x) — en 7 días de datos no tiene un solo meeting de `abogados` ni de `tactical_investor`
-// (Retia, otra empresa con su propio Calendly), y 4 closers del roster ni siquiera son owners
-// ahí. Cambiar Calendly por HubSpot ganaba 8 calls y perdía 9. Cada fuente ve lo que la otra no.
+// ⚠️ Por qué UNIÓN y no reemplazo: HubSpot no es superconjunto. Es el CRM de UNA empresa (30x),
+// así que `tactical_investor` (Retia, otra empresa con su propio Calendly) no existe ahí: 0
+// meetings con "Tactical" en 30 días. Cambiar Calendly por HubSpot pierde esos programas enteros.
+//
+// ⚠️ Corrección 2026-07-27 — este encabezado decía además que HubSpot no tiene meetings de
+// `abogados` y que "4 closers del roster ni siquiera son owners ahí". Las dos afirmaciones eran
+// artefactos de la medición, no del dato:
+//   · la ventana de 7 días chocó con el tope de 1000 de searchMeetingsInWindow, que TRUNCABA EN
+//     SILENCIO → los programas de bajo volumen salían en cero. `abogados` sí está (10 meetings,
+//     "…Programa IA para Abogados EstadoX").
+//   · Pablo Suarez sí es owner, con OTRO email (pablosuarez+hubspot@). Lo descartaba este mismo
+//     filtro. De ahí `ownerToCloser` (ver abajo).
+// Medido bien: HubSpot tiene las calls de 30x y sus estados. Sigue sin tener las de Retia.
 //
 // Filtros, en orden:
 //   1. owner del meeting ∈ roster de closers → saca las reuniones del resto de la empresa
@@ -38,14 +47,21 @@ const dedupKey = (email, dbUtc) => `${String(email).toLowerCase().trim()}|${dbUt
 
 // Traduce meetings crudos de HubSpot a filas de agenda, descartando lo que no es una call de
 // venta de un closer. `ownerEmailById` = { ownerId: email } (getOwnerEmailMap).
-// `closerEmails` = Set de emails del roster, en minúsculas.
+// `ownerToCloser` = { email de owner en HubSpot → email CANÓNICO de Calendly } (el mapa
+// HUBSPOT_OWNER_TO_CLOSER de closers.js). Hace de filtro y de traductor a la vez: si el owner no
+// está en el mapa no es closer nuestro, y si está, la fila sale con el email de Calendly.
+//
+// ⚠️ La canonicalización NO es cosmética. `dedupKey` compara por email, así que una fila que
+// saliera con el email de HubSpot (pablosuarez+hubspot@) no deduplicaría contra su gemela de
+// Calendly (pablosuarez@) y la call aparecería DOS VECES en la agenda del jefe.
 // Devuelve [{ event_uuid, program, closer_email, prospect_name, call_start, source:'hubspot' }].
-export function meetingsToCalls(meetings = [], { ownerEmailById = {}, closerEmails = new Set() } = {}) {
+export function meetingsToCalls(meetings = [], { ownerEmailById = {}, ownerToCloser = {} } = {}) {
   const out = [];
   for (const m of meetings) {
     const props = m?.properties || {};
-    const email = String(ownerEmailById[String(props.hubspot_owner_id)] || '').toLowerCase();
-    if (!email || !closerEmails.has(email)) continue; // no es de un closer
+    const owner = String(ownerEmailById[String(props.hubspot_owner_id)] || '').toLowerCase();
+    const email = owner ? ownerToCloser[owner] : null;
+    if (!email) continue; // no es de un closer (o es un owner que no gestionamos)
 
     const program = programFromTitle(props.hs_meeting_title);
     if (!program) continue; // interna / sin naming de programa → no es call de venta

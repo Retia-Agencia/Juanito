@@ -24,7 +24,7 @@ import { getOutcomesInWindow, getScheduledCallsInWindow } from '../db/index.js';
 import { formatBossScorecard } from '../calendly/boss-report.js';
 import { formatAgendaScorecard } from '../calendly/agenda-report.js';
 import { dayRangeUtc } from '../calendly/index.js';
-import { CLOSERS } from '../calendly/closers.js';
+import { HUBSPOT_OWNER_TO_CLOSER } from '../calendly/closers.js';
 import { isEnabled as hubspotEnabled, searchMeetingsInWindow, getOwnerEmailMap } from '../hubspot/client.js';
 import { meetingsToCalls, mergeAgendaSources } from '../hubspot/meetings.js';
 
@@ -76,10 +76,7 @@ async function hubspotCallsForToday(now) {
       searchMeetingsInWindow({ fromIso: minStartIso, untilIso: maxStartIso }),
       getOwnerEmailMap(),
     ]);
-    return meetingsToCalls(meetings, {
-      ownerEmailById,
-      closerEmails: new Set(Object.keys(CLOSERS).map((e) => e.toLowerCase())),
-    });
+    return meetingsToCalls(meetings, { ownerEmailById, ownerToCloser: HUBSPOT_OWNER_TO_CLOSER });
   } catch (e) {
     console.warn(`[DailyReports] agenda: HubSpot no disponible (${e.message}) → solo Calendly`);
     return [];
