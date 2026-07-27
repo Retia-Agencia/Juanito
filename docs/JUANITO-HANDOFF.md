@@ -3352,9 +3352,56 @@ Backup: `juanito-backup-20260727-154045-pre-hubspot-alias.tar.gz`.
   (no 12). Sin la canonicalización habrían sido 12.
 - Retia sobrevive: "De Cero a Tactical Investor" sigue con sus 11 calls, que solo ve Calendly.
 
-**Fase 2 (diseñada, NO implementada):** poll de meetings como fuente de los Push 0-3 para los
-programas de 30x. La pregunta que bloqueaba el diseño **ya se midió** (2026-07-27, 12 deals con
-`agenda_status=RESCHEDULED` en 21 días), y la respuesta descarta la idea original:
+#### Fase 2 — que no se pierda ningún push, de ninguna agenda (2026-07-27, ✅ EN PRODUCCIÓN)
+
+Pregunta del jefe que destapó el resto: *"¿quedaron los pushes precall de las reprogramadas o
+setteadas?"*. La respuesta era **no**, por dos vías distintas. Ambas medidas en la DB de producción:
+
+**Hueco 1 — las citas agendadas DENTRO del CRM no recibían nada.** De 844 calls con push en 30
+días, **ninguna** venía de HubSpot: el poll que crea pushes lee solo Calendly. Son ~11 al día que
+desde §18.AN salían en la agenda del jefe pero por las que **ningún closer recibía aviso**.
+
+**Hueco 2 — la cosecha de reagendas apagaba la pregunta sin reemplazarla.** De 30 reagendas en 30
+días solo 5 generaron call nueva. Abierto por origen:
+- Por WhatsApp, el flujo **funciona**: se insiste (1 a 3 veces) y produjo las 5 call-nuevas.
+- Cosechadas de HubSpot: **5 de 5 con `reschedule_asked = 0` y sin call nueva.** El código solo
+  agendaba la call nueva desde `hs_next_meeting_start_time` —vacío en 397 de 400 deals— y en el
+  `else` hacía `markCalendlyPushSent` + `continue`. Ese `else` no era el borde: era el camino
+  NORMAL. La reagenda se cerraba muda.
+
+**Qué se hizo:**
+- **`hubspot/agenda-poll.js`** (PURO, 16 tests): decide qué citas de HubSpot merecen push.
+  **El riesgo de este feature no es perder un push, es mandar DOS**, así que todo el filtro es de
+  exclusión — programa de otra empresa · duplicados dentro de HubSpot · call que ya tiene push ·
+  fuera de horario laboral. Ante la duda, no se agenda.
+- **`runHubspotAgendaPoll`** en `scheduler/calendly.js`: crea los mismos Push 0/3/4 reusando
+  `scheduleCalendlyPush`, así que hereda **todos** los gates anti-ban (opt-in ganado, pausa
+  global, pausa por closer, dry-run por cuenta) sin duplicar esa lógica. Corre **al final del
+  poll de Calendly, en el mismo tick**: al ver ya escrito lo que Calendly acaba de agendar, una
+  cita presente en las dos fuentes queda con UN push. Si corrieran en paralelo habría carrera.
+- **`supersedeHubspotPushes`**: el sentido inverso — si la cita entra después por Calendly, el
+  push sintético se cancela. Mismo patrón que `supersedeManualPushes`.
+- **`recordRescheduleAwaitingDate`**: sin fecha utilizable, la reagenda cosechada queda en
+  `awaiting_date` y la recoge el cron de las 9am, igual que si la hubiera dictado el closer.
+- **Guardarraíl de horario:** medido sobre 169 calls reales de HubSpot, todas caen entre 07:00 y
+  19:00 Bogotá **salvo una a las 00:00** — un marcador de seguimiento, no una llamada, cuyo Push 3
+  habría llegado 23:35 de la noche. Ventana `[06:00, 22:00)` local. Las descartadas **se loguean
+  con warn**: un descarte mudo sería exactamente el bug que este trabajo vino a arreglar.
+
+**Rollout (el patrón a repetir):** OFF por default (`HUBSPOT_AGENDA_POLL`), registrado en
+`docker-compose.yml` **y** `.env.example` antes de tocar el VPS. Se desplegó apagado, se corrió
+`runHubspotAgendaPoll({ preview:true })` contra datos reales para ver qué haría, y recién con eso
+a la vista se encendió. El preview fue lo que destapó la cita de medianoche.
+
+**Verificado en producción:** 2 ciclos de poll → **10 pushes creados, 10 en total** (idempotente,
+sin duplicados); 20 filas = 10 calls × (Push 3 + Push 4); las 10 con nombre y teléfono real del
+prospecto vía el contacto asociado. 125 calls se descartaron por venir ya de Calendly y 1 por
+horario. El caso de Leidy Toledo —3 meetings al mismo minuto— produjo **un** push.
+
+#### Lo que se midió sobre las reagendas antes de diseñar
+
+La pregunta que bloqueaba el diseño (12 deals con `agenda_status=RESCHEDULED` en 21 días)
+descarta la idea original de detectar la reagenda por diff de hora:
 
 - **La reagenda NO mueve la hora del meeting: crea uno NUEVO.** 8 de 10 casos tienen 2+ meetings
   para el mismo lead; solo 2 tienen uno solo. → La detección **no** puede ser "diff de hora del
