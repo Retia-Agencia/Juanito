@@ -104,7 +104,13 @@ const PEOPLE = {
   pablo_suarez: {
     name: 'Pablo Suarez',
     // Teléfono actualizado 2026-07-21 (jefe): +573152573103 → +573189248507.
-    identities: [{ connection: '30x', email: 'pablosuarez@30x.com', phone: '+573189248507' }],
+    // `hubspotEmail`: en HubSpot su owner NO es pablosuarez@ sino pablosuarez+hubspot@ (medido
+    // 2026-07-27, owner 95239179). Sin este alias, `meetingsToCalls` descartaba sus 28 meetings
+    // al mes — la agenda del día no veía UNA sola call de AI for Developers y el diagnóstico
+    // parecía "developers no existe en HubSpot". Ver §18.AN.
+    identities: [
+      { connection: '30x', email: 'pablosuarez@30x.com', phone: '+573189248507', hubspotEmail: 'pablosuarez+hubspot@30x.com' },
+    ],
   },
   // ─── Retia (agencia #2) — programa "De Cero a Tactical Investor" ───────────
   // Vieira VENDE el programa (la CARA del pitch), NO es closer → está en IGNORED_CLOSERS.
@@ -129,6 +135,28 @@ export const CLOSERS = Object.fromEntries(
       const entry = { name: person.name, phone: id.phone };
       if (id.connection !== DEFAULT_ACCOUNT) entry.account = id.connection;
       return [id.email.toLowerCase(), entry];
+    })
+  )
+);
+
+// ─── Derivación: owner de HubSpot → email CANÓNICO del closer ────────────────────────────────
+// El email con el que una persona es owner en HubSpot no siempre es el mismo con el que hostea
+// en Calendly (Pablo Suarez: pablosuarez+hubspot@ vs pablosuarez@). Este mapa hace de puente en
+// las DOS direcciones que importan:
+//   · pertenencia — ¿este owner es uno de nuestros closers? (antes: un Set de emails de Calendly,
+//     que dejaba fuera a quien tuviera alias)
+//   · canonicalización — la fila que sale de HubSpot debe llevar el email de CALENDLY, no el de
+//     HubSpot. Si no, la misma call no deduplica contra su gemela de Calendly (`dedupKey` va por
+//     email) y el jefe la ve DOS VECES; y `resolveCloser` no encuentra el nombre.
+// La identidad siempre se mapea a sí misma, así que sin `hubspotEmail` el comportamiento es el
+// de antes. Clave y valor en minúsculas.
+export const HUBSPOT_OWNER_TO_CLOSER = Object.fromEntries(
+  Object.values(PEOPLE).flatMap((person) =>
+    person.identities.flatMap((id) => {
+      const canonical = id.email.toLowerCase();
+      const pairs = [[canonical, canonical]];
+      if (id.hubspotEmail) pairs.push([id.hubspotEmail.toLowerCase(), canonical]);
+      return pairs;
     })
   )
 );
@@ -170,6 +198,11 @@ export const IGNORED_CLOSERS = new Set([
   'alejocarpa1108@gmail.com', // salió de Tactical Investor 2026-07-21; lo reemplazó Sebastian Rodriguez.
   'equipo@ttrading.co',       // buzón-rol de Dana; salió 2026-07-22, la reemplazó Sebastian Salazar
                               // con email propio → buzón retirado (no lo hereda nadie).
+  // Owner de HubSpot, NO de Calendly (2026-07-27): 383 meetings "Sesión Programa LinkedIn Sales
+  // 30X" en 30 días. El volumen (≈12/día) dice que son SESIONES del programa, no calls de cierre
+  // 1-a-1. Se ignora explícitamente para que, cuando el poll mire meetings, no dispare alertas de
+  // "closer sin mapear" ni le llene la agenda del jefe con sesiones. Decisión del jefe 2026-07-27.
+  'danieltovar@30x.com',
 ]);
 
 export function isIgnoredCloser(email) {

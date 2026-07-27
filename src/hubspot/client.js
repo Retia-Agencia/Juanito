@@ -310,6 +310,17 @@ export async function searchMeetingsInWindow({ fromIso, untilIso }) {
       out.push(...(data.results || []));
       after = data.paging?.next?.after || null;
     } while (after && out.length < MEETINGS_HARD_CAP);
+    // El tope existe para que un rango mal calculado no dispare cientos de requests, pero cortar
+    // en silencio es peor que el problema que evita: una ventana grande devuelve una foto PARCIAL
+    // que se lee como completa. Pasó de verdad (2026-07-27): una sonda de 7 días se truncó acá y
+    // los programas de bajo volumen aparecieron en CERO, lo que casi cuesta la decisión de sacar
+    // `abogados` y `developers` de HubSpot creyendo que no estaban.
+    if (after && out.length >= MEETINGS_HARD_CAP) {
+      console.warn(
+        `[HubSpot] searchMeetingsInWindow TRUNCADO en ${MEETINGS_HARD_CAP} meetings ` +
+          `(${fromIso} → ${untilIso}) — hay más y NO se trajeron: la ventana es demasiado grande.`
+      );
+    }
     return out;
   } catch (e) {
     console.warn(`[HubSpot] searchMeetingsInWindow falló: ${e.message}`);

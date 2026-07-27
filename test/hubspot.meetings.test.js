@@ -7,14 +7,22 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { meetingsToCalls, mergeAgendaSources, meetingStartMs, toDbUtc } from '../src/hubspot/meetings.js';
 import { programFromTitle } from '../src/calendly/programs.js';
+import { HUBSPOT_OWNER_TO_CLOSER, CLOSERS } from '../src/calendly/closers.js';
 
 const OWNERS = {
   100: 'sebastian@30x.com',
   101: 'pablo.lozano@30x.com',
   999: 'marketing@30x.com', // no es closer
+  // Caso real (2026-07-27): el owner de HubSpot NO es el email con el que hostea en Calendly.
+  102: 'pablosuarez+hubspot@30x.com',
 };
-const CLOSER_EMAILS = new Set(['sebastian@30x.com', 'pablo.lozano@30x.com']);
-const opts = { ownerEmailById: OWNERS, closerEmails: CLOSER_EMAILS };
+const OWNER_TO_CLOSER = {
+  'sebastian@30x.com': 'sebastian@30x.com',
+  'pablo.lozano@30x.com': 'pablo.lozano@30x.com',
+  'pablosuarez+hubspot@30x.com': 'pablosuarez@30x.com', // alias → canónico
+  'pablosuarez@30x.com': 'pablosuarez@30x.com',
+};
+const opts = { ownerEmailById: OWNERS, ownerToCloser: OWNER_TO_CLOSER };
 
 const meeting = ({ id = 'm1', owner = 100, title = 'Entrevista de Postulación Programa de Implementación AI Second Brain', start = '2026-07-24T15:00:00Z' }) => ({
   id,
@@ -85,6 +93,46 @@ const cal = (closer, start, program = 'second_brain') => ({
   closer_email: closer,
   call_start: start,
   source: 'calendly',
+});
+
+// ─── Alias de owner: el email de HubSpot ≠ el email de Calendly (2026-07-27) ───
+
+test('un owner con alias de HubSpot SÍ es closer, y sale con su email canónico', () => {
+  const [c] = meetingsToCalls(
+    [meeting({ id: 'm7', owner: 102, title: 'Entrevista de Postulación Programa AI for Developers 30X' })],
+    opts
+  );
+  assert.ok(c, 'pablosuarez+hubspot@ es Pablo Suarez: sus meetings NO se descartan');
+  assert.equal(c.program, 'developers');
+  assert.equal(c.closer_email, 'pablosuarez@30x.com', 'sale el email de Calendly, no el de HubSpot');
+});
+
+test('la call de un closer con alias NO se cuenta dos veces', () => {
+  // Sin canonicalizar, la fila de HubSpot saldría con pablosuarez+hubspot@ y `dedupKey` la vería
+  // como un closer distinto → la misma call aparecería DOS veces en la agenda del jefe.
+  const calendly = [cal('pablosuarez@30x.com', '2026-07-24 15:00:00', 'developers')];
+  const hubspot = meetingsToCalls(
+    [meeting({ id: 'm8', owner: 102, title: 'Entrevista de Postulación Programa AI for Developers 30X' })],
+    opts
+  );
+  const { calls, added, duplicates } = mergeAgendaSources(calendly, hubspot);
+  assert.equal(calls.length, 1);
+  assert.equal(added, 0);
+  assert.equal(duplicates, 1);
+});
+
+test('el roster real mapea el alias de Pablo Suarez y deja a los demás igual', () => {
+  assert.equal(HUBSPOT_OWNER_TO_CLOSER['pablosuarez+hubspot@30x.com'], 'pablosuarez@30x.com');
+  // Toda identidad se mapea a sí misma → sin alias, el comportamiento es el de antes.
+  assert.equal(HUBSPOT_OWNER_TO_CLOSER['sebastian@30x.com'], 'sebastian@30x.com');
+  assert.equal(HUBSPOT_OWNER_TO_CLOSER['pablo.lozano@30x.com'], 'pablo.lozano@30x.com');
+  // Un owner que no gestionamos no está → el mapa sigue siendo el filtro.
+  assert.equal(HUBSPOT_OWNER_TO_CLOSER['danieltovar@30x.com'], undefined);
+  // Y todo valor del mapa tiene que ser un closer real (si no, resolveCloser no lo encuentra
+  // y la agenda del jefe muestra un email crudo en vez del nombre).
+  for (const canonical of Object.values(HUBSPOT_OWNER_TO_CLOSER)) {
+    assert.ok(CLOSERS[canonical], `${canonical} debe existir en CLOSERS`);
+  }
 });
 
 test('la misma call en las dos fuentes se cuenta UNA vez y gana Calendly', () => {
