@@ -202,15 +202,19 @@ test('insistencia por la fecha: se pide, se cuenta y al tope se cierra sin fecha
 });
 
 test('supersede: si la reagenda entra por Calendly, se cancela el push sintético', () => {
+  // `call_start` RELATIVO a propósito: getPendingManualPushes filtra por
+  // `call_start > datetime('now','-1 hour')`, así que una fecha fija va caducando y el test
+  // empieza a fallar solo con el paso del tiempo (pasó con '2026-07-20').
+  const enUnaHora = new Date(Date.now() + 3600e3).toISOString().slice(0, 19).replace('T', ' ');
   db.scheduleCalendlyPush({
     event_uuid: 'manual:evt-sup:1', push_n: 4, program: 'abogados',
     closer_email: 'x@30x.com', closer_phone: '573001112233',
     prospect_name: 'Ana Pérez', prospect_phone: '573109998877',
-    call_start: '2026-07-20 20:00:00', due_at: '2026-07-20 20:35:00', message: 'push4',
+    call_start: enUnaHora, due_at: enUnaHora, message: 'push4',
   });
   db.createPendingOutcome(base({ event_uuid: 'evt-sup' }));
   db.setOutcomeReschedule(row('evt-sup').id, {
-    startUtc: '2026-07-20 20:00:00',
+    startUtc: enUnaHora,
     uuid: 'manual:evt-sup:1',
   });
 

@@ -340,6 +340,97 @@ export async function searchMeetingsInWindow({ fromIso, untilIso }) {
   }
 }
 
+// Meetings CREADOS en [sinceIso, ahora), sin importar cuándo arrancan. Es la señal barata para
+// detectar la reagenda hecha dentro del CRM (§18.AO): reagendar crea un meeting nuevo, así que
+// mirar "lo recién creado" cuesta 1 request por ciclo — mucho menos que rastrear meses de agenda
+// hacia adelante buscando el reemplazo. Volumen medido: ~4.7 meetings/h en toda la empresa, de
+// los cuales ~1.1/h son calls de un closer.
+export async function searchMeetingsCreatedSince({ sinceIso, cap = 300 }) {
+  if (!isEnabled() || !sinceIso) return [];
+  try {
+    const out = [];
+    let after = null;
+    do {
+      const data = await request('/crm/v3/objects/meetings/search', {
+        method: 'POST',
+        body: {
+          filterGroups: [
+            { filters: [{ propertyName: 'hs_createdate', operator: 'GTE', value: String(Date.parse(sinceIso)) }] },
+          ],
+          properties: MEETING_PROPS,
+          limit: 100,
+          ...(after ? { after } : {}),
+        },
+      });
+      out.push(...(data.results || []));
+      after = data.paging?.next?.after || null;
+    } while (after && out.length < cap);
+    if (after && out.length >= cap) {
+      console.warn(`[HubSpot] searchMeetingsCreatedSince truncado en ${cap} (desde ${sinceIso}) — ventana muy grande`);
+    }
+    return out;
+  } catch (e) {
+    console.warn(`[HubSpot] searchMeetingsCreatedSince falló: ${e.message}`);
+    return [];
+  }
+}
+
+// ─── Asociaciones en batch (v4) ───────────────────────────────────────────────
+// Una sola llamada por cada 100 ids, en vez de una por meeting. Es lo que hace viable correr la
+// detección de reagendas en cada ciclo del poll (cada 5 min) sin castigar el rate limit.
+
+async function batchAssoc(fromType, toType, ids) {
+  const out = {};
+  if (!isEnabled() || !ids?.length) return out;
+  try {
+    for (let i = 0; i < ids.length; i += 100) {
+      const data = await request(`/crm/v4/associations/${fromType}/${toType}/batch/read`, {
+        method: 'POST',
+        body: { inputs: ids.slice(i, i + 100).map((id) => ({ id: String(id) })) },
+      });
+      for (const r of data.results || []) {
+        const to = (r.to || []).map((t) => String(t.toObjectId)).filter(Boolean);
+        if (to.length) out[String(r.from?.id)] = to;
+      }
+    }
+    return out;
+  } catch (e) {
+    console.warn(`[HubSpot] batchAssoc ${fromType}→${toType} falló: ${e.message}`);
+    return {}; // sin asociaciones no se detecta la reagenda; nada se cancela por error
+  }
+}
+
+// { meetingId: contactId } — el PRIMER contacto asociado, que es el lead de la call.
+export async function getContactsOfMeetings(meetingIds = []) {
+  const raw = await batchAssoc('meetings', 'contacts', meetingIds);
+  return Object.fromEntries(Object.entries(raw).map(([mid, contacts]) => [mid, contacts[0]]));
+}
+
+// { contactId: [meetingId, …] } — todas las citas del lead, para encontrar la que quedó vieja.
+export async function getMeetingsOfContacts(contactIds = []) {
+  return batchAssoc('contacts', 'meetings', contactIds);
+}
+
+// Lee meetings por id, con las mismas props que la búsqueda → el resultado se puede pasar tal
+// cual a `meetingsToCalls`.
+export async function getMeetingsByIds(meetingIds = []) {
+  if (!isEnabled() || !meetingIds.length) return [];
+  try {
+    const out = [];
+    for (let i = 0; i < meetingIds.length; i += 100) {
+      const data = await request('/crm/v3/objects/meetings/batch/read', {
+        method: 'POST',
+        body: { properties: MEETING_PROPS, inputs: meetingIds.slice(i, i + 100).map((id) => ({ id: String(id) })) },
+      });
+      out.push(...(data.results || []));
+    }
+    return out;
+  } catch (e) {
+    console.warn(`[HubSpot] getMeetingsByIds falló: ${e.message}`);
+    return [];
+  }
+}
+
 // El LEAD de un meeting: su primer contacto asociado, con nombre y teléfono. Lo necesita el push
 // precall de las citas que solo viven en HubSpot — sin esto el mensaje saldría con el título del
 // meeting como nombre del prospecto ("Entrevista de Postulación Programa…") y sin número al cual
