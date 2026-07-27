@@ -46,7 +46,7 @@ import { computePush3Schedule, decidePush0 } from '../calendly/push-logic.js';
 import { pickSupersededPushes, isManualUuid, planRescheduledPushes } from '../calendly/reschedule-logic.js';
 import { isCoveredProgram, decideFromAgenda } from '../hubspot/deals.js';
 import { decideNudgeAction, buildDealNudgeMessage, buildCreateDealNudgeMessage, dealUrl } from '../hubspot/nudge.js';
-import { meetingsToCalls } from '../hubspot/meetings.js';
+import { meetingsToCalls, hubspotMeetingIdOf } from '../hubspot/meetings.js';
 import { pickMeetingsToSchedule, callStartToIso, programLivesInThisHubspot } from '../hubspot/agenda-poll.js';
 import { pickRescheduledAway } from '../hubspot/reschedule-detect.js';
 import { resolveCloser, isIgnoredCloser, accountOfCloser, HUBSPOT_OWNER_TO_CLOSER } from '../calendly/closers.js';
@@ -280,13 +280,27 @@ function pendingOutcomeFrom(p, extra = {}) {
 //   { handled:true, message }                 → mandar el nudge (link al deal / crear)
 async function planNudge(d, p) {
   if (!d.matchCallToDeal) return { handled: false };
-  // Email del lead desde Calendly (no está en la fila del push).
+  // Email del lead (la fila del push no lo guarda) — y de dónde sacarlo depende del ORIGEN de
+  // la call. Bug 2026-07-27: esto preguntaba SIEMPRE a Calendly con el event_uuid, así que para
+  // una cita que solo vive en HubSpot armaba la URL '…/scheduled_events/hubspot:113635096174',
+  // Calendly devolvía error, el email quedaba null y el plan caía a `handled:false` → el Push 4
+  // CLÁSICO. Resultado medido: de las calls de origen Calendly, 121 de 148 outcomes se
+  // cosecharon solos; de las de origen HubSpot, 0 de 3 — las tres le preguntaron al closer,
+  // que es justo lo que la cosecha existe para evitar.
   let email = null;
-  try {
-    const inv = await d.getFirstInvitee(`https://api.calendly.com/scheduled_events/${p.event_uuid}`);
-    email = inv?.email || null;
-  } catch {
-    /* sin invitee → sin email → cae a clásico */
+  const meetingId = hubspotMeetingIdOf(p.event_uuid);
+  if (meetingId) {
+    // Origen HubSpot: el lead sale del contacto asociado al meeting, la misma vía que ya usa
+    // el poll para armar el Push 3.
+    const contacto = d.getMeetingContact ? await d.getMeetingContact(meetingId).catch(() => null) : null;
+    email = contacto?.email || null;
+  } else {
+    try {
+      const inv = await d.getFirstInvitee(`https://api.calendly.com/scheduled_events/${p.event_uuid}`);
+      email = inv?.email || null;
+    } catch {
+      /* sin invitee → sin email → cae a clásico */
+    }
   }
   if (!email) return { handled: false };
 

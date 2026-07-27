@@ -78,6 +78,19 @@ export function conferencingUrl(...candidates) {
   return '';
 }
 
+// El `event_uuid` de una call que solo vive en HubSpot es 'hubspot:<meetingId>' (se acuña abajo,
+// en meetingsToCalls). Esta es la vuelta: dado un uuid devuelve el meetingId, o null si la call
+// no vino de HubSpot. Vive acá, pegada a donde se acuña, para que las dos mitades no se separen.
+//
+// La necesita el Push 4: para cosechar el outcome hay que llegar al deal, y para eso al email del
+// lead. En una call de Calendly ese email sale del invitee; en una de HubSpot, del contacto
+// asociado al meeting. Sin distinguir el origen se le preguntaba a Calendly por un uuid que no
+// es suyo, y toda call de HubSpot terminaba molestando al closer (§18.AO).
+export function hubspotMeetingIdOf(eventUuid) {
+  const s = String(eventUuid || '');
+  return s.startsWith('hubspot:') ? s.slice('hubspot:'.length) || null : null;
+}
+
 // Clave de dedup: mismo closer + mismo minuto de arranque = la misma call en las dos fuentes.
 // Al minuto y no al segundo porque Calendly guarda :00 y HubSpot puede traer segundos.
 const dedupKey = (email, dbUtc) => `${String(email).toLowerCase().trim()}|${dbUtc.slice(0, 16)}`;
