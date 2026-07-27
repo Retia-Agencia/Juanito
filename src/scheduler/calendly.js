@@ -46,7 +46,9 @@ import { computePush3Schedule, decidePush0 } from '../calendly/push-logic.js';
 import { pickSupersededPushes, isManualUuid, planRescheduledPushes } from '../calendly/reschedule-logic.js';
 import { isCoveredProgram, decideFromAgenda } from '../hubspot/deals.js';
 import { decideNudgeAction, buildDealNudgeMessage, buildCreateDealNudgeMessage, dealUrl } from '../hubspot/nudge.js';
-import { resolveCloser, isIgnoredCloser, accountOfCloser } from '../calendly/closers.js';
+import { meetingsToCalls } from '../hubspot/meetings.js';
+import { pickMeetingsToSchedule, callStartToIso } from '../hubspot/agenda-poll.js';
+import { resolveCloser, isIgnoredCloser, accountOfCloser, HUBSPOT_OWNER_TO_CLOSER } from '../calendly/closers.js';
 import { accountOf, activeAccounts, DEFAULT_ACCOUNT } from '../calendly/accounts.js';
 import {
   recordPollOk,
@@ -102,6 +104,10 @@ const HARVEST_ENABLED = () => process.env.HUBSPOT_AGENDA_HARVEST === 'true';
 // abandonadas, cada N horas, solo mientras HARVEST_ENABLED. Apagable aparte por si acaso,
 // sin tocar el harvest en vivo.
 const HARVEST_SWEEP_ENABLED = () => process.env.HUBSPOT_HARVEST_SWEEP_ENABLED !== 'false'; // default true
+// Poll de las citas que solo viven en HubSpot (§18.AN): les crea los mismos Push 0/3/4 que a
+// una cita de Calendly. Apagado por default porque manda mensajes REALES a closers — se estrena
+// con `runHubspotAgendaPoll({ preview:true })`, que solo dice qué haría.
+const HUBSPOT_POLL_ENABLED = () => process.env.HUBSPOT_AGENDA_POLL === 'true';
 const HARVEST_SWEEP_CRON = () => process.env.HUBSPOT_HARVEST_SWEEP_CRON || '0 8-22/2 * * *'; // cada 2h, 8am-10pm
 const HARVEST_SWEEP_MAX_AGE_HOURS = () => Number(process.env.HUBSPOT_HARVEST_SWEEP_MAX_AGE_HOURS || 72);
 // Params de la reagenda (para agendar la call nueva desde hs_next_meeting_start_time).
@@ -164,6 +170,12 @@ async function deps() {
     getContactPhone: hubspot.getContactPhone,
     // §18.AF: modelo nudge — matchea la call con su deal y clasifica el estado.
     matchCallToDeal: hubspot.matchCallToDeal,
+    // §18.AN: poll de las citas que solo viven en HubSpot.
+    searchMeetingsInWindow: hubspot.searchMeetingsInWindow,
+    getOwnerEmailMap: hubspot.getOwnerEmailMap,
+    getMeetingContact: hubspot.getMeetingContact,
+    getScheduledCallsInWindow: db.getScheduledCallsInWindow,
+    supersedeHubspotPushes: db.supersedeHubspotPushes,
     scheduleCalendlyPush: db.scheduleCalendlyPush,
     getDueCalendlyPushes: db.getDueCalendlyPushes,
     claimCalendlyPush: db.claimCalendlyPush,
@@ -180,6 +192,7 @@ async function deps() {
     getStaleHarvestCandidates: db.getStaleHarvestCandidates,
     applyHarvestedOutcome: db.applyHarvestedOutcome,
     // §18.AC: reagendas — dedup contra Calendly + insistencia por la fecha.
+    recordRescheduleAwaitingDate: db.recordRescheduleAwaitingDate,
     getPendingManualPushes: db.getPendingManualPushes,
     supersedeManualPushes: db.supersedeManualPushes,
     getAwaitingDateOutcomes: db.getAwaitingDateOutcomes,
@@ -485,6 +498,20 @@ export async function runCalendlyPoll() {
         if (uuids.size) manualPushes = manualPushes.filter((p) => !uuids.has(p.event_uuid));
       }
 
+      // Dedup contra el poll de HubSpot (§18.AN), en el sentido inverso: la cita ya tenía push
+      // sintético porque solo estaba en el CRM, y ahora aparece en Calendly (el closer la pasó
+      // al sistema, o el sync llegó tarde). Calendly manda → se cancela el sintético. Sin esto
+      // el closer recibiría el MISMO aviso dos veces, que es peor que no recibirlo.
+      const callStartUtc = toSqliteUtc(new Date(ev.start_time));
+      if (d.supersedeHubspotPushes) {
+        const cancelados = d.supersedeHubspotPushes(email, callStartUtc, uuid);
+        if (cancelados) {
+          console.log(
+            `[Calendly] ${cancelados} push(es) de HubSpot cancelados: la cita de ${firstName} entró por Calendly (${uuid})`
+          );
+        }
+      }
+
       const message = buildPush3Message({
         name,
         firstName,
@@ -587,6 +614,147 @@ export async function runCalendlyPoll() {
   console.log(
     `[Calendly] Poll completo: ${events.length} citas, ${nuevos} push 3 agendados/actualizados${DRY_RUN() ? ' [DRY-RUN]' : ''}`
   );
+
+  // Las citas que solo existen en HubSpot, DESPUÉS de Calendly y en el mismo tick. El orden no
+  // es cosmético: al correr segundo, el poll de HubSpot ya ve en `calendly_pushes` lo que
+  // Calendly acaba de agendar, así que una cita que está en las dos fuentes queda con UN push,
+  // el de Calendly. Si corrieran en paralelo (o HubSpot primero) habría carrera y doble aviso.
+  await runHubspotAgendaPoll().catch((e) =>
+    console.error('[HubSpot] poll de agenda falló (los pushes de Calendly no se ven afectados):', e.message)
+  );
+
+  return nuevos;
+}
+
+// ─── Poll de las citas que SOLO viven en HubSpot (§18.AN) ─────────────────────
+// El closer (o un setter) agenda dentro del CRM y esa cita nunca pasa por Calendly: medido,
+// ~11 al día. Salían en la agenda del jefe pero NADIE avisaba al closer. Acá se les crean los
+// mismos Push 3/4/0 que a una cita de Calendly, pasando por los MISMOS gates (opt-in ganado,
+// pausa global, pausa por closer, dry-run por cuenta) porque reusan `scheduleCalendlyPush` y
+// los entrega `runCalendlyDelivery`.
+//
+// Apagado por default (HUBSPOT_AGENDA_POLL=true para activarlo): manda mensajes reales a
+// closers, así que se estrena mirando primero qué haría (`previewHubspotAgendaPoll`).
+export async function runHubspotAgendaPoll({ preview = false } = {}) {
+  const d = await deps();
+  if (!preview && !HUBSPOT_POLL_ENABLED()) return 0;
+  if (!d.hubspotEnabled?.() || !d.searchMeetingsInWindow || !d.getScheduledCallsInWindow) return 0;
+
+  const nowMs = d.now();
+  const minStartIso = new Date(nowMs - 5 * 60000).toISOString();
+  const maxStartIso = new Date(nowMs + 48 * 3600 * 1000).toISOString();
+  const toDb = (iso) => iso.slice(0, 19).replace('T', ' ');
+
+  const [meetings, ownerEmailById] = await Promise.all([
+    d.searchMeetingsInWindow({ fromIso: minStartIso, untilIso: maxStartIso }),
+    d.getOwnerEmailMap(),
+  ]);
+  const hubspotCalls = meetingsToCalls(meetings, { ownerEmailById, ownerToCloser: HUBSPOT_OWNER_TO_CLOSER });
+  const existingCalls = d.getScheduledCallsInWindow(toDb(minStartIso), toDb(maxStartIso));
+  const { toSchedule, skipped } = pickMeetingsToSchedule({ hubspotCalls, existingCalls });
+
+  if (preview) {
+    console.log(
+      `[HubSpot] PREVIEW: ${meetings.length} meetings → ${hubspotCalls.length} de closer → ` +
+        `${toSchedule.length} SIN push (descartadas: ${skipped.yaAgendado} ya agendadas, ` +
+        `${skipped.duplicado} duplicadas en HubSpot, ${skipped.programa} de otro CRM)`
+    );
+    for (const c of toSchedule) {
+      console.log(`   · ${c.call_start} UTC · ${c.closer_email} · ${c.program} · ${c.prospect_name || '(sin título)'}`);
+    }
+    return toSchedule.length;
+  }
+
+  let nuevos = 0;
+  for (const call of toSchedule) {
+    try {
+      const startIso = callStartToIso(call.call_start);
+      if (!startIso) continue;
+      const sched = computePush3Schedule({ startIso, leadMin: LEAD_MIN(), nowMs });
+      if (!sched.shouldSchedule) continue;
+
+      const email = call.closer_email;
+      const closer = resolveCloser(email);
+      if (!closer) continue; // el mapa ya garantiza que es closer; defensivo
+
+      // El lead sale del contacto asociado, no del título del meeting: el título es
+      // "Entrevista de Postulación Programa X", que como nombre de prospecto no sirve
+      // y deja el push sin número al cual escribirle.
+      const contacto = d.getMeetingContact ? await d.getMeetingContact(call.meeting_id) : null;
+      const name = fullNameFrom(contacto?.name) || null;
+      const firstName = firstNameFrom(contacto?.name) || '';
+      const phone = contacto?.phone || null;
+
+      const base = {
+        event_uuid: call.event_uuid,
+        program: call.program,
+        closer_email: email,
+        closer_phone: closer.phone,
+        prospect_name: contacto?.name || call.prospect_name || null,
+        prospect_phone: phone,
+        call_start: call.call_start,
+      };
+
+      const r3 = d.scheduleCalendlyPush({
+        ...base,
+        push_n: 3,
+        due_at: toSqliteUtc(new Date(sched.dueMs)),
+        message: buildPush3Message({
+          name,
+          firstName,
+          phone,
+          startIso,
+          programKey: call.program,
+          closer: firstNameFrom(closer.name),
+          linkLlamada: call.join_url || '',
+        }),
+      });
+      if (r3 === 'new' || r3 === 'rescheduled') {
+        nuevos++;
+        console.log(
+          `[HubSpot] Push 3 ${r3} (cita solo en HubSpot) → ${closer.name} | ${firstName || '?'} | ${formatCallTime(startIso)}`
+        );
+      }
+
+      const acct = accountOf(accountOfCloser(email));
+      if (acct?.push4?.() && push4AllowedFor(email)) {
+        d.scheduleCalendlyPush({
+          ...base,
+          push_n: 4,
+          due_at: toSqliteUtc(push4DueUtc(startIso, CALL_DURATION_MIN(), PUSH4_GRACE_MIN())),
+          message: buildPush4Message({ name, firstName, startIso }),
+        });
+      }
+
+      if (PUSH0_ENABLED()) {
+        const d0 = decidePush0({
+          startMs: Date.parse(startIso),
+          createdAtMs: call.created_at ? Date.parse(call.created_at) : NaN,
+          nowMs,
+          isToday: isSameDayInTz(startIso, TZ(), new Date(nowMs)),
+          push2HasRun: push2HasRunToday(PUSH2_CRON(), TZ(), new Date(nowMs)),
+          recentMs: PUSH0_RECENT_MIN() * 60000,
+        });
+        if (d0.notify) {
+          d.scheduleCalendlyPush({
+            ...base,
+            push_n: 0,
+            due_at: toSqliteUtc(new Date(nowMs)),
+            message: buildPush0Message({ name, firstName, phone, startIso, programKey: call.program }),
+          });
+        }
+      }
+    } catch (e) {
+      console.error(`[HubSpot] poll: error en ${call.event_uuid}:`, e.message);
+    }
+  }
+
+  if (toSchedule.length || nuevos) {
+    console.log(
+      `[HubSpot] Poll de agenda: ${hubspotCalls.length} calls de closer, ${nuevos} push nuevos ` +
+        `(${skipped.yaAgendado} ya venían de Calendly, ${skipped.duplicado} duplicadas en HubSpot)`
+    );
+  }
   return nuevos;
 }
 
@@ -685,8 +853,8 @@ export async function runCalendlyDelivery() {
             // §18.AG — reagenda registrada en HubSpot: cosecha 'reagendado' + agenda la call
             // nueva desde hs_next_meeting_start_time (mismo mecanismo que la reagenda manual).
             if (plan.handled && plan.reschedule) {
-              if (d.recordAutoOutcome) d.recordAutoOutcome(pendingOutcomeFrom(p, { asistencia: 'reagendado' }));
               let extra = '';
+              let agendada = false;
               const startMs = Date.parse(plan.nextMeetingStart || '');
               if (RESCHEDULE_ENABLED() && startMs && startMs > d.now()) {
                 const rp = planRescheduledPushes(pendingOutcomeFrom(p), new Date(startMs), {
@@ -699,9 +867,22 @@ export async function runCalendlyDelivery() {
                 if (rp.ok) {
                   for (const push of rp.pushes) d.scheduleCalendlyPush(push);
                   extra = ` → nueva call agendada (${rp.pushes.map((x) => `push${x.push_n}`).join(', ')})`;
+                  agendada = true;
                 } else {
                   extra = ` → no agendé la nueva (${rp.reason})`;
                 }
+              }
+              // Sin fecha nueva utilizable, la reagenda NO se cierra: se le pide la fecha al
+              // closer, exactamente igual que cuando la dicta él por WhatsApp. Antes acá había
+              // un recordAutoOutcome + markSent que la cerraba muda, y como
+              // `hs_next_meeting_start_time` viene vacío en 397 de 400 deals, ese era el camino
+              // NORMAL, no el borde: 5 de 5 reagendas cosechadas murieron ahí sin una sola
+              // repregunta (§18.AN). El cron de las 9am (runReschedulePrompts) las recoge.
+              if (!agendada && RESCHEDULE_ENABLED() && d.recordRescheduleAwaitingDate) {
+                d.recordRescheduleAwaitingDate(pendingOutcomeFrom(p));
+                extra += ' → le pido la fecha al closer';
+              } else if (d.recordAutoOutcome) {
+                d.recordAutoOutcome(pendingOutcomeFrom(p, { asistencia: 'reagendado' }));
               }
               d.markCalendlyPushSent(p.id);
               console.log(`[Calendly] Push 4 #${p.id}: agenda_status=RESCHEDULED → reagenda cosechada${extra}`);

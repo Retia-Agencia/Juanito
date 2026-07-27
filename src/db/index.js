@@ -723,6 +723,62 @@ export function supersedeManualPushes(manualUuid, realUuid) {
   return info.changes;
 }
 
+// La reagenda la cosechamos de HubSpot pero SIN fecha nueva utilizable → hay que pedírsela al
+// closer, igual que cuando la reagenda la dicta él por WhatsApp. Es `recordAutoOutcome` con la
+// única diferencia que importa: el status queda en 'awaiting_date' (no 'auto'), que es lo que
+// hace que `getAwaitingDateOutcomes` la recoja y el cron de las 9am insista hasta 3 veces.
+//
+// Sin esto, la cosecha CERRABA la reagenda en silencio: medido en producción, 5 de 5 reagendas
+// cosechadas de HubSpot quedaron con reschedule_asked=0 y sin call nueva, mientras que las que
+// venían por WhatsApp sí generaban call. La cosecha apagaba la pregunta sin reemplazarla (§18.AN).
+export function recordRescheduleAwaitingDate(o) {
+  const row = {
+    program: null,
+    closer_email: null,
+    closer_phone: null,
+    closer_name: null,
+    lead_name: null,
+    lead_phone: null,
+    ...o,
+  };
+  row.closer_phone = normalizePhone(row.closer_phone) || null;
+  return db
+    .prepare(`
+      INSERT INTO call_outcomes
+        (event_uuid, program, closer_email, closer_phone, closer_name, lead_name,
+         lead_phone, call_start, asistencia, status, asked_at)
+      VALUES
+        (@event_uuid, @program, @closer_email, @closer_phone, @closer_name, @lead_name,
+         @lead_phone, @call_start, 'reagendado', 'awaiting_date', datetime('now'))
+      ON CONFLICT(event_uuid) DO UPDATE SET
+        asistencia = 'reagendado',
+        status     = 'awaiting_date',
+        asked_at   = datetime('now')
+      WHERE call_outcomes.status = 'pending'
+    `)
+    .run(row);
+}
+
+// La cita que solo estaba en HubSpot terminó apareciendo en Calendly (el closer la pasó al
+// sistema, o el sync llegó tarde). Calendly MANDA — igual que en `mergeAgendaSources` — así que
+// los pushes sintéticos de HubSpot se cancelan: si no, el closer recibiría el MISMO aviso dos
+// veces, que es peor que no recibirlo. Match por closer + minuto de arranque, la misma clave de
+// identidad que usan el merge del reporte y agenda-poll.js.
+export function supersedeHubspotPushes(closerEmail, callStartUtc, realUuid) {
+  const info = db
+    .prepare(`
+      UPDATE calendly_pushes
+      SET status = 'skipped',
+          message = COALESCE(message, '') || ' | skip: la cita entró por Calendly como ' || ?
+      WHERE event_uuid LIKE 'hubspot:%'
+        AND status = 'scheduled'
+        AND lower(closer_email) = lower(?)
+        AND substr(call_start, 1, 16) = substr(?, 1, 16)
+    `)
+    .run(realUuid, String(closerEmail || ''), String(callStartUtc || ''));
+  return info.changes;
+}
+
 // ─── Calendly: opt-in de closers (anti-baneo) ─────────────────────────────────
 // Solo se envía en frío a un closer cuyo opt-in fue GANADO: el closer le escribió a
 // Juanito (`source='self'`). Las filas sembradas/sin verificar (`source` null/'seeded')

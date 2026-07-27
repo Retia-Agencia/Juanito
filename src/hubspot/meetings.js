@@ -76,6 +76,10 @@ export function meetingsToCalls(meetings = [], { ownerEmailById = {}, ownerToClo
       prospect_name: props.hs_meeting_title || null,
       call_start: toDbUtc(ms),
       source: 'hubspot',
+      // Extras que solo consume el poll de pushes (agenda-poll.js). El reporte los ignora.
+      meeting_id: m.id,
+      created_at: props.hs_createdate || null,
+      join_url: props.hs_meeting_external_url || props.hs_meeting_location || '',
     });
   }
   return out;

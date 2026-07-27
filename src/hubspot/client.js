@@ -278,7 +278,19 @@ export async function getOwnerEmailMap() {
 // el filtrado (owner ∈ closers, título → programa) es puro y vive en hubspot/meetings.js.
 // Pagina hasta agotar, con tope duro: un día entero de la empresa son ~220 meetings, así que
 // 1000 es holgado y evita que un rango mal calculado dispare cientos de requests.
-const MEETING_PROPS = ['hs_meeting_start_time', 'hs_meeting_title', 'hs_meeting_outcome', 'hubspot_owner_id'];
+// `hs_createdate` alimenta el Push 0 (¿es una reserva RECIÉN hecha para hoy?); el join_url y la
+// location, el Push 3 (el link de la llamada). `hs_meeting_outcome` se trae pero NO se usa para
+// decidir nada: medido sobre calls reales está vacío o en 'SCHEDULED' en casi todo el volumen
+// (1 sola 'COMPLETED' en 250 calls). El estado real vive en `agenda_status` del DEAL.
+const MEETING_PROPS = [
+  'hs_meeting_start_time',
+  'hs_meeting_title',
+  'hs_meeting_outcome',
+  'hubspot_owner_id',
+  'hs_createdate',
+  'hs_meeting_external_url',
+  'hs_meeting_location',
+];
 const MEETINGS_HARD_CAP = 1000;
 
 export async function searchMeetingsInWindow({ fromIso, untilIso }) {
@@ -325,6 +337,31 @@ export async function searchMeetingsInWindow({ fromIso, untilIso }) {
   } catch (e) {
     console.warn(`[HubSpot] searchMeetingsInWindow falló: ${e.message}`);
     return []; // la agenda degrada a solo-Calendly, no se cae
+  }
+}
+
+// El LEAD de un meeting: su primer contacto asociado, con nombre y teléfono. Lo necesita el push
+// precall de las citas que solo viven en HubSpot — sin esto el mensaje saldría con el título del
+// meeting como nombre del prospecto ("Entrevista de Postulación Programa…") y sin número al cual
+// escribirle. Tolerante a fallos: null si no hay contacto, si HubSpot está apagado o si falla.
+export async function getMeetingContact(meetingId) {
+  if (!isEnabled() || !meetingId) return null;
+  try {
+    const assoc = await request(`/crm/v3/objects/meetings/${meetingId}/associations/contacts`);
+    const id = (assoc.results || []).map((r) => r.toObjectId || r.id).filter(Boolean)[0];
+    if (!id) return null;
+    const c = await request(`/crm/v3/objects/contacts/${id}?properties=${CONTACT_PROPS.join(',')}`);
+    const p = c.properties || {};
+    const name = `${p.firstname || ''} ${p.lastname || ''}`.trim();
+    return {
+      id: c.id,
+      name: name || null,
+      email: p.email || null,
+      phone: (p.mobilephone || p.phone || '').trim() || null,
+    };
+  } catch (e) {
+    console.warn(`[HubSpot] getMeetingContact(${meetingId}) falló: ${e.message}`);
+    return null;
   }
 }
 
