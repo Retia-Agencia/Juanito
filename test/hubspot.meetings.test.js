@@ -5,7 +5,7 @@
 // programas de otra empresa (Retia) ni a los closers que no son owners ahí.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { meetingsToCalls, mergeAgendaSources, meetingStartMs, toDbUtc } from '../src/hubspot/meetings.js';
+import { meetingsToCalls, mergeAgendaSources, meetingStartMs, toDbUtc, conferencingUrl } from '../src/hubspot/meetings.js';
 import { programFromTitle } from '../src/calendly/programs.js';
 import { HUBSPOT_OWNER_TO_CLOSER, CLOSERS } from '../src/calendly/closers.js';
 
@@ -93,6 +93,49 @@ const cal = (closer, start, program = 'second_brain') => ({
   closer_email: closer,
   call_start: start,
   source: 'calendly',
+});
+
+// ─── El link de la llamada (2026-07-27) ───────────────────────────────────────
+
+test('la URL del evento de Google Calendar NO es el link de la llamada', () => {
+  // Caso real: el primer push entregado desde HubSpot llevaba esta URL como "link de la llamada".
+  // El closer se la reenvía al lead, que no puede abrir el calendario ajeno. Vacío es correcto:
+  // el mensaje cae a "nos conectamos por el link que ya te compartí".
+  const cal = 'https://www.google.com/calendar/event?eid=YzRwamVkMWxjZ282NmI5cDZs';
+  assert.equal(conferencingUrl(cal), '');
+});
+
+test('los links de videollamada de verdad sí pasan', () => {
+  assert.equal(conferencingUrl('https://meet.google.com/abc-defg-hij'), 'https://meet.google.com/abc-defg-hij');
+  assert.equal(conferencingUrl('https://us02web.zoom.us/j/123'), 'https://us02web.zoom.us/j/123');
+  assert.equal(conferencingUrl('https://teams.microsoft.com/l/meetup-join/x'), 'https://teams.microsoft.com/l/meetup-join/x');
+});
+
+test('el segundo candidato se usa si el primero no sirve', () => {
+  const url = conferencingUrl('https://www.google.com/calendar/event?eid=x', 'https://meet.google.com/abc');
+  assert.equal(url, 'https://meet.google.com/abc');
+});
+
+test('basura, texto libre y vacíos devuelven cadena vacía', () => {
+  assert.equal(conferencingUrl('Oficina piso 3'), '');
+  assert.equal(conferencingUrl('meet.google.com/sin-esquema'), '');
+  assert.equal(conferencingUrl(null, undefined, ''), '');
+  assert.equal(conferencingUrl('https://'), '');
+  // Un host que solo CONTIENE el nombre no basta (evita zoom.us.phishing.com).
+  assert.equal(conferencingUrl('https://zoom.us.otrodominio.com/j/1'), '');
+});
+
+test('el meeting sale con el join_url ya filtrado', () => {
+  const m = {
+    id: 'm1',
+    properties: {
+      hubspot_owner_id: '100',
+      hs_meeting_title: 'Entrevista de Postulación Programa de Implementación AI Second Brain',
+      hs_meeting_start_time: '2026-07-24T15:00:00Z',
+      hs_meeting_external_url: 'https://www.google.com/calendar/event?eid=x',
+    },
+  };
+  assert.equal(meetingsToCalls([m], opts)[0].join_url, '');
 });
 
 // ─── Alias de owner: el email de HubSpot ≠ el email de Calendly (2026-07-27) ───
