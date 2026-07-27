@@ -274,3 +274,87 @@ test('harvest OFF por default → agenda_status ignorado, Push 4 clásico (regre
   assert.match(h.wa.sent.at(-1).text, /¿Cómo te fue/, 'sin flags → pregunta clásica');
   assert.equal(h.store._outcomes[0].status, 'pending');
 });
+
+// ─── Origen de la call: de dónde sale el email del lead (§18.AO) ──────────────
+// Bug 2026-07-27: planNudge le pedía el email a Calendly SIEMPRE, armando la URL con el
+// event_uuid. Para una cita que solo vive en HubSpot ese uuid es 'hubspot:<meetingId>', así que
+// Calendly fallaba, el email quedaba null y el plan caía a Push 4 CLÁSICO. Medido en producción:
+// de las calls de origen Calendly, 121 de 148 outcomes se cosecharon solos; de las de origen
+// HubSpot, 0 de 3 — las tres le preguntaron al closer, que es justo lo que la cosecha evita.
+
+// Mete a mano un Push 4 ya vencido, sin pasar por el poll (la call no existe en Calendly).
+function seedPush4(h, { uuid, program = 'second_brain', closerEmail = SALAZAR, closerPhone = SALAZAR_PHONE }) {
+  const callStart = new Date(h.clock.ms - 40 * MIN).toISOString().slice(0, 19).replace('T', ' ');
+  h.store.scheduleCalendlyPush({
+    event_uuid: uuid, push_n: 4, program,
+    closer_email: closerEmail, closer_phone: closerPhone,
+    prospect_name: 'Ana Gómez', prospect_phone: '+573004445555',
+    call_start: callStart,
+    due_at: new Date(h.clock.ms - 5 * MIN).toISOString().slice(0, 19).replace('T', ' '),
+    message: 'push4 clásico',
+  });
+}
+
+test('call solo-HubSpot: el email del lead sale del contacto del meeting, y se cosecha sin preguntar', async () => {
+  process.env.HUBSPOT_AGENDA_HARVEST = 'true';
+  const now = Date.now();
+  const h = installHarness(scheduler, {
+    events: [], optins: [SALAZAR_PHONE], nowMs: now,
+    match: ({ email }) =>
+      email === 'lead@hubspot.test'
+        ? { covered: true, agendaStatus: 'COMPLETED', deal: { id: '77' } }
+        : { covered: false },
+  });
+  // El contacto asociado al meeting es la ÚNICA fuente del email para estas calls.
+  const pedidos = [];
+  h.deps.getMeetingContact = async (id) => {
+    pedidos.push(id);
+    return { id: 'c1', name: 'Ana Gómez', email: 'lead@hubspot.test', phone: '+573004445555' };
+  };
+  scheduler.__setDeps(h.deps);
+
+  seedPush4(h, { uuid: 'hubspot:113635096174' });
+  await scheduler.runCalendlyDelivery();
+
+  assert.deepEqual(pedidos, ['113635096174'], 'se le pidió el contacto a HubSpot con el meetingId pelado');
+  assert.equal(h.matchCalls[0]?.email, 'lead@hubspot.test', 'el deal se buscó con el email del contacto');
+  assert.equal(push4Msgs(h.wa).length, 0, 'NO se le pregunta al closer: la cosecha ya sabe');
+  assert.equal(h.store._outcomes[0].asistencia, 'show');
+  assert.equal(h.store._outcomes[0].status, 'auto');
+});
+
+test('call solo-HubSpot sin contacto asociado → Push 4 clásico (red de seguridad intacta)', async () => {
+  process.env.HUBSPOT_AGENDA_HARVEST = 'true';
+  const now = Date.now();
+  const h = installHarness(scheduler, {
+    events: [], optins: [SALAZAR_PHONE], nowMs: now,
+    match: { covered: true, agendaStatus: 'COMPLETED', deal: { id: '77' } },
+  });
+  h.deps.getMeetingContact = async () => null; // el meeting no tiene contacto
+  scheduler.__setDeps(h.deps);
+
+  seedPush4(h, { uuid: 'hubspot:999' });
+  await scheduler.runCalendlyDelivery();
+
+  assert.equal(push4Msgs(h.wa).length, 1, 'sin email no se puede cosechar → se pregunta, como antes');
+  assert.equal(h.matchCalls.length, 0, 'ni se llama al matcher sin email');
+});
+
+test('call de Calendly: sigue sacando el email del invitee (regresión)', async () => {
+  process.env.HUBSPOT_AGENDA_HARVEST = 'true';
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'cal-1', startInMin: 20, closerEmail: SALAZAR, prospectName: 'Ana Gómez', nowMs: now })];
+  const h = installHarness(scheduler, {
+    events, optins: [SALAZAR_PHONE], nowMs: now,
+    match: { covered: true, agendaStatus: 'COMPLETED', deal: { id: '55' } },
+  });
+  let pidioHubspot = false;
+  h.deps.getMeetingContact = async () => { pidioHubspot = true; return null; };
+  scheduler.__setDeps(h.deps);
+
+  await pollThenDeliver(h, now);
+
+  assert.equal(pidioHubspot, false, 'una call de Calendly no debe ir a buscar contactos a HubSpot');
+  assert.equal(push4Msgs(h.wa).length, 0);
+  assert.equal(h.store._outcomes[0].status, 'auto');
+});
