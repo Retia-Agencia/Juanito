@@ -3396,7 +3396,26 @@ a la vista se encendió. El preview fue lo que destapó la cita de medianoche.
 **Verificado en producción:** 2 ciclos de poll → **10 pushes creados, 10 en total** (idempotente,
 sin duplicados); 20 filas = 10 calls × (Push 3 + Push 4); las 10 con nombre y teléfono real del
 prospecto vía el contacto asociado. 125 calls se descartaron por venir ya de Calendly y 1 por
-horario. El caso de Leidy Toledo —3 meetings al mismo minuto— produjo **un** push.
+horario. El caso de Leidy Toledo —3 meetings al mismo minuto— produjo **un** push. El primer Push
+3 se **entregó de verdad** a Pablo Suarez (16:35 UTC) por su hilo de opt-in.
+
+**Bug encontrado EN el primer push entregado — `hs_meeting_external_url` no es el join_url.**
+Cuando la cita viene sincronizada de Google Calendar, esa propiedad trae la URL del **evento en el
+calendario del closer** (`google.com/calendar/event?eid=…`). Se coló al push como "link de la
+llamada", y el push está redactado para que el closer se lo **reenvíe al lead** — que no puede
+abrir el calendario ajeno. Arreglado con **lista blanca** de hosts de videollamada
+(meet/zoom/teams/whereby/jitsi/webex/…), comparando host exacto o subdominio (no "contiene", para
+que `zoom.us.otrodominio.com` no pase). Sin link, `buildPrecallText` cae a "nos conectamos por el
+link que ya te compartí", que es correcto. Solo alcanzó a salir 1 mensaje con el link malo.
+
+⚠️ **Trampa al reparar filas de `calendly_pushes` a mano** (mordida al arreglar lo de arriba): el
+poll **no reescribe el mensaje** de una fila existente — `decidePushAction` devuelve `unchanged`
+salvo que cambie `call_start`. Para regenerar un mensaje hay que BORRAR la fila y dejar que el
+poll la recree. Y hay que borrar **todos los push_n de esa call, no solo el 3**: el dedup mira
+`getScheduledCallsInWindow`, que agrupa por `event_uuid` sobre cualquier push vivo, así que un
+Push 4 huérfano hace que la call siga contando como "ya agendada" y el Push 3 nunca vuelve.
+Segundo detalle: el mensaje guarda la URL **codificada** dentro del `wa.me`, así que buscarla con
+`LIKE '%google.com/calendar%'` da 0 — hay que buscar también `google.com%2Fcalendar`.
 
 #### Lo que se midió sobre las reagendas antes de diseñar
 
