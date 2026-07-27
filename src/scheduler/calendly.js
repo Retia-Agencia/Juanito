@@ -651,13 +651,27 @@ export async function runHubspotAgendaPoll({ preview = false } = {}) {
   ]);
   const hubspotCalls = meetingsToCalls(meetings, { ownerEmailById, ownerToCloser: HUBSPOT_OWNER_TO_CLOSER });
   const existingCalls = d.getScheduledCallsInWindow(toDb(minStartIso), toDb(maxStartIso));
-  const { toSchedule, skipped } = pickMeetingsToSchedule({ hubspotCalls, existingCalls });
+  const { toSchedule, skipped, fueraDeHorario } = pickMeetingsToSchedule({
+    hubspotCalls,
+    existingCalls,
+    tz: TZ(),
+  });
+
+  // Una cita fuera de horario NO se descarta en silencio: casi siempre es un marcador y no una
+  // llamada, pero si alguna vez lo fuera, el log es la única forma de enterarse.
+  for (const c of fueraDeHorario) {
+    console.warn(
+      `[HubSpot] cita fuera de horario, SIN push: ${c.call_start} UTC · ${c.closer_email} · ` +
+        `${c.program} · ${String(c.prospect_name || '').slice(0, 60)}`
+    );
+  }
 
   if (preview) {
     console.log(
       `[HubSpot] PREVIEW: ${meetings.length} meetings → ${hubspotCalls.length} de closer → ` +
         `${toSchedule.length} SIN push (descartadas: ${skipped.yaAgendado} ya agendadas, ` +
-        `${skipped.duplicado} duplicadas en HubSpot, ${skipped.programa} de otro CRM)`
+        `${skipped.duplicado} duplicadas en HubSpot, ${skipped.programa} de otro CRM, ` +
+        `${skipped.fueraDeHorario} fuera de horario)`
     );
     for (const c of toSchedule) {
       console.log(`   · ${c.call_start} UTC · ${c.closer_email} · ${c.program} · ${c.prospect_name || '(sin título)'}`);

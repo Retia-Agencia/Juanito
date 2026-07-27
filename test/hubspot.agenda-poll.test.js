@@ -5,7 +5,14 @@
 // peor que perder el aviso: quema la confianza en Juanito y es el patrón que enoja a WhatsApp.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickMeetingsToSchedule, callKey, callStartToIso, programLivesInThisHubspot } from '../src/hubspot/agenda-poll.js';
+import {
+  pickMeetingsToSchedule,
+  callKey,
+  callStartToIso,
+  programLivesInThisHubspot,
+  withinWorkingHours,
+  localHourOf,
+} from '../src/hubspot/agenda-poll.js';
 
 const hs = (over = {}) => ({
   event_uuid: 'hubspot:m1',
@@ -91,6 +98,39 @@ test('un programa de OTRA empresa nunca se agenda desde este CRM', () => {
 test('sin programa reconocido tampoco entra', () => {
   const { toSchedule } = pickMeetingsToSchedule({ hubspotCalls: [hs({ program: null })], existingCalls: [] });
   assert.equal(toSchedule.length, 0);
+});
+
+// ─── Guardarraíl de horario ───────────────────────────────────────────────────
+
+test('una cita a medianoche NO recibe push, y se devuelve para loguearla', () => {
+  // Caso real (2026-07-27): 1 de 169 calls de HubSpot caía a las 00:00 Bogotá — un marcador de
+  // seguimiento, no una llamada. Su Push 3 le habría llegado al closer 23:35 de la noche.
+  const medianoche = hs({ call_start: '2026-07-28 05:00:00' }); // 00:00 en Bogotá
+  const { toSchedule, skipped, fueraDeHorario } = pickMeetingsToSchedule({
+    hubspotCalls: [medianoche],
+    existingCalls: [],
+  });
+  assert.equal(toSchedule.length, 0);
+  assert.equal(skipped.fueraDeHorario, 1);
+  assert.equal(fueraDeHorario.length, 1, 'se devuelve para el log: un descarte mudo sería el bug');
+});
+
+test('el horario laboral real sí pasa', () => {
+  // 15:00 UTC = 10:00 Bogotá, la franja más cargada del equipo.
+  const { toSchedule } = pickMeetingsToSchedule({ hubspotCalls: [hs()], existingCalls: [] });
+  assert.equal(toSchedule.length, 1);
+  assert.equal(localHourOf('2026-07-28 15:00:00'), 10);
+  assert.equal(withinWorkingHours('2026-07-28 12:00:00'), true); // 07:00 Bogotá — la más temprana real
+  assert.equal(withinWorkingHours('2026-07-29 00:00:00'), true); // 19:00 Bogotá — la más tardía real
+});
+
+test('los bordes de la ventana laboral', () => {
+  // La ventana es [06:00, 22:00) hora Bogotá (UTC-5).
+  assert.equal(withinWorkingHours('2026-07-28 11:00:00'), true, '06:00 entra');
+  assert.equal(withinWorkingHours('2026-07-28 10:59:00'), false, '05:59 no');
+  assert.equal(withinWorkingHours('2026-07-29 02:59:00'), true, '21:59 entra');
+  assert.equal(withinWorkingHours('2026-07-29 03:00:00'), false, '22:00 no');
+  assert.equal(withinWorkingHours('no-es-fecha'), false);
 });
 
 // ─── Lo que NO debe excluir ───────────────────────────────────────────────────
