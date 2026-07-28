@@ -111,6 +111,11 @@ services:
       # a activeAccounts(). Org URI y event_type van hardcodeados en accounts.js (no por env).
       - CALENDLY_TOKEN_RETIA=${CALENDLY_TOKEN_RETIA:-}
       - CALENDLY_DRY_RUN_RETIA=${CALENDLY_DRY_RUN_RETIA:-true}
+      # Push 5 (§18.AP): recordatorio de llenar los Sheets, N min después de que TERMINA la
+      # call. Solo lo reciben las conexiones que declaran `sheets` en accounts.js (hoy retia),
+      # así que este flag es el apagado de emergencia, no el interruptor de alcance.
+      - CALENDLY_SHEET_PUSH=${CALENDLY_SHEET_PUSH:-true}
+      - CALENDLY_SHEET_DELAY_MIN=${CALENDLY_SHEET_DELAY_MIN:-10}
       # Cuánto sigue "caliente" un outcome a medio flujo antes de ceder la respuesta del
       # closer al Push 4 más reciente (§18.AC).
       - OUTCOME_REPLY_WINDOW_MIN=${OUTCOME_REPLY_WINDOW_MIN:-120}

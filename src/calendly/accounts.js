@@ -85,6 +85,21 @@ export const ACCOUNTS = {
     dryRun: () => process.env.CALENDLY_DRY_RUN_RETIA !== 'false',
     // v1: solo pushes precall (0-3). El registro de outcomes se prende acá, no por env.
     push4: () => false,
+    // Los dos Sheets que los closers de Retia llenan después de CADA call (Push 5, §18.AP).
+    // La lista ES el interruptor: una conexión sin `sheets` no recibe el recordatorio, que es
+    // como queda 30x (no declara el campo). Ojo con la numeración: Retia NO tiene Push 4 —ver
+    // la línea de arriba—, así que este es su ÚNICO push post-call. El 5 no es un typo, el 4
+    // está ocupado por el registro de outcomes de 30x.
+    sheets: [
+      {
+        label: 'De Cero a Tactical Investor',
+        url: 'https://docs.google.com/spreadsheets/d/1DBKL4zwWWeJppe-6mzpJ4jT1G6MdEmT1Dd_uMiNBNwc/edit?gid=0#gid=0',
+      },
+      {
+        label: 'Comunicarte',
+        url: 'https://docs.google.com/spreadsheets/d/1NN6rlZXJJcgvWXYsbP99vLt9aj7FXVPd6ep4ULAcK54/edit?gid=1633631553#gid=1633631553',
+      },
+    ],
     // Su CRM no es el HubSpot que Juanito tiene conectado (ese es de 30X).
     hubspot: false,
   },
