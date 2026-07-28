@@ -3567,6 +3567,39 @@ El caso filoso del roster que el test blinda: **Sebastian Salazar** cierra para 
 desde **la misma línea de WhatsApp**, con un solo opt-in y un solo hilo. Su call de retia genera
 Push 5 y la de 30x no, porque la cuenta se resuelve por **email**, no por teléfono.
 
+#### ⚠️ Regla: dos fuentes, dos formas de `event_uuid`
+
+Salió de un bug que estuvo tres días vivo sin dar un solo error. Vale para cualquiera que toque
+`calendly_pushes`.
+
+Los pushes nacen de **tres orígenes** y su `event_uuid` no tiene una sola forma:
+
+| origen | forma del `event_uuid` |
+|---|---|
+| Calendly | el uuid del evento, pelado |
+| HubSpot (§18.AN) | `hubspot:<meetingId>` |
+| reagenda manual (§18.AC) | `manual:<uuid>:<n>` |
+
+**Todo código que resuelva o parsee ese identificador tiene que ramificar por origen.** Helpers:
+`hubspotMeetingIdOf` (`hubspot/meetings.js`, pegada a donde se acuña el prefijo) e `isManualUuid`
+(`calendly/reschedule-logic.js`).
+
+El caso real (2026-07-28): `planNudge` sacaba el email del lead pidiéndoselo a Calendly con
+`…/scheduled_events/${p.event_uuid}`. Para una cita de HubSpot esa URL es basura → error →
+`email = null` → `handled:false` → **Push 4 clásico**, o sea preguntarle al closer lo que HubSpot
+ya sabía. Medido: de las calls de Calendly, 121 de 148 se cosechaban solas; **de las de HubSpot,
+0 de 3**.
+
+Las dos lecciones que conviene no re-aprender:
+
+1. **Al sumar una segunda fuente de datos, auditar TODO lo que consume el identificador de la
+   primera.** Un `grep` de `event_uuid` bastaba para encontrarlo.
+2. **Un fallback que se activa de más no rompe nada visible: degrada callado.** Acá la red de
+   seguridad ("ante la duda, preguntá") era correcta y por eso mismo escondió el bug — no hubo
+   excepción, ni log de error, ni test en rojo. Lo destapó el jefe preguntando por un mensaje que
+   le llegó a una closer. **Si un camino tiene fallback, hay que medir con qué frecuencia se
+   toma, no solo que funcione.**
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):
