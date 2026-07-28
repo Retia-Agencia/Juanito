@@ -33,6 +33,10 @@ const OPERACIONES_ET = 'https://api.calendly.com/event_types/8462e92a-8210-4bb2-
 const INSTAGRAM_ET = 'https://api.calendly.com/event_types/d33075cb-d349-43ef-be43-6f80f9c5da03';
 const { resolveCloser, resolveCloserByPhone, resolveCloserByLid, resolveCloserByPushName, isNonCanonicalOptinJid, isIgnoredCloser, workLidForCloser } = await import('../src/calendly/closers.js');
 
+// Encabezado del bloque de materiales, literal. Se repite acá a propósito (no se importa): si
+// alguien cambia el copy en index.js, este test tiene que fallar y obligar a decidirlo.
+const MATERIALS_HEADER_TXT = 'Es MUY IMPORTANTE que puedas ver estos materiales sí o sí antes de nuestra llamada:';
+
 test('firstNameFrom parsea y capitaliza el primer nombre', () => {
   assert.equal(firstNameFrom('maría del pilar yangana '), 'María');
   assert.equal(firstNameFrom('Sebastian Castiblanco'), 'Sebastian');
@@ -268,9 +272,15 @@ test('todo programa cableado tiene copy y brochure propios', () => {
     assert.ok(key, `event_type sin clave de programa: ${et}`);
     const push1 = buildPrecallText({ programKey: key, pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
     assert.ok(push1, `${key}: no tiene copy en PROGRAM_PITCH`);
-    // Todos los brochures viajan como LINK dentro del copy (MATERIAL_LINKS.brochure): abre
-    // renderizado en el celular del lead y no depende de que el closer reenvíe un PDF.
-    assert.ok(MATERIAL_LINKS[key]?.brochure, `${key}: no entrega brochure por link`);
+    // Todo programa DECLARA su brochure, aunque no lo mande: el registro es la fuente de verdad
+    // del material del programa, y `sendLinks:false` (operaciones) solo decide si viaja en el
+    // push. Si algún día se reactiva, el link ya está donde tiene que estar.
+    assert.ok(MATERIAL_LINKS[key]?.brochure, `${key}: no declara brochure`);
+    // Los que SÍ mandan links lo hacen por LINK dentro del copy: abre renderizado en el celular
+    // del lead y no depende de que el closer reenvíe un PDF.
+    if (MATERIAL_LINKS[key].sendLinks !== false) {
+      assert.ok(push1.includes(MATERIAL_LINKS[key].brochure), `${key}: no entrega brochure por link`);
+    }
   }
 });
 
@@ -280,9 +290,32 @@ test('los programas nuevos nombran SU programa, no el de otro', () => {
   assert.ok(!dev.includes('Second Brain'), 'no debe colarse el pitch de Second Brain');
   assert.ok(!dev.includes('🎥'), 'todavía no tiene video → sin la línea de video');
 
+  // Copy propio de operaciones (2026-07-28): sin "de" delante, sin "de 30X" al final y con "IA",
+  // no "AI". Es el ÚNICO programa cuyo nombre no termina en la marca.
   const ops = buildPrecallText({ programKey: 'operaciones', pushN: 1, primerNombre: 'Ana', closer: 'Lucas', hora: '3pm' });
-  assert.match(ops, /programa de Operaciones Escalables con AI de 30X/);
-  assert.ok(ops.includes(MATERIAL_LINKS.operaciones.brochure), 'operaciones: falta su brochure por link');
+  assert.match(ops, /postulación al programa Operaciones Escalables con IA\./);
+  assert.ok(!ops.includes('con AI'), 'operaciones: el programa se llama "con IA", no "con AI"');
+});
+
+// Operaciones Escalables es la ÚNICA excepción a "el material viaja en el push" (jefe,
+// 2026-07-28): el brochure sigue declarado en PROGRAMS pero el closer lo entrega por su cuenta.
+// El encabezado se queda —en negrita— aunque no lo siga ningún link. Sin este test, un refactor
+// de materialsBlock puede "arreglar" el encabezado huérfano borrándolo, o recuperar el link.
+test('operaciones: encabezado de materiales en negrita y SIN links; el resto no se entera', () => {
+  const ops = buildPrecallText({ programKey: 'operaciones', pushN: 1, primerNombre: 'Ana', closer: 'Lucas', hora: '3pm' });
+  assert.match(ops, /\*Es MUY IMPORTANTE que puedas ver estos materiales sí o sí antes de nuestra llamada:\*/);
+  assert.ok(!ops.includes(MATERIAL_LINKS.operaciones.brochure), 'operaciones: el brochure NO debe viajar en el push');
+  assert.ok(!ops.includes('📄'), 'operaciones: sin línea de brochure');
+  assert.ok(!ops.includes('🎥'), 'operaciones: sin línea de video');
+  assert.ok(ops.trimEnd().endsWith(':*'), 'el encabezado en negrita cierra el mensaje');
+
+  // El flag es por-programa: los demás siguen con encabezado SIN negrita y CON sus links.
+  for (const prog of Object.keys(MATERIAL_LINKS)) {
+    if (prog === 'operaciones') continue;
+    const txt = buildPrecallText({ programKey: prog, pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
+    assert.ok(txt.includes(`\n${MATERIALS_HEADER_TXT}\n`), `${prog}: el encabezado no debe llevar negrita`);
+    assert.ok(!txt.includes(`*${MATERIALS_HEADER_TXT}*`), `${prog}: se le coló la negrita de operaciones`);
+  }
 });
 
 test('isIgnoredCloser: hosts conocidos no gestionados → true; mapeados/desconocidos → false', () => {
@@ -333,12 +366,14 @@ test('buildPrecallText Push 1 distingue producto (intro + nombre del programa)',
 test('buildPrecallText Push 1 incrusta el bloque de materiales del producto correcto', () => {
   for (const prog of Object.keys(MATERIAL_LINKS)) {
     const txt = buildPrecallText({ programKey: prog, pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
-    // La línea 328 ya garantiza que aparezca ≥1 material (si no hubiera ninguno, materialsBlock
-    // omite el bloque entero y este match fallaría).
+    // El encabezado va SIEMPRE, mande links o no (operaciones lo conserva con `sendLinks:false`).
     assert.match(txt, /Es MUY IMPORTANTE que puedas ver estos materiales/);
     // Brochure y video son AMBOS opcionales, pero si el programa declara uno, tiene que viajar en
     // el copy. developers/operaciones lanzaron con solo brochure; tactical_investor con solo video
     // (deck PDF pendiente). El link va dentro del copy — el lead lo abre sin depender de reenvíos.
+    // Excepción: `sendLinks:false` (operaciones) declara sus links pero no los manda — su test
+    // propio cubre ese caso, acá solo lo saltamos.
+    if (MATERIAL_LINKS[prog].sendLinks === false) continue;
     if (MATERIAL_LINKS[prog].brochure) assert.ok(txt.includes(MATERIAL_LINKS[prog].brochure), `${prog}: falta su brochure`);
     if (MATERIAL_LINKS[prog].video) assert.ok(txt.includes(MATERIAL_LINKS[prog].video), `${prog}: falta su video`);
   }
