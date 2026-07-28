@@ -356,7 +356,7 @@ function tomorrowAt(hourUtc) {
   return `${y}-${mo}-${d}T${String(hourUtc).padStart(2, '0')}:00:00.000Z`;
 }
 
-test('Push 1 Operaciones: entrega el brochure por link en el copy, sin adjuntar PDF', async () => {
+test('Push 1 Operaciones: NO manda material — encabezado en negrita y sin link ni PDF', async () => {
   const events = [
     makeEvent({ uuid: 'o1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Ana Gómez' }),
     makeEvent({ uuid: 'o2', startIso: tomorrowAt(19), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Beto Ruiz' }),
@@ -366,14 +366,18 @@ test('Push 1 Operaciones: entrega el brochure por link en el copy, sin adjuntar 
   await scheduler.runPush1();
 
   assert.equal(h.wa.sent.length, 1, 'un digest al closer');
-  assert.equal(h.wa.docs.length, 0, 'Operaciones ya no adjunta PDF: el brochure va por link');
+  assert.equal(h.wa.docs.length, 0, 'Operaciones no adjunta PDF');
   // El copy del lead viaja percent-encoded dentro del wa.me → hay que decodificar.
   const copy = decodeURIComponent(h.wa.sent[0].text);
-  assert.match(copy, /programa de Operaciones Escalables con AI de 30X/);
-  assert.match(copy, /📄 Brochure: https:\/\/drive\.google\.com/, 'lleva el link de Drive del brochure');
+  assert.match(copy, /postulación al programa Operaciones Escalables con IA\./);
+  // Desde 2026-07-28 el material NO viaja en el push (lo entrega el closer). El encabezado se
+  // queda, en negrita. Se assertan las dos mitades: que la línea esté Y que el link no.
+  assert.match(copy, /\*Es MUY IMPORTANTE que puedas ver estos materiales sí o sí antes de nuestra llamada:\*/);
+  assert.ok(!copy.includes('📄 Brochure'), 'el brochure NO debe viajar en el push');
+  assert.ok(!copy.includes('drive.google.com'), 'ningún link de Drive en el copy');
 });
 
-test('Push 1: digest mixto → ambos programas llevan su link y ninguno adjunta PDF', async () => {
+test('Push 1: digest mixto → segmenta por programa y ninguno adjunta PDF', async () => {
   const events = [
     makeEvent({ uuid: 'm1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Ana Gómez' }),
     makeEvent({ uuid: 'm2', startIso: tomorrowAt(19), closerEmail: LUCAS, eventType: INSTAGRAM_ET, prospectName: 'Beto Ruiz' }),

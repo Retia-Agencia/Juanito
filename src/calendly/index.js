@@ -241,18 +241,27 @@ export function programLabelOf(programKey) {
   return PROGRAM_LABELS[programKey] || '';
 }
 
+// Flags por-programa que se leen de `materials` (programs.js), junto a los links:
+//   · `order`      — orden de las líneas (default brochure→video; tactical_investor pide video 1º)
+//   · `sendLinks`  — en `false`, el programa CONSERVA sus URLs en el registro pero NO las manda
+//                    en el push. El encabezado SÍ se mantiene: el material lo entrega el closer
+//                    por su cuenta (operaciones, 2026-07-28). Ojo con la diferencia respecto a
+//                    "no tiene links": ahí el bloque entero se omite (ver abajo).
+//   · `boldHeader` — encabezado en negrita de WhatsApp (`*…*`).
+const MATERIALS_HEADER = 'Es MUY IMPORTANTE que puedas ver estos materiales sí o sí antes de nuestra llamada:';
+
 function materialsBlock(programKey) {
   const links = MATERIAL_LINKS[programKey] || {};
   const labels = { brochure: '📄 Brochure', video: '🎥 Video' };
-  // Default brochure→video (histórico, byte-idéntico para 30x). Un programa puede fijar su propio
-  // orden con `order` (ej: tactical_investor pide video antes que brochure).
   const order = links.order || ['brochure', 'video'];
-  const lines = [];
-  for (const kind of order) {
-    if (links[kind]) lines.push(`${labels[kind]}: ${links[kind]}`);
-  }
-  if (!lines.length) return ''; // sin links → no incluimos el bloque
-  return `\n\nEs MUY IMPORTANTE que puedas ver estos materiales sí o sí antes de nuestra llamada:\n\n${lines.join('\n')}`;
+  const hideLinks = links.sendLinks === false;
+  const lines = hideLinks ? [] : order.filter((kind) => links[kind]).map((kind) => `${labels[kind]}: ${links[kind]}`);
+  // Sin líneas y sin haberlo pedido: el programa todavía no tiene materiales cargados → se omite
+  // el bloque entero, para no mandarle al lead un "mirá estos materiales:" seguido de nada. Un
+  // `sendLinks:false` explícito SÍ deja el encabezado solo — eso es una decisión, no un olvido.
+  if (!lines.length && !hideLinks) return '';
+  const header = links.boldHeader ? `*${MATERIALS_HEADER}*` : MATERIALS_HEADER;
+  return lines.length ? `\n\n${header}\n\n${lines.join('\n')}` : `\n\n${header}`;
 }
 
 // Construye el texto precall (lo que el closer envía al lead). pushN: 1 | 2 | 3.

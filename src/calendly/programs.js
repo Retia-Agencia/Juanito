@@ -128,12 +128,23 @@ export const PROGRAMS = {
     company: '30x',
     connection: '30x',
     eventType: OPERACIONES_ET,
+    // Copy dictado por el jefe (2026-07-28). Dos cosas a propósito, distintas del resto de
+    // programas: el nombre va SIN "de" delante y SIN "de 30X" al final (la marca ya se dijo en
+    // "Por acá <closer> de 30X"), y dice "IA", no "AI" — que es como se llama el programa.
     pitch: {
       from: 'de 30X',
-      program: 'programa de Operaciones Escalables con AI de 30X',
+      program: 'programa Operaciones Escalables con IA',
     },
+    // ÚNICO programa que no manda links en el push (decisión del jefe, 2026-07-28). Los dos
+    // flags son por-programa, como `order`: sin ellos materialsBlock se comporta igual que
+    // siempre → los otros 6 programas no se enteran de nada de esto.
     materials: {
+      // El link NO está muerto: se conserva a propósito. El brochure sigue existiendo y sigue
+      // siendo el de este programa; lo único que cambió es que dejó de viajar en el push.
+      // Para volver a mandarlo: borrar `sendLinks: false`, nada más.
       brochure: 'https://drive.google.com/file/d/16NbFnJq1gCYSfQA0a2sfLbGuEBxVc8Yp/view',
+      sendLinks: false, // el closer entrega el material por su cuenta
+      boldHeader: true, // la línea de materiales va en negrita
     },
     active: true,
   },
