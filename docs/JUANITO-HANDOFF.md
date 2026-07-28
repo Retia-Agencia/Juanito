@@ -3600,6 +3600,165 @@ Las dos lecciones que conviene no re-aprender:
    le llegó a una closer. **Si un camino tiene fallback, hay que medir con qué frecuencia se
    toma, no solo que funcione.**
 
+### 18.AQ ✅ Push 1 de Operaciones: copy propio y sin material en el push (2026-07-28)
+
+Dos cambios dictados por el jefe, **solo para Operaciones Escalables con IA**. Commit `97c3bbc`,
+desplegado y verificado ejecutando `buildPrecallText` dentro del contenedor.
+
+1. **`pitch.program`** → `programa Operaciones Escalables con IA`. Sin "de" delante, sin "de 30X"
+   al final (la marca ya se dijo en "Por acá ‹closer› de 30X") y con **IA**, no "AI". Es el único
+   programa cuyo nombre no termina en la marca.
+2. **El material dejó de viajar en el push.** El encabezado *"Es MUY IMPORTANTE que puedas ver
+   estos materiales…"* **se queda, en negrita, y cierra el mensaje** — el closer entrega el
+   material por su cuenta.
+
+**El link del brochure NO se borró**: sigue en `PROGRAMS.operaciones.materials.brochure`. Para
+reactivarlo se borra `sendLinks: false` y nada más.
+
+Dos flags por-programa nuevos dentro de `materials`, por el mismo camino que ya usaba `order`:
+
+| Flag | Efecto |
+|---|---|
+| `sendLinks: false` | conserva las URLs en el registro pero no las manda en el push |
+| `boldHeader: true` | encabezado del bloque de materiales en negrita de WhatsApp |
+
+**`materialsBlock` ahora distingue dos casos que antes eran uno solo**, y la distinción importa:
+
+- **sin links cargados** → se omite el bloque entero (comportamiento histórico: evita mandarle al
+  lead un "mirá estos materiales:" seguido de nada *por descuido*)
+- **`sendLinks:false` explícito** → el encabezado se queda solo, porque eso es una **decisión**
+
+Sin esa distinción, el próximo programa que se agregue sin brochure mostraría el encabezado
+colgando sin haberlo pedido.
+
+⚠️ **El encabezado huérfano está afirmado en un test** (`el encabezado en negrita cierra el
+mensaje`). Es justo la clase de cosa que el próximo lector "arregla" borrándola.
+
+---
+
+### 18.AR 🟡 Rotar el teléfono de un closer tiene DOS pasos, y el segundo no lo hace nadie (2026-07-28)
+
+**Síntoma:** a Pablo Suarez le cambiaron el número el 2026-07-21 y **siguió recibiendo los pushes
+en el aparato viejo durante una semana**, sin un solo error.
+
+**Causa:** el teléfono del roster (`closers.js`) **no es el destino**. Es solo la LLAVE con la que
+se busca la fila del opt-in. Quien decide a dónde se entrega es **`calendly_optins.contact_jid`**
+(`deliver()`, `src/scheduler/calendly.js`). Se cambió `closers.js` y la columna `phone`, y el
+`contact_jid` quedó apuntando al hilo viejo.
+
+**Lo que hace el bug invisible es el log**, que muestra las dos cosas y pone la correcta a la
+derecha:
+
+```
+[Calendly] enviado (push3) → 7486144782578@lid [hilo de opt-in; closer +573189248507]
+                             ^^^ destino REAL (viejo)     ^^^ canónico (nuevo, decorativo)
+```
+
+Auditando logs uno jura que está bien. **Verificar la FILA, no el log:**
+`SELECT phone, contact_jid, registered_at FROM calendly_optins WHERE closer_email=…` — si el
+`contact_jid` es más viejo que el cambio de número, ese es el bug.
+
+**Arreglo (el que se usó):** que el closer le escriba cualquier cosa a Juanito desde el número
+nuevo → `handleCloserOptin` lo reconoce y reescribe el `contact_jid` solo. Requisitos y trampas:
+
+- Su **pushName debe traer nombre Y apellido**. "Pablo Suarez 30x" sirvió; "Pablo" o "P. Suárez"
+  **no matchean y fallan en silencio**.
+- **No le responde nada** si el opt-in ya existía (`yaEstaba` → solo loguea "Closer ya
+  registrado"). El silencio no significa que falló: hay que ir a mirar la fila.
+- Fallback manual: `scripts/calendly-optin-set.js "<nombre>" "<jid>"`.
+
+⚠️ **Nunca escribir el `contact_jid` a mano apuntando a un número que jamás le escribió a
+Juanito.** Eso es el envío en frío que disparó el softban anterior, y `deliver()` lo bloquea a
+propósito.
+
+**PENDIENTE (propuesto, NO implementado):** al rotar un teléfono, poner el `contact_jid` en
+`NULL` para que la entrega falle **ruidosamente** (`skipped-no-thread`, visible en logs) en vez de
+callada. Es una línea. Sin esto, le vuelve a pasar al próximo closer que rote.
+
+---
+
+### 18.AS ✅ El lead agenda con otro correo: Juanito mandaba a crear deals que ya existían (2026-07-28)
+
+**El dato de ops:** cuando una reunión aparece "sin deal", en la mayoría de los casos el negocio
+**ya existe y ya es del closer** — el lead agendó en Calendly con un correo distinto al del
+formulario, así que el deal quedó colgado de otro contacto. La instrucción a los closers es
+*"antes de crear el deal a mano, búsquenlo por nombre o por teléfono, no por el correo de la
+reunión"*.
+
+**Juanito estaba haciendo justo lo contrario.** Medido contra la API real con los dos casos que
+dio ops (`matchCallToDeal` ejecutado de verdad, no supuesto):
+
+```
+match: covered=true  reason=no_deal  deal=null   →   ACCION: nudge_create
+mensaje: "…pero está en HubSpot pero sin deal en el pipeline. ¿Le creas/actualizas el deal?"
+```
+
+**La causa raíz no es "el lead no está en HubSpot": son DOS contactos duplicados**, y el de
+Calendly es un cascarón creado **~2 minutos después** del contacto del formulario:
+
+| | contacto del FORM | contacto de CALENDLY |
+|---|---|---|
+| Francisco Patarroyo | `237475367219` · apellido ✅ · tel `573209836707` · **deal `63140649533`** | `237473023786` · apellido `null` · tel `null` · **sin deals** |
+| Diana Fonseca | `237629150473` · tel `573215087717` · **deal `63133504121`** | `237631083782` · apellido `null` · tel `null` · **sin deals** |
+
+Firma inconfundible del duplicado: **solo nombre y correo** — sin apellido, sin teléfono, sin deal.
+
+**Daño doble.** Además del nudge equivocado, el mismo desajuste les costó **el push precall**:
+`getContactPhone(correo de Calendly)` devolvía `null`, así que el closer recibía *"sin teléfono en
+Calendly — mándalo manual"* **teniendo el número a un search de distancia**, en el gemelo.
+
+#### Lo que se implementó (todo READ-ONLY)
+
+El PAK **no tiene ningún scope de escritura** — Juanito no puede fusionar contactos ni mover el
+deal, y no debe. Lo único que se arregla es **qué lee y qué le dice al closer**. El único endpoint
+nuevo es `/crm/v3/objects/contacts/search`, y **hay un test que lo fija** para que nadie le
+agregue una escritura sin romperlo.
+
+**1. Teléfono por gemelo** (`findPhoneByName`, commit `060fd9a`). Si la búsqueda por correo no da
+teléfono, se busca al homónimo por *firstname* + *última palabra del nombre* y se toma el suyo.
+
+**2. Deal por gemelo** (`dealsViaTwins` dentro de `matchCallToDeal`, commit `6463646`):
+
+| Deals de gemelos | Acción |
+|---|---|
+| **1** | lo **adopta**; el nudge sale normal (link al deal) y agrega bajo qué correo está |
+| **2+** | `nudge_review`: le muestra **todos** los candidatos y le dice que no cree uno nuevo |
+| **0** | nudge de creación **reescrito**: primero "búscalo por nombre o teléfono", después crear |
+
+#### La regla que sostiene todo esto: ambiguo = no adivinar
+
+Los dos errores **no cuestan lo mismo**. Un deal duplicado ensucia pipeline y métricas y hay que
+limpiarlo a mano; señalarle al closer el deal *de otra persona* es peor todavía, y en el caso del
+teléfono el push precall **se le envía al lead**. Treinta segundos de verificación no le cuestan
+nada a nadie. Por eso:
+
+- **Teléfono:** se juntan los de todos los homónimos, **ya normalizados a dígitos**, y solo se
+  devuelve algo si queda UNO. Si discrepan → `null` → "mándalo manual", igual que antes.
+- **Deal:** con 2+ candidatos **no se elige**. Se los muestra al closer.
+- **Un nombre de UNA palabra devuelve `null` sin consultar la API** (mismo criterio que
+  `resolveCloserByPushName`).
+
+⚠️ **Normalizar antes de comparar no es cosmético:** los dos contactos de Diana traen el **mismo**
+número, uno con `+` y otro sin él. Comparando en crudo se verían como dos teléfonos distintos y el
+rescate se caería justo en el caso que existe para resolver.
+
+#### Verificado en producción (contenedor real, 2026-07-28)
+
+```
+Francisco → teléfono 573209836707 recuperado · deal 63140649533 adoptado (el que nombró ops)
+Diana     → teléfono +573215087717 recuperado · 2 candidatos mostrados (incluye el 63133504121)
+findPhoneByName("Diana") → null     findPhoneByName("Zzz Inexistente") → null
+```
+
+#### Lo que NO resuelve
+
+La búsqueda es por **nombre exacto**: un apellido escrito distinto entre el formulario y Calendly
+se le escapa. Por eso el nudge de creación **conserva** el pedido de buscar a mano aunque Juanito
+ya haya buscado. El arreglo de fondo (que el match no dependa del correo) lo está trabajando ops
+del lado del CRM.
+
+---
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):
@@ -3611,6 +3770,23 @@ Las dos lecciones que conviene no re-aprender:
   cron puede dejar a algún closer sin su digest (Push 3 sí es resiliente). No crítico.
 - **Forzar Title Case** en nombres de prospecto (hoy "Juan pineres" se respeta tal cual): una línea en
   `fullNameFrom`.
+
+### 🔍 Visto de paso el 2026-07-28, SIN investigar
+
+- **Filas de push duplicadas.** Francisco Patarroyo tenía **dos** filas de Push 3 y **dos** de Push 4,
+  mismo `due_at`, **las dos en `scheduled`** (en otros leads el par sale `skipped`+`scheduled`). Huele
+  al asunto conocido de las dos fuentes (Calendly + HubSpot, §18.AN), pero no se verificó si eso
+  produce un envío doble al closer o si algo lo deduplica al entregar. Reproducir con:
+  `SELECT prospect_name,push_n,status,due_at FROM calendly_pushes WHERE prospect_name LIKE '%…%'`.
+- **64 tests en rojo en la máquina de Windows, y NO son de producción.** El grueso es
+  `better-sqlite3` sin binding compilado para Node 24 (todo lo que toca DB), más
+  `calendly.sheet-push.test.js › el mensaje lleva los DOS links de Retia` que falla por formato de
+  hora y **ya venía rojo antes**. Verificado con `git stash`: 64 antes y 64 después de los cambios
+  del 2026-07-28. Al medir regresiones, **comparar contra ese 64**, no contra cero.
+- **⚠️ Recrear el contenedor BORRA su historial de logs.** `docker compose up -d --build` deja
+  `docker compose logs` empezando en el arranque nuevo. El 2026-07-28 eso invalidó una medición
+  ("0 nudges en 14 días" cuando solo había 208 líneas de log). **Para medir histórico, ir a la DB,
+  no a los logs** — y si hace falta el log viejo, sacarlo ANTES de desplegar.
 
 ### Secretos (decididos, ver §13)
 
