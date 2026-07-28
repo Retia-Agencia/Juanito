@@ -16,6 +16,7 @@
 // (ej. el push precall debe salir aunque HubSpot esté caído).
 
 import { pipelineForProgram, pickDealForPipeline, classifyDealStage, isWonStage } from './deals.js';
+import { normalizePhone } from '../common/utils.js';
 
 const BASE = 'https://api.hubapi.com';
 const PAK = () => process.env.HUBSPOT_PAT || '';
@@ -135,6 +136,74 @@ export async function getContactPhone(email) {
   const p = c.properties || {};
   const phone = (p.mobilephone || p.phone || '').trim();
   return phone || null;
+}
+
+// Teléfono del lead POR NOMBRE, cuando buscarlo por su correo no dio nada.
+//
+// Causa medida (2026-07-28, casos Francisco Patarroyo y Diana Fonseca): el lead llena el
+// formulario con un correo y agenda en Calendly con OTRO. HubSpot termina con DOS contactos
+// para la misma persona, y el que Juanito consulta —el del correo de Calendly— es un cascarón
+// creado ~2 min después: sin apellido, sin teléfono y sin deal. El teléfono bueno vive en el
+// gemelo, el del formulario. Antes de esto el push salía "sin teléfono → mándalo manual"
+// teniendo el número a un search de distancia.
+//
+// REGLA DE SEGURIDAD (lo importante de esta función): solo devuelve algo si NO hay ambigüedad.
+// Se juntan los teléfonos de TODOS los homónimos y se comparan ya normalizados a dígitos; si
+// discrepan, devuelve null — que es exactamente el comportamiento de antes ("mándalo manual").
+// Mandarle al closer el número de otra persona con el mismo nombre es peor que no mandarle
+// ninguno: el push precall se envía al lead. Mismo criterio que resolveCloserByPushName en
+// calendly/closers.js (ambiguo = null = seguro).
+//
+// Un nombre de UNA sola palabra no identifica a nadie → null sin consultar.
+// READ-ONLY: solo /search. Tolerante a fallos como el resto del módulo.
+export async function findPhoneByName(fullName) {
+  if (!isEnabled() || !fullName) return null;
+  const words = String(fullName).trim().split(/\s+/).filter(Boolean);
+  if (words.length < 2) return null;
+  const firstname = words[0];
+  const lastname = words[words.length - 1]; // "Francisco Leonardo Patarroyo" → Patarroyo
+  try {
+    const data = await request('/crm/v3/objects/contacts/search', {
+      method: 'POST',
+      body: {
+        filterGroups: [
+          {
+            filters: [
+              { propertyName: 'firstname', operator: 'CONTAINS_TOKEN', value: firstname },
+              { propertyName: 'lastname', operator: 'CONTAINS_TOKEN', value: lastname },
+            ],
+          },
+        ],
+        properties: CONTACT_PROPS,
+        limit: 20,
+      },
+    });
+    const candidatos = data.results || [];
+    if (!candidatos.length) return null;
+    // Teléfono crudo por candidato (buildLeadLink ya limpia no-dígitos), indexado por su
+    // forma NORMALIZADA: así "+573215087717" y "573215087717" cuentan como el MISMO número
+    // (caso Diana: dos contactos homónimos, un solo teléfono real → no es ambigüedad).
+    const porNumero = new Map();
+    for (const c of candidatos) {
+      const p = c.properties || {};
+      const crudo = (p.mobilephone || p.phone || '').trim();
+      if (!crudo) continue;
+      const norm = normalizePhone(crudo);
+      if (norm && !porNumero.has(norm)) porNumero.set(norm, crudo);
+    }
+    if (porNumero.size !== 1) {
+      if (porNumero.size > 1) {
+        console.warn(
+          `[HubSpot] "${fullName}": ${candidatos.length} homónimos con ${porNumero.size} teléfonos distintos → NO adivino, va sin número`
+        );
+      }
+      return null;
+    }
+    return [...porNumero.values()][0];
+  } catch (e) {
+    console.warn(`[HubSpot] findPhoneByName(${fullName}) falló: ${e.message}`);
+    return null;
+  }
 }
 
 // ─── Pipelines y deals (modelo nudge) ─────────────────────────────────────────

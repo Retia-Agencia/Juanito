@@ -186,6 +186,8 @@ async function deps() {
     // (read-only). Se autodesactiva si HubSpot no está configurado → comportamiento previo.
     hubspotEnabled: hubspot.isEnabled,
     getContactPhone: hubspot.getContactPhone,
+    // Rescate del teléfono cuando el lead agendó con otro correo (ver resolvePhone).
+    findPhoneByName: hubspot.findPhoneByName,
     // §18.AF: modelo nudge — matchea la call con su deal y clasifica el estado.
     matchCallToDeal: hubspot.matchCallToDeal,
     // §18.AN: poll de las citas que solo viven en HubSpot.
@@ -256,10 +258,27 @@ async function resolvePhone(d, invitee, account) {
   const acct = account || accountOf(DEFAULT_ACCOUNT);
   if (!acct?.hubspot) return null;
   const email = invitee?.email;
-  if (!email || !d.hubspotEnabled?.() || !d.getContactPhone) return null;
-  const p = await d.getContactPhone(email).catch(() => null);
-  if (p) console.log(`[HubSpot] teléfono de ${email} recuperado (Calendly sin número)`);
-  return p;
+  if (!d.hubspotEnabled?.()) return null;
+  if (email && d.getContactPhone) {
+    const p = await d.getContactPhone(email).catch(() => null);
+    if (p) {
+      console.log(`[HubSpot] teléfono de ${email} recuperado (Calendly sin número)`);
+      return p;
+    }
+  }
+  // Último recurso: el GEMELO por nombre. Cuando el lead agenda con un correo distinto al del
+  // formulario, HubSpot queda con dos contactos y el del correo de Calendly es un cascarón sin
+  // teléfono — así que la búsqueda por email de arriba devuelve null teniendo el número al lado
+  // (medido 2026-07-28). findPhoneByName solo responde si NO hay ambigüedad; ante homónimos con
+  // teléfonos distintos devuelve null y el push sale "mándalo manual", como antes.
+  if (!d.findPhoneByName) return null;
+  const porNombre = await d.findPhoneByName(invitee?.name).catch(() => null);
+  if (porNombre) {
+    console.log(
+      `[HubSpot] teléfono de "${invitee?.name}" recuperado por NOMBRE (su correo de Calendly ${email || '(sin correo)'} no tiene teléfono en HubSpot)`
+    );
+  }
+  return porNombre;
 }
 
 // Payload de createPendingOutcome para una fila de push. `extra` permite fijar `reminded`
