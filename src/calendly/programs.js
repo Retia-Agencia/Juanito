@@ -100,13 +100,14 @@ export const PROGRAMS = {
   developers: {
     key: 'developers',
     label: 'AI for Developers',
-    // 'hardcore' es el nombre NUEVO del mismo programa (2026-07-27): en HubSpot los deals ya se
-    // llaman "‹lead› | Hardcore AI" —672 de los 685 del pipeline 887379064 en 30 días— pero los
-    // títulos de las citas siguen diciendo "AI for Developers", así que hoy matchean por el hint
-    // viejo. El hint nuevo NO cambia nada ahora (medido: 0 citas de closer con "Hardcore" en el
-    // título en 21 días); está para que el día que renombren el event type de Calendly, Juanito
-    // no deje de reconocer esas calls EN SILENCIO — sin push precall y fuera de la agenda del
-    // jefe, que es exactamente la clase de falla que no avisa.
+    // 'hardcore' NO es un rename: el programa se llama AI for Developers de cara al cliente
+    // (confirmado por el jefe 2026-07-28), y por eso el label y el pitch de acá abajo se quedan
+    // como están. "Hardcore AI" es cómo se nombran los DEALS puertas adentro de HubSpot: 672 de
+    // los 685 del pipeline 887379064 en 30 días se llaman "‹lead› | Hardcore AI".
+    // El hint existe solo como seguro: hoy no matchea nada (medido, 0 citas de closer con
+    // "Hardcore" en el título en 21 días), pero si alguna vez ese naming interno se filtra al
+    // título de una cita, Juanito la reconoce igual en vez de ignorarla EN SILENCIO — sin push
+    // precall y fuera de la agenda del jefe, que es la clase de falla que no avisa.
     titleHints: ['developer', 'hardcore'],
     company: '30x',
     connection: '30x',

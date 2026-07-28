@@ -40,10 +40,11 @@ test('programa derivado del título, con los naming reales de HubSpot', () => {
   assert.equal(programFromTitle('Entrevista de Postulación Programa AI for Developers 30X'), 'developers');
 });
 
-test('"Hardcore AI" es el nombre nuevo de AI for Developers → el mismo programa', () => {
-  // El rename (2026-07-27) ya ocurrió en los deals de HubSpot ("‹lead› | Hardcore AI") pero
-  // todavía no en los títulos de las citas. Este test fija que cuando llegue al event type de
-  // Calendly, esas calls NO desaparezcan en silencio de los pushes y de la agenda del jefe.
+test('"Hardcore AI" (naming interno de los deals) también cae en AI for Developers', () => {
+  // NO es un rename: de cara al cliente el programa se llama AI for Developers. "Hardcore AI"
+  // es cómo se nombran los deals dentro de HubSpot. Hoy ningún título de cita lo usa; el hint
+  // es un seguro para que, si ese naming interno se filtra a una cita, la call NO desaparezca
+  // en silencio de los pushes y de la agenda del jefe.
   assert.equal(programFromTitle('Hardcore AI/Jose Luis Ruiz'), 'developers');
   assert.equal(programFromTitle('Entrevista de Postulación Programa Hardcore AI 30X'), 'developers');
   assert.equal(programFromTitle('HARDCORE AI'), 'developers');
