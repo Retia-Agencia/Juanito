@@ -43,6 +43,7 @@ import {
   buildReschedulePromptMessage,
 } from '../calendly/index.js';
 import { computePush3Schedule, decidePush0 } from '../calendly/push-logic.js';
+import { push5DueUtc, buildPush5Message } from '../calendly/sheet-push.js';
 import { pickSupersededPushes, isManualUuid, planRescheduledPushes } from '../calendly/reschedule-logic.js';
 import { isCoveredProgram, decideFromAgenda } from '../hubspot/deals.js';
 import { decideNudgeAction, buildDealNudgeMessage, buildCreateDealNudgeMessage, dealUrl } from '../hubspot/nudge.js';
@@ -87,6 +88,14 @@ function push4AllowedFor(email) {
 }
 const CALL_DURATION_MIN = () => Number(process.env.CALENDLY_CALL_DURATION_MIN || 30);
 const PUSH4_GRACE_MIN = () => Number(process.env.CALENDLY_PUSH4_GRACE_MIN || 5);
+
+// Push 5 (§18.AP): recordatorio de llenar los Google Sheets, N minutos después de que la call
+// TERMINA. Quién lo recibe NO se decide acá: lo decide la conexión, declarando `sheets` en
+// accounts.js (hoy solo retia). Este flag es el interruptor global de emergencia, para poder
+// apagarlo sin redeploy y sin cortarle a un closer el resto de sus pushes (que es lo que hace
+// `/calendly off <closer> <cuenta>`).
+const SHEET_PUSH_ENABLED = () => process.env.CALENDLY_SHEET_PUSH !== 'false'; // default true
+const SHEET_PUSH_DELAY_MIN = () => Number(process.env.CALENDLY_SHEET_DELAY_MIN || 10);
 
 // Modelo nudge (§18.AF): para programas con pipeline en HubSpot, en vez de preguntarle
 // el outcome al closer, Juanito revisa el deal y solo lo pica si sigue en "Agendado"
@@ -601,6 +610,38 @@ export async function runCalendlyPoll() {
         }
       }
 
+      // ─── Push 5: recordatorio de llenar los Sheets (§18.AP) ──────────────────
+      // Solo las conexiones que declaran `sheets` (hoy retia). Vence al FIN REAL de la call
+      // (ev.end_time) + delay, no a start+duración: una call de 45 min no debe recibirlo
+      // mientras sigue en curso. Mismo dedup UNIQUE(event_uuid, push_n) que los demás; el
+      // mensaje real se reconstruye al entregar.
+      //
+      // OJO con la numeración: es 5 y no 4 porque el 4 es el registro de outcome de 30x, que
+      // esta cuenta tiene apagado (account.push4() → false). Retia se salta el 4.
+      if (SHEET_PUSH_ENABLED() && account.sheets?.length) {
+        const due5 = push5DueUtc(ev.start_time, ev.end_time, {
+          durationMin: CALL_DURATION_MIN(),
+          delayMin: SHEET_PUSH_DELAY_MIN(),
+        });
+        const r5 = d.scheduleCalendlyPush({
+          event_uuid: uuid,
+          push_n: 5,
+          program: programKey,
+          closer_email: email,
+          closer_phone: closer.phone,
+          prospect_name: invitee?.name || null,
+          prospect_phone: phone,
+          call_start: toSqliteUtc(new Date(ev.start_time)),
+          due_at: toSqliteUtc(due5),
+          message: buildPush5Message({ name, firstName, startIso: ev.start_time, sheets: account.sheets }),
+        });
+        if (r5 === 'new' || r5 === 'rescheduled') {
+          console.log(
+            `[Calendly] Push 5 ${r5} → ${closer.name} | ${firstName} | call ${formatCallTime(ev.start_time)} (sheets ${toSqliteUtc(due5)} UTC)`
+          );
+        }
+      }
+
       // ─── Push 0: aviso de "nueva call HOY" (§18.C) ───────────────────────────
       // Solo para reservas genuinamente nuevas de calls de hoy, una vez ya pasaron
       // los digests. Reusa la misma fila/dedup que los demás pushes (push_n=0,
@@ -1083,6 +1124,59 @@ export async function runCalendlyDelivery() {
           } else if (r4 === 'paused' || r4 === 'paused-closer') {
             if (d.revertCalendlyPush) d.revertCalendlyPush(p.id); // reintentar al despausar
           } else if (r4 === 'skipped-no-thread') {
+            d.markCalendlyPushSkipped(p.id, 'sin hilo establecido (contact_jid)');
+          } else {
+            d.markCalendlyPushSkipped(p.id, 'closer sin opt-in');
+          }
+          procesados++;
+          continue;
+        }
+
+        // ─── Push 5: recordatorio de llenar los Sheets (§18.AP) ──────────────
+        // Va ACÁ, antes del guard de obsolescencia, y termina en `continue`. No es
+        // cuestión de estilo: el guard descarta todo push cuya call ya empezó, y este
+        // vence DESPUÉS de que terminó, así que si lo alcanzara se marcaría 'skipped'
+        // siempre y no se enviaría nunca. Es la misma maniobra del Push 4 de arriba
+        // (salir antes), no una excepción dentro del guard: el guard no se toca.
+        if (p.push_n === 5) {
+          // Cancelada o movida → no pedir que registre una call que no pasó. Los uuids
+          // sintéticos de reagenda no existen en Calendly: no se consultan.
+          let ev5 = null;
+          if (!isManualUuid(p.event_uuid)) {
+            try {
+              ev5 = await d.getEvent(`https://api.calendly.com/scheduled_events/${p.event_uuid}`);
+            } catch {
+              /* si la verificación falla, mandamos igual con lo guardado */
+            }
+          }
+          if (ev5 && ev5.status !== 'active') {
+            d.markCalendlyPushSkipped(p.id, `cita ${ev5.status}`);
+            console.log(`[Calendly] Push 5 #${p.id} omitido: cita ${ev5.status}`);
+            continue;
+          }
+          if (ev5 && toSqliteUtc(new Date(ev5.start_time)) !== p.call_start) {
+            d.markCalendlyPushSkipped(p.id, 'reagendada (el poll agendará la nueva hora)');
+            console.log(`[Calendly] Push 5 #${p.id} omitido: reagendada`);
+            continue;
+          }
+
+          // Reconstruido acá, no `p.message`, por lo mismo que los demás pushes: un cambio
+          // de copy o de link no llega a las filas ya agendadas (decidePushAction devuelve
+          // 'unchanged' mientras la hora no cambie). Los sheets salen de la cuenta del
+          // CLOSER, igual que el dry-run.
+          const acct5 = accountOf(accountOfCloser(p.closer_email));
+          const msg5 = buildPush5Message({
+            name: fullNameFrom(p.prospect_name),
+            firstName: firstNameFrom(p.prospect_name),
+            startIso: ev5?.start_time || `${p.call_start.replace(' ', 'T')}Z`,
+            sheets: acct5?.sheets || [],
+          });
+          const r5 = await deliver(d, p.closer_phone, msg5, 'push5', p.closer_email);
+          if (r5 === 'sent' || r5 === 'dry-run') {
+            d.markCalendlyPushSent(p.id);
+          } else if (r5 === 'paused' || r5 === 'paused-closer') {
+            if (d.revertCalendlyPush) d.revertCalendlyPush(p.id); // reintentar al despausar
+          } else if (r5 === 'skipped-no-thread') {
             d.markCalendlyPushSkipped(p.id, 'sin hilo establecido (contact_jid)');
           } else {
             d.markCalendlyPushSkipped(p.id, 'closer sin opt-in');
