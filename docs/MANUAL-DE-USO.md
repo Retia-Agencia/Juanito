@@ -225,6 +225,25 @@ Botón de pánico de los pushes a closers.
 > reconoce acá (es a propósito: un nombre de una palabra es ambiguo y podría apuntar a la persona
 > equivocada).
 
+### Recordatorio de los Sheets (solo Retia)
+
+Los closers de **Retia** reciben, **10 minutos después de que termina cada call**, un mensaje
+con los dos links de los Google Sheets que tienen que llenar. No hay que contestarlo: Juanito no
+revisa los sheets y no insiste.
+
+Nadie más lo recibe. El alcance no se controla por comando sino por configuración: solo las
+cuentas que declaran sus sheets en `src/calendly/accounts.js` lo tienen, y hoy es únicamente
+Retia.
+
+Para apagarlo:
+- `/calendly off <closer> retia` → le corta **todo** a ese closer en Retia, incluidos los pushes
+  precall. Es el botón de pánico normal.
+- `CALENDLY_SHEET_PUSH=false` en el VPS → apaga **solo** este recordatorio, para todos, dejando
+  los pushes precall funcionando.
+
+> Ojo con la numeración si andás mirando logs: internamente es el **Push 5**. Retia no tiene
+> Push 4 (el registro de calls de la sección de abajo), así que salta del 3 al 5.
+
 ---
 
 ## Registro de calls — lo que responde el **closer** (sin comandos)

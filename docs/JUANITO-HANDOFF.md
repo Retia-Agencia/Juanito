@@ -3510,6 +3510,63 @@ cita que entró por Calendly también se puede mover en el CRM) y `HUBSPOT_RESCH
   lo trae. El env **reemplaza** el default entero (no lo completa), así que el programa quedaba
   fuera del modelo nudge/cosecha. El pipeline `906259304` es real: **3360 deals en 60 días**.
 
+### 18.AP 🟢 Push 5 — recordatorio de llenar los Sheets, solo Retia (2026-07-27)
+
+**El problema:** los closers de Retia deben registrar cada llamada en dos Google Sheets y no lo
+hacían de forma confiable. Nadie se lo recordaba: Retia recibe solo los pushes **precall (0-3)**
+porque `ACCOUNTS.retia.push4` está en `false` a propósito — o sea, cero contacto post-call.
+
+**Qué se agregó:** un push que sale **10 minutos después de que TERMINA cada call** de Retia,
+con los dos links. Un disparo, sin repregunta.
+
+#### Por qué es el 5 y no el 4
+
+El 4 está ocupado: es el **registro de outcome** de 30X ("¿cómo te fue? 1 Show / 2 No show / 3
+Reagendó"), con su máquina de pendientes, cosecha de HubSpot y recordatorios. Retia lo tiene
+apagado. Reusar el número habría obligado a bifurcar por cuenta dentro de toda esa maquinaria
+— o sea, a tocar el camino de 30X, que era justo lo que este cambio no podía hacer (había un PR
+abierto sobre 30X). Así que **Retia se salta el 4**: sus pushes son 0, 1, 2, 3 y 5.
+
+#### Cómo se decide quién lo recibe
+
+**La lista `sheets` de la conexión ES el interruptor de alcance** (`accounts.js`). Una conexión
+que no declara `sheets` no lo recibe, y así queda 30x: no se le agregó el campo. No hay un
+`sheetReminder: () => bool` aparte — un concepto en vez de dos.
+
+`CALENDLY_SHEET_PUSH=false` es el apagado de emergencia global (sin redeploy), no el control de
+alcance. Se separa de `/calendly off <closer> retia` a propósito: ese corta **todos** los pushes
+de ese closer, incluidos los precall.
+
+#### La decisión de tiempo: `end_time` real, no duración asumida
+
+`push4DueUtc` asume 30 minutos (`CALENDLY_CALL_DURATION_MIN`). El Push 5 usa **`ev.end_time`**,
+que viene en el payload de Calendly y hasta ahora no lo leía nadie en el repo. Con una call de
+45 o 60 minutos, la duración asumida mandaría el recordatorio **con el closer todavía hablando**.
+Sin `end_time` utilizable (uuid sintético de reagenda, payload viejo) cae a `start + duración`.
+
+#### El detalle que lo rompería en silencio
+
+`runCalendlyDelivery` tiene un **guard de obsolescencia** que descarta todo push cuya call ya
+empezó. Un push post-call lo choca por definición: si lo alcanzara, se marcaría `skipped`
+**siempre** y la feature no enviaría nunca nada, sin un solo error en los logs.
+
+La solución no es meterle una excepción al guard (eso es tocar el camino de 30X), sino **salir
+de la iteración antes de llegar a él** — exactamente la maniobra que el Push 4 ya usaba y que su
+comentario describe como "INVIERTE el guard". El bloque del Push 5 va justo después del de
+Push 4 y termina en `continue`. **El guard quedó sin tocar.** Hay un test dedicado a esto
+(`test/calendly.sheet-push.test.js`), porque es el tipo de bug que no se nota hasta que alguien
+pregunta por qué nunca llegó el mensaje.
+
+#### Alcance verificado
+
+Al implementarlo se midió el VPS: Retia **ya estaba en vivo** (`CALENDLY_DRY_RUN_RETIA=false`,
+el `.env` local decía `true` y estaba desactualizado), los tres closers con `contact_jid`, y
+~27 pushes en 7 días. El Push 5 suma ~4 mensajes/día entre 3 closers.
+
+El caso filoso del roster que el test blinda: **Sebastian Salazar** cierra para las dos empresas
+desde **la misma línea de WhatsApp**, con un solo opt-in y un solo hilo. Su call de retia genera
+Push 5 y la de 30x no, porque la cuenta se resuelve por **email**, no por teléfono.
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):
