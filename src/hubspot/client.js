@@ -156,10 +156,13 @@ export async function getContactPhone(email) {
 //
 // Un nombre de UNA sola palabra no identifica a nadie → null sin consultar.
 // READ-ONLY: solo /search. Tolerante a fallos como el resto del módulo.
-export async function findPhoneByName(fullName) {
-  if (!isEnabled() || !fullName) return null;
+// Contactos GEMELOS: los homónimos del lead en HubSpot. Es la vía para llegar a la persona
+// cuando el correo con el que agendó no es el del formulario. READ-ONLY (solo /search).
+// Un nombre de UNA palabra no identifica a nadie → [] sin consultar la API.
+export async function searchContactsByName(fullName) {
+  if (!isEnabled() || !fullName) return [];
   const words = String(fullName).trim().split(/\s+/).filter(Boolean);
-  if (words.length < 2) return null;
+  if (words.length < 2) return [];
   const firstname = words[0];
   const lastname = words[words.length - 1]; // "Francisco Leonardo Patarroyo" → Patarroyo
   try {
@@ -178,7 +181,16 @@ export async function findPhoneByName(fullName) {
         limit: 20,
       },
     });
-    const candidatos = data.results || [];
+    return data.results || [];
+  } catch (e) {
+    console.warn(`[HubSpot] searchContactsByName(${fullName}) falló: ${e.message}`);
+    return [];
+  }
+}
+
+export async function findPhoneByName(fullName) {
+  try {
+    const candidatos = await searchContactsByName(fullName);
     if (!candidatos.length) return null;
     // Teléfono crudo por candidato (buildLeadLink ya limpia no-dígitos), indexado por su
     // forma NORMALIZADA: así "+573215087717" y "573215087717" cuentan como el MISMO número
@@ -279,15 +291,60 @@ export async function getContactDeals(contactId) {
 //   { covered:true, deal:null,   reason:'no_deal' }         → contacto sin deal en el pipeline
 //   { covered:true, deal, status:'stale'|'resolved'|'unknown', contact, pipelineId }
 // Tolerante a fallos: cualquier error → { covered:true, error } (el engine cae a preguntar).
-export async function matchCallToDeal({ email, programKey }) {
+// Deals del pipeline que cuelgan de los GEMELOS del lead (mismos nombre y apellido, otro
+// correo). Es la red que atrapa el caso medido el 2026-07-28: el lead agenda con un correo
+// distinto al del formulario, HubSpot crea un contacto aparte sin deal, y el deal REAL —que
+// ya existe y ya es del closer— queda colgado del contacto del formulario.
+// Devuelve deals ÚNICOS por id, saltándose el contacto que ya se revisó por correo.
+// READ-ONLY. Tope de 5 gemelos: más que eso es un nombre demasiado común para confiar.
+async function dealsViaTwins({ name, pipelineId, skipContactId }) {
+  const gemelos = (await searchContactsByName(name)).filter((c) => String(c.id) !== String(skipContactId));
+  const porId = new Map();
+  for (const g of gemelos.slice(0, 5)) {
+    const deal = pickDealForPipeline(await getContactDeals(g.id), pipelineId);
+    if (deal && !porId.has(String(deal.id))) porId.set(String(deal.id), { deal, contact: g });
+  }
+  return [...porId.values()];
+}
+
+export async function matchCallToDeal({ email, programKey, name = null }) {
   const pipelineId = pipelineForProgram(programKey);
   if (!pipelineId) return { covered: false };
   if (!isEnabled() || !email) return { covered: true, contact: null, deal: null, reason: 'no_contact' };
   try {
     const contact = await findContactByEmail(email);
-    if (!contact) return { covered: true, contact: null, deal: null, reason: 'no_contact', pipelineId };
-    const deals = await getContactDeals(contact.id);
-    const deal = pickDealForPipeline(deals, pipelineId);
+    const deals = contact ? await getContactDeals(contact.id) : [];
+    let deal = contact ? pickDealForPipeline(deals, pipelineId) : null;
+    let viaTwin = null;
+
+    // Sin deal por el correo de la reunión → buscar al gemelo ANTES de declarar que no existe.
+    // Decir "no está en HubSpot, créalo" cuando el deal sí existe hace que el closer cree un
+    // duplicado, que es exactamente lo que ops pidió evitar.
+    if (!deal && name) {
+      const candidatos = await dealsViaTwins({ name, pipelineId, skipContactId: contact?.id });
+      if (candidatos.length === 1) {
+        deal = candidatos[0].deal;
+        viaTwin = candidatos[0].contact;
+        console.log(
+          `[HubSpot] "${name}": el deal ${deal.id} estaba colgado de otro contacto (${viaTwin.properties?.email}) — no es un lead sin deal`
+        );
+      } else if (candidatos.length > 1) {
+        // Varios homónimos CON deal (caso real: dos "Diana Fonseca"). No elegimos por el
+        // closer: le mostramos los candidatos. Adivinar aquí sería señalarle el deal de otra
+        // persona, y ese error es más caro que pedirle 10 segundos de revisión.
+        console.warn(`[HubSpot] "${name}": ${candidatos.length} deals de homónimos → que revise el closer`);
+        return {
+          covered: true,
+          contact,
+          deal: null,
+          reason: 'ambiguous_twin',
+          twinDealIds: candidatos.map((c) => String(c.deal.id)),
+          pipelineId,
+        };
+      }
+    }
+
+    if (!contact && !deal) return { covered: true, contact: null, deal: null, reason: 'no_contact', pipelineId };
     if (!deal) return { covered: true, contact, deal: null, reason: 'no_deal', pipelineId };
     const stages = await getPipelineStages(pipelineId);
     const status = classifyDealStage(deal.properties?.dealstage, stages);
@@ -299,6 +356,9 @@ export async function matchCallToDeal({ email, programKey }) {
       deal,
       status,
       pipelineId,
+      // Contacto del que colgaba el deal cuando NO era el del correo de la reunión. El mensaje
+      // al closer lo menciona para que entienda por qué no lo encontraba donde lo buscaba.
+      viaTwin: viaTwin ? { id: viaTwin.id, email: viaTwin.properties?.email || null } : null,
       agendaStatus: props.agenda_status || null,
       nextMeetingStart: props.hs_next_meeting_start_time || null,
       nextMeetingName: props.hs_next_meeting_name || null,

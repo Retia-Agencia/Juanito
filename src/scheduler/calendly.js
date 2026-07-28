@@ -46,7 +46,7 @@ import { computePush3Schedule, decidePush0 } from '../calendly/push-logic.js';
 import { push5DueUtc, buildPush5Message } from '../calendly/sheet-push.js';
 import { pickSupersededPushes, isManualUuid, planRescheduledPushes } from '../calendly/reschedule-logic.js';
 import { isCoveredProgram, decideFromAgenda } from '../hubspot/deals.js';
-import { decideNudgeAction, buildDealNudgeMessage, buildCreateDealNudgeMessage, dealUrl } from '../hubspot/nudge.js';
+import { decideNudgeAction, buildDealNudgeMessage, buildCreateDealNudgeMessage, buildTwinReviewMessage, dealUrl } from '../hubspot/nudge.js';
 import { meetingsToCalls, hubspotMeetingIdOf } from '../hubspot/meetings.js';
 import { pickMeetingsToSchedule, callStartToIso, programLivesInThisHubspot } from '../hubspot/agenda-poll.js';
 import { pickRescheduledAway } from '../hubspot/reschedule-detect.js';
@@ -332,7 +332,8 @@ async function planNudge(d, p) {
   }
   if (!email) return { handled: false };
 
-  const match = await d.matchCallToDeal({ email, programKey: p.program });
+  // `name`: sin él, matchCallToDeal no puede buscar al GEMELO cuando el lead agendó con otro correo.
+  const match = await d.matchCallToDeal({ email, programKey: p.program, name: p.prospect_name });
   const lead = fullNameFrom(p.prospect_name);
 
   // §18.AG — cosecha por estado de agenda (evolución del nudge). Solo si el flag está y el
@@ -349,7 +350,7 @@ async function planNudge(d, p) {
       return { handled: true, reschedule: true, nextMeetingStart: match.nextMeetingStart, reason: 'RESCHEDULED' };
     if (a.action === 'skip') return { handled: true, silent: true, reason: a.reason };
     if (a.action === 'nudge')
-      return { handled: true, message: buildDealNudgeMessage({ name: lead, url: dealUrl(match.deal?.id) }) };
+      return { handled: true, message: buildDealNudgeMessage({ name: lead, url: dealUrl(match.deal?.id), viaTwin: match.viaTwin }) };
     // a.action === 'ask' → sin estado claro → cae al modelo por etapa / clásico.
   }
 
@@ -358,7 +359,9 @@ async function planNudge(d, p) {
   const decision = decideNudgeAction(match);
   if (decision.action === 'silent') return { handled: true, silent: true, reason: match.status };
   if (decision.action === 'nudge_update')
-    return { handled: true, message: buildDealNudgeMessage({ name: lead, url: decision.dealUrl }) };
+    return { handled: true, message: buildDealNudgeMessage({ name: lead, url: decision.dealUrl, viaTwin: match.viaTwin }) };
+  if (decision.action === 'nudge_review')
+    return { handled: true, message: buildTwinReviewMessage({ name: lead, urls: decision.dealUrls }) };
   if (decision.action === 'nudge_create')
     return { handled: true, message: buildCreateDealNudgeMessage({ name: lead, reason: decision.reason }) };
   return { handled: false }; // 'ask' / unknown / error → Push 4 clásico
