@@ -3905,6 +3905,27 @@ creando desde el poll (cada 5 min). Si el meeting se crea en HubSpot **después*
 mañana y a menos de 10 min de la call, el closer se entera solo por el Push 3. El Push 0 tapa ese
 hueco únicamente si el booking cae dentro de la ventana `PUSH0_RECENT_MIN`.
 
+#### Desplegado 2026-07-29 16:20 UTC
+
+⚠️ **El fix no limpia las gemelas que YA estaban en la base** — solo evita que nazcan nuevas. Se
+descubrió en el pre-vuelo: a las 16:05 Sebas iba a recibir **dos Push 3 para la misma call**. Hubo
+que apagar a mano las filas perdedoras aplicando la misma regla del código nuevo (`dedupeSameCall`
+sobre las calls futuras). Fueron 2 filas: `manual:b9bd368b…:1` push3 `id=1870` y push4 `id=1871`.
+**Si se vuelve a tocar esta lógica, revisar si quedan gemelas vivas antes de dar por cerrado.**
+La pareja de Pablo Suárez ya había disparado esa mañana: **recibió el push duplicado**.
+
+Notas del deploy, para la próxima:
+- **Reiniciar en el hueco entre tandas de pushes.** Se miran los `due_at` pendientes y se busca un
+  claro (ese día: 15 min entre 16:20 y 16:35). Bajó ~20 s; WA reconectó **sin QR y sin 405**.
+- **Verificar ejercitando los módulos REALES dentro del contenedor**, no una copia: Sebas dio 6, y
+  `pickMeetingsToSchedule` confirmó **7 citas del CRM** que el digest de esa noche sí incluiría
+  (28 ya venían de Calendly → el dedup funciona contra la API real).
+- `HUBSPOT_ENABLED` vale `""` en producción y eso **no** apaga nada: `isEnabled()` es
+  `Boolean(PAK()) && HUBSPOT_ENABLED !== 'false'`. Verificarlo antes de asumir que el fix quedó
+  activo (es justo la trampa 3 del §12).
+- Respaldos: `juanito-backup-20260729-pre18AU.tar.gz`, imagen `juanito-agent:pre-18AU-…`,
+  DB en `brain-backup-20260729-pre-18AU.sqlite`.
+
 ---
 
 ### 🟢 Baja prioridad / Nice-to-have
