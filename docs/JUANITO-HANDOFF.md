@@ -3820,6 +3820,93 @@ si vuelve a fallar parar de nuevo. Insistir alarga el bloqueo.
 
 ---
 
+### 18.AU 🔴 Dos bugs que el CRM destapó: el digest ciego y la call contada dos veces (2026-07-29)
+
+**Cómo se destapó:** Daniela Camacho reportó que no le avisaron de dos calls (David Pulido y
+"Julián segura" — no *Juliana*, así está en el CRM). Sebastián Rodríguez reportó que la agenda de
+las 7am le puso **7 calls cuando tenía 6**. Son **dos bugs independientes**, los dos con la misma
+raíz de fondo: **HubSpot es una segunda fuente de calls y no todas las capas se enteraron.**
+
+#### Bug 1 — el digest Push 1/2 leía SOLO Calendly
+
+`runDigest` (`scheduler/calendly.js`) armaba el mensaje con `listEventsAllAccounts`, que solo
+consulta Calendly. Las citas que un closer agenda **a mano dentro del CRM** no existen ahí, así
+que **nunca aparecían en el aviso de la noche ni en el de la mañana**. Sí recibían Push 3 (25 min
+antes), porque `agenda-poll.js` las levanta para el precall — por eso el hueco pasó desapercibido:
+el push llegaba, solo que sin aviso previo.
+
+Medido el 2026-07-29 con el log en la mano:
+
+```
+[Calendly] Digest Push 2 (en la mañana): 8 closers, 27 citas   ← exactamente las de Calendly
+```
+
+El día tenía **43 calls vivas**. Las **14 de diferencia** eran de 6 closers distintos (Daniela 2,
+Lucas 4, Pablo Suárez 3, Pablo Lozano 2, Sebastián R. 2, Sebastián Marín 1). Los dos leads que
+reportó Daniela eran, exactamente, sus dos citas de HubSpot.
+
+**El log escondía el bug:** decía `${events.length}` (solo Calendly), justo en la línea donde el
+descuadre se habría visto. Ahora imprime el total real y desglosa cuántas vinieron del CRM.
+
+**Arreglo:** `runDigest` suma la segunda fuente reusando `pickMeetingsToSchedule` — trae los tres
+guardarraíles ya medidos (programa de esta empresa, horario laboral, duplicados dentro del CRM) y
+la misma clave de dedup del resto del sistema. Falla suave: HubSpot caído o apagado devuelve `[]`
+y el digest sale como antes. **Calendly caído sigue cancelando el digest entero**: un conteo
+incompleto que se lee como completo es peor que no mandar.
+
+#### Bug 2 — la misma call contada dos veces
+
+`getScheduledCallsInWindow` agrupaba por `event_uuid`. Pero hay **tres fuentes que acuñan uuid
+propio** — Calendly (uuid pelado), el CRM (`hubspot:<id>`) y la reagenda dictada por WhatsApp
+(`manual:<raíz>:<n>`) — y los supersedes que las reconcilian **no cubren todos los cruces**. El
+que faltaba: **la reagenda manual cuya cita real vuelve por HubSpot.** `supersedeManualPushes`
+solo se invoca desde el poll de **Calendly**, así que nadie la cancelaba.
+
+El caso de Sebas, por `created_at`:
+
+| hora | qué pasó |
+|---|---|
+| 27 jul 16:56 | el poll del CRM crea `hubspot:113752024882` ("Jonathan Jonathan") |
+| 27 jul 17:00 | Sebas dicta la reagenda → `manual:b9bd368b…:1` ("Jonathan bean"), **sin mirar el slot** |
+| — | nadie reconcilia → 2 filas vivas, mismo closer, mismo minuto → **7 en vez de 6** |
+
+Pablo Suárez tenía la misma colisión ese día (Fabio Diaz, 15:00): 9 contadas, 8 reales.
+
+⚠️ **La trampa que casi rompe 8 calls reales:** el arreglo obvio es deduplicar por **closer +
+minuto**, que es la clave que ya usan `mergeAgendaSources` y `pickMeetingsToSchedule`. **Es
+incorrecto para contar.** Medido sobre 2 meses: de **14 colisiones, solo 6 eran la misma call**;
+las otras 8 son **dobles reservas reales** — dos leads distintos, con teléfonos distintos, en el
+mismo slot del mismo closer. Deduplicar por slot habría escondido 8 calls que sí existen, o sea
+el mismo error que se venía a corregir pero al revés.
+
+**El discriminador es el LEAD, no el horario.** El arreglo usa `isSameLead` (últimos 8 dígitos del
+teléfono, con fallback a nombre normalizado), que ya existía para `pickSupersededPushes`. Resuelve
+los 14 casos: "Jonathan Jonathan" vs "Jonathan bean" son el mismo (`573104407335`), "Lorena" vs
+"Lorenzana Rebollo" también (`507 6023-6359`), y "Rafael Schwart" vs "María Isabel Castrillon" no.
+
+**Arreglo, en dos capas** (cada una falla sola):
+1. `dedupeSameCall` en `reschedule-logic.js` (puro) — closer + minuto + **lead**, con precedencia
+   Calendly > HubSpot > manual. Lo aplica `getScheduledCallsInWindow`.
+2. `createRescheduledCall` consulta `findLiveCallAtSlot` **antes** de escribir: si esa call ya
+   existe, **adopta su uuid** y no crea el sintético. El lead es parte del match a propósito —
+   sin él, una reagenda se adoptaría la call de OTRO lead y el outcome quedaría colgado del
+   prospecto equivocado, que es un dato falso, peor que la fila duplicada.
+
+**Verificado contra la base de producción (read-only):** hoy Sebas 7→**6** y Pablo Suárez 9→**8**,
+el resto de closers sin cambios. En 2 meses solo se descartan **4 filas**, las 4 gemelas del mismo
+lead. La versión ingenua descartaba 14.
+
+**Tests:** `test/calendly.dedupe-same-call.test.js` (14 casos, los pares REALES de producción como
+fixture — incluidos los falsos positivos) y `test/calendly.digest-hubspot.test.js` (11 escenarios).
+804 tests, 740 verdes; los 64 rojos son los de `better-sqlite3` en Windows, idénticos al baseline.
+
+**Lo que NO cubre y queda abierto:** los pushes de una call que solo vive en el CRM se siguen
+creando desde el poll (cada 5 min). Si el meeting se crea en HubSpot **después** del digest de la
+mañana y a menos de 10 min de la call, el closer se entera solo por el Push 3. El Push 0 tapa ese
+hueco únicamente si el booking cae dentro de la ventana `PUSH0_RECENT_MIN`.
+
+---
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):
