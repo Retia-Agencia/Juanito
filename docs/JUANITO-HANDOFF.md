@@ -4001,6 +4001,33 @@ que ya están en `calendly/health.js` — ~10 líneas. Habría cazado esto el 22
 15 pushes omitidos y 7 enviados con 110-144 min de retraso, repartidos entre casi todos los closers,
 y ya está resuelta. Lo de Salazar lleva roto desde el 22-jul, una semana antes, y es solo suyo.
 
+#### Desplegado 2026-07-29 17:08 UTC
+
+Swap en el hueco de 17:08→17:15 (la tanda anterior ya había disparado). Bajó ~20 s; **WA reconectó
+sin QR y sin 405**. Un ciclo de poll después, las filas aparecieron solas:
+
+```
+id=2106 push3 equipo@ttrading.co +573054312905  Juan Felipe Rodriguez Reyna  due 2026-07-29 23:05
+id=2107 push5 …                                  (misma call, 23:30 UTC = 18:30 COL)
+id=2108 push3 equipo@ttrading.co +573054312905  Francisco fernandez          due 2026-07-30 18:35
+id=2109 push5 …                                  (misma call, 19:00 UTC = 14:00 COL)
+```
+
+Ojo al `closer_phone`: **+573054312905** (Salazar), no el +573169835624 de Dana que llevaban las
+filas viejas del buzón. Las 5 compuertas de `deliver()` ejercitadas contra los módulos reales dentro
+del contenedor: pausa global activa, opt-in ✅, sin pausa por identidad, hilo `39415653117990@lid`,
+cuenta `retia` en vivo → **se envía**.
+
+Notas para la próxima:
+- **La imagen NO incluye `test/`** (el Dockerfile solo copia lo que corre). Correr la suite con
+  `docker run --rm --entrypoint node juanito-agent:latest --test …` devuelve vacío y parece que pasó.
+  Para verificar dentro del contenedor, ejercitar los **módulos** (importar `closers.js` y
+  comprobar `CLOSERS[...]` / `isIgnoredCloser`), no la suite.
+- Respaldos: DB en `brain-backup-20260729-pre-18AV.sqlite`, imagen `juanito-agent:pre-18AV`,
+  archivo en `src/calendly/closers.js.bak-20260729-pre18AV`.
+- **Las filas viejas del buzón (22-jul, `skipped`, teléfono de Dana) no se tocaron.** Son historia;
+  el fix no las revive ni hace falta.
+
 ---
 
 ### 🟢 Baja prioridad / Nice-to-have
