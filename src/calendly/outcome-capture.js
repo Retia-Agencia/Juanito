@@ -55,7 +55,8 @@ function commitReschedule(outcome, startUtc, rawReply, lead) {
   }
   setOutcomeReschedule(outcome.id, { startUtc: toSqliteUtc(startUtc), uuid: r.uuid, rawReply });
   console.log(
-    `[Calendly] reagenda #${outcome.id} → ${r.uuid} | ${lead} | ${toSqliteUtc(startUtc)} UTC (agendados: ${r.scheduled.join(', ')})`
+    `[Calendly] reagenda #${outcome.id} → ${r.uuid} | ${lead} | ${toSqliteUtc(startUtc)} UTC ` +
+      (r.adopted ? '(adoptada: la cita real ya existía, sin pushes nuevos)' : `(agendados: ${r.scheduled.join(', ')})`)
   );
   return buildRescheduleConfirmation({ name: lead, startIso: new Date(startUtc).toISOString() });
 }

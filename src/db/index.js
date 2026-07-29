@@ -7,6 +7,9 @@ import { mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { normalizePhone } from '../common/utils.js';
 import { decidePushAction } from '../calendly/push-logic.js';
+// Identidad de una call (§18.AU). Son helpers PUROS y viven allá, pegados al `isSameLead` que
+// ya decidía si dos pushes hablan del mismo lead — duplicar esa regla acá sería el bug siguiente.
+import { dedupeSameCall, isSameLead, sourceRankOf } from '../calendly/reschedule-logic.js';
 
 const DB_PATH = process.env.DB_PATH || './data/brain.sqlite';
 mkdirSync(dirname(DB_PATH), { recursive: true });
@@ -687,14 +690,24 @@ export function getPendingManualPushes() {
 //
 // Ojo: una cancelación se detecta al ENTREGAR el push, no antes. Una cita cancelada de noche
 // puede seguir contada a las 7am; se auto-corrige cuando el Push 3 la salta.
+//
+// ⚠️ Agrupar por `event_uuid` NO alcanza (§18.AU). Una misma call puede tener DOS filas vivas
+// con uuids distintos, porque hay tres fuentes que acuñan uuid propio: Calendly (uuid pelado),
+// el poll del CRM ('hubspot:<id>') y la reagenda dictada por WhatsApp ('manual:<raíz>:<n>').
+// Los supersedes que las reconcilian no cubren todos los cruces —el que faltaba: la reagenda
+// manual cuya cita real vuelve por HubSpot, que nadie cancelaba— y esa call se contaba dos veces
+// en la agenda del jefe. Por eso la segunda capa: `dedupeSameCall` (closer + minuto + LEAD).
+// La regla de identidad vive en reschedule-logic.js, junto al `isSameLead` en que se apoya y a
+// la medición que descartó deduplicar por slot a secas.
 export function getScheduledCallsInWindow(fromUtc, toUtc) {
-  return db
+  const rows = db
     .prepare(`
       SELECT event_uuid,
-             MAX(program)       AS program,
-             MAX(closer_email)  AS closer_email,
-             MAX(prospect_name) AS prospect_name,
-             MIN(call_start)    AS call_start
+             MAX(program)        AS program,
+             MAX(closer_email)   AS closer_email,
+             MAX(prospect_name)  AS prospect_name,
+             MAX(prospect_phone) AS prospect_phone,
+             MIN(call_start)     AS call_start
       FROM calendly_pushes
       WHERE call_start >= ? AND call_start < ?
         AND status IN ('scheduled', 'sent')
@@ -702,6 +715,42 @@ export function getScheduledCallsInWindow(fromUtc, toUtc) {
       ORDER BY call_start
     `)
     .all(fromUtc, toUtc);
+  return dedupeSameCall(rows);
+}
+
+// ¿Este closer ya tiene una call VIVA a esa hora CON ESTE MISMO LEAD? La fila o null.
+//
+// La usa `createRescheduledCall` antes de acuñar un uuid sintético: si la cita real ya entró
+// (por Calendly o por el CRM), crear otra fila garantiza el doble push — justo lo que
+// agenda-poll.js declara peor que perder uno.
+//
+// ⚠️ El lead NO es opcional en la comparación. Un closer puede tener dos leads distintos en el
+// mismo slot (dobles reservas: 8 casos reales en 2 meses). Si esto matcheara solo por hora, una
+// reagenda se "adoptaría" la call de OTRO lead y el outcome quedaría colgado del prospecto
+// equivocado — un dato falso, peor que la fila duplicada que vino a evitar.
+export function findLiveCallAtSlot(closerEmail, callStartUtc, { leadName = null, leadPhone = null } = {}) {
+  const email = String(closerEmail || '').trim().toLowerCase();
+  const slot = String(callStartUtc || '').trim().slice(0, 16);
+  if (!email || !slot) return null;
+  const rows = db
+    .prepare(`
+      SELECT event_uuid,
+             MAX(program)        AS program,
+             MAX(prospect_name)  AS prospect_name,
+             MAX(prospect_phone) AS prospect_phone,
+             MIN(call_start)     AS call_start
+      FROM calendly_pushes
+      WHERE status IN ('scheduled', 'sent')
+        AND trim(lower(closer_email)) = ?
+        AND substr(call_start, 1, 16) = ?
+      GROUP BY event_uuid
+    `)
+    .all(email, slot);
+  return (
+    rows
+      .filter((r) => isSameLead({ phone: r.prospect_phone, name: r.prospect_name }, { phone: leadPhone, name: leadName }))
+      .sort((a, b) => sourceRankOf(a.event_uuid) - sourceRankOf(b.event_uuid))[0] || null
+  );
 }
 
 // La reagenda volvió a entrar por Calendly → el evento real manda. Se cancelan los

@@ -1324,6 +1324,72 @@ function whenLabel(offsetDays, nowMs = Date.now()) {
   return offsetDays === 1 ? `mañana (${fmt})` : `hoy (${fmt})`;
 }
 
+// Las citas que un closer agenda A MANO dentro del CRM no existen en Calendly, así que
+// `listEventsAllAccounts` no las ve y el digest las omitía (§18.AU). No era un hueco menor:
+// medido el 2026-07-29, el Push 2 listó 27 citas cuando el día tenía 43 calls vivas — 14 calls
+// de 6 closers distintos sin ningún aviso anticipado. El closer solo se enteraba con el Push 3,
+// 25 minutos antes, porque `agenda-poll.js` sí las levanta para el precall. La agenda del jefe
+// SÍ las contaba (lee `calendly_pushes`, no Calendly), y de ahí la asimetría que lo destapó:
+// el jefe veía más calls que las que el propio closer tenía en su lista.
+//
+// Se reusa `pickMeetingsToSchedule` en vez de filtrar acá: trae los tres guardarraíles ya
+// medidos (programa de esta empresa, horario laboral, duplicados dentro del CRM) y —lo que
+// importa— la MISMA clave de dedup que el resto del sistema. Si el digest deduplicara distinto,
+// una call podría salir en el digest y no tener push, o al revés.
+//
+// Falla suave a propósito: HubSpot apagado o caído devuelve [] y el digest sale con lo de
+// Calendly, exactamente como antes. Perder el complemento no puede costar el digest entero.
+async function hubspotDigestItems(d, { calendlyCalls, minStartIso, maxStartIso, pushN }) {
+  if (!d.searchMeetingsInWindow || !d.getOwnerEmailMap) return [];
+  if (d.hubspotEnabled && !d.hubspotEnabled()) return [];
+  try {
+    const [meetings, ownerEmailById] = await Promise.all([
+      d.searchMeetingsInWindow({ fromIso: minStartIso, untilIso: maxStartIso }),
+      d.getOwnerEmailMap(),
+    ]);
+    const hubspotCalls = meetingsToCalls(meetings, {
+      ownerEmailById,
+      ownerToCloser: HUBSPOT_OWNER_TO_CLOSER,
+    });
+    const { toSchedule } = pickMeetingsToSchedule({
+      hubspotCalls,
+      existingCalls: calendlyCalls,
+      tz: TZ(),
+    });
+
+    const items = [];
+    for (const call of toSchedule) {
+      const startIso = callStartToIso(call.call_start);
+      if (!startIso) continue;
+      // El lead sale del contacto asociado, no del título ("Entrevista de Postulación…"), que
+      // como nombre de prospecto no sirve y dejaría la línea del digest sin número.
+      let contacto = null;
+      try {
+        contacto = d.getMeetingContact ? await d.getMeetingContact(call.meeting_id) : null;
+      } catch {
+        /* sin contacto igual listamos la cita: saberla es más valioso que su teléfono */
+      }
+      items.push({
+        closerEmail: call.closer_email,
+        item: {
+          name: fullNameFrom(contacto?.name) || null,
+          firstName: firstNameFrom(contacto?.name) || '',
+          phone: contacto?.phone || null,
+          startIso,
+          programKey: call.program,
+        },
+      });
+    }
+    if (items.length) {
+      console.log(`[HubSpot] digest push${pushN}: +${items.length} cita(s) que no están en Calendly`);
+    }
+    return items;
+  } catch (e) {
+    console.error(`[HubSpot] digest push${pushN}: no pude sumar las citas del CRM:`, e.message);
+    return [];
+  }
+}
+
 async function runDigest(pushN, offsetDays) {
   const d = await deps();
   const nowMs = d.now();
@@ -1335,9 +1401,13 @@ async function runDigest(pushN, offsetDays) {
     maxStartIso,
     tag: `digest push${pushN}`,
   });
+  // Calendly caído entero → no se manda nada. Con HubSpot como segunda fuente la tentación es
+  // mandar igual, pero ese digest diría "tienes 2 llamadas" a un closer que tiene 8: un conteo
+  // incompleto que se lee como completo es peor que no mandar.
   if (failed && !events.length) return 0;
 
   const byCloser = new Map(); // phone -> { name, email, items[] }
+  const calendlyCalls = []; // { closer_email, call_start } — para deduplicar contra HubSpot
   for (const { ev, account } of events) {
     const email = closerEmailOf(ev);
     const closer = resolveCloser(email);
@@ -1363,6 +1433,23 @@ async function runDigest(pushN, offsetDays) {
       startIso: ev.start_time,
       programKey: programKeyOf(ev.event_type),
     });
+    calendlyCalls.push({ closer_email: email, call_start: toSqliteUtc(new Date(ev.start_time)) });
+  }
+
+  // Segunda fuente: las citas que solo viven en el CRM. Se suman al MISMO mapa, así que el
+  // mensaje sale idéntico —ordenado por hora y agrupado por programa— sin distinguir origen:
+  // al closer le da igual por dónde entró la cita, lo que necesita es la lista completa.
+  for (const { closerEmail, item } of await hubspotDigestItems(d, {
+    calendlyCalls,
+    minStartIso,
+    maxStartIso,
+    pushN,
+  })) {
+    const closer = resolveCloser(closerEmail);
+    if (!closer) continue; // HUBSPOT_OWNER_TO_CLOSER ya lo garantiza; defensivo
+    if (!byCloser.has(closer.phone))
+      byCloser.set(closer.phone, { name: closer.name, email: closerEmail, items: [] });
+    byCloser.get(closer.phone).items.push(item);
   }
 
   const desc = pushN === 1 ? 'la noche anterior' : 'en la mañana';
@@ -1379,8 +1466,17 @@ async function runDigest(pushN, offsetDays) {
     await deliver(d, phone, msg, `push${pushN}`, email);
   }
 
+  // Se loguea el total REAL enviado y, aparte, cuántas vinieron del CRM: el log viejo decía
+  // `events.length` (solo Calendly) y por eso el hueco de las citas de HubSpot era invisible
+  // justo en la línea donde se habría notado.
+  const totalCitas = [...byCloser.values()].reduce((n, c) => n + c.items.length, 0);
+  // Contra `calendlyCalls` y no contra `events`: los eventos de un closer sin mapear se
+  // descartaron arriba y nunca llegaron al mensaje, así que restarlos daría un número negativo.
+  const delCrm = totalCitas - calendlyCalls.length;
   console.log(
-    `[Calendly] Digest ${label}: ${byCloser.size} closers, ${events.length} citas${DRY_RUN() ? ' [DRY-RUN]' : ''}`
+    `[Calendly] Digest ${label}: ${byCloser.size} closers, ${totalCitas} citas` +
+      `${delCrm > 0 ? ` (${calendlyCalls.length} de Calendly + ${delCrm} solo en HubSpot)` : ''}` +
+      `${DRY_RUN() ? ' [DRY-RUN]' : ''}`
   );
   return byCloser.size;
 }
