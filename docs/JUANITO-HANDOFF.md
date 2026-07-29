@@ -3928,6 +3928,81 @@ Notas del deploy, para la próxima:
 
 ---
 
+### 18.AV 🔴 Una semana sin pushes en Retia: el correo que nunca existió y el skip que no deja rastro (2026-07-29)
+
+**Cómo se destapó:** Salazar le dijo al jefe que no le llegaban los pre-call de *De Cero a Tactical
+Investor*. A los otros closers de Retia sí. El jefe confirmó el celular (`+57 3054312905`) y
+preguntó si había que pedirle que le escribiera a Juanito.
+
+**El teléfono y el opt-in nunca fueron el problema.** Ese número ya estaba correcto en el roster, y
+Salazar tiene opt-in ganado desde el **2026-06-09** con hilo vivo (`contact_jid =
+39415653117990@lid`). Prueba de que el canal funciona: sus pushes de *IA para Abogados* (30x) se
+entregan por ese mismo hilo. `deliver()` resuelve el opt-in por **teléfono**, así que una sola fila
+sirve a sus dos identidades — pedirle que escribiera de nuevo no habría cambiado nada.
+
+#### La causa: un correo que solo existía en el repo
+
+El commit `6c833d5` (22-jul, "Salazar cierra Retia — reemplaza a Dana") asumió que Salazar tendría
+**cuenta personal** en el Calendly de Retia y, en el mismo movimiento, hizo dos cosas:
+
+1. Agregó la identidad `sebastiansalazar1410@gmail.com` (connection `retia`).
+2. Retiró `equipo@ttrading.co` a `IGNORED_CLOSERS` — *"buzón retirado, no lo hereda nadie"*.
+
+Esa cuenta **nunca se creó**. Medido el 29-jul contra la API de Retia:
+
+```
+Miembros de la org: equipo@ · jvieira@ · registro@ · sebasrr321@     ← 4, ninguno es el gmail
+Invitaciones: 5, todas accepted, ninguna para sebastiansalazar1410@   ← ni siquiera se envió
+```
+
+Salazar atiende el cupo desde el **buzón-rol `equipo@ttrading.co`** — el mismo que quedó ignorado.
+
+| Dato (29-jul) | Valor |
+|---|---|
+| Filas en `calendly_pushes` para `sebastiansalazar1410@gmail.com` | **0**, nunca existió una |
+| Citas Retia hosteadas por `equipo@` (últimos 8d + próximos 8d) | **10**, todas silenciadas |
+| Últimas filas de `equipo@` en la tabla | 22-jul, `skipped` — *antes* del commit |
+| Citas futuras que se iban a perder | hoy 18:30 COL y mañana 14:00 COL |
+
+#### Lo que lo hizo invisible una semana
+
+`IGNORED_CLOSERS` se salta **en silencio**: `if (isIgnoredCloser(email)) continue;`
+(`scheduler/calendly.js`) — sin log, sin `recordUnmapped`, sin alerta al admin. Es deliberado (evita
+spam por hosts que no gestionamos), pero significa que **un host ignorado que sigue agendando calls
+es indistinguible de uno dormido**. La rama de al lado, la del host desconocido, sí alerta. Aquí no
+saltó nada porque el correo estaba "conocido y decidido".
+
+**Regla que sale de esto:** retirar un correo a `IGNORED_CLOSERS` y dar de alta al reemplazo son dos
+movimientos que **hay que verificar contra la API antes de darlos por buenos**. La pregunta no es
+"¿a quién le asignamos el cupo?" sino "**¿qué correo aparece como host en las citas reales?**".
+
+#### Arreglo
+
+Reconocer el modelo real: **en Retia los cupos se atienden por buzón-rol, no por cuenta personal.**
+El precedente ya existía y funcionaba — `registro@ttrading.co` → Andrea Machado.
+
+- `closers.js`: la identidad `retia` de Salazar pasa a `equipo@ttrading.co` (mismo teléfono, misma
+  invariante *un teléfono = una persona*). Sale de `IGNORED_CLOSERS`, con un comentario en su lugar
+  que explica por qué **no** debe volver.
+- Tests: `resolveIdentitiesByName` espera el par nuevo; el test *"Dana salió: equipo@ queda
+  ignorado"* se invierte y pasa a ser regresión explícita de este bug; `calendly.sheet-push.test.js`
+  usaba el correo fantasma como constante.
+
+**Verificación:** 59/59 en closers+helpers+commands, 9/9 en sheet-push. Baseline de rojos en Mac:
+**solo `documents.test.js`** (binding de `better-sqlite3` para otro ABI de Node), idéntico con y sin
+el cambio — comparado con `git stash`. Ojo: el baseline de 64 que menciona §18.AU es el de Windows;
+depende de la máquina, comparar siempre contra el propio.
+
+**Lo que queda abierto:** la visibilidad. Un host ignorado con citas activas sigue sin dejar rastro.
+Lo barato sería, en el poll, avisar a los admins reusando `notifyAdmins` + `shouldAlert` (dedup 6h)
+que ya están en `calendly/health.js` — ~10 líneas. Habría cazado esto el 22-jul.
+
+**No confundir con el 405 del 28-jul (§18.AT).** Esa caída (contenedor abajo 23:32→02:04 UTC) costó
+15 pushes omitidos y 7 enviados con 110-144 min de retraso, repartidos entre casi todos los closers,
+y ya está resuelta. Lo de Salazar lleva roto desde el 22-jul, una semana antes, y es solo suyo.
+
+---
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):

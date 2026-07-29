@@ -157,7 +157,7 @@ const IDENTITIES = {
   ],
   'sebastian salazar': [
     { email: 'sebastian.salazar@30x.com', name: 'Sebastian Salazar', phone: '+573054312905', account: '30x', accountLabel: '30X / EstadoX' },
-    { email: 'sebastiansalazar1410@gmail.com', name: 'Sebastian Salazar', phone: '+573054312905', account: 'retia', accountLabel: 'Retia' },
+    { email: 'equipo@ttrading.co', name: 'Sebastian Salazar', phone: '+573054312905', account: 'retia', accountLabel: 'Retia' },
   ],
 };
 // Con opt-in registrado (por teléfono). +570000000000 (retia de Sebas Rodriguez) NO lo tiene.
@@ -260,7 +260,7 @@ test('/calendly off <closer> <cuenta> con teléfono compartido pausa SOLO ese pr
   const deps = calendlyDeps();
   const out = await handleCommand({ text: '/calendly off Sebastian Salazar retia', sender: 'a@lid', role: 'admin' }, deps);
   assert.match(out, /Pushes de Sebastian Salazar · Retia \(retia\): PAUSADOS ⏸️/);
-  assert.equal(deps._state.closers['sebastiansalazar1410@gmail.com'], true, 'retia pausado');
+  assert.equal(deps._state.closers['equipo@ttrading.co'], true, 'retia pausado');
   assert.equal(deps._state.closers['sebastian.salazar@30x.com'], undefined, '30x intacto');
 });
 

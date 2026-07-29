@@ -74,7 +74,7 @@ test('pausa por-closer: setCloserPaused/isCloserPaused por IDENTIDAD (email) y l
   // El pause es por email (identidad), en la tabla `settings` — no por teléfono. Así una persona
   // con dos identidades (mismo teléfono, dos Conexiones) se apaga por programa. Ver closers.js.
   const A = 'sebastian.salazar@30x.com';
-  const B = 'sebastiansalazar1410@gmail.com'; // misma persona, otra Conexión (retia)
+  const B = 'equipo@ttrading.co'; // misma persona, otra Conexión (retia): su buzón-rol
   assert.equal(db.isCloserPaused(A), false, 'arranca activo');
   assert.equal(db.setCloserPaused(B, true), 1);
   assert.equal(db.isCloserPaused(B), true, 'retia queda pausado');

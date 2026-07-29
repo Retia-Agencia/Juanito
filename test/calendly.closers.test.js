@@ -196,13 +196,25 @@ test('resolveIdentitiesByName lista las DOS identidades aunque compartan teléfo
   assert.equal(new Set(ids.map((i) => i.phone)).size, 1, 'ambas identidades comparten teléfono');
   assert.deepEqual(
     ids.map((i) => i.email).sort(),
-    ['sebastian.salazar@30x.com', 'sebastiansalazar1410@gmail.com']
+    ['equipo@ttrading.co', 'sebastian.salazar@30x.com']
   );
 });
 
-test('Dana salió: equipo@ttrading.co queda ignorado y fuera de CLOSERS', () => {
-  assert.ok(isIgnoredCloser('equipo@ttrading.co'), 'equipo@ debe estar en IGNORED_CLOSERS');
-  assert.ok(!CLOSERS['equipo@ttrading.co'], 'equipo@ no debe seguir en CLOSERS');
+test('el buzón-rol equipo@ttrading.co es la identidad retia de Salazar, NO un host ignorado', () => {
+  // Regresión del 2026-07-29: del 22 al 29 de julio equipo@ estuvo en IGNORED_CLOSERS porque se
+  // asumió que Salazar tendría cuenta personal en el Calendly de Retia. Nunca se creó, así que sus
+  // citas caían en el skip SILENCIOSO del poll (sin log ni alerta) y estuvo una semana sin pushes.
+  assert.ok(!isIgnoredCloser('equipo@ttrading.co'), 'equipo@ NO debe estar en IGNORED_CLOSERS');
+  const c = CLOSERS['equipo@ttrading.co'];
+  assert.ok(c, 'equipo@ debe estar en CLOSERS');
+  assert.equal(c.name, 'Sebastian Salazar');
+  assert.equal(c.account, 'retia');
+  // Mismo teléfono que su identidad 30x: una sola línea de WhatsApp, un solo opt-in.
+  assert.equal(c.phone, CLOSERS['sebastian.salazar@30x.com'].phone);
+});
+
+test('el correo personal que nunca existió en Calendly no quedó en el roster', () => {
+  assert.ok(!CLOSERS['sebastiansalazar1410@gmail.com'], 'el correo fantasma no debe estar en CLOSERS');
 });
 
 test('resolveIdentitiesByName de un closer de identidad única devuelve exactamente una', () => {
