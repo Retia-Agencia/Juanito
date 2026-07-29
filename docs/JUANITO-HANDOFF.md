@@ -4030,6 +4030,50 @@ Notas para la próxima:
 
 ---
 
+### 🔴 PENDIENTE — Enterarnos nosotros de que un push no sale, sin que lo reporte el closer (abierto 2026-07-29)
+
+**Por qué está acá:** los dos últimos incidentes de pushes los descubrió un **closer avisando**, no
+el sistema. Salazar estuvo **una semana** sin pre-call de Retia (§18.AV) y Daniela reportó las dos
+calls que el digest no veía (§18.AU). En los dos casos el dato estaba en la DB desde el primer día.
+La meta: que un dev lo vea antes de que lo diga un humano.
+
+Tres piezas, de la más barata a la más cara. Son independientes: se pueden hacer por separado.
+
+**1. Host ignorado que sigue agendando → alertar.** Es exactamente el agujero del §18.AV.
+`isIgnoredCloser(email)` hace `continue` sin log, sin contador y sin alerta
+(`scheduler/calendly.js`, en el bucle del poll). Es deliberado —evita spam por hosts que no
+gestionamos— pero vuelve **indistinguible un host retirado de uno que factura calls todos los días**.
+Arreglo: contar los ignorados con citas activas y avisar reusando lo que ya existe en
+`calendly/health.js` (`recordUnmapped` como modelo, `notifyAdmins` + `shouldAlert(key, 6h)` para el
+dedup). ~10 líneas. Habría cazado esto el 22-jul en el primer poll.
+
+**2. `skip_reason` no se está guardando (columna muerta).** Medido el 29-jul: de **195** filas
+`skipped`, **194 tienen `skip_reason` NULL**. La causa es de una línea —
+`markCalendlyPushSkipped` (`src/db/index.js:381`) concatena la razón dentro de `message`:
+
+```sql
+UPDATE calendly_pushes SET status='skipped', message = COALESCE(message,'') || ' | skip: ' || ?
+```
+
+...y nunca toca la columna `skip_reason`, que existe justo para eso. El código pasa razones útiles
+en ~10 sitios (`sin hilo establecido (contact_jid)`, `closer sin opt-in`, `llamada ya pasó`,
+`cita canceled`…) y todas quedan enterradas en un blob de texto. Consecuencia práctica: **no se
+puede hacer `GROUP BY skip_reason`** para ver que un motivo se disparó esta semana. Escribir también
+la columna es trivial y desbloquea todo lo demás. Ojo: es cambio de escritura, las 194 filas viejas
+se quedan NULL (rellenarlas desde `message` es opcional y aparte).
+
+**3. Chequeo periódico de entrega.** Con (2) hecho, un job barato (¿diario, junto al reporte de las
+7am?) que compare por closer **citas de hoy vs. pushes entregados** y avise si alguien tiene calls y
+cero entregas, o si un motivo de skip pegó un salto. Cubre los modos que (1) no ve: pausa por
+identidad olvidada encendida, opt-in sin `contact_jid`, una cuenta que quedó en dry-run.
+
+**Cuidado al implementarlo:** el destino de las alertas son los `ADMIN_LID`, o sea **WhatsApp del
+equipo** — todo lo que se agregue acá compite con el anti-ban y con la paciencia del que lo lee. El
+TTL de `shouldAlert` existe por eso. Preferir **una alerta agregada al día** antes que una por
+evento; y si el volumen asusta, mandarlo a log y revisarlo a mano antes de conectarlo a WhatsApp.
+
+---
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):
