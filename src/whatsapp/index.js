@@ -123,6 +123,8 @@ export async function connect({ onMessage, onGroupJoin, onGroupChange }) {
 
   return new Promise((resolve) => {
     let hasConnected = false;
+    let pairingRetries = 0;
+    const MAX_PAIRING_RETRIES = 5;
 
     function createSocket() {
       sock = makeWASocket({
@@ -184,11 +186,48 @@ export async function connect({ onMessage, onGroupJoin, onGroupChange }) {
             process.exit(2);
           }
 
+          // Flujo NORMAL de Baileys justo después de vincular: WhatsApp pide reiniciar el
+          // socket. No es un rechazo — se reabre en caliente una sola vez.
+          if (reason === DisconnectReason.restartRequired) {
+            console.log('[WhatsApp] restartRequired (515): reabriendo socket…');
+            setTimeout(createSocket, 1000);
+            return;
+          }
+
           if (hasConnected) {
             process.exit(1);
+          } else if (state.creds.me?.id) {
+            // ⚠️ SOFTBAN (incidente 2026-07-28). `hasConnected` es por PROCESO, así que tras
+            // cualquier restart con sesión ya vinculada un rechazo de WhatsApp caía en la rama
+            // de "pairing" y reintentaba cada 3s PARA SIEMPRE. Como el proceso nunca crashea,
+            // el backoff de entrypoint.sh no llegaba a entrar nunca — el mismo loop rápido de
+            // reconexiones desde datacenter que ya provocó el softban anterior.
+            // Con la sesión vinculada NO hay QR que reintentar: un cierre antes de abrir es un
+            // RECHAZO (405 = rate-limit de WhatsApp). Salimos para que entrypoint.sh aplique
+            // su backoff exponencial (30→60→120→240→300s), que es justo para esto.
+            //
+            // El indicador de "sesión vinculada" es `creds.me` — NO `creds.registered`, que en
+            // esta sesión vale `false` aunque lleve meses vinculada: Baileys solo lo marca en el
+            // flujo de pairing-code, no en el de QR. Usar `registered` mandaba una sesión buena
+            // a la rama de pairing (medido el 2026-07-28: 5 reintentos de QR contra un 405).
+            console.error(
+              `[WhatsApp] Rechazo de WhatsApp (razón ${reason}) con sesión ya vinculada. ` +
+              `Salgo para que entrypoint.sh espacie el reintento (NO reintentar en caliente).`
+            );
+            process.exit(1);
           } else {
-            console.log('[WhatsApp] Reconectando para nuevo QR...');
-            setTimeout(createSocket, 3000);
+            // Pairing genuino (aún sin credenciales): cada QR que expira cierra el socket y
+            // hay que pedir otro. Acotado y con backoff, nunca infinito a 3s.
+            pairingRetries += 1;
+            if (pairingRetries > MAX_PAIRING_RETRIES) {
+              console.error(`[WhatsApp] ${MAX_PAIRING_RETRIES} intentos de vinculación sin éxito. Salgo (backoff de entrypoint.sh).`);
+              process.exit(1);
+            }
+            const waitMs = Math.min(3000 * 2 ** (pairingRetries - 1), 60000);
+            console.log(
+              `[WhatsApp] Reconectando para nuevo QR… (intento ${pairingRetries}/${MAX_PAIRING_RETRIES}, en ${Math.round(waitMs / 1000)}s)`
+            );
+            setTimeout(createSocket, waitMs);
           }
         }
       });
