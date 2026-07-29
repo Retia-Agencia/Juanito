@@ -48,7 +48,11 @@ import { DEFAULT_ACCOUNT, accountOf } from './accounts.js';
 const PEOPLE = {
   daniela_camacho: {
     name: 'Daniela Camacho',
-    identities: [{ connection: '30x', email: 'daniela.camacho@30x.com', phone: '+573103062287' }],
+    // Teléfono actualizado 2026-07-28 (jefe): +573103062287 → +573018094666.
+    // ⚠️ Rotar un número tiene DOS pasos: este roster es solo la LLAVE del opt-in; el destino
+    // real de los pushes es `calendly_optins.contact_jid`. Ver el patrón de Pablo Suarez (§18.AJ)
+    // y el runbook de rotación en docs/JUANITO-HANDOFF.md.
+    identities: [{ connection: '30x', email: 'daniela.camacho@30x.com', phone: '+573018094666' }],
   },
   // Sebastian Rodriguez: UNA persona, DOS identidades. Cierra AI Second Brain en 30X y "De Cero a
   // Tactical Investor" en Retia, con host/teléfono distinto en cada Calendly. Antes eran dos

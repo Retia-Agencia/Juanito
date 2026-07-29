@@ -3675,6 +3675,26 @@ propósito.
 `NULL` para que la entrega falle **ruidosamente** (`skipped-no-thread`, visible en logs) en vez de
 callada. Es una línea. Sin esto, le vuelve a pasar al próximo closer que rote.
 
+#### Segunda rotación: Daniela Camacho (2026-07-28)
+
+`+573103062287` → `+573018094666`, por orden del jefe. Lo que se hizo:
+
+- `closers.js` actualizado + test (`calendly.helpers.test.js`, con assert de que el viejo ya NO
+  resuelve). No había pushes `scheduled` ni outcomes abiertos con el número viejo → nada colgando.
+- Fila del opt-in migrada por `UPDATE calendly_optins SET phone=…` (backup:
+  `/app/data/brain-backup-20260728-pre-daniela-phone.sqlite`).
+- **`contact_jid` CONSERVADO** (`48889780502756@lid`) — decisión explícita del jefe, tomada
+  sabiendo que es un WhatsApp NUEVO y que por tanto ese LID es el del aparato anterior. Es
+  justo el riesgo que describe esta sección; queda anotado como decisión, no como descuido.
+
+⚠️ **Al ser cuenta nueva de WhatsApp, su `@lid` entrante será desconocido:** no hay `workLid`
+mapeado y `resolveCloserByPhone` no aplica a un `@lid`, así que el reconocimiento cuelga
+**enteramente de `resolveCloserByPushName`** → su nombre de WhatsApp tiene que traer **"Daniela"
+Y "Camacho"**. Si dice solo "Daniela", falla en silencio (nombre de una palabra = ambiguo por
+diseño) y hay que correr `scripts/calendly-optin-set.js "Daniela Camacho" "<lid nuevo>"`.
+
+El deploy de esta rotación destapó, de rebote, el agujero del backoff anti-softban → §18.AT.
+
 ---
 
 ### 18.AS ✅ El lead agenda con otro correo: Juanito mandaba a crear deals que ya existían (2026-07-28)
@@ -3756,6 +3776,47 @@ La búsqueda es por **nombre exacto**: un apellido escrito distinto entre el for
 se le escapa. Por eso el nudge de creación **conserva** el pedido de buscar a mano aunque Juanito
 ya haya buscado. El arreglo de fondo (que el match no dependa del correo) lo está trabajando ops
 del lado del CRM.
+
+---
+
+### 18.AT 🔴 El backoff anti-softban tenía un agujero: el proceso que nunca crashea (2026-07-28)
+
+**Cómo se destapó:** rotando el teléfono de Daniela Camacho (§18.AR) hubo que reiniciar el
+contenedor para tomar el cambio. WhatsApp respondió **405** al handshake y el proceso entró a
+reconectar **cada 3 segundos, sin tope**. Se cortó a mano a los ~3,5 min (~45 intentos).
+
+**Causa (`src/whatsapp/index.js`):** la rama de reconexión decidía con `hasConnected`, que es
+**por PROCESO**. Tras cualquier restart con la sesión ya vinculada, `hasConnected === false` →
+caía en la rama de *pairing* → `setTimeout(createSocket, 3000)` en loop infinito.
+
+Lo grave es la interacción con `entrypoint.sh`: **su backoff (30→60→120→240→300s) solo actúa
+entre CRASHES**. Acá el proceso nunca crashea —reconecta desde adentro— así que el backoff
+**jamás llegaba a entrar**. O sea: la protección que se puso tras el softban de junio no cubría
+este camino, que produce exactamente el mismo patrón (loop rápido desde IP de datacenter).
+
+**Arreglo:** con sesión vinculada, un cierre antes de abrir se trata como RECHAZO → `exit(1)` →
+el backoff de `entrypoint.sh` sí entra. El pairing genuino conserva su reintento, ahora acotado
+(5 intentos, backoff 3→6→12→24→48s) y con `restartRequired` (515) manejado aparte, en caliente.
+
+⚠️ **La trampa que costó un intento fallido:** el primer discriminador fue `creds.registered`, y
+vale **`false`** aunque la sesión lleve meses vinculada — Baileys solo lo marca en el flujo de
+**pairing-code**, no en el de **QR** (y esta sesión se vinculó por QR). El indicador correcto es
+**`creds.me?.id`**. Medido en el `creds.json` real del volumen:
+
+```
+"registered": false          ← NO sirve para saber si está vinculada
+"me": {"id":"573332761238:4@s.whatsapp.net"}   ← esto sí
+```
+
+**Sobre el 405 en sí:** WhatsApp no lo documenta. Es el `statusCode` de Boom con el que se cierra
+el WebSocket **durante el handshake** (revienta en `noise-handler.decodeFrame`), o sea rechazo
+del servidor antes de abrir sesión. No es credenciales: eso da `401 loggedOut`, que sale con
+exit 2 por otra rama. La lectura habitual —consistente con lo visto— es rechazo por reconectar
+demasiado seguido, castigado más duro desde IP de datacenter. **No se puede forzar ni consultar
+cuánto dura: solo esperar y reintentar espaciado.**
+
+**Protocolo cuando aparezca un 405:** parar el contenedor, esperar (≥1h), **un solo** intento, y
+si vuelve a fallar parar de nuevo. Insistir alarga el bloqueo.
 
 ---
 

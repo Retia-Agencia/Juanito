@@ -77,7 +77,8 @@ test('resolveCloser mapea closers por email (case-insensitive)', () => {
 test('resolveCloserByPhone identifica al closer por su número entrante', () => {
   // con sufijo de WhatsApp y formato distinto
   assert.equal(resolveCloserByPhone('573054312905@s.whatsapp.net').email, 'sebastian.salazar@30x.com');
-  assert.equal(resolveCloserByPhone('+57 310 306 2287').name, 'Daniela Camacho');
+  assert.equal(resolveCloserByPhone('+57 301 809 4666').name, 'Daniela Camacho'); // rotado 2026-07-28
+  assert.equal(resolveCloserByPhone('573103062287'), null);                       // número viejo → ya no resuelve
   assert.equal(resolveCloserByPhone('573212100048').email, 'sebastian.marin@30x.com'); // closer nuevo
   assert.equal(resolveCloserByPhone('573014477044').name, 'Lucas Mendoza');
   assert.equal(resolveCloserByPhone('573003558574'), null); // Mateo salió → ya no resuelve
