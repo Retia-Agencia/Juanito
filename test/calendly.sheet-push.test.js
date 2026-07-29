@@ -35,7 +35,8 @@ const ET_RETIA = Object.keys(RETIA.eventTypes)[0];
 // Sebastian Salazar es el caso filoso del roster: UNA persona, UNA línea de WhatsApp y DOS
 // identidades (30x + retia). La cuenta se resuelve por EMAIL, así que sus dos calls tienen
 // que caer en lados distintos aunque compartan teléfono, opt-in e hilo.
-const SALAZAR_RETIA = 'sebastiansalazar1410@gmail.com';
+// Su identidad de retia es el BUZÓN-ROL de Retia, no un correo personal (corrección 2026-07-29).
+const SALAZAR_RETIA = 'equipo@ttrading.co';
 const SALAZAR_30X = 'sebastian.salazar@30x.com';
 const PHONE_SALAZAR = CLOSERS[SALAZAR_RETIA].phone;
 
