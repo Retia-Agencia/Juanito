@@ -27,10 +27,14 @@
 - [x] **Botón Deploy en la UI** — [dashboard/server/deploy.js](../dashboard/server/deploy.js),
       `POST /api/deploy` → `workflow_dispatch`. Dos botones en el lateral (`dash` y `todo`), con
       confirmación distinta: el de `todo` avisa que reconstruye la imagen y **reconecta WhatsApp**.
-      ⚠️ **Falta un dato humano:** el botón necesita `DASH_GITHUB_TOKEN` en el `.env` del VPS — un
-      PAT con `actions:write` sobre el repo. Es un secreto del **contenedor**, no un Repository
-      secret (esos los usa el workflow; este los dispara). Sin token la ruta no existe y la UI no
-      dibuja los botones, que es el default seguro.
+      ✅ **Token configurado el 2026-07-30.** `DASH_GITHUB_TOKEN` en el `.env` del VPS, un PAT
+      fine-grained con `actions:write` sobre el repo. Es un secreto del **contenedor**, no un
+      Repository secret (esos los usa el workflow; este lo dispara). Sin token la ruta no existe y
+      la UI no dibuja los botones, que es el default seguro. Verificado: `/api/meta` responde
+      `deploy: true`, el log del dash dice `deploy ON`, y el token autentica contra
+      `GET /repos/Agencia-Dani/Juanito/actions/workflows/deploy.yml` (`state: active`). El permiso
+      de **escritura** solo queda probado el día que se apriete el botón; hasta entonces el camino
+      probado es `gh workflow run deploy.yml -f alcance=dash`, que ya corrió tres veces.
 
 ## Cómo operar el dashboard
 
@@ -54,6 +58,11 @@ ssh root@157.230.152.202 'docker logs --tail 50 juanito-dash'
   **solo corre sobre una copia**: tiene dos guardas que se niegan si `DB_PATH` huele a base viva.
 - **Encender las escrituras de un tab:** `DASH_WRITES=aprobaciones` en el `.env` del VPS + recrear
   `dash`. Se acumulan por coma (`aprobaciones,toggles`) y `todo` habilita los ocho. Vacío = F1.
+- **El `.env` del VPS es el único lugar donde importan `DASH_WRITES` y `DASH_GITHUB_TOKEN`.** No van
+  al `.env` local del repo: ahí no corre el dashboard. Cada vez que se toca, hay que **recrear el
+  contenedor** (`docker compose up -d --no-deps --force-recreate dash`) porque las env vars se leen
+  al arrancar el proceso. Convención del VPS: `cp .env .env.bak-$(date +%Y%m%d-%H%M%S)-<motivo>`
+  antes de editarlo.
 - **Encender las alertas por WhatsApp:** `DASH_ALERTS_WHATSAPP=true` en el `.env` del VPS + recrear
   el contenedor. Arranca en `false` a propósito; ver la advertencia del §18.AV sobre el anti-ban.
 - **Si Tailscale Serve falla:** poner `DASH_BIND` a la IP `100.x` del nodo y entrar por
@@ -265,6 +274,7 @@ Estado de cada flag. **Mantener esta tabla actualizada es parte del trabajo.**
 | `DASH_BIND` | `127.0.0.1` | El puerto solo existe en loopback; se llega por `tailscale serve` | F1 |
 | `DASH_ALERTS_WHATSAPP` | `false` | Watchdog solo escribe al dashboard, no manda DM | F1 |
 | `DASH_GITHUB_TOKEN` | sin valor | `/api/deploy` no existe y la UI no dibuja el botón Deploy | F1 |
+| ↳ *en producción hoy* | configurado | Botón Deploy activo (`deploy: true`) | F1 |
 | `DASH_WRITES` | vacío | Dashboard read-only: ningún POST pasa, ningún botón se dibuja | F2 |
 | ↳ *en producción hoy* | `toggles` | Solo el tab Toggles escribe; los otros siete siguen read-only | F2 |
 | `REGISTRY_SOURCE_CONNECTIONS` | `code` | Lee de `accounts.js` como hoy | F3c |
@@ -434,8 +444,16 @@ validación + el gate por tab), `POST /api/w/<tab>/<accion>` en el server,
 - [x] **Primer tab encendido: `toggles`** (2026-07-30). `DASH_WRITES=toggles` en el `.env` del VPS
       (con backup `.env.bak-*-pre-dashwrites`) + `docker compose up -d --no-deps --force-recreate
       dash`. Verificación end-to-end abajo.
-- [ ] **Encender los que faltan**, uno por vez. Orden sugerido, del más reversible al menos:
-      `tareas,negocio` → `aprobaciones` → `grupos,programados,recordatorios`.
+- [ ] **Encender los siete que faltan.** Un detalle que se aclaró usándolo: **encender un tab no
+      escribe nada por sí solo**. La bandera solo dibuja botones; el riesgo vive en el click, y las
+      acciones que salen a un humano piden confirmación con destinatario y texto a la vista. Como
+      las 21 acciones ya se ejercitaron contra una copia de producción, prender los siete de una no
+      es más riesgoso que prender uno:
+      ```bash
+      ssh root@157.230.152.202 'cd /root/juanito && sed -i "s/^DASH_WRITES=.*/DASH_WRITES=todo/" .env && docker compose up -d --no-deps --force-recreate dash'
+      ```
+      Verificar después con `curl -fsS http://127.0.0.1:8080/api/meta` (deben aparecer los ocho
+      tabs en `escrituras`) y `docker logs --tail 3 juanito-dash`.
 
 ### Cuatro decisiones que se tomaron al construirlo
 
