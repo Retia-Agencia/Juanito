@@ -42,11 +42,17 @@ Todo lo demás ───────┴─▶ src/whatsapp/send-queue.js (cola F
 
 Regla clave: **todo envío sale del proceso principal y pasa por la cola anti-ban**.
 
+**Segundo contenedor: `juanito-dash`** (solo lectura). Lee el MISMO SQLite desde otro proceso e
+importa `src/db/index.js` y `src/calendly/*.js` en vez de reimplementarlos. Va aparte del bot por el
+crash domain, no por recursos. Para alertar por WhatsApp **no tiene socket**: inserta en la tabla
+`reminders`, que el cron del bot despacha por la cola anti-ban — la regla de arriba se mantiene.
+
 ## Archivos clave
 
 | Ruta | Rol |
 |---|---|
 | `src/index.js` | Entry point: wira Baileys → bot |
+| `dashboard/` | Consola de operación (contenedor `dash`). `server/` = API `node:http` de lectura + watchdog; `src/` = SPA Vite/React; `server/selftest.js` ejercita toda la capa de lectura contra una copia de la DB. Guía: [docs/DASHBOARD-ROADMAP.md](docs/DASHBOARD-ROADMAP.md) |
 | `src/bot/` | Router (`index.js`), comandos (`commands.js`), guard anti-secuestro de grupos (`group-guard.js`) |
 | `src/claude/index.js` | Claude: prompts, tool-use loop, memoria, reintentos |
 | `src/whatsapp/` | Baileys (`index.js`), cola anti-ban (`send-queue.js`), cache de subjects |
@@ -90,9 +96,17 @@ hardening) tiene default seguro.
 - La IP fija es crítica — no migrar sin planificarlo
 - Número del agente: SIM física, conecta via Baileys al arrancar
 - **Acceso SSH:** `root@157.230.152.202`, auth por password. La contraseña es `VPS_KEY` del `.env`
-  local. No hay clave pública cargada → usar **`plink`** (PuTTY, ya instalado en
-  `C:\Program Files\PuTTY\`): `plink -ssh -batch -pw "<VPS_KEY>" root@157.230.152.202 "<cmd>"`.
-  Deploy de archivos con `pscp` (mismo `-pw`). Ojo: `/root/juanito` **no es git** — se copia con `pscp`.
+  local. No hay clave pública cargada → en Windows usar **`plink`** (PuTTY en
+  `C:\Program Files\PuTTY\`): `plink -ssh -batch -pw "<VPS_KEY>" root@157.230.152.202 "<cmd>"`;
+  en Mac/Linux, **`sshpass -e ssh`** con `SSHPASS` exportado.
+- **Deploy:** workflow `.github/workflows/deploy.yml` (`workflow_dispatch`, con `alcance: dash|todo`).
+  Hace **rsync de una allowlist** — el VPS no tiene credenciales de GitHub porque el repo es privado,
+  así que `git pull` allá no funciona y `/root/juanito` **no es un repo git**. `alcance: dash` no
+  toca el bot; `alcance: todo` reconstruye la imagen y **reconecta Baileys** (ojo con el softban).
+- **Dashboard:** `https://juanito.tail2df10b.ts.net` (solo desde el tailnet de Tailscale).
+- `/root/juanito` es un directorio de trabajo con años de respaldos a mano (`.env.bak-*`,
+  `src.bak-*`, `brain.sqlite.bak-*`). El rsync del deploy **no** usa `--delete` fuera de
+  `dashboard/`, justamente para no barrerlos.
 
 ## Historia técnica importante
 

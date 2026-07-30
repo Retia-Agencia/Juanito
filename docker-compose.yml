@@ -233,10 +233,17 @@ services:
       # Para que el check de respuestas vencidas use el mismo TTL que el bot.
       - REPLY_APPROVAL_TTL_MIN=${REPLY_APPROVAL_TTL_MIN:-30}
     ports:
-      # Bind a LOOPBACK, no a 0.0.0.0: esto NO expone un puerto a internet. El acceso
-      # es por Tailscale (`tailscale serve` → 127.0.0.1:8080). La regla de no exponer
-      # puertos, que nació de un softban, se mantiene intacta.
-      - "127.0.0.1:8080:8080"
+      # NUNCA 0.0.0.0, y ni siquiera la interfaz del tailnet: el puerto escucha SOLO en
+      # loopback. Quien lo publica es `tailscale serve`, que proxea
+      # https://juanito.<tailnet>.ts.net → 127.0.0.1:8080 con TLS real.
+      #
+      # Así el puerto no está expuesto ni a internet ni al tailnet: solo tailscaled, que
+      # corre en el propio host, puede alcanzarlo. La regla de no exponer puertos, que
+      # nació de un softban, se mantiene intacta.
+      #
+      # DASH_BIND existe como escape: apuntándolo a la IP 100.x del nodo se llega por
+      # http://<ip>:8080 sin Serve (útil si Serve o los certs se caen). Default seguro.
+      - "${DASH_BIND:-127.0.0.1}:8080:8080"
     volumes:
       - agent-data:/app/data
       # Solo lectura: el dashboard nunca reescribe su propio código.

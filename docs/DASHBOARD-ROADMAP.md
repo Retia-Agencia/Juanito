@@ -1,7 +1,9 @@
 # Dashboard centralizado de Juanito — Roadmap
 
-> **Estado:** F1 desplegado y corriendo (falta autenticar Tailscale y los secrets del workflow).
-> Última actualización: 2026-07-30.
+> **Estado: F1 COMPLETO y en producción** (2026-07-30). El dashboard corre en
+> **`https://juanito.tail2df10b.ts.net`**, en modo solo lectura, sin haber reiniciado el bot ni una
+> vez. **Próximo paso: F2** (escrituras, tab por tab) o **F6** (pase de diseño Jarvis) — son
+> independientes, se puede empezar por cualquiera.
 > **Fuente de verdad de este proyecto.** Si retomas en otra sesión, lee este archivo completo antes
 > de tocar nada. Decisión arquitectónica formal en [ADR 0002](adr/0002-dashboard-y-superficie-http.md).
 
@@ -11,6 +13,35 @@
 2. `git log --oneline -10` y revisa qué casillas de abajo están marcadas.
 3. Revisa la tabla **Interruptores y sus defaults** para saber en qué estado quedó el sistema.
 4. Sigue por la primera casilla sin marcar. Las fases son independientes y pausables.
+
+### Lo único que quedó pendiente de F1 (necesita acción humana)
+
+- [ ] **Dos Repository secrets** en Settings → Secrets and variables → Actions (pestaña *Secrets*,
+      **no** Environment secrets: el workflow no declara `environment:`, así que los de entorno
+      llegarían vacíos): `VPS_HOST` = `157.230.152.202` y `VPS_PASSWORD` = el `VPS_KEY` del `.env`.
+      Sin esto el workflow existe pero no puede correr.
+- [ ] **Botón Deploy en la UI** — depende de los secrets y de un token de GitHub con `actions:write`.
+
+## Cómo operar el dashboard
+
+```bash
+ssh root@157.230.152.202 'cd /root/juanito && docker compose up -d --no-deps --force-recreate dash'
+```
+
+```bash
+ssh root@157.230.152.202 'docker logs --tail 50 juanito-dash'
+```
+
+- **Apagarlo sin afectar nada:** `docker compose stop dash`. El bot es indiferente.
+- **Probar la capa de lectura contra datos reales, sin tocar la base viva:** copiar con
+  `VACUUM INTO` a `/tmp` y correr `dashboard/server/selftest.js` con `DB_PATH` apuntando a la copia
+  (el comando exacto está en la cabecera de ese archivo).
+- **Encender las alertas por WhatsApp:** `DASH_ALERTS_WHATSAPP=true` en el `.env` del VPS + recrear
+  el contenedor. Arranca en `false` a propósito; ver la advertencia del §18.AV sobre el anti-ban.
+- **Si Tailscale Serve falla:** poner `DASH_BIND` a la IP `100.x` del nodo y entrar por
+  `http://<ip>:8080`. Sigue siendo solo-tailnet.
+- **Ojo:** el código del dashboard se monta desde `/root/juanito/dashboard` del host, no está
+  horneado en la imagen. Iterarlo NO requiere rebuild ni reinicia el bot.
 
 ---
 
@@ -213,6 +244,7 @@ Estado de cada flag. **Mantener esta tabla actualizada es parte del trabajo.**
 | Interruptor | Default | Efecto del default | Fase |
 |---|---|---|---|
 | Servicio `dash` en compose | ausente | No hay dashboard | F1 |
+| `DASH_BIND` | `127.0.0.1` | El puerto solo existe en loopback; se llega por `tailscale serve` | F1 |
 | `DASH_ALERTS_WHATSAPP` | `false` | Watchdog solo escribe al dashboard, no manda DM | F1 |
 | Escrituras por tab (config del dash) | todas off | Dashboard read-only | F2 |
 | `REGISTRY_SOURCE_CONNECTIONS` | `code` | Lee de `accounts.js` como hoy | F3c |
@@ -253,7 +285,18 @@ Estado de cada flag. **Mantener esta tabla actualizada es parte del trabajo.**
       Nota: el dash no necesita dependencias npm nuevas — `better-sqlite3` ya está en
       `/app/node_modules` de la imagen y `node:http` es builtin.
 - [x] **`src/db/index.js`:** agregar `db.pragma('busy_timeout = 5000')` junto al `journal_mode = WAL`.
-- [~] **Tailscale en el host** + `tailscale serve https / http://127.0.0.1:8080`.
+- [x] **Tailscale en el host** + `tailscale serve`. URL final:
+      **`https://juanito.tail2df10b.ts.net`** (nodo `juanito`, IP `100.106.116.11`).
+      Instalado desde el repo apt firmado, **no** con `curl | sh`.
+      **Dos features del tailnet hay que habilitarlas en la consola** (no se puede desde el CLI):
+      *Serve* (`login.tailscale.com/f/serve?node=…`) y *HTTPS Certificates* (Admin → DNS). Sin ellas,
+      `tailscale serve` responde "Serve is not enabled on your tailnet" y `tailscale cert` da
+      `your Tailscale account does not support getting TLS certs`.
+      **Configuración final:** el contenedor escucha SOLO en loopback y `tailscaled` proxea con TLS.
+      El puerto no está expuesto ni a internet ni al tailnet; solo el propio host lo alcanza.
+      `DASH_BIND` en el `.env` del VPS queda como escape (apuntarlo a la IP `100.x` sirve sin Serve).
+      Verificado desde afuera: **de todos los puertos del droplet, solo el 22 responde**; `curl` a
+      `http://157.230.152.202:8080` da `HTTP 000`.
 - [x] **`.github/workflows/deploy.yml`** con **solo `workflow_dispatch`** al principio. El trigger en
       push a `main` se habilita después, cuando el pipeline esté probado. Pasos: compilar el frontend
       → **rsync por SSH de una allowlist de rutas** → escribir `DEPLOYED_SHA` → reiniciar solo lo que

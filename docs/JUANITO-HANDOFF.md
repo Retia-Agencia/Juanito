@@ -4030,9 +4030,54 @@ Notas para la próxima:
 
 ---
 
-### 18.AW 🟡 Dashboard centralizado para operar y mantener a Juanito (planeado 2026-07-29)
+### 18.AW ✅ Dashboard centralizado para operar y mantener a Juanito (F1 EN PRODUCCIÓN 2026-07-30)
 
-**Estado: diseñado y grillado, sin ejecutar.** Tareas, fases e interruptores viven en
+**Estado: F1 desplegado y corriendo** en `https://juanito.tail2df10b.ts.net` (solo tailnet, TLS
+real), en modo **solo lectura**. Contenedor `juanito-dash`, 18 MB, aparte del bot.
+
+**Costo total en código del bot: UNA línea** — `db.pragma('busy_timeout = 5000')` en
+`src/db/index.js`. Todo lo demás son archivos nuevos (`dashboard/`, `.github/workflows/deploy.yml`)
+más el servicio `dash` en `docker-compose.yml`. **El bot no se reinició ni una vez** durante toda la
+construcción (`StartedAt` verificado de principio a fin), y la suite quedó igual que la línea base
+(742/127 en Mac, 61/63 en contenedor — los 2 rojos son preexistentes).
+
+Lo que ya sirve: 11 checks de salud, 12 tabs de lectura sobre todo lo que hoy son comandos de
+WhatsApp, watchdog cada 15 min con dedupe persistente, y los registries (programas/conexiones/
+closers/ignorados) visibles sin abrir un archivo fuente. Pendiente de F1: dos Repository secrets
+para activar el workflow de deploy.
+
+**Tres cosas que solo se supieron construyéndolo** (detalle en el roadmap):
+1. *"Host ignorado que sigue agendando" NO es detectable desde la DB.* Un host en
+   `IGNORED_CLOSERS` nunca genera fila de push, o sea no deja rastro — que es precisamente lo que
+   hizo invisible al §18.AV. El dashboard hace lo único posible sin tocar el bot: mostrar la lista
+   para auditarla. El detector real sigue siendo la pieza 1 del pendiente de abajo.
+2. *El breakdown de motivos de skip NO estaba bloqueado por el bug de `skip_reason`.* La razón se
+   extrae del texto de `message`, donde `markCalendlyPushSkipped` la concatena. El fix de la columna
+   sigue siendo deseable, pero no bloqueaba el panel.
+3. *Apareció un check que no estaba en el plan y resultó el más valioso:* `pushes_no_entregados`
+   separa un skip legítimo (cancelada, reagendada, obsoleta) de uno que significa **que un push no
+   salió por falta de configuración** (sin opt-in, sin hilo, sin mapear). Esa es la familia entera
+   del §18.AV. ⚠️ Al implementarlo salió un falso positivo instructivo: probar el regex contra
+   `message` completo marca filas sanas, porque ese campo guarda **también el copy de WhatsApp**,
+   donde frases como "sin teléfono" aparecen legítimamente. Hay que probar contra el motivo extraído.
+
+**Validado contra historia real:** el check encontró 8 pushes de Daniela saltados por falta de
+opt-in entre el 8 y el 28 de julio. Diagnóstico: era §18.AR (su opt-in estaba bajo `…4666` desde el
+14-jul, pero los pushes se construían con el número viejo `…2287`), y **ya estaba arreglado** — el
+roster se corrigió el 28-jul y el último skip es de ese día. La ventana de 24h reporta 0, que es lo
+correcto. Lo que prueba: de haber existido el dashboard el 8 de julio, lo habría marcado ese mismo
+día en vez de tres semanas después.
+
+**Hallazgo nuevo sin resolver:** el push **#898** (Push 3, Pablo Lozano, 9-jul) lleva desde entonces
+en `sending`. Si el proceso muere entre `claimCalendlyPush` y `markCalendlyPushSent`, la fila queda
+huérfana y nadie la reintenta. **1 caso en toda la historia**, así que no es urgente; el arreglo
+natural es revertir a `scheduled` los `sending` viejos con `revertCalendlyPush`, que ya existe.
+
+**Otro dato útil que salió de la recon:** la deriva entre `/root/juanito` y `main` es **CERO**. Un
+primer diff mostró 44 archivos "distintos" pero era **puro CRLF** (los deploys históricos se hacían
+con `pscp` desde Windows). Procedimiento para repetir la medición, en el roadmap.
+
+Tareas, fases, interruptores y kill-switches viven en
 **[docs/DASHBOARD-ROADMAP.md](DASHBOARD-ROADMAP.md)** (ese es el documento de trabajo; esta entrada
 solo deja el rastro). Decisión arquitectónica en
 [ADR 0002](adr/0002-dashboard-y-superficie-http.md).
