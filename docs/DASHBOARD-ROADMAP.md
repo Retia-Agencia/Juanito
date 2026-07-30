@@ -1,10 +1,11 @@
 # Dashboard centralizado de Juanito — Roadmap
 
-> **Estado: F1 y F2 en producción · las escrituras APAGADAS** (2026-07-30). El dashboard corre en
-> **`https://juanito.tail2df10b.ts.net`** sin haber reiniciado el bot ni una vez. El código de F2
-> (escrituras tab por tab) ya está desplegado y **apagado**: mientras `DASH_WRITES` esté vacía, el
-> dashboard es exactamente el read-only de F1. **Próximo paso: encender el primer tab** (§F2), o
-> **F6** (pase de diseño Jarvis) — son independientes.
+> **Estado: F1 y F2 en producción · escribe UN tab (`toggles`)** (2026-07-30). El dashboard corre en
+> **`https://juanito.tail2df10b.ts.net`** sin haber reiniciado el bot ni una vez. F2 está desplegada
+> y `DASH_WRITES=toggles`: ese tab escribe y **los otros siete siguen read-only**. El round-trip
+> dashboard → `settings` → `/calendly` quedó verificado en producción sin tocar a ningún closer real
+> (§F2). **Próximo paso: encender el siguiente tab**, o **F6** (pase de diseño Jarvis), o **F3**
+> (registries editables) — son independientes.
 > **Fuente de verdad de este proyecto.** Si retomas en otra sesión, lee este archivo completo antes
 > de tocar nada. Decisión arquitectónica formal en [ADR 0002](adr/0002-dashboard-y-superficie-http.md).
 
@@ -265,6 +266,7 @@ Estado de cada flag. **Mantener esta tabla actualizada es parte del trabajo.**
 | `DASH_ALERTS_WHATSAPP` | `false` | Watchdog solo escribe al dashboard, no manda DM | F1 |
 | `DASH_GITHUB_TOKEN` | sin valor | `/api/deploy` no existe y la UI no dibuja el botón Deploy | F1 |
 | `DASH_WRITES` | vacío | Dashboard read-only: ningún POST pasa, ningún botón se dibuja | F2 |
+| ↳ *en producción hoy* | `toggles` | Solo el tab Toggles escribe; los otros siete siguen read-only | F2 |
 | `REGISTRY_SOURCE_CONNECTIONS` | `code` | Lee de `accounts.js` como hoy | F3c |
 | `REGISTRY_SOURCE_PROGRAMS` | `code` | Lee de `programs.js` como hoy | F3c |
 | `REGISTRY_SOURCE_CLOSERS` | `code` | Lee de `closers.js` como hoy | F3c |
@@ -429,9 +431,11 @@ validación + el gate por tab), `POST /api/w/<tab>/<accion>` en el server,
 - [x] **Desplegado** el 2026-07-30 con `alcance: dash` (dos corridas del workflow, ver §F1). El bot
       no se reinició: `StartedAt` siguió en `2026-07-30T00:30:02Z` y `docker ps` lo mostró `Up 10
       hours` en las dos. `/api/meta` responde `escrituras: {}` → read-only, como debe arrancar.
-- [ ] **Encender el primer tab.** `DASH_WRITES=<tab>` en el `.env` del VPS + `docker compose up -d
-      --no-deps --force-recreate dash`. Orden sugerido, del más reversible al menos:
-      `toggles` → `tareas,negocio` → `aprobaciones` → `grupos,programados,recordatorios`.
+- [x] **Primer tab encendido: `toggles`** (2026-07-30). `DASH_WRITES=toggles` en el `.env` del VPS
+      (con backup `.env.bak-*-pre-dashwrites`) + `docker compose up -d --no-deps --force-recreate
+      dash`. Verificación end-to-end abajo.
+- [ ] **Encender los que faltan**, uno por vez. Orden sugerido, del más reversible al menos:
+      `tareas,negocio` → `aprobaciones` → `grupos,programados,recordatorios`.
 
 ### Cuatro decisiones que se tomaron al construirlo
 
@@ -489,9 +493,39 @@ cancelar-otra-vez-no-aplica, default-deny de un grupo no autorizado, y persona d
 de vuelta → borrar. **La base viva quedó intacta**, verificado después: `calendly_paused=0`, 0
 recordatorios pendientes, 2 mensajes recurrentes activos (los que había). La copia se borró.
 
-Falta el end-to-end de verdad, que necesita las escrituras encendidas: aprobar un draft desde la UI y
-confirmar que el cron de `group-messages` lo publica. Pausar un closer desde la UI y verlo reflejado
-en `/calendly` por WhatsApp (misma fuente de verdad, `settings.calendly_pause:<email>`).
+#### End-to-end del tab Toggles, en producción (2026-07-30) ✅
+
+Lo que había que probar era que una escritura del dashboard se vea igual desde el bot. Se probó
+**sin cambiar el comportamiento de Juanito**, con dos trucos que conviene reusar:
+
+1. **Se pausó un email centinela que no existe en el roster**
+   (`dashboard-selftest@30x.invalid`). `setCloserPaused` solo escribe
+   `settings['calendly_pause:<email>']`, así que la fila recorre exactamente el mismo camino que la
+   de un closer real, pero **ninguna cita puede tener ese host** → cero efecto operativo. Pausar a
+   un closer de verdad, aunque fuera por segundos, arriesga que un push que caiga en esa ventana se
+   marque `skipped` y se pierda: es literalmente el modo de fallo del §18.AV.
+2. **`/calendly` se renderizó con el código del bot, sin mandar un WhatsApp.** `buildCalendlyStatus`
+   es una función pura de `isCalendlyPaused` + `listCloserPauses` + `resolveCloser`, y
+   `src/bot/commands.js` no importa DB ni WhatsApp al tope (es testeable sin deps nativas). Así que
+   `handleCommand({ text: '/calendly', role: 'admin' }, deps)` dentro de `juanito-agent` imprime el
+   texto EXACTO que el comando manda por WhatsApp, sin enviar nada:
+
+```bash
+docker exec juanito-agent node --input-type=module -e 'import { isCalendlyPaused, listCloserPauses } from "/app/src/db/index.js"; import { resolveCloser } from "/app/src/calendly/closers.js"; import { handleCommand } from "/app/src/bot/commands.js"; console.log(await handleCommand({ text: "/calendly", sender: "check", role: "admin" }, { isCalendlyPaused, listCloserPauses, resolveCloser }));'
+```
+
+Resultado: `Closers pausados: ninguno` → POST al dashboard →
+`Closers pausados: dashboard-selftest@30x.invalid` → POST de reversa → `ninguno`. El bot no se
+reinició (`StartedAt` intacto, `Up 20 hours`) y las dos escrituras quedaron en el log del dash.
+**Único rastro:** la fila `calendly_pause:dashboard-selftest@30x.invalid = 0`, invisible en todas
+las vistas (`listCloserPauses()` solo devuelve las que valen `1`, y el tab Toggles itera el roster).
+
+Lo que sigue faltando, y necesita encender más tabs: aprobar un draft desde la UI y confirmar que el
+cron de `group-messages` lo publica.
+
+> 📌 **Observado de paso:** `dm_approval = 1` en producción, o sea la **aprobación de DMs de
+> desconocidos está ENCENDIDA**. No lo tocó esta sesión; queda anotado porque ahora se ve de un
+> vistazo en el tab Toggles y nadie lo había mirado.
 
 ## F3 — Registries editables (opcional, la parte cara)
 
