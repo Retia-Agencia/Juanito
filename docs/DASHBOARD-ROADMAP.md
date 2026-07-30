@@ -11,12 +11,12 @@
 > la vez. Es el primer paso de F3 que puede cambiar comportamiento. Alternativa independiente: **F6**
 > (pase de diseño Jarvis).
 >
-> ⚠️ **Dos cosas en `main` sin desplegar, con costos MUY distintos:**
-> - **El arreglo de la interfaz** (pantalla negra en Toggles/Registries + frontera de error + el
->   dry-run que se mostraba al revés). Solo toca `dashboard/` → `alcance: dash`, ~35s, **el bot ni
->   se entera**. Conviene desplegarlo ya: hoy la UI en producción sigue rota.
-> - **F3a/F3b.** Toca `src/`, así que exige `alcance: todo` → rebuild de imagen y **reconexión de
->   Baileys**. No corre prisa y conviene que viaje acompañado. Ver "Cómo desplegar F3a".
+> ✅ **El arreglo de la interfaz está desplegado** (`785c2cf`, 2026-07-30, `alcance: dash`). Los 13
+> tabs renderizan en producción y el bot no se reinició (`Up 22 hours`, `StartedAt` intacto).
+>
+> ⚠️ **F3a/F3b están en `main` pero NO desplegadas.** Tocan `src/`, así que exigen `alcance: todo`
+> → rebuild de imagen y **reconexión de Baileys**. No corre prisa y conviene que viajen
+> acompañadas. Ver "Cómo desplegar F3a".
 > **Fuente de verdad de este proyecto.** Si retomas en otra sesión, lee este archivo completo antes
 > de tocar nada. Decisión arquitectónica formal en [ADR 0002](adr/0002-dashboard-y-superficie-http.md).
 
@@ -174,6 +174,19 @@ solo GET) en el 8080. Alternativa sin proxy: correr `node dashboard/server/index
 - `selftest.js` (lectura) y `selftest-escrituras.js`: **verdes, exit 0**, contra una copia de
   producción.
 - `npm run build`: compila.
+
+### Desplegado y verificado en producción (2026-07-30) ✅
+
+`785c2cf` con `alcance: dash`. `/api/meta` reporta el sha nuevo, `juanito-dash` se recreó y
+**`juanito-agent` siguió `Up 22 hours` con el `StartedAt` intacto**.
+
+Verificar el RENDER de lo desplegado tiene un truco, porque las herramientas de navegador están
+bloqueadas contra `*.ts.net`: se levanta un espejo GET-only en localhost que reenvía **todo** (no
+solo `/api`) al host del tailnet. Así el bundle que se inspecciona es el que de verdad está
+sirviendo producción, no una compilación local.
+
+Resultado: los **13 tabs** renderizan, y las dos conexiones muestran `tienetoken`/`dryrun`/`push4`
+en `—` como corresponde (`hubspot` sigue en sí/no porque es constante de código, no del entorno).
 
 **Lo que sigue pendiente:** sumar el celular al tailnet y mirarlo en pantalla chica. Y el pase de
 diseño es F6.
