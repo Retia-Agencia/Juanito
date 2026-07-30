@@ -1,11 +1,15 @@
 # Dashboard centralizado de Juanito — Roadmap
 
-> **Estado: F1 y F2 en producción · escribe UN tab (`toggles`)** (2026-07-30). El dashboard corre en
-> **`https://juanito.tail2df10b.ts.net`** sin haber reiniciado el bot ni una vez. F2 está desplegada
-> y `DASH_WRITES=toggles`: ese tab escribe y **los otros siete siguen read-only**. El round-trip
-> dashboard → `settings` → `/calendly` quedó verificado en producción sin tocar a ningún closer real
-> (§F2). **Próximo paso: encender el siguiente tab**, o **F6** (pase de diseño Jarvis), o **F3**
-> (registries editables) — son independientes.
+> **Estado: F1 y F2 COMPLETAS y en producción** (2026-07-30). El dashboard corre en
+> **`https://juanito.tail2df10b.ts.net`** con `DASH_WRITES=todo` (los 8 tabs escriben, 21 acciones)
+> y el botón Deploy activo, **sin haber reiniciado el bot ni una vez** en toda la construcción. El
+> round-trip dashboard → `settings` → `/calendly` está verificado en producción sin tocar a ningún
+> closer real (§F2). **Próximo paso: F3** (registries editables, la fase cara) o **F6** (pase de
+> diseño Jarvis) — son independientes.
+>
+> ⚠️ **Nadie ha visto todavía la interfaz.** El tailnet tiene **un solo nodo** (el VPS), así que
+> `juanito.tail2df10b.ts.net` da `DNS_PROBE_FINISHED_NXDOMAIN` desde cualquier máquina que no esté
+> en él. Toda la verificación hasta hoy fue por `curl` y por el selftest. Ver "Entrar al dashboard".
 > **Fuente de verdad de este proyecto.** Si retomas en otra sesión, lee este archivo completo antes
 > de tocar nada. Decisión arquitectónica formal en [ADR 0002](adr/0002-dashboard-y-superficie-http.md).
 
@@ -35,6 +39,35 @@
       `GET /repos/Agencia-Dani/Juanito/actions/workflows/deploy.yml` (`state: active`). El permiso
       de **escritura** solo queda probado el día que se apriete el botón; hasta entonces el camino
       probado es `gh workflow run deploy.yml -f alcance=dash`, que ya corrió tres veces.
+
+## Entrar al dashboard (el paso que falta)
+
+`https://juanito.tail2df10b.ts.net` es un nombre de **MagicDNS**: existe solo dentro del tailnet.
+Desde una máquina que no esté en él, el navegador da `DNS_PROBE_FINISHED_NXDOMAIN`, y eso **no es
+una falla, es el diseño** (la red es la auth: no hay login porque no hay puerta pública).
+
+Medido el 2026-07-30, el tailnet tiene **un solo nodo**:
+
+```
+100.106.116.11  juanito  Manigreeen@  linux
+tailscale serve → https://juanito.tail2df10b.ts.net (tailnet only) → 127.0.0.1:8080
+```
+
+O sea que el lado servidor está bien y lo que falta es sumar los dispositivos. En el Mac:
+
+```bash
+brew install --cask tailscale
+```
+
+Abrir la app, iniciar sesión con **la misma cuenta que ya tiene el nodo `juanito`** (la que aparece
+como `Manigreeen@` arriba; si entras con otra identidad, creas un tailnet distinto y el nombre sigue
+sin resolver). En el celular, la app de Tailscale con esa misma cuenta. Después de eso la URL abre
+sola, sin abrir un puerto ni cambiar nada del VPS.
+
+**Consecuencia honesta:** hasta hoy **nadie ha abierto la interfaz**. Todo lo verificado es la capa
+de datos (selftest de lectura, selftest de escrituras contra una copia de producción, round-trip de
+Toggles y respuestas de la API por `curl`). El frontend compila y se sirve, pero su render no lo ha
+visto un humano. Es el primer punto a mirar en la próxima sesión, y también el insumo natural de F6.
 
 ## Cómo operar el dashboard
 
@@ -194,6 +227,36 @@ juanito-agent: 80.78 MiB RAM (4.1%) · 0.00% CPU
 | Alertas | DM de WhatsApp vía la tabla `reminders` como outbox + feed en el dashboard | El handoff advierte que las alertas compiten con el anti-ban y con la paciencia de quien las lee → **una alerta agregada al día**, y primero solo al dashboard hasta medir volumen |
 | Jarvis | Estética con `/impeccable` + consola de chat con tools reales; confirmación explícita para lo que sale a un humano por WhatsApp | Sandbox total lo degrada a playground; sin confirmación, un prompt de prueba manda un mensaje real a un closer |
 
+### Cómo se despliega hoy, y qué tiene de incómodo
+
+Pregunta recurrente, así que queda escrita. **Ya no se copia el repo a mano.** Tampoco es un `git
+pull`: `/root/juanito` **no es un repo git y no puede serlo**, porque el remoto es privado y el
+droplet no tiene credenciales de GitHub (`git ls-remote` falla con "could not read Username").
+Meterle una deploy key o un PAT sería darle al droplet acceso permanente al código.
+
+Lo que hay es un **rsync de una allowlist de rutas desde GitHub Actions**: el runner ya tiene el
+código checkouteado, compila el frontend y empuja `src/`, `scripts/`, `dashboard/`, `package*.json`,
+`Dockerfile`, `docker-compose.yml` y `entrypoint.sh`. Nunca `.env`, `data/`, `node_modules/` ni los
+`*.bak*`. Y escribe `DEPLOYED_SHA`, que responde la pregunta que antes no tenía respuesta: **qué
+versión está corriendo**.
+
+Lo que sí es incómodo, sin adornos:
+
+- **El rsync de `src/` no lleva `--delete`.** Si un commit borra un archivo de `src/`, el archivo
+  **sigue vivo en el VPS**. No hace daño mientras nadie lo importe, pero significa que el VPS es un
+  superconjunto de `main`, no una copia. Los 7 archivos muertos que encontró la recon (incluidos
+  `src/stripe/{index,count}.js` del 5-jul) son exactamente eso. La razón de no ponerlo es que
+  `/root/juanito` acumula respaldos hechos a mano y borrarlos no es decisión de un pipeline; pero
+  **acotar `--delete` a `src/` sí sería seguro** y está sobre la mesa.
+- **No hay `git status` allá.** Para auditar deriva hay que comparar checksums (el comando está en
+  "Recon del VPS"). Se midió el 2026-07-30 y dio cero.
+- **`alcance: todo` reconstruye la imagen y reconecta Baileys.** Por eso el alcance es explícito y
+  por eso un deploy de dashboard no puede tocar al bot ni por accidente.
+
+Para lo que se necesitaba, alcanza y sobra: tres deploys esta sesión, 34-35s cada uno, y el bot no se
+reinició ni una vez. La alternativa "de verdad" (repo git en el VPS) cuesta credenciales permanentes
+en el droplet, que es peor negocio.
+
 ---
 
 ## Contrato: qué se toca de Juanito
@@ -276,7 +339,7 @@ Estado de cada flag. **Mantener esta tabla actualizada es parte del trabajo.**
 | `DASH_GITHUB_TOKEN` | sin valor | `/api/deploy` no existe y la UI no dibuja el botón Deploy | F1 |
 | ↳ *en producción hoy* | configurado | Botón Deploy activo (`deploy: true`) | F1 |
 | `DASH_WRITES` | vacío | Dashboard read-only: ningún POST pasa, ningún botón se dibuja | F2 |
-| ↳ *en producción hoy* | `toggles` | Solo el tab Toggles escribe; los otros siete siguen read-only | F2 |
+| ↳ *en producción hoy* | `todo` | Los 8 tabs escriben (21 acciones). Se apaga vaciando la variable | F2 |
 | `REGISTRY_SOURCE_CONNECTIONS` | `code` | Lee de `accounts.js` como hoy | F3c |
 | `REGISTRY_SOURCE_PROGRAMS` | `code` | Lee de `programs.js` como hoy | F3c |
 | `REGISTRY_SOURCE_CLOSERS` | `code` | Lee de `closers.js` como hoy | F3c |
@@ -413,7 +476,9 @@ que no es urgente, pero es un modo de fallo real: anotado como diferido.
   contra 0 — ver §18 "Visto de paso" del handoff).
 - Provocar un push vencido en una **copia** de la DB y ver que el watchdog lo detecta.
 - Con `DASH_ALERTS_WHATSAPP=true`, el DM llega al admin.
-- `https://juanito.<tailnet>.ts.net` abre desde el Mac y desde el celular.
+- ⏳ **PENDIENTE:** `https://juanito.<tailnet>.ts.net` abre desde el Mac y desde el celular. Sigue
+  sin hacerse: el tailnet tiene un solo nodo (el VPS) y ninguna otra máquina entró todavía. Ver
+  "Entrar al dashboard".
 
 ## F2 — Escrituras, tab por tab · cero cambios en el bot
 
@@ -444,16 +509,14 @@ validación + el gate por tab), `POST /api/w/<tab>/<accion>` en el server,
 - [x] **Primer tab encendido: `toggles`** (2026-07-30). `DASH_WRITES=toggles` en el `.env` del VPS
       (con backup `.env.bak-*-pre-dashwrites`) + `docker compose up -d --no-deps --force-recreate
       dash`. Verificación end-to-end abajo.
-- [ ] **Encender los siete que faltan.** Un detalle que se aclaró usándolo: **encender un tab no
-      escribe nada por sí solo**. La bandera solo dibuja botones; el riesgo vive en el click, y las
-      acciones que salen a un humano piden confirmación con destinatario y texto a la vista. Como
-      las 21 acciones ya se ejercitaron contra una copia de producción, prender los siete de una no
-      es más riesgoso que prender uno:
-      ```bash
-      ssh root@157.230.152.202 'cd /root/juanito && sed -i "s/^DASH_WRITES=.*/DASH_WRITES=todo/" .env && docker compose up -d --no-deps --force-recreate dash'
-      ```
-      Verificar después con `curl -fsS http://127.0.0.1:8080/api/meta` (deben aparecer los ocho
-      tabs en `escrituras`) y `docker logs --tail 3 juanito-dash`.
+- [x] **Los ocho tabs encendidos: `DASH_WRITES=todo`** (2026-07-30). Un detalle que se aclaró
+      usándolo: **encender un tab no escribe nada por sí solo**. La bandera solo dibuja botones; el
+      riesgo vive en el click, y las acciones que salen a un humano piden confirmación con
+      destinatario y texto a la vista. Como las 21 acciones ya se ejercitaron contra una copia de
+      producción, prender los siete restantes de una no era más riesgoso que prender uno.
+      Verificado: `/api/meta` lista las 21 acciones sobre los 8 tabs, el log del dash las enumera, y
+      el bot no se reinició (`StartedAt` en `2026-07-30T00:30:02Z` desde el principio de todo).
+      Para volver atrás, `DASH_WRITES=` vacío o con menos tabs + recrear `dash`.
 
 ### Cuatro decisiones que se tomaron al construirlo
 

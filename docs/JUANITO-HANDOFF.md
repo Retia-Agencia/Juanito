@@ -4046,15 +4046,18 @@ WhatsApp, watchdog cada 15 min con dedupe persistente, y los registries (program
 closers/ignorados) visibles sin abrir un archivo fuente. Los dos Repository secrets (`VPS_HOST`,
 `VPS_PASSWORD`) quedaron creados el 30-jul, así que el workflow de deploy ya puede correr.
 
-**F2 — escrituras: DESPLEGADO, con UN tab encendido (`DASH_WRITES=toggles`, 2026-07-30).**
+**F2 — escrituras: COMPLETA y encendida (`DASH_WRITES=todo`, 2026-07-30).** Los 8 tabs escriben, 21
+acciones, y el botón Deploy quedó activo con su PAT. ⚠️ **Nadie ha abierto todavía la interfaz:** el
+tailnet tiene un solo nodo (el VPS), así que la URL da NXDOMAIN desde cualquier otra máquina hasta
+que se instale Tailscale con la misma cuenta. Todo lo verificado hasta hoy fue por `curl` y por los
+selftests.
 El round-trip está verificado en producción: escritura desde el dashboard → tabla `settings` → el
 texto de `/calendly` (renderizado con el código del bot, sin mandar WhatsApp) muestra el cambio, y de
 reversa vuelve al estado original. Se hizo pausando un **email centinela que no existe en el roster**
 (`dashboard-selftest@30x.invalid`), porque pausar a un closer real aunque sea por segundos arriesga
-que un push que caiga en esa ventana quede `skipped` y se pierda: el modo de fallo del §18.AV. Los
-otros siete tabs siguen read-only. **Observado de paso:** `dm_approval = 1` en producción, o sea la
-aprobación de DMs de desconocidos está encendida; nadie lo había mirado y ahora se ve en el tab
-Toggles. 21 acciones sobre 8 tabs,
+que un push que caiga en esa ventana quede `skipped` y se pierda: el modo de fallo del §18.AV.
+**Observado de paso:** `dm_approval = 1` en producción, o sea la aprobación de DMs de desconocidos
+está encendida; nadie lo había mirado y ahora se ve en el tab Toggles. 21 acciones sobre 8 tabs,
 cada una llamando a la MISMA función de `src/db/index.js` que su comando de WhatsApp equivalente
 (cero SQL nuevo en el dashboard, así que los dos lados no pueden divergir). El interruptor es
 `DASH_WRITES` en el `.env` del VPS: lista de tabs por coma o `todo`; **vacía = el read-only de F1**,
