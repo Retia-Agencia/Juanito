@@ -33,12 +33,47 @@ export { eventTypeToProgram };
 
 export const DEFAULT_ACCOUNT = '30x';
 
+// ─── Metadata declarativa (F3a) ───────────────────────────────────────────────
+// Cada Conexión describe, además de sus closures, DE DÓNDE sale cada valor: el nombre de la
+// env var y el default que aplica cuando no está. Existe porque una closure no es
+// introspectable: `() => process.env.CALENDLY_TOKEN` no dice "CALENDLY_TOKEN" desde afuera, y
+// el seed de registries (src/db/registry-seed.js) necesita ese nombre para guardarlo en DB.
+// ⚠️ NO se guarda el token, solo el NOMBRE de su variable: los secretos siguen viviendo en el
+// `.env`, nunca en la base.
+//
+// Hoy esto CONVIVE con las closures en vez de reemplazarlas, a propósito: F3a se declara
+// "riesgo cero" y reescribir `dryRun` es tocar el camino por el que salen (o no salen) los
+// pushes. La red contra la deriva entre las dos representaciones es el test de equivalencia
+// `test/data.registry.test.js`, que ejercita ambas con la env prendida, apagada y ausente.
+// F3c, que ya tiene que recablear esto, las colapsa en una sola.
+//
+// Convención del default (la misma que confunde en el scheduler, ver F5 del roadmap):
+//   default true  → la env APAGA con 'false'   (`env !== 'false'`)
+//   default false → la env PRENDE con 'true'   (`env === 'true'`)
+// Sin `env` declarada, el valor es el default fijo y no hay forma de moverlo por entorno.
+export const flagFromEnv = (envName, def) => {
+  if (!envName) return () => !!def;
+  return def
+    ? () => process.env[envName] !== 'false'
+    : () => process.env[envName] === 'true';
+};
+
 export const ACCOUNTS = {
   // Conexión original: 30X + EstadoX (son marcas distintas, pero UNA sola cuenta de Calendly
   // — la marca se distingue por programa, no por conexión; ver programs.js).
   '30x': {
     key: '30x',
     label: '30X / EstadoX',
+    // Espejo declarativo de las closures de abajo (ver flagFromEnv). Solo lo lee el seed.
+    env: {
+      token: 'CALENDLY_TOKEN',
+      orgUri: 'CALENDLY_ORG_URI',
+      orgUriDefault: 'https://api.calendly.com/organizations/9ac5ab82-0c41-43c8-bede-cc9787043b28',
+      dryRun: 'CALENDLY_DRY_RUN',
+      dryRunDefault: true,
+      push4: 'CALENDLY_PUSH4_ENABLED',
+      push4Default: true,
+    },
     token: () => process.env.CALENDLY_TOKEN || '',
     orgUri: () =>
       process.env.CALENDLY_ORG_URI ||
@@ -71,6 +106,17 @@ export const ACCOUNTS = {
   retia: {
     key: 'retia',
     label: 'Retia',
+    // push4 sin `env`: es un `false` FIJO (v1 de Retia = solo pushes precall 0-3), no una
+    // variable que alguien pueda prender por entorno. El seed guarda esa diferencia.
+    env: {
+      token: 'CALENDLY_TOKEN_RETIA',
+      orgUri: 'CALENDLY_ORG_URI_RETIA',
+      orgUriDefault: 'https://api.calendly.com/organizations/fa27fb07-a83b-4a40-9807-6a619b1f652c',
+      dryRun: 'CALENDLY_DRY_RUN_RETIA',
+      dryRunDefault: true,
+      push4: null,
+      push4Default: false,
+    },
     token: () => process.env.CALENDLY_TOKEN_RETIA || '',
     // Org derivada 2026-07-21 (GET /users/me). Hardcodeada como default igual que 30x — el env
     // var CALENDLY_ORG_URI_RETIA es override opcional, no hace falta setearlo.

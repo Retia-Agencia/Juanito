@@ -408,7 +408,122 @@ if (columnExists('reminders', 'sent')) {
   if (migrated.changes) console.log(`  ~ ${migrated.changes} recordatorios migrados sent->status`);
 }
 
-// ─── 3. Índices ───────────────────────────────────────────────────────────────
+// ─── 3. Registries (F3a — docs/DASHBOARD-ROADMAP.md) ─────────────────────────
+//
+// Espejo en DB de los registros que hoy viven como literales en src/calendly/
+// {programs,accounts,closers}.js. **En F3a NADIE LEE ESTAS TABLAS**: el runtime sigue leyendo
+// del código, y los flags REGISTRY_SOURCE_* de F3c arrancan en 'code'. Existen desde ya para
+// que el día que se cambie la fuente no haya ADEMÁS una migración en el camino crítico.
+//
+// Tres cosas que valen la pena saber antes de tocarlas:
+//   · `sort_order` NO es cosmético. Los literales son objetos y el código itera en orden de
+//     inserción: `programFromTitle` devuelve el PRIMER programa cuyo hint matchea el título.
+//     Sin preservar el orden, un título ambiguo puede clasificarse a otro programa.
+//   · Los SECRETOS no viven acá. De cada Conexión se guarda el NOMBRE de su env var
+//     (`token_env`), nunca el token. La base es un archivo que se copia a /tmp para correr
+//     selftests; un token adentro se filtraría en cada copia.
+//   · `materials` va como JSON y no normalizado en columnas: sus llaves son heterogéneas
+//     (brochure, video, order, sendLinks, boldHeader) y crecen por programa. buildPrecallText
+//     lo consume entero, así que el blob es la representación fiel.
+db.exec(`
+  -- Empresas: marca de cara al lead. Hoy es solo un label (ADR 0001).
+  CREATE TABLE IF NOT EXISTS companies (
+    key        TEXT PRIMARY KEY,
+    label      TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0
+  );
+
+  -- Conexiones de Calendly (el código las llama ACCOUNTS por historia).
+  -- Los *_env guardan el NOMBRE de la variable, no su valor.
+  -- Convención de los defaults booleanos: 1 = la env APAGA con 'false';
+  --                                       0 = la env PRENDE con 'true'.
+  -- Con *_env NULL el valor es fijo y no se puede mover por entorno (ej: push4 de retia).
+  CREATE TABLE IF NOT EXISTS connections (
+    key             TEXT PRIMARY KEY,
+    label           TEXT NOT NULL,
+    token_env       TEXT NOT NULL,
+    org_uri_env     TEXT,
+    org_uri_default TEXT NOT NULL,
+    dry_run_env     TEXT,
+    dry_run_default INTEGER NOT NULL DEFAULT 1,
+    push4_env       TEXT,
+    push4_default   INTEGER NOT NULL DEFAULT 1,
+    hubspot         INTEGER NOT NULL DEFAULT 0,
+    sheets          TEXT,                        -- JSON [{label,url}] | NULL = sin Push 5
+    sort_order      INTEGER NOT NULL DEFAULT 0
+  );
+
+  -- Programas. Fuente única de label + empresa + conexión + event_type + copy.
+  CREATE TABLE IF NOT EXISTS programs (
+    key           TEXT PRIMARY KEY,
+    label         TEXT NOT NULL,
+    title_hints   TEXT,                          -- JSON [string] | NULL = cae al label
+    company       TEXT NOT NULL,
+    connection    TEXT NOT NULL,
+    event_type    TEXT NOT NULL,
+    pitch_from    TEXT NOT NULL,
+    pitch_program TEXT NOT NULL,
+    materials     TEXT,                          -- JSON {brochure?,video?,order?,...}
+    active        INTEGER NOT NULL DEFAULT 1,
+    sort_order    INTEGER NOT NULL DEFAULT 0
+  );
+
+  -- Closers: la PERSONA es la unidad de autoría. Una persona cierra para 1+ Conexiones.
+  CREATE TABLE IF NOT EXISTS closers (
+    key        TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0
+  );
+
+  -- Identidades: una por (persona, Conexión). email es la llave con la que el resto del
+  -- código resuelve todo (CLOSERS va keyeado por email), de ahí el UNIQUE.
+  -- ⚠️ Dos identidades PUEDEN compartir teléfono si son la MISMA persona (Sebastian Salazar,
+  -- 30x + retia desde una línea). Lo que rompería la DB es dos PERSONAS con un teléfono:
+  -- se pisarían el opt-in. Esa invariante la cuida el test, no el esquema.
+  CREATE TABLE IF NOT EXISTS closer_identities (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    closer_key    TEXT NOT NULL,
+    connection    TEXT NOT NULL,
+    email         TEXT NOT NULL UNIQUE,
+    phone         TEXT NOT NULL,
+    work_lid      TEXT,                          -- LID de TRABAJO; nunca uno personal
+    hubspot_email TEXT,                          -- alias de owner en HubSpot, si difiere
+    sort_order    INTEGER NOT NULL DEFAULT 0
+  );
+
+  -- Hosts que aparecen en el query org-wide y se saltan EN SILENCIO (sin alerta de
+  -- "closer sin mapear"). El silencio es justo lo que hizo invisible al §18.AV: tenerlos en
+  -- una tabla los vuelve auditables desde el dashboard en vez de enterrados en un Set.
+  CREATE TABLE IF NOT EXISTS ignored_closers (
+    email      TEXT PRIMARY KEY,
+    note       TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0
+  );
+`);
+
+// El seed corre SOLO sobre tablas vacías y vive aparte (importa src/calendly/*.js para no
+// duplicar los literales). Va envuelto porque `entrypoint.sh` es
+// `node src/db/migrate.js && node src/index.js`: una excepción acá deja al bot SIN ARRANCAR.
+// En F3a nadie lee estas tablas, así que un seed fallido no tiene ninguna consecuencia
+// operativa — tumbar WhatsApp por él sería el peor negocio posible. Grita en el log y sigue.
+// ⚠️ Cuando F3c encienda la lectura desde DB, este try/catch deja de ser suficiente por sí
+// solo: la garantía pasa a ser el flag REGISTRY_SOURCE_* (default 'code') + el test de
+// equivalencia, no el seed.
+try {
+  // `await import` y no un `import` estático arriba: un import estático que falle (un error de
+  // sintaxis en el seed o en cualquier módulo de src/calendly/) revienta al CARGAR el módulo,
+  // antes de que este try/catch exista. El dinámico mete también ese caso adentro de la red.
+  const { seedRegistries } = await import('./registry-seed.js');
+  const resumen = seedRegistries(db);
+  const sembradas = Object.entries(resumen).filter(([, n]) => n > 0);
+  if (sembradas.length) {
+    console.log('  + registries sembrados:', sembradas.map(([t, n]) => `${t}=${n}`).join(' '));
+  }
+} catch (e) {
+  console.error('⚠️  seed de registries falló (no bloquea el arranque; nadie los lee en F3a):', e.message);
+}
+
+// ─── 4. Índices ───────────────────────────────────────────────────────────────
 
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_messages_source_created ON messages(source, created_at);

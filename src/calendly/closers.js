@@ -45,7 +45,11 @@
 import { phonesMatch } from '../common/utils.js';
 import { DEFAULT_ACCOUNT, accountOf } from './accounts.js';
 
-const PEOPLE = {
+// Exportado (F3a) para que el seed de registries pueda guardar la PERSONA. Los mapas derivados
+// de abajo son por IDENTIDAD y ya no saben quién es quién: dos identidades de Sebastian
+// Rodriguez no se distinguen de dos personas homónimas (que existen — ver Andrea Machado).
+// Nadie más debería consumir esto: el resto del código habla de CLOSERS/CLOSER_LIDS.
+export const PEOPLE = {
   daniela_camacho: {
     name: 'Daniela Camacho',
     // Teléfono actualizado 2026-07-28 (jefe): +573103062287 → +573018094666.

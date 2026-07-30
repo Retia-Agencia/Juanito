@@ -1,15 +1,18 @@
 # Dashboard centralizado de Juanito — Roadmap
 
-> **Estado: F1 y F2 COMPLETAS y en producción** (2026-07-30). El dashboard corre en
+> **Estado: F1, F2, F3a y F3b COMPLETAS y en producción** (2026-07-30). El dashboard corre en
 > **`https://juanito.tail2df10b.ts.net`** con `DASH_WRITES=todo` (los 8 tabs escriben, 21 acciones)
 > y el botón Deploy activo, **sin haber reiniciado el bot ni una vez** en toda la construcción. El
 > round-trip dashboard → `settings` → `/calendly` está verificado en producción sin tocar a ningún
-> closer real (§F2). **Próximo paso: F3** (registries editables, la fase cara) o **F6** (pase de
-> diseño Jarvis) — son independientes.
+> closer real (§F2). Los registries ya tienen tablas, seed y test de equivalencia, pero **nadie los
+> lee todavía** (§F3).
 >
-> ⚠️ **Nadie ha visto todavía la interfaz.** El tailnet tiene **un solo nodo** (el VPS), así que
-> `juanito.tail2df10b.ts.net` da `DNS_PROBE_FINISHED_NXDOMAIN` desde cualquier máquina que no esté
-> en él. Toda la verificación hasta hoy fue por `curl` y por el selftest. Ver "Entrar al dashboard".
+> **Próximo paso: F3c** — que el runtime lea de la DB detrás de `REGISTRY_SOURCE_*`, un registry a
+> la vez. Es el primer paso de F3 que puede cambiar comportamiento. Alternativa independiente: **F6**
+> (pase de diseño Jarvis).
+>
+> ⚠️ **El código de F3a/F3b está en `main` pero NO desplegado.** Toca `src/`, así que su deploy
+> exige `alcance: todo` → rebuild de imagen y **reconexión de Baileys**. Ver "Cómo desplegar F3a".
 > **Fuente de verdad de este proyecto.** Si retomas en otra sesión, lee este archivo completo antes
 > de tocar nada. Decisión arquitectónica formal en [ADR 0002](adr/0002-dashboard-y-superficie-http.md).
 
@@ -64,10 +67,20 @@ como `Manigreeen@` arriba; si entras con otra identidad, creas un tailnet distin
 sin resolver). En el celular, la app de Tailscale con esa misma cuenta. Después de eso la URL abre
 sola, sin abrir un puerto ni cambiar nada del VPS.
 
-**Consecuencia honesta:** hasta hoy **nadie ha abierto la interfaz**. Todo lo verificado es la capa
-de datos (selftest de lectura, selftest de escrituras contra una copia de producción, round-trip de
-Toggles y respuestas de la API por `curl`). El frontend compila y se sirve, pero su render no lo ha
-visto un humano. Es el primer punto a mirar en la próxima sesión, y también el insumo natural de F6.
+**Actualización 2026-07-30 — el tailnet ya tiene dos nodos.** El Mac entró:
+
+```
+100.106.116.11  juanito              Manigreeen@  linux
+100.112.26.18   manuels-macbook-air  Manigreeen@  macOS
+```
+
+`https://juanito.tail2df10b.ts.net` **responde 200 desde el Mac** (~0.8s) y `/api/meta` devuelve el
+sha desplegado, `deploy: true` y las 21 escrituras. O sea: el camino de red está cerrado de punta a
+punta y la advertencia de `NXDOMAIN` ya no aplica en esa máquina.
+
+**Lo que sigue siendo cierto:** el RENDER del frontend no lo ha mirado un humano. Lo verificado es
+que el servidor responde, no que la página se vea bien. Falta abrirla en un navegador y también
+sumar el celular al tailnet. Es el insumo natural de F6.
 
 ## Cómo operar el dashboard
 
@@ -270,7 +283,22 @@ en el droplet, que es peor negocio.
 | `docs/`, `CLAUDE.md`, `.env.example` | Documentación | Ninguno |
 | `.github/workflows/deploy.yml` (nuevo) | Deploys | Ninguno hasta que lo dispares |
 
-**Una línea de código en `src/`.** Eso es todo el costo de F1-F3.
+**Una línea de código en `src/`.** Ese fue todo el costo de F1 y F2.
+
+### Lo que F3a sumó al contrato (2026-07-30)
+
+La tabla de arriba se escribió antes de construir F3. F3a resultó más barata que lo temido pero no
+gratis, y esto es lo que de verdad toca:
+
+| Cambio | Por qué | Impacto en el bot |
+|---|---|---|
+| `src/db/migrate.js`: 6 `CREATE TABLE IF NOT EXISTS` + llamada al seed | Es F3a | Aditivo. El seed va en `try/catch` con import dinámico y **está probado que un seed roto sale con exit 0** |
+| `src/calendly/accounts.js`: bloque `env` declarativo por conexión | Una closure no es introspectable; el seed necesita el NOMBRE de la env var | Ninguno. Metadata pura, no la lee el runtime. Las closures quedaron intactas |
+| `src/calendly/closers.js`: `export` de `PEOPLE` | El seed necesita la PERSONA; los mapas derivados son por identidad y ya la perdieron | Ninguno. Una palabra |
+| `src/db/registry-seed.js`, `src/db/registry-read.js` (nuevos) | Seed y su reverso | Ninguno hasta F3c. Solo los llaman migrate.js y el test |
+
+**Sigue sin entrar una línea al proceso del bot** en el sentido que importa: nada nuevo corre dentro
+de `src/index.js` ni puede tirar una excepción en su crash domain.
 
 ### Anotado y diferido
 
@@ -614,14 +642,73 @@ La **lectura** ya llegó en F1 importando los módulos. Esto es solo la escritur
 invasiva: toca el módulo más testeado del repo (~60 archivos de test, ~840 casos) y la invariante de
 [ADR 0001](adr/0001-modelo-empresa-programa-closer.md): **el copy precall debe quedar byte-idéntico.**
 
-- [ ] **3a — Tablas + seed, nadie lee.** `programs`, `companies`, `connections`, `closers`,
-      `closer_identities`, `ignored_closers`, sembradas desde los literales actuales (7 programas, 2
-      conexiones, 8 personas con sus identidades, 13 ignorados) **solo si están vacías**. El runtime
-      sigue leyendo del código. Riesgo: cero.
-- [ ] **3b — Test de equivalencia.** Compara `buildPrecallText()` y todos los derivados
-      (`eventTypeToProgram`, `PROGRAM_LABELS`, `PROGRAM_PITCH`, `MATERIAL_LINKS`, `CLOSERS`,
-      `CLOSER_LIDS`, `HUBSPOT_OWNER_TO_CLOSER`, `resolveCloser*`) entre seed-en-DB y literales. Si no
-      es idéntico, el seed está mal. Nada lee de DB todavía.
+- [x] **3a — Tablas + seed, nadie lee.** ✅ **2026-07-30.** `companies`, `connections`, `programs`,
+      `closers`, `closer_identities`, `ignored_closers` en [migrate.js](../src/db/migrate.js) §3,
+      sembradas desde los literales por [registry-seed.js](../src/db/registry-seed.js) **solo si
+      están vacías**. El runtime sigue leyendo del código.
+      Sembrado real: **3 empresas · 2 conexiones · 7 programas · 8 personas · 10 identidades ·
+      12 ignorados**. (El plan decía "13 ignorados": era el conteo de antes de que
+      `equipo@ttrading.co` saliera de `IGNORED_CLOSERS` el 29-jul por el §18.AV. Son 12.)
+- [x] **3b — Test de equivalencia.** ✅ **2026-07-30** —
+      [test/data.registry.test.js](../test/data.registry.test.js), **16 tests verdes** en el
+      contenedor. Además del round-trip compara el ORDEN de los programas, y fija tres invariantes
+      que hasta ahora solo vivían en comentarios: un teléfono = una persona, toda identidad apunta a
+      una conexión/empresa que existe, y **ningún closer del roster está además en ignorados** (el
+      §18.AV exacto).
+      **Compara las estructuras CRUDAS, no `buildPrecallText()`.** Los mapas de copy
+      (`PROGRAM_PITCH`, `MATERIAL_LINKS`, `PROGRAM_LABELS`) son proyecciones puras de `PROGRAMS`: si
+      el insumo es idéntico, el copy es byte-idéntico por construcción, y encima quedan cubiertos
+      los programas que hoy no tienen ni una cita agendada. Re-derivarlos en el test habría dado una
+      segunda copia de esa lógica destinada a divergir. Los tres derivados se comprueban igual, por
+      redundancia barata.
+      [registry-read.js](../src/db/registry-read.js) es el reverso del seed y es lo que F3c reusa.
+
+#### Cinco cosas que se decidieron construyéndolo
+
+1. **`accounts.js` guardaba comportamiento, no datos.** `token: () => process.env.CALENDLY_TOKEN` no
+   es introspectable: desde afuera no hay forma de saber que la variable se llama `CALENDLY_TOKEN`,
+   y el seed necesita ese nombre. Se le agregó un bloque `env` declarativo por conexión.
+   **Convive con las closures en vez de reemplazarlas**, a propósito: reescribir `dryRun` es tocar
+   el camino por el que salen (o no salen) los pushes, y F3a se declaró riesgo cero. La red contra
+   la deriva entre ambas representaciones es un test que las ejercita con la env prendida, apagada y
+   ausente. F3c, que ya tiene que recablear esto, las colapsa.
+2. **No hay secretos en la base.** De cada conexión se guarda el NOMBRE de su env var, nunca el
+   token. La DB se copia a `/tmp` en cada selftest; un token adentro se filtraría en cada copia.
+3. **`sort_order` no es cosmético.** Los literales son objetos y el código itera en orden de
+   inserción: `programFromTitle` devuelve el PRIMER programa cuyo hint matchea. Sin preservar el
+   orden, un título ambiguo se clasifica a otro programa → otro pitch. El test lo fija.
+4. **El seed solo llena tablas VACÍAS y nunca actualiza.** Es lo que hace posible F3d: el código es
+   la SEMILLA, no el dueño permanente del dato. Un test comprueba que una edición hecha a mano
+   sobrevive a la siguiente corrida.
+5. **El seed no puede dejar al bot sin arrancar, y está probado, no afirmado.** `entrypoint.sh` es
+   `node src/db/migrate.js && node src/index.js` — la línea más peligrosa del repo (garantía 2). El
+   seed va en `try/catch` con **`await import` dinámico y no un import estático**: un import estático
+   que falle revienta al CARGAR el módulo, antes de que el `try` exista. Se rompió el seed a
+   propósito de las dos maneras (error de sintaxis y excepción en runtime) contra una copia de
+   producción: las dos veces gritó en el log y **salió con exit 0**. Como en F3a nadie lee esas
+   tablas, un seed fallido no tiene ninguna consecuencia operativa; tumbar WhatsApp por él sería el
+   peor negocio posible. ⚠️ Cuando F3c encienda la lectura, este try/catch deja de alcanzar por sí
+   solo: la garantía pasa a ser el flag `REGISTRY_SOURCE_*` + este test.
+
+#### Verificación de F3a+F3b (2026-07-30)
+
+Todo contra el contenedor del VPS, con `src/` y `test/` montados desde `/root/dash-verify` — el
+código nuevo **nunca entró a producción**.
+
+| Qué | Resultado |
+|---|---|
+| `test/data.registry.test.js` en el contenedor | **16 pass · 0 fail** |
+| `test/data.*.test.js` en el contenedor | **77 pass · 2 fail** (los 2 son los preexistentes de `data.scheduled-calls`; antes era 61/2 de 63) |
+| Suite local, Mac | `pass` **idéntico a HEAD (742)**; +16 tests y +16 rojos, que son el archivo nuevo sin binding nativo |
+| Migración contra copia de producción (`VACUUM INTO`) | Siembra limpia, y la **segunda corrida no imprime nada** → idempotente |
+| Seed roto (sintaxis y excepción) | `exit 0` las dos veces |
+| Base VIVA tras todo | **0 tablas de registries** — nada tocó producción |
+| `docker inspect juanito-agent` | `StartedAt` sigue en `2026-07-30T00:30:02Z` |
+
+> ⚠️ **La línea base de tests del Mac que dice "127 rojos" no se reproduce.** Medida en la misma
+> sesión, `HEAD` da **805 tests · 742 pass · 63 fail**. Los 742 verdes sí coinciden, así que ese es
+> el número contra el que conviene comparar; el de rojos depende de qué tan completo esté el
+> `node_modules` de la raíz y no sirve de referencia estable.
 - [ ] **3c — Lectura desde DB detrás de flag, un registry a la vez.** Los módulos conservan
       **exactamente su API pública**, así que los ~60 tests siguen importando lo mismo; solo cambia de
       dónde salen los datos. Los derivados (hoy computados al importar) pasan a un cache invalidado
@@ -633,11 +720,39 @@ invasiva: toca el módulo más testeado del repo (~60 archivos de test, ~840 cas
       reusando lo que ya hace [scripts/calendly-precall-preview.js](../scripts/calendly-precall-preview.js).
       Primer cambio real con `CALENDLY_DRY_RUN=true`.
 
-⚠️ Esta es la única fase que necesita tocar `migrate.js`, y solo en 3a. Probar la migración contra una
-copia de la DB de producción antes de deployear:
+### Cómo desplegar F3a (y por qué conviene NO desplegarla sola)
+
+F3a toca `src/` (`migrate.js`, `accounts.js`, `closers.js` + dos módulos nuevos), así que su deploy
+es `alcance: todo`: **reconstruye la imagen y reconecta Baileys**. Y lo que compra ese viaje es que
+existan seis tablas **que nadie lee**.
+
+**Recomendación: no desplegarla sola.** Que viaje de arriba de la próxima corrida de `alcance: todo`
+que haga falta por otra razón — o de F3c, que es cuando las tablas empiezan a servir para algo. El
+backoff de `entrypoint.sh` existe por un softban real; gastar una reconexión en código inerte es
+justo el tipo de riesgo que este roadmap se propuso no correr.
+
+Cuando toque, las tablas se crean solas al arrancar (`migrate.js` corre antes que `index.js`) y el
+seed las llena en esa misma corrida. No hay paso manual.
+
+⚠️ Probar la migración contra una copia de la DB de producción antes de deployear. Lo hecho el
+2026-07-30 (sin tocar la base viva: `VACUUM INTO` a una copia, y la copia borrada después):
+⚠️ **Ojo con el comando obvio.** `docker exec juanito-agent … node src/db/migrate.js` corre el
+`src/` **de la imagen**, o sea el código VIEJO: probaría la migración que ya está desplegada, no la
+nueva. Hay que montar el código a probar, igual que los tests:
+
 ```bash
-docker exec juanito-agent sh -c 'cp /app/data/brain.sqlite /tmp/t.sqlite && DB_PATH=/tmp/t.sqlite node src/db/migrate.js'
+sshpass -e rsync -a --delete -e ssh src/ root@157.230.152.202:/root/dash-verify/src/
 ```
+
+```bash
+docker exec juanito-agent node --input-type=module -e 'import D from "better-sqlite3"; new D("/app/data/brain.sqlite",{readonly:true}).exec("VACUUM INTO '"'"'/tmp/copia.sqlite'"'"'")' && docker cp juanito-agent:/tmp/copia.sqlite /root/dash-verify/copia.sqlite && docker exec juanito-agent rm -f /tmp/copia.sqlite
+```
+
+```bash
+docker run --rm -v /root/dash-verify/src:/app/src:ro -v /root/dash-verify/copia.sqlite:/tmp/copia.sqlite -e DB_PATH=/tmp/copia.sqlite --entrypoint node juanito-agent:latest src/db/migrate.js
+```
+
+Correrlo **dos veces**: la segunda no debe imprimir ninguna línea de seed. Borrar la copia al final.
 
 📎 Contexto obligatorio antes de tocar closers: el handoff §18.AR ("rotar el teléfono de un closer
 tiene DOS pasos y el segundo no lo hace nadie") y §18.AV (el cupo de Retia de Salazar vivía en un
