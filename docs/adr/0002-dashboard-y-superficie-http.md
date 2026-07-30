@@ -72,6 +72,18 @@ rechazar los webhooks de Calendly. No es incidental: nace de un softban real de 
   mismo. La invariante de [ADR 0001](0001-modelo-empresa-programa-closer.md) —copy precall
   byte-idéntico— se protege con un test de equivalencia seed-en-DB vs. literales, y con un preview del
   mensaje exacto en la UI antes de guardar. Pausar = dejar los flags en `code`.
+- **El despliegue es rsync desde CI, no `git pull` en el VPS.** El repo es privado y el droplet no
+  tiene credenciales de GitHub; las opciones eran una deploy key SSH, un PAT en `.git/config`, o que
+  el workflow —que ya tiene el código checkouteado— empuje una allowlist de rutas por SSH. Gana la
+  tercera: **el VPS nunca necesita credenciales de GitHub**, y la pregunta "¿qué versión corre?" la
+  responde un archivo `DEPLOYED_SHA` que escribe el pipeline. Consecuencia aceptada: `/root/juanito`
+  sigue sin ser un repo git, así que no hay `git status` para inspección manual — la deriva se mide
+  con un diff de checksums desde el Mac (procedimiento en el roadmap). Medida el 2026-07-30: cero.
+- **El código del dashboard se monta, no se hornea en la imagen.** `./dashboard:/app/dashboard:ro`
+  evita tocar el `Dockerfile` y evita reconstruir la imagen compartida, con lo cual desplegar una
+  iteración del dashboard **no reinicia el bot**. El precio es que el contenedor `dash` depende de
+  archivos del host; a cambio, el aislamiento que exige la restricción del proyecto se cumple sin
+  excepciones.
 - **Cada deploy que reconstruya `agent` reconecta Baileys.** El botón de Deploy hace del despliegue
   algo trivial de disparar, lo cual es justo el riesgo que el softban enseñó. Queda documentado el
   límite: unos pocos por hora, nunca en loop. Y el botón dispara el workflow de GitHub por API, no

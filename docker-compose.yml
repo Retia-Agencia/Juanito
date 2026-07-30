@@ -202,6 +202,50 @@ services:
     volumes:
       - agent-data:/app/data
 
+  # ─── Dashboard de operación (docs/DASHBOARD-ROADMAP.md · ADR 0002) ──────────
+  #
+  # Contenedor APARTE del bot a propósito: src/index.js hace process.exit(1) ante
+  # cualquier excepción no capturada y entrypoint.sh duerme 30-300s, así que un bug
+  # HTTP dentro del bot tumbaría WhatsApp hasta 5 minutos.
+  #
+  # Reusa la MISMA imagen ya construida (sin `build:`) → levantarlo no dispara una
+  # compilación en el único vCPU del droplet. El código del dashboard se monta desde
+  # el host, así que iterarlo NO reconstruye la imagen ni reinicia el bot.
+  dash:
+    image: juanito-agent:latest
+    container_name: juanito-dash
+    restart: unless-stopped
+    command: node dashboard/server/index.js
+    # Sin depends_on a propósito: el dashboard tiene que servir JUSTO cuando el bot
+    # está caído, que es cuando hace falta mirarlo.
+    environment:
+      - NODE_ENV=production
+      - TZ=${TZ:-America/Bogota}
+      - DB_PATH=/app/data/brain.sqlite
+      - DASH_PORT=8080
+      # Destinatarios de las alertas: los mismos LIDs del equipo dev.
+      - ADMIN_LID=${ADMIN_LID:-}
+      # Arranca APAGADO: el watchdog solo escribe al dashboard hasta medir volumen.
+      # El handoff §18.AV avisa que estas alertas compiten con el anti-ban.
+      - DASH_ALERTS_WHATSAPP=${DASH_ALERTS_WHATSAPP:-false}
+      - DASH_WATCHDOG_MIN=${DASH_WATCHDOG_MIN:-15}
+      - DASH_ALERT_DEDUP_HOURS=${DASH_ALERT_DEDUP_HOURS:-6}
+      # Para que el check de respuestas vencidas use el mismo TTL que el bot.
+      - REPLY_APPROVAL_TTL_MIN=${REPLY_APPROVAL_TTL_MIN:-30}
+    ports:
+      # Bind a LOOPBACK, no a 0.0.0.0: esto NO expone un puerto a internet. El acceso
+      # es por Tailscale (`tailscale serve` → 127.0.0.1:8080). La regla de no exponer
+      # puertos, que nació de un softban, se mantiene intacta.
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - agent-data:/app/data
+      # Solo lectura: el dashboard nunca reescribe su propio código.
+      - ./dashboard:/app/dashboard:ro
+    # Aislamiento por contrato, no por confianza: el bot vive en ~80 MB de los 1967
+    # del droplet y bajo contención de CPU gana él.
+    mem_limit: 256m
+    cpu_shares: 512
+
 volumes:
   agent-data:
     driver: local

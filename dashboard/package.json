@@ -1,0 +1,19 @@
+{
+  "name": "juanito-dashboard",
+  "private": true,
+  "type": "module",
+  "description": "Dashboard de operación de Juanito. Deps AISLADAS del package.json raíz, que tiene 0 devDependencies por regla del repo.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.4",
+    "vite": "^7.1.12"
+  }
+}

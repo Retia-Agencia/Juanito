@@ -1,6 +1,7 @@
 # Dashboard centralizado de Juanito — Roadmap
 
-> **Estado:** planeado, sin ejecutar. Última actualización: 2026-07-29.
+> **Estado:** F1 desplegado y corriendo (falta autenticar Tailscale y los secrets del workflow).
+> Última actualización: 2026-07-30.
 > **Fuente de verdad de este proyecto.** Si retomas en otra sesión, lee este archivo completo antes
 > de tocar nada. Decisión arquitectónica formal en [ADR 0002](adr/0002-dashboard-y-superficie-http.md).
 
@@ -78,6 +79,32 @@ casi nada:
 **Resultado:** los objetivos 1 y 2 se entregan **sin una línea de código nuevo dentro del proceso del
 bot**. Todo lo que antes era la fase 1 pasó a ser opcional (F4-F6).
 
+## Recon del VPS (medida 2026-07-30)
+
+Antes de tocar nada se midió la deriva entre `/root/juanito` y `main`. Resultado:
+
+- **Deriva real: CERO.** El `src/` de producción es idéntico a `main`. Un primer diff mostró 44
+  archivos "distintos", pero era **puro CRLF**: los deploys históricos se hacían con `pscp` desde
+  Windows. Con finales de línea normalizados no queda una sola diferencia de contenido.
+  Para repetir la medición:
+  ```bash
+  sshpass -e ssh root@157.230.152.202 'cd /root/juanito && for f in $(find src scripts -type f | grep -v "/\._" | sort); do printf "%s  %s\n" "$(tr -d "\r" < "$f" | md5sum | cut -c1-32)" "$f"; done'
+  ```
+- **`/root/juanito` no es una copia limpia del repo**, es un directorio de trabajo acumulado: 30+
+  `.env.bak-*`, 13 directorios `src.bak-*`, 7 `brain.sqlite.bak-*` (~2 MB c/u), 7
+  `docker-compose.yml.bak-*`, scripts sueltos (`audit.js`, `audit2.js`, `audit3.js`, `members.js`,
+  `check.mjs`, `retry-405.sh`, `watch-first-retia.sh`), `node_modules` instalado en el host, y sin
+  `docs/` ni `test/`. **No se limpió nada** (sería destructivo y está fuera de alcance); queda
+  anotado por si algún día se quiere ordenar.
+- **7 archivos existen solo en el VPS y todos son muertos:** `closers.js.bak-20260721-152347`,
+  `closers.js.bak-20260729-pre18AV`, `whatsapp/index.js.qrserver.bak`, `whatsapp/package.json` y
+  `package-lock.json` (npm sueltos), y `src/stripe/{index,count}.js` del 5-jul que **nadie importa**
+  (sobrantes de una iteración anterior del módulo de Stripe, reemplazada por `client.js` +
+  `alerts.js`).
+- **El remoto es privado y el VPS no tiene credenciales de GitHub** → de ahí el cambio de `git pull`
+  a rsync (ver tabla de decisiones).
+- `tailscale` no está instalado. Docker Compose es v5.1.4. Git 2.43.0 sí está.
+
 ## Hechos del entorno (medidos 2026-07-29)
 
 ```
@@ -104,7 +131,7 @@ juanito-agent: 80.78 MiB RAM (4.1%) · 0.00% CPU
 | Stack | **Vite + React** (SPA) + API con `node:http` | **Next.js** tiene el mismo techo estético (todo lo visual vive en el browser: Tailwind, Framer Motion, Canvas, WebGL, shadcn/ui), pero su runtime pesa 150-250 MB vs ~70 MB, y un dashboard tipo Jarvis es 100% cliente — RSC no compra nada cuando cada panel se actualiza solo. **Vercel** queda descartado: la data es un archivo SQLite en el droplet, así que un frontend en Vercel *igual* necesita un servicio en el VPS, y encima lo obliga a ser alcanzable desde internet público (una env var guarda la URL, no crea el camino de red). Solo compraría un servidor de build, que GitHub Actions da gratis sin partir el sistema en dos |
 | Imagen Docker | El dash reusa **la misma imagen** del agent con otro `command:` | `better-sqlite3` ya está compilado y `src/` ya está dentro. Cero segundo Dockerfile, cero build extra |
 | Frontend en disco | Bind mount `./dashboard/dist:/app/dashboard/dist:ro` | Así se actualiza el frontend sin rebuild de imagen y sin reiniciar `agent` |
-| Deploys | `/root/juanito` → repo git *in situ* + GitHub Action + botón Deploy | Clonar a un directorio nuevo exigiría parar el contenedor (mismo `container_name`). *In situ* con `git init` + `reset --mixed` no modifica un solo archivo |
+| Deploys | **rsync desde el GitHub Action** de una lista explícita de rutas + archivo `DEPLOYED_SHA` + botón Deploy | **Cambiado el 2026-07-30 tras la recon.** El plan original era `git pull` en el VPS, pero **el repo es privado** y el droplet no tiene credenciales de GitHub (`git ls-remote` falla con "could not read Username"). Las alternativas eran una deploy key SSH o un PAT en `.git/config`; rsync gana porque **el VPS nunca necesita credenciales de GitHub** y la pregunta "¿qué versión corre?" la responde el `DEPLOYED_SHA` que escribe el pipeline. El rsync usa allowlist de rutas: nunca toca `.env`, `data/`, ni los backups acumulados |
 | Botón Deploy | Dispara el workflow por la API de GitHub (`workflow_dispatch`) | **No** montar el socket de Docker en el dash: eso es root en el host. El pipeline es el único camino y GitHub queda como audit log |
 | Alertas | DM de WhatsApp vía la tabla `reminders` como outbox + feed en el dashboard | El handoff advierte que las alertas compiten con el anti-ban y con la paciencia de quien las lee → **una alerta agregada al día**, y primero solo al dashboard hasta medir volumen |
 | Jarvis | Estética con `/impeccable` + consola de chat con tools reales; confirmación explícita para lo que sale a un humano por WhatsApp | Sandbox total lo degrada a playground; sin confirmación, un prompt de prueba manda un mensaje real a un closer |
@@ -136,6 +163,7 @@ Mejoras reales, ninguna necesaria para el dashboard. Se dejan escritas para no p
 | Envolver los 22 jobs en `runJob()` | Última corrida y duración por job | La alerta que de verdad importa se detecta por SQL sin instrumentar nada. Si algún día quieren el grid completo, se hace de a un job por vez. Es F4 |
 | Shim `logEvent` en los ~71 `console.error` | Feed de errores completo en la UI | `docker logs` ya los tiene. Migrar 71 call sites en código vivo no se paga con lo que aporta |
 | Costo de LLM de `src/claude/index.js` (~línea 2000) a una tabla | Costo agregado por día en vez de una línea de log por interacción | Métrica linda, cero urgencia |
+| **Pushes huérfanos en `sending`.** Si el proceso muere entre `claimCalendlyPush` y `markCalendlyPushSent`, la fila queda en `sending` para siempre | Que un push reclamado y no enviado se reintente en vez de morir en silencio | Encontrado por el dashboard el 2026-07-30: **1 caso en toda la historia** (#898, 9-jul). No es urgente, pero es un modo de fallo real y hoy solo lo ve el dashboard. El arreglo (revertir a `scheduled` los `sending` viejos) va en `revertCalendlyPush`, que ya existe |
 | Control server dentro del bot | `listGroups()` de grupos no autorizados, chat de Jarvis, `reload()` de registries | Es el único código que viviría en el crash domain del bot. Se posterga a F6 detrás de `CONTROL_PORT`, con el patrón de [qr-server.js:23](../src/whatsapp/qr-server.js) (`if (!port) return;`): sin la variable, no arranca |
 | Tablas nuevas en `migrate.js` | — | Ver garantía 2. El dash crea sus tablas él mismo |
 
@@ -197,8 +225,8 @@ Estado de cada flag. **Mantener esta tabla actualizada es parte del trabajo.**
 
 | Fase | Cómo se revierte | ¿Toca al bot? |
 |---|---|---|
-| F1 git in situ | `rm -rf /root/juanito/.git` | No, ni un archivo se modifica |
 | F1 GitHub Action | Deshabilitar el workflow en GitHub | No |
+| F1 rsync de `dashboard/` | `docker compose stop dash`; el rsync nunca toca `src/` salvo que el commit lo cambie | No |
 | F1 contenedor dash | `docker compose stop dash` | No |
 | F1 alertas | `DASH_ALERTS_WHATSAPP=false` | No |
 | F2 escrituras | Apagar por tab; read-only por default | No |
@@ -211,45 +239,62 @@ Estado de cada flag. **Mantener esta tabla actualizada es parte del trabajo.**
 
 ## F1 — Dashboard read-only + alertas · cero cambios en el bot
 
-- [ ] **Tarea 0** — este archivo creado y referenciado desde `CLAUDE.md` y §18 del handoff.
-- [ ] **ADR 0002** — `docs/adr/0002-dashboard-y-superficie-http.md`.
-- [ ] **`/root/juanito` → repo git *in situ*, sin reiniciar nada:**
-      ```bash
-      cd /root/juanito && git init && git remote add origin https://github.com/Agencia-Dani/Juanito.git && git fetch origin && git reset --mixed origin/main
-      ```
-      No modifica un solo archivo del working tree. `git status` después muestra exactamente en qué
-      difiere el VPS de `main` — información que hoy no existe. **Revisar ese diff antes de seguir.**
-      El `.env` está en `.gitignore`, nunca corre riesgo. `assets/` aparecerá como untracked: dejarla.
-- [ ] **Servicio `dash` en `docker-compose.yml`:** misma imagen que `agent` (`build: .`),
-      `command:` distinto, `./dashboard/dist:/app/dashboard/dist:ro`, volumen `agent-data`,
-      `mem_limit: 256m`, `cpu_shares` menor que el del bot, bind a `127.0.0.1`, **sin `ports:`
-      públicos**. Levantar con `docker compose up -d dash` (solo ese servicio).
-- [ ] **`src/db/index.js`:** agregar `db.pragma('busy_timeout = 5000')` junto al `journal_mode = WAL`.
-- [ ] **Tailscale en el host** + `tailscale serve https / http://127.0.0.1:8080`.
-- [ ] **`.github/workflows/deploy.yml`** con **solo `workflow_dispatch`** al principio. El trigger en
+- [x] **Tarea 0** — este archivo creado y referenciado desde `CLAUDE.md` y §18 del handoff.
+- [x] **ADR 0002** — `docs/adr/0002-dashboard-y-superficie-http.md`.
+- [x] **Medir la deriva VPS ↔ `main`** — hecha 2026-07-30, resultado cero. Ver "Recon del VPS".
+      Reemplaza al plan original de convertir `/root/juanito` en repo git, que quedó descartado
+      porque el remoto es privado y el droplet no tiene credenciales.
+- [x] **Servicio `dash` en `docker-compose.yml`:** misma imagen que `agent` (`build: .`),
+      `command: node dashboard/server/index.js`, bind-mount **de todo** `./dashboard:/app/dashboard:ro`
+      (no solo `dist/`: así el código del server también llega sin rebuild de imagen y **sin tocar el
+      Dockerfile ni reiniciar `agent`**), volumen `agent-data`, `mem_limit: 256m`, `cpu_shares` menor
+      que el del bot, bind a `127.0.0.1`, **sin `ports:` públicos**. Levantar con
+      `docker compose up -d dash` (solo ese servicio).
+      Nota: el dash no necesita dependencias npm nuevas — `better-sqlite3` ya está en
+      `/app/node_modules` de la imagen y `node:http` es builtin.
+- [x] **`src/db/index.js`:** agregar `db.pragma('busy_timeout = 5000')` junto al `journal_mode = WAL`.
+- [~] **Tailscale en el host** + `tailscale serve https / http://127.0.0.1:8080`.
+- [x] **`.github/workflows/deploy.yml`** con **solo `workflow_dispatch`** al principio. El trigger en
       push a `main` se habilita después, cuando el pipeline esté probado. Pasos: compilar el frontend
-      → SSH → `git pull` → `docker compose up -d` → publicar `logs --tail 50`. Secrets `VPS_HOST`,
-      `VPS_PASSWORD`.
-      ⚠️ **Anti-softban:** cada deploy que reconstruya `agent` reconecta Baileys. Unos pocos por
-      hora, nunca en loop. El backoff de `entrypoint.sh` existe por un softban real.
+      → **rsync por SSH de una allowlist de rutas** → escribir `DEPLOYED_SHA` → reiniciar solo lo que
+      cambió → publicar `logs --tail 50`. Secrets `VPS_HOST`, `VPS_PASSWORD`.
+      **Allowlist:** `src/`, `scripts/`, `dashboard/`, `package.json`, `package-lock.json`,
+      `Dockerfile`, `docker-compose.yml`, `entrypoint.sh`. **Nunca** `.env`, `data/`, `node_modules/`,
+      ni los `*.bak*` del VPS. Sin `--delete` global, para no barrer los backups que el equipo dejó.
+      ⚠️ **Anti-softban:** un deploy que solo toque `dashboard/` reinicia **únicamente** el
+      contenedor `dash` — el bot ni se entera. Solo los cambios en `src/` o el `Dockerfile` obligan a
+      reconstruir `agent`, y eso reconecta Baileys: unos pocos por hora, nunca en loop. El backoff de
+      `entrypoint.sh` existe por un softban real.
 - [ ] **Botón Deploy** en la UI → `POST /repos/Agencia-Dani/Juanito/actions/workflows/deploy.yml/dispatches`.
-- [ ] **API del dash** (`dashboard/api/`): importa `src/db/index.js` con `DB_PATH` apuntando al mismo
+- [x] **API del dash** (`dashboard/api/`): importa `src/db/index.js` con `DB_PATH` apuntando al mismo
       archivo, e importa `src/calendly/{programs,accounts,closers}.js` para el tab de registries.
-- [ ] **Frontend** (`dashboard/`): Vite + React + Tailwind, devDependencies **aisladas** en
+- [x] **Frontend** (`dashboard/`): Vite + React + Tailwind, devDependencies **aisladas** en
       `dashboard/package.json` (el `package.json` raíz tiene 0 devDependencies y una regla de "no
       agregar dependencias sin justificación clara").
-- [ ] **Tabs en modo lectura:** Salud · Aprobaciones · Respuestas · Grupos · Programados · Outreach ·
+- [x] **Tabs en modo lectura:** Salud · Aprobaciones · Respuestas · Grupos · Programados · Outreach ·
       Tareas · Negocio · Recordatorios · Calls · Registries · Toggles.
-- [ ] **Tab Salud**, todo derivado de SQL sobre datos que ya existen:
-      - `calendly_pushes` vencidos sin enviar ← **el push que no sale, §18.AV**
-      - `pending_replies` pendientes por encima del TTL, y las `held` por quiet hours
-      - `call_outcomes` sin responder y `awaiting_date` estancados
-      - `scheduled_drafts` pendientes que no se van a publicar
-      - frescura por tabla (último `created_at` de `messages`, `calendly_pushes`, `call_outcomes`)
-      - opt-ins sembrados vs. ganados (`source='self'`), closers pausados
-      - hosts en `IGNORED_CLOSERS` con citas activas ← síntoma del §18.AV
-      - *(bloqueado hasta desdiferir el fix de `skip_reason`)* breakdown de motivos de skip
-- [ ] **Watchdog en el dash**, cada 15 min, dedupe en su propia tabla `dash_alerts`
+- [x] **Tab Salud** — 11 checks, todos derivados de SQL sobre datos que ya existen:
+      `pushes_vencidos` (el push que no sale, §18.AV) · `pushes_atascados` en `sending` ·
+      `pushes_no_entregados` por configuración · `respuestas_vencidas` · `outcomes_sin_respuesta` ·
+      `reagendas_colgadas` · `recordatorios_fallidos` · `programados_sin_publicar` · `frescura` por
+      tabla · `interruptores` · `motivos_skip`.
+      **Dos correcciones sobre lo planeado, descubiertas al construirlo:**
+      - *"Hosts ignorados con citas activas" NO es detectable desde la DB.* Un host en
+        `IGNORED_CLOSERS` nunca genera fila de push, así que no deja rastro alguno — que es
+        precisamente lo que hizo invisible al §18.AV. El dashboard hace lo único que puede sin tocar
+        el bot: **mostrar la lista** en el tab Registries para que sea auditable, en vez de vivir
+        enterrada en un archivo fuente. El detector real necesita la pieza 1 del §18.AV (en el bot).
+      - *El breakdown de motivos de skip NO estaba bloqueado por el bug de `skip_reason`.* La razón
+        se puede extraer del texto de `message`, donde `markCalendlyPushSkipped` la concatena. Es
+        feo pero es solo lectura y da el panel hoy. El fix de la columna sigue siendo deseable.
+- [x] **`pushes_no_entregados`**, el check que no estaba en el plan y resultó el más valioso:
+      separa un skip legítimo (`cita canceled`, `rescheduled`, `push obsoleto`) de uno que significa
+      **que un push no salió por falta de configuración** (`sin opt-in`, `sin hilo establecido`,
+      `sin mapear`). Esa distinción es la familia entera del §18.AV.
+      ⚠️ Al implementarlo apareció un falso positivo instructivo: probar el regex contra `message`
+      completo marca filas sanas, porque ese campo guarda **también el copy de WhatsApp**, donde
+      frases como "sin teléfono" aparecen legítimamente. Hay que probar contra el motivo extraído.
+- [x] **Watchdog en el dash**, cada 15 min, dedupe en su propia tabla `dash_alerts`
       (`CREATE TABLE IF NOT EXISTS` en el arranque del dash, **no** en `migrate.js`).
       Arranca con `DASH_ALERTS_WHATSAPP=false`: solo escribe al dashboard. Tras medir volumen unos
       días, se enciende y entonces inserta con `saveReminder({ text, dueAt: ahora, toPhone: <admin> })`
@@ -258,6 +303,27 @@ Estado de cada flag. **Mantener esta tabla actualizada es parte del trabajo.**
       compite con el anti-ban y con la paciencia de quien la lee).
       🔍 **Verificar en implementación** qué prefijo le pone el job de recordatorios al texto, para
       que la alerta se lea bien y no como "Recordatorio: ...".
+
+### Validación contra un incidente real (2026-07-30)
+
+El check `pushes_no_entregados` se probó contra los datos de producción y encontró **8 pushes de
+`daniela.camacho@30x.com` saltados por "closer sin opt-in"**, del 8 al 28 de julio. Diagnóstico:
+
+- Su opt-in existe desde el 14-jul bajo el número `…4666` (`source=self`, con `contact_jid`).
+- Pero los pushes se construían con `…2287`, el número **viejo** del roster.
+- El roster se corrigió el 28-jul ([closers.js:51](../src/calendly/closers.js)) y **el último skip es
+  del 28-jul 21:55**. O sea: es §18.AR (rotar un teléfono tiene dos pasos) y **ya está arreglado**.
+  El check con ventana de 24h reporta 0, que es lo correcto.
+
+**Lo que esto prueba:** de haber existido este dashboard el 8 de julio, habría marcado el primer
+push saltado de Daniela **ese mismo día** en vez de que el problema viviera tres semanas. Es el
+mismo patrón del §18.AV con Salazar. El check quedó validado contra historia real sin inventar una
+alarma falsa.
+
+**Otro hallazgo, este sin resolver:** el push **#898** (Push 3, Pablo Lozano, 9-jul) lleva desde
+entonces en estado `sending`. Si el proceso muere entre `claimCalendlyPush` y `markCalendlyPushSent`,
+la fila queda huérfana y **nadie la reintenta ni se entera**. Un solo caso en toda la historia, así
+que no es urgente, pero es un modo de fallo real: anotado como diferido.
 
 **Verificación de F1:**
 - `docker inspect juanito-agent --format '{{.State.StartedAt}}'` sin cambios durante toda la fase.
@@ -397,6 +463,21 @@ npm test
 
 ```bash
 sshpass -e ssh root@157.230.152.202 'cd /root/juanito && docker compose run --rm agent node --test "test/data.*.test.js"'
+```
+
+### Línea base de tests (medida 2026-07-30)
+
+Al medir regresiones hay que comparar contra estos números, **no contra cero** (misma advertencia
+que el handoff hace sobre los 64 rojos de Windows):
+
+| Dónde | Resultado | Nota |
+|---|---|---|
+| Mac, Node 26, `node --test "test/*.test.js"` | **742 verdes · 127 rojos** | Los 127 son la capa nativa: `better-sqlite3` no tiene binding para Node 26. Idéntico antes y después del cambio de `busy_timeout`. Ojo: el `node_modules` de la raíz puede estar incompleto (faltaban `pdfkit` y `docx`) y eso hace que el runner muera sin imprimir resumen — correr `npm install` primero |
+| Contenedor, `test/data.*.test.js` | **61 pass · 2 fail** de 63 | Los 2 rojos son **preexistentes**, verificado corriendo el mismo contenedor contra el `src` de HEAD: `call con TODOS sus pushes skipped … sale de la agenda` y `reagenda manual superseded no se cuenta dos veces` (ambos en `data.scheduled-calls.test.js`) |
+
+Para correr la capa nativa contra código local sin tocar producción:
+```bash
+docker run --rm -v /root/dash-verify/src:/app/src:ro -v /root/dash-verify/test:/app/test:ro -e TZ=America/Bogota --entrypoint node juanito-agent:latest --test "test/data.*.test.js"
 ```
 
 - `docker inspect juanito-agent --format '{{.State.StartedAt}}'` → confirma que el bot no reinició.

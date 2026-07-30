@@ -16,6 +16,10 @@ mkdirSync(dirname(DB_PATH), { recursive: true });
 
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
+// El dashboard abre este mismo archivo desde otro proceso (docs/DASHBOARD-ROADMAP.md). Sin
+// busy_timeout, un escritor que encuentra la DB ocupada recibe SQLITE_BUSY al instante en vez
+// de esperar. WAL ya permite lectores concurrentes; esto cubre el cruce de dos escritores.
+db.pragma('busy_timeout = 5000');
 
 // Ventana en la que un outcome a medio flujo sigue "caliente" y se lleva la respuesta
 // del closer (ver getActiveOutcomeForCloser). Pasada, cae al final de la fila.
