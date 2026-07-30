@@ -450,13 +450,24 @@ export function registries() {
       materials: p.materials || null,
       active: p.active !== false,
     })),
+    // ⚠️ `token()`, `dryRun()` y `push4()` leen `process.env` DEL PROCESO QUE LLAMA, y este
+    // proceso es el dashboard, no el bot. `docker-compose.yml` pasa las env EXPLÍCITAMENTE por
+    // servicio y a `dash` no le pasa ninguna de Calendly (no las necesita: nunca llama a la API).
+    // Llamarlas acá devolvía los DEFAULTS del contenedor del dashboard y los mostraba como si
+    // fueran la configuración del bot. Medido el 2026-07-30: el tab decía `tieneToken: no` y
+    // `dryRun: sí` en las DOS conexiones, mientras el `.env` tiene el token puesto y
+    // `CALENDLY_DRY_RUN=false` — o sea reportaba MUDO justo lo que está enviando de verdad.
+    // Exactamente la clase de dato falso que este dashboard existe para eliminar.
+    // Se devuelven en null (la tabla los pinta "—"). Verlos de verdad exige preguntarle al
+    // proceso del bot: es el control server de F6. Lo que NO depende del entorno (orgUri con su
+    // default hardcodeado, hubspot, sheets, eventTypes) sí es fiable y se sigue mostrando.
     conexiones: Object.values(ACCOUNTS).map((a) => ({
       key: a.key,
       label: a.label,
-      tieneToken: !!a.token(),           // nunca el valor
+      tieneToken: null,                  // nunca el valor, y ahora tampoco una adivinanza
       orgUri: a.orgUri(),
-      dryRun: a.dryRun(),
-      push4: a.push4(),
+      dryRun: null,
+      push4: null,
       hubspot: !!a.hubspot,
       sheets: a.sheets || null,
       eventTypes: a.eventTypes,

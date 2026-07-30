@@ -66,9 +66,12 @@ if (r) {
     `     programas=${r.programas.length} conexiones=${r.conexiones.length} ` +
       `closers=${r.closers.length} ignorados=${r.ignorados.length}`
   );
-  // Invariante de seguridad: los tokens NUNCA se serializan.
+  // Invariante de seguridad: los tokens NUNCA se serializan. `tieneToken` puede ser booleano o
+  // `null` (2026-07-30: el dashboard corre en otro contenedor y no recibe las env de Calendly,
+  // así que dejó de adivinar el valor — ver el comentario de `conexiones` en queries.js). Lo que
+  // NO puede ser nunca es un string: eso sería el token viajando en el JSON.
   const json = JSON.stringify(r);
-  const filtrado = !/"token"/.test(json) && r.conexiones.every((c) => typeof c.tieneToken === 'boolean');
+  const filtrado = !/"token"/.test(json) && r.conexiones.every((c) => typeof c.tieneToken !== 'string');
   console.log(`     tokens fuera del JSON: ${filtrado ? 'sí ✅' : 'NO ❌'}`);
   if (!filtrado) fallos++;
 }

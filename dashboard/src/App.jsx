@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, Component } from 'react';
 import Tabla from './Tabla.jsx';
 import {
   useEscrituras,
@@ -425,6 +425,13 @@ function Contenido({ tab, datos, ops }) {
             Fuente: <code>src/calendly/*.js</code>. Solo lectura hasta F3 — para cambiar algo hoy
             todavía hay que editar código y desplegar.
           </div>
+          <div className="aviso">
+            <strong>Token, dry-run y Push 4 salen «—» a propósito.</strong> Dependen de variables
+            de entorno del proceso del <em>bot</em>, y el dashboard corre en otro contenedor que no
+            las recibe. Antes se mostraban los defaults de <em>este</em> proceso como si fueran la
+            config del bot: decía <code>dry-run: sí</code> con los pushes saliendo de verdad.
+            Verlos requiere preguntarle al bot (control server, F6).
+          </div>
           <Secciones grupos={[
             { titulo: 'Programas', filas: datos.programas },
             { titulo: 'Conexiones de Calendly', filas: datos.conexiones },
@@ -448,6 +455,31 @@ function Contenido({ tab, datos, ops }) {
   }
 }
 
+// ── Frontera de error ───────────────────────────────────────────────────────
+// Sin esto, UNA excepción de render en UN tab desmonta la app entera y deja la pantalla en
+// negro, sin un solo mensaje. Fue exactamente lo que pasó con Toggles y Registries, y es lo
+// contrario de la garantía 5 del roadmap ("el dashboard degrada solo"): la consola sirve
+// justamente cuando algo anda mal, así que no puede ser lo primero que se cae.
+// Acota el daño AL TAB: el resto de la navegación sigue viva y el error se puede leer.
+// Tiene que ser una clase — React 19 sigue sin dar frontera de error en hooks.
+class FronteraDeError extends Component {
+  state = { error: null };
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="aviso error-caja">
+        <strong>El tab «{this.props.tab}» falló al dibujarse.</strong> Los demás siguen funcionando.
+        <pre>{String(this.state.error?.stack || this.state.error)}</pre>
+      </div>
+    );
+  }
+}
+
 // ── App ─────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -460,12 +492,26 @@ export default function App() {
 
   const ruta = TABS.find((t) => t.id === tab).ruta;
 
+  // Los datos se guardan JUNTO AL TAB al que pertenecen, y `Contenido` solo se dibuja cuando
+  // los dos coinciden. Sin eso, cambiar de tab renderiza el tab NUEVO con los datos del
+  // ANTERIOR: `setTab` re-renderiza de inmediato y el `setDatos(null)` del efecto de abajo
+  // corre DESPUÉS del commit, o sea tarde. Once tabs sobrevivían de casualidad porque pasan
+  // por <Tabla>, que tolera `undefined` (`!filas?.length`); Toggles y Registries reventaban
+  // con pantalla negra por desreferenciar directo (`datos.closers.length`, `datos.ignorados.map`).
+  // De paso mata la carrera de respuestas fuera de orden: ir a A → B → A rápido ya no deja que
+  // la respuesta lenta de B se pinte encima de A.
   const cargar = useCallback(() => {
     setError(null);
-    traer(ruta).then(setDatos).catch((e) => setError(e.message)).finally(() => setCargando(false));
-  }, [ruta]);
+    traer(ruta)
+      .then((d) => setDatos({ tab, payload: d }))
+      .catch((e) => setError(e.message))
+      .finally(() => setCargando(false));
+  }, [ruta, tab]);
 
   const ops = useEscrituras(meta, cargar);
+
+  // ¿Los datos que hay en mano son de ESTE tab?
+  const listo = datos?.tab === tab;
 
   useEffect(() => { setCargando(true); setDatos(null); cargar(); }, [cargar]);
   useEffect(() => { traer('/api/meta').then(setMeta).catch(() => {}); }, []);
@@ -561,8 +607,14 @@ export default function App() {
           </div>
         )}
         {error && <div className="aviso error-caja">Error al cargar: {error}</div>}
-        {cargando && !datos && <div className="vacio">Cargando…</div>}
-        {datos && <Contenido tab={tab} datos={datos} ops={ops} />}
+        {cargando && !listo && <div className="vacio">Cargando…</div>}
+        {listo && (
+          // `key={tab}` remonta la frontera al cambiar de tab: si no, un tab que reventó deja
+          // la frontera en estado de error y el siguiente hereda el mensaje.
+          <FronteraDeError key={tab} tab={tab}>
+            <Contenido tab={tab} datos={datos.payload} ops={ops} />
+          </FronteraDeError>
+        )}
       </main>
     </div>
   );

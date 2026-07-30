@@ -11,8 +11,12 @@
 > la vez. Es el primer paso de F3 que puede cambiar comportamiento. Alternativa independiente: **F6**
 > (pase de diseño Jarvis).
 >
-> ⚠️ **El código de F3a/F3b está en `main` pero NO desplegado.** Toca `src/`, así que su deploy
-> exige `alcance: todo` → rebuild de imagen y **reconexión de Baileys**. Ver "Cómo desplegar F3a".
+> ⚠️ **Dos cosas en `main` sin desplegar, con costos MUY distintos:**
+> - **El arreglo de la interfaz** (pantalla negra en Toggles/Registries + frontera de error + el
+>   dry-run que se mostraba al revés). Solo toca `dashboard/` → `alcance: dash`, ~35s, **el bot ni
+>   se entera**. Conviene desplegarlo ya: hoy la UI en producción sigue rota.
+> - **F3a/F3b.** Toca `src/`, así que exige `alcance: todo` → rebuild de imagen y **reconexión de
+>   Baileys**. No corre prisa y conviene que viaje acompañado. Ver "Cómo desplegar F3a".
 > **Fuente de verdad de este proyecto.** Si retomas en otra sesión, lee este archivo completo antes
 > de tocar nada. Decisión arquitectónica formal en [ADR 0002](adr/0002-dashboard-y-superficie-http.md).
 
@@ -78,9 +82,101 @@ sola, sin abrir un puerto ni cambiar nada del VPS.
 sha desplegado, `deploy: true` y las 21 escrituras. O sea: el camino de red está cerrado de punta a
 punta y la advertencia de `NXDOMAIN` ya no aplica en esa máquina.
 
-**Lo que sigue siendo cierto:** el RENDER del frontend no lo ha mirado un humano. Lo verificado es
-que el servidor responde, no que la página se vea bien. Falta abrirla en un navegador y también
-sumar el celular al tailnet. Es el insumo natural de F6.
+## La primera mirada humana a la interfaz (2026-07-30) — dos bugs reales
+
+El roadmap venía avisando que nadie había abierto la página. Se abrió, y en el primer minuto
+aparecieron **dos defectos que ninguna verificación por `curl` podía encontrar**. Vale registrarlo
+como evidencia de que "la API responde 200" no es lo mismo que "el dashboard funciona".
+
+### Bug 1 — Toggles y Registries en pantalla negra
+
+**Síntoma:** los otros 11 tabs abrían bien; esos dos dejaban la pantalla en negro.
+
+**Causa, y no era de esos dos tabs.** `useEffect` corre DESPUÉS del commit. Al hacer click,
+`setTab` re-renderiza de inmediato con el tab NUEVO y los `datos` del ANTERIOR; el `setDatos(null)`
+del efecto llega tarde. O sea que `Contenido` recibía siempre, por un render, datos del tab
+equivocado.
+
+Los otros 11 tabs sobrevivían **de casualidad**: pasan por `<Tabla>`, que se defiende con
+`!filas?.length` y pinta "Sin registros". Toggles y Registries son los únicos dos que desreferencian
+directo — `datos.closers.length` y `datos.ignorados.map(...)` — así que tiraban `TypeError`.
+
+**Arreglo estructural, no parche en los dos call sites:** los datos se guardan junto al tab al que
+pertenecen (`{ tab, payload }`) y `Contenido` solo se dibuja cuando coinciden. De paso mata la
+carrera de respuestas fuera de orden (ir a A → B → A rápido ya no deja que la respuesta lenta de B
+se pinte encima de A). Poner `?.` en los dos lugares habría tapado el síntoma y dejado la trampa
+armada para el próximo tab que alguien agregue.
+
+### Y lo que convirtió un bug en un apagón: no había frontera de error
+
+Una sola excepción de render desmontaba **la app entera** — root vacío, sin un mensaje. Eso es lo
+contrario de la garantía 5 ("el dashboard degrada solo"): la consola sirve justamente cuando algo
+anda mal, así que no puede ser lo primero que se cae.
+
+Ahora hay una `FronteraDeError` con `key={tab}` que acota el daño AL TAB: muestra el stack y el
+resto de la navegación sigue viva. **Probado rompiendo un tab a propósito:** la frontera atrapó, la
+barra lateral siguió respondiendo, y volver a Salud se recuperó completo.
+
+### Bug 2 — el tab Registries mentía sobre dry-run (el más grave de los dos)
+
+Este no se veía como una falla: se veía como un dato.
+
+`ACCOUNTS[x].token()`, `.dryRun()` y `.push4()` leen `process.env` **del proceso que llama**, y ese
+proceso es el dashboard, no el bot. `docker-compose.yml` pasa las env explícitamente por servicio, y
+a `dash` no le pasa ninguna de Calendly (no las necesita: nunca llama a la API). Resultado medido:
+
+| | `.env` real | lo que ve el bot | lo que mostraba el dashboard |
+|---|---|---|---|
+| `CALENDLY_TOKEN` | presente | presente | **`tieneToken: no`** |
+| `CALENDLY_TOKEN_RETIA` | presente | presente | **`tieneToken: no`** |
+| `CALENDLY_DRY_RUN` | `false` | `false` | **`dryRun: sí`** |
+| `CALENDLY_DRY_RUN_RETIA` | `false` | `false` | **`dryRun: sí`** |
+
+O sea: el dashboard reportaba **MUDAS las dos conexiones que están enviando de verdad**, y sin token
+un sistema que sí lo tiene. Es exactamente la clase de dato falso que este proyecto existe para
+eliminar, ocurriendo adentro del proyecto.
+
+**Arreglo:** los tres campos devuelven `null` y la tabla los pinta `—`, con un aviso en el tab
+explicando por qué. Preferible un hueco honesto a un dato inventado. Verlos de verdad exige
+preguntarle al proceso del bot, o sea el **control server de F6** — queda como una razón concreta
+más para construirlo. Lo que no depende del entorno (`orgUri` con su default hardcodeado, `hubspot`,
+`sheets`, `eventTypes`) sí es fiable y se sigue mostrando.
+
+> 📌 De paso quedó medido que **`CALENDLY_DRY_RUN_RETIA=false`**: Retia ya NO está muda. Los
+> comentarios de `accounts.js` todavía dicen "arranca MUDA hasta validar un ciclo completo". El
+> código no está mal (el default sigue siendo `true`), pero el comentario describe un estado que ya
+> no es el de producción.
+
+**El selftest de lectura cazó el cambio solo:** su invariante era
+`typeof c.tieneToken === 'boolean'` y `null` no lo es. Se actualizó a lo que de verdad importa
+(`!== 'string'`, o sea que el token nunca viaje en el JSON), que es una guarda más precisa que la
+anterior.
+
+### Cómo mirar la interfaz localmente (contra datos reales)
+
+Lo que hizo posible depurar esto sin tocar producción: `dashboard/vite.config.js` ya proxea `/api` a
+`127.0.0.1:8080`, así que basta con dejar ahí algo que reenvíe al dashboard del tailnet, y correr el
+frontend local con datos reales de producción y la consola del navegador abierta.
+
+```bash
+npm run dev --prefix dashboard
+```
+
+Con un proxy de ~15 líneas (`http.createServer` → `fetch('https://juanito.tail2df10b.ts.net' + req.url)`,
+solo GET) en el 8080. Alternativa sin proxy: correr `node dashboard/server/index.js` local apuntando
+`DB_PATH` a una copia de la base.
+
+### Verificación del arreglo
+
+- Los **13 tabs** renderizan (recorrido automatizado comprobando que el root no quede vacío).
+- Frontera probada rompiendo un tab a propósito: atrapa, el resto sigue vivo, y se recupera al
+  cambiar de tab.
+- `selftest.js` (lectura) y `selftest-escrituras.js`: **verdes, exit 0**, contra una copia de
+  producción.
+- `npm run build`: compila.
+
+**Lo que sigue pendiente:** sumar el celular al tailnet y mirarlo en pantalla chica. Y el pase de
+diseño es F6.
 
 ## Cómo operar el dashboard
 
