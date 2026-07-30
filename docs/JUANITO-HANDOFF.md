@@ -4030,7 +4030,55 @@ Notas para la próxima:
 
 ---
 
+### 18.AW 🟡 Dashboard centralizado para operar y mantener a Juanito (planeado 2026-07-29)
+
+**Estado: diseñado y grillado, sin ejecutar.** Tareas, fases e interruptores viven en
+**[docs/DASHBOARD-ROADMAP.md](DASHBOARD-ROADMAP.md)** (ese es el documento de trabajo; esta entrada
+solo deja el rastro). Decisión arquitectónica en
+[ADR 0002](adr/0002-dashboard-y-superficie-http.md).
+
+**El problema:** operar a Juanito solo se puede por comandos de WhatsApp, y modificarlo solo editando
+código y desplegando a mano. `/root/juanito` no es un repo git, así que la versión en producción es
+una incógnita. Los logs se borran al recrear el contenedor. El pendiente de abajo (el push que no
+sale) es un síntoma directo.
+
+**Restricción que define todo el diseño:** es una adición visual y de manejo, **Juanito sigue
+funcionando**, y la construcción se puede pausar en cualquier punto y retomar semanas después.
+
+**Lo que hace que sea barato — el hallazgo del grill:** el dashboard corre en un contenedor aparte
+y **importa el código existente** en vez de reimplementarlo (`src/db/index.js` con sus ~122 funciones
+idempotentes, y `src/calendly/{programs,accounts,closers}.js` que son JS puro). El watchdog vive en
+el dash y detecta el push que no sale por SQL. Y **para mandar el DM de alerta usa la tabla
+`reminders` como outbox**: el cron de recordatorios corre cada minuto, siempre encendido, y ya
+despacha a `to_phone` por la cola anti-ban. Resultado: las fases 1 a 3 cuestan **una línea de código
+en `src/`** (`db.pragma('busy_timeout = 5000')`), más `docker-compose.yml` y archivos nuevos.
+
+**Decisiones clave:**
+- Contenedor aparte por el **crash domain**, no por saturación (el droplet está en load 0.00 con el
+  bot en 80 MB). `src/index.js:297` hace `process.exit(1)` y `entrypoint.sh` duerme 30-300s: un bug
+  HTTP dentro del bot tumbaría WhatsApp hasta 5 minutos.
+- **La regla de no exponer puertos se conserva literalmente.** Bind a `127.0.0.1` + Tailscale
+  (`tailscale serve` da HTTPS en `*.ts.net`, gratis, sin dominio).
+- Vite + React (mismo techo estético que Next con 1/3 del runtime; Vercel descartado porque la data
+  es un SQLite en el droplet y obligaría a exponer la API a internet).
+- `migrate.js` **no se toca** hasta la fase 3: `entrypoint.sh:11` es `migrate && index`, o sea una
+  migración que falle deja al bot sin arrancar.
+- Los registries a DB van detrás de flags por registry con default `code`; la invariante de copy
+  precall byte-idéntico (ADR 0001) se protege con un test de equivalencia y un preview en la UI.
+
+**Diferidos anotados en el roadmap** (mejoras reales, ninguna necesaria): borrar el `COPY assets/`
+muerto del Dockerfile, el fix de `skip_reason` (pieza 2 del pendiente de abajo — candidato número uno
+a desdiferir), la alerta de host ignorado que sigue agendando (pieza 1), instrumentar los 22 jobs, el
+shim de logs sobre los ~71 `console.error`, y el control server dentro del bot.
+
+---
+
 ### 🔴 PENDIENTE — Enterarnos nosotros de que un push no sale, sin que lo reporte el closer (abierto 2026-07-29)
+
+> **Nota 2026-07-29:** la fase 1 de [docs/DASHBOARD-ROADMAP.md](DASHBOARD-ROADMAP.md) ataca esto sin
+> tocar el bot: el watchdog del dashboard detecta por SQL los `calendly_pushes` vencidos sin enviar y
+> los hosts de `IGNORED_CLOSERS` con citas activas. Las piezas 1 y 2 de abajo siguen siendo mejores
+> (más precisas, en la fuente) y quedan anotadas ahí como diferidos.
 
 **Por qué está acá:** los dos últimos incidentes de pushes los descubrió un **closer avisando**, no
 el sistema. Salazar estuvo **una semana** sin pre-call de Retia (§18.AV) y Daniela reportó las dos

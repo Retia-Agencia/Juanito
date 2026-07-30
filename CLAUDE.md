@@ -3,6 +3,10 @@
 > **Estado vivo del proyecto → [docs/JUANITO-HANDOFF.md](docs/JUANITO-HANDOFF.md)** (fuente de
 > verdad: features, decisiones y pendientes en §18). Este archivo es guía de manejo del repo,
 > no documentación — mantenerlo esencial y conciso.
+>
+> **Dashboard centralizado (en construcción) → [docs/DASHBOARD-ROADMAP.md](docs/DASHBOARD-ROADMAP.md)**
+> — fases, tareas e interruptores. Decisión arquitectónica en
+> [ADR 0002](docs/adr/0002-dashboard-y-superficie-http.md).
 
 ## Qué es esto
 
