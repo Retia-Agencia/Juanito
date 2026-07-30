@@ -54,12 +54,15 @@ const RUTAS = {
   '/api/meta': () => meta(),
 };
 
-// Identidad del despliegue. El pipeline escribe DEPLOYED_SHA en la raíz del proyecto;
-// sin él, `desconocido` (que es el estado de hoy, y por eso existe el archivo).
+// Identidad del despliegue. El pipeline deja DEPLOYED_SHA en DOS lugares del host
+// (`/root/juanito/` y `/root/juanito/dashboard/`) y acá hay que leer el segundo: lo único
+// que el contenedor bind-montea es `./dashboard:/app/dashboard`, así que el de la raíz del
+// host no existe adentro. Leerlo de `../` daba siempre `desconocido`, que es justo la
+// pregunta ("¿qué versión corre?") que este archivo existe para responder.
 async function meta() {
   let sha = 'desconocido';
   try {
-    sha = (await readFile(join(RAIZ, '..', 'DEPLOYED_SHA'), 'utf8')).trim();
+    sha = (await readFile(join(RAIZ, 'DEPLOYED_SHA'), 'utf8')).trim();
   } catch {
     /* sin desplegar por pipeline todavía */
   }
