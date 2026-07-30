@@ -11,7 +11,8 @@ function celda(valor) {
   return String(valor);
 }
 
-export default function Tabla({ filas, vacio = 'Sin registros', columnas = null }) {
+// `acciones` es una función fila → botones (F2). Sin ella la tabla es la de F1.
+export default function Tabla({ filas, vacio = 'Sin registros', columnas = null, acciones = null }) {
   if (!filas?.length) return <div className="envoltura"><div className="vacio">{vacio}</div></div>;
   const cols = columnas || Object.keys(filas[0]);
 
@@ -19,7 +20,10 @@ export default function Tabla({ filas, vacio = 'Sin registros', columnas = null 
     <div className="envoltura">
       <table>
         <thead>
-          <tr>{cols.map((c) => <th key={c}>{c.replace(/_/g, ' ')}</th>)}</tr>
+          <tr>
+            {cols.map((c) => <th key={c}>{c.replace(/_/g, ' ')}</th>)}
+            {acciones && <th />}
+          </tr>
         </thead>
         <tbody>
           {filas.map((f, i) => (
@@ -29,6 +33,7 @@ export default function Tabla({ filas, vacio = 'Sin registros', columnas = null 
                   {celda(f[c])}
                 </td>
               ))}
+              {acciones && <td className="acciones">{acciones(f)}</td>}
             </tr>
           ))}
         </tbody>

@@ -28,6 +28,7 @@ import db, {
   listOptins,
   listCloserPauses,
   isCalendlyPaused,
+  isCloserPaused,
   isDmApprovalOn,
   getOutcomesInWindow,
   getScheduledCallsInWindow,
@@ -414,6 +415,21 @@ export const optins = () => {
     filas: todos,
   };
 };
+
+// Interruptores, con una fila por closer para poder pausarlo desde la UI (F2).
+// Misma fuente de verdad que `/calendly` por WhatsApp: la tabla `settings`. La pausa es
+// por IDENTIDAD (email), no por persona: una con dos conexiones se pausa por separado
+// — ver la invariante en src/calendly/closers.js.
+export const toggles = () => ({
+  calendlyPausado: isCalendlyPaused(),
+  dmAprobacion: isDmApprovalOn(),
+  closers: Object.entries(CLOSERS).map(([email, c]) => ({
+    email,
+    nombre: c.name,
+    conexion: c.account || '30x',
+    pausado: isCloserPaused(email),
+  })),
+});
 
 // Registries desde el CÓDIGO (fuente de verdad hoy). Editables desde la UI hasta F3.
 //

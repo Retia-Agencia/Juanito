@@ -52,7 +52,7 @@ crash domain, no por recursos. Para alertar por WhatsApp **no tiene socket**: in
 | Ruta | Rol |
 |---|---|
 | `src/index.js` | Entry point: wira Baileys → bot |
-| `dashboard/` | Consola de operación (contenedor `dash`). `server/` = API `node:http` de lectura + watchdog; `src/` = SPA Vite/React; `server/selftest.js` ejercita toda la capa de lectura contra una copia de la DB. Guía: [docs/DASHBOARD-ROADMAP.md](docs/DASHBOARD-ROADMAP.md) |
+| `dashboard/` | Consola de operación (contenedor `dash`). `server/` = API `node:http` (GET de lectura + POST de escritura en `actions.js`, apagados salvo los tabs de `DASH_WRITES`) + watchdog + botón Deploy; `src/` = SPA Vite/React; los dos `server/selftest*.js` ejercitan lectura y escritura contra una copia de la DB. Guía: [docs/DASHBOARD-ROADMAP.md](docs/DASHBOARD-ROADMAP.md) |
 | `src/bot/` | Router (`index.js`), comandos (`commands.js`), guard anti-secuestro de grupos (`group-guard.js`) |
 | `src/claude/index.js` | Claude: prompts, tool-use loop, memoria, reintentos |
 | `src/whatsapp/` | Baileys (`index.js`), cola anti-ban (`send-queue.js`), cache de subjects |

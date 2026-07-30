@@ -5,7 +5,7 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-07-16** (§11.11 + §18.AH: segunda cuenta de Calendly)
+Última actualización: **2026-07-30** (§18.AW: dashboard F1 en producción + F2 escrita y apagada)
 
 ---
 
@@ -4030,7 +4030,7 @@ Notas para la próxima:
 
 ---
 
-### 18.AW ✅ Dashboard centralizado para operar y mantener a Juanito (F1 EN PRODUCCIÓN 2026-07-30)
+### 18.AW ✅ Dashboard centralizado para operar y mantener a Juanito (F1 EN PRODUCCIÓN · F2 escrita y apagada, 2026-07-30)
 
 **Estado: F1 desplegado y corriendo** en `https://juanito.tail2df10b.ts.net` (solo tailnet, TLS
 real), en modo **solo lectura**. Contenedor `juanito-dash`, 18 MB, aparte del bot.
@@ -4041,10 +4041,39 @@ más el servicio `dash` en `docker-compose.yml`. **El bot no se reinició ni una
 construcción (`StartedAt` verificado de principio a fin), y la suite quedó igual que la línea base
 (742/127 en Mac, 61/63 en contenedor — los 2 rojos son preexistentes).
 
-Lo que ya sirve: 11 checks de salud, 12 tabs de lectura sobre todo lo que hoy son comandos de
+Lo que ya sirve: 11 checks de salud, 13 tabs de lectura sobre todo lo que hoy son comandos de
 WhatsApp, watchdog cada 15 min con dedupe persistente, y los registries (programas/conexiones/
-closers/ignorados) visibles sin abrir un archivo fuente. Pendiente de F1: dos Repository secrets
-para activar el workflow de deploy.
+closers/ignorados) visibles sin abrir un archivo fuente. Los dos Repository secrets (`VPS_HOST`,
+`VPS_PASSWORD`) quedaron creados el 30-jul, así que el workflow de deploy ya puede correr.
+
+**F2 — escrituras: código en el repo, APAGADO por default (2026-07-30).** 21 acciones sobre 8 tabs,
+cada una llamando a la MISMA función de `src/db/index.js` que su comando de WhatsApp equivalente
+(cero SQL nuevo en el dashboard, así que los dos lados no pueden divergir). El interruptor es
+`DASH_WRITES` en el `.env` del VPS: lista de tabs por coma o `todo`; **vacía = el read-only de F1**,
+sin botones ni columna de acciones. Sigue costando **cero líneas en `src/`**. Cuatro cosas que
+conviene saber sin abrir el roadmap:
+
+1. **`createOutreach` no se expone, solo cancelar.** Armar un outreach son ~80 líneas de reglas en el
+   bot (resolver contacto, validar teléfono, piso anti-spam, `next_due_at`, de parte de quién va
+   §18.Y) y esos mensajes salen a terceros. Duplicarlas en el dash las pone en dos lugares que van a
+   divergir. Mismo criterio que ya excluía a `deauthorizeGroup` (que además necesita `leaveGroup()`).
+2. **Cerrar una tarea desde la UI le avisa al solicitante**, como `/tareas hecha`. `setTaskStatus`
+   sola no manda nada, así que sin esto una tarea cerrada desde el dashboard se cerraba en silencio
+   para el jefe. El aviso sale por el outbox de `reminders`.
+3. **Todo lo que termina en un WhatsApp real pide confirmación explícita** mostrando destinatario y
+   texto: el servidor marca esas acciones con `sale: true` y las publica en `/api/meta`. Es la regla
+   que el roadmap fijaba para el chat de F6, aplicada desde ya.
+4. **Respondida la pregunta abierta del prefijo:** `src/scheduler/reminders.js:24` manda
+   `⏰ Recordatorio: ${text}` hardcodeado. Por eso las alertas del watchdog abren con 🚨 y el aviso de
+   tarea cerrada con ✅.
+
+También quedó el **botón Deploy** (`POST /api/deploy` → `workflow_dispatch`), que necesita un dato
+humano: `DASH_GITHUB_TOKEN` en el `.env` del VPS, un PAT con `actions:write`. Es secreto del
+**contenedor**, no un Repository secret. Sin él la ruta no existe y la UI no dibuja los botones.
+
+**Corregido de paso:** la cabecera de `selftest.js` mandaba a correrlo en `juanito-agent`, y ese
+contenedor **no tiene `/app/dashboard`** (el Dockerfile no lo copia y el bot no lo bind-montea). Los
+dos selftests van en `juanito-dash`.
 
 **Tres cosas que solo se supieron construyéndolo** (detalle en el roadmap):
 1. *"Host ignorado que sigue agendando" NO es detectable desde la DB.* Un host en

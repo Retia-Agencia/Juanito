@@ -232,6 +232,13 @@ services:
       - DASH_ALERT_DEDUP_HOURS=${DASH_ALERT_DEDUP_HOURS:-6}
       # Para que el check de respuestas vencidas use el mismo TTL que el bot.
       - REPLY_APPROVAL_TTL_MIN=${REPLY_APPROVAL_TTL_MIN:-30}
+      # Escrituras por tab (F2). Vacío = dashboard de solo lectura, o sea F1 tal cual.
+      # Lista de tabs (aprobaciones,grupos,programados,outreach,tareas,negocio,
+      # recordatorios,toggles) o `todo`. Cambiarlo solo recrea `dash`, no toca al bot.
+      - DASH_WRITES=${DASH_WRITES:-}
+      # PAT de GitHub con `actions:write` para el botón Deploy. Sin él la ruta no existe
+      # y la UI no lo dibuja. El repo y la rama tienen default correcto en deploy.js.
+      - DASH_GITHUB_TOKEN=${DASH_GITHUB_TOKEN:-}
     ports:
       # NUNCA 0.0.0.0, y ni siquiera la interfaz del tailnet: el puerto escucha SOLO en
       # loopback. Quien lo publica es `tailscale serve`, que proxea

@@ -3,10 +3,12 @@
 // better-sqlite3 no compila en cualquier Node de escritorio: la verificación de
 // verdad es dentro del contenedor.
 //
-// Uso (sobre una COPIA, nunca sobre la base viva):
-//   docker exec juanito-agent node -e "const D=require('better-sqlite3');\
+// Uso (sobre una COPIA, nunca sobre la base viva). Va en `juanito-dash`, NO en
+// `juanito-agent`: el Dockerfile no mete `dashboard/` en la imagen y el bot tampoco la
+// bind-montea, así que /app/dashboard existe solo en el contenedor del dashboard.
+//   docker exec juanito-dash node -e "const D=require('better-sqlite3');\
 //     new D('/app/data/brain.sqlite',{readonly:true}).exec(\"VACUUM INTO '/tmp/copia.sqlite'\")"
-//   docker exec -e DB_PATH=/tmp/copia.sqlite juanito-agent node /app/dashboard/server/selftest.js
+//   docker exec -e DB_PATH=/tmp/copia.sqlite juanito-dash node /app/dashboard/server/selftest.js
 
 import * as Q from './queries.js';
 import * as watchdog from './watchdog.js';

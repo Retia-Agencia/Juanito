@@ -1,9 +1,10 @@
 # Dashboard centralizado de Juanito — Roadmap
 
-> **Estado: F1 COMPLETO y en producción** (2026-07-30). El dashboard corre en
-> **`https://juanito.tail2df10b.ts.net`**, en modo solo lectura, sin haber reiniciado el bot ni una
-> vez. **Próximo paso: F2** (escrituras, tab por tab) o **F6** (pase de diseño Jarvis) — son
-> independientes, se puede empezar por cualquiera.
+> **Estado: F1 COMPLETO y en producción · F2 ESCRITA, sin desplegar** (2026-07-30). El dashboard
+> corre en **`https://juanito.tail2df10b.ts.net`** sin haber reiniciado el bot ni una vez. El código
+> de F2 (escrituras tab por tab) está en el repo y **apagado por default**: sin `DASH_WRITES` el
+> dashboard sigue siendo exactamente el read-only de F1. **Próximo paso: desplegar F2 y encender el
+> primer tab** (§F2), o **F6** (pase de diseño Jarvis) — son independientes.
 > **Fuente de verdad de este proyecto.** Si retomas en otra sesión, lee este archivo completo antes
 > de tocar nada. Decisión arquitectónica formal en [ADR 0002](adr/0002-dashboard-y-superficie-http.md).
 
@@ -11,16 +12,29 @@
 
 1. Lee este archivo entero (son ~15 min y te ahorran repetir la discusión).
 2. `git log --oneline -10` y revisa qué casillas de abajo están marcadas.
+   ⚠️ **F2 vive en la rama `feat/dashboard-f2-escrituras`, todavía sin mergear.** Si estás en `main`
+   no la vas a ver. El workflow de deploy despliega **`main`** (`ref: main`), así que F2 no llega al
+   VPS hasta que se mergee — y como nace apagada (`DASH_WRITES` vacío), mergearla no cambia nada en
+   producción por sí sola:
+   ```bash
+   git checkout main && git merge feat/dashboard-f2-escrituras
+   ```
 3. Revisa la tabla **Interruptores y sus defaults** para saber en qué estado quedó el sistema.
 4. Sigue por la primera casilla sin marcar. Las fases son independientes y pausables.
 
 ### Lo único que quedó pendiente de F1 (necesita acción humana)
 
-- [ ] **Dos Repository secrets** en Settings → Secrets and variables → Actions (pestaña *Secrets*,
+- [x] **Dos Repository secrets** en Settings → Secrets and variables → Actions (pestaña *Secrets*,
       **no** Environment secrets: el workflow no declara `environment:`, así que los de entorno
       llegarían vacíos): `VPS_HOST` = `157.230.152.202` y `VPS_PASSWORD` = el `VPS_KEY` del `.env`.
-      Sin esto el workflow existe pero no puede correr.
-- [ ] **Botón Deploy en la UI** — depende de los secrets y de un token de GitHub con `actions:write`.
+      **Creados el 2026-07-30.** El workflow ya puede correr desde la pestaña Actions.
+- [x] **Botón Deploy en la UI** — [dashboard/server/deploy.js](../dashboard/server/deploy.js),
+      `POST /api/deploy` → `workflow_dispatch`. Dos botones en el lateral (`dash` y `todo`), con
+      confirmación distinta: el de `todo` avisa que reconstruye la imagen y **reconecta WhatsApp**.
+      ⚠️ **Falta un dato humano:** el botón necesita `DASH_GITHUB_TOKEN` en el `.env` del VPS — un
+      PAT con `actions:write` sobre el repo. Es un secreto del **contenedor**, no un Repository
+      secret (esos los usa el workflow; este los dispara). Sin token la ruta no existe y la UI no
+      dibuja los botones, que es el default seguro.
 
 ## Cómo operar el dashboard
 
@@ -35,7 +49,15 @@ ssh root@157.230.152.202 'docker logs --tail 50 juanito-dash'
 - **Apagarlo sin afectar nada:** `docker compose stop dash`. El bot es indiferente.
 - **Probar la capa de lectura contra datos reales, sin tocar la base viva:** copiar con
   `VACUUM INTO` a `/tmp` y correr `dashboard/server/selftest.js` con `DB_PATH` apuntando a la copia
-  (el comando exacto está en la cabecera de ese archivo).
+  (el comando exacto está en la cabecera de ese archivo). Ojo: los dos selftests corren en
+  **`juanito-dash`**, no en `juanito-agent` — el Dockerfile no mete `dashboard/` en la imagen y el
+  bot no la bind-montea, así que `/app/dashboard` existe solo en el contenedor del dashboard. La
+  cabecera de F1 decía `juanito-agent` y estaba mal; quedó corregida.
+- **Probar la capa de ESCRITURA:** `dashboard/server/selftest-escrituras.js`, mismo patrón pero
+  además con `DASH_WRITES=todo`. Hace round-trips completos (crear → modificar → cancelar), así que
+  **solo corre sobre una copia**: tiene dos guardas que se niegan si `DB_PATH` huele a base viva.
+- **Encender las escrituras de un tab:** `DASH_WRITES=aprobaciones` en el `.env` del VPS + recrear
+  `dash`. Se acumulan por coma (`aprobaciones,toggles`) y `todo` habilita los ocho. Vacío = F1.
 - **Encender las alertas por WhatsApp:** `DASH_ALERTS_WHATSAPP=true` en el `.env` del VPS + recrear
   el contenedor. Arranca en `false` a propósito; ver la advertencia del §18.AV sobre el anti-ban.
 - **Si Tailscale Serve falla:** poner `DASH_BIND` a la IP `100.x` del nodo y entrar por
@@ -246,7 +268,8 @@ Estado de cada flag. **Mantener esta tabla actualizada es parte del trabajo.**
 | Servicio `dash` en compose | ausente | No hay dashboard | F1 |
 | `DASH_BIND` | `127.0.0.1` | El puerto solo existe en loopback; se llega por `tailscale serve` | F1 |
 | `DASH_ALERTS_WHATSAPP` | `false` | Watchdog solo escribe al dashboard, no manda DM | F1 |
-| Escrituras por tab (config del dash) | todas off | Dashboard read-only | F2 |
+| `DASH_GITHUB_TOKEN` | sin valor | `/api/deploy` no existe y la UI no dibuja el botón Deploy | F1 |
+| `DASH_WRITES` | vacío | Dashboard read-only: ningún POST pasa, ningún botón se dibuja | F2 |
 | `REGISTRY_SOURCE_CONNECTIONS` | `code` | Lee de `accounts.js` como hoy | F3c |
 | `REGISTRY_SOURCE_PROGRAMS` | `code` | Lee de `programs.js` como hoy | F3c |
 | `REGISTRY_SOURCE_CLOSERS` | `code` | Lee de `closers.js` como hoy | F3c |
@@ -261,7 +284,8 @@ Estado de cada flag. **Mantener esta tabla actualizada es parte del trabajo.**
 | F1 rsync de `dashboard/` | `docker compose stop dash`; el rsync nunca toca `src/` salvo que el commit lo cambie | No |
 | F1 contenedor dash | `docker compose stop dash` | No |
 | F1 alertas | `DASH_ALERTS_WHATSAPP=false` | No |
-| F2 escrituras | Apagar por tab; read-only por default | No |
+| F1 botón Deploy | Borrar `DASH_GITHUB_TOKEN` del `.env` | No |
+| F2 escrituras | Sacar el tab de `DASH_WRITES` (o vaciarla) y recrear `dash` | No |
 | F3 registries | `REGISTRY_SOURCE_*=code` | No |
 | F4 `runJob` | El wrap es behavior-preserving; `git revert` job por job | No |
 | F5 cron | Borrar las filas de `job_config` | No |
@@ -379,26 +403,81 @@ que no es urgente, pero es un modo de fallo real: anotado como diferido.
 ## F2 — Escrituras, tab por tab · cero cambios en el bot
 
 Cada tab enciende sus escrituras por separado, reusando funciones ya exportadas en `src/db/index.js`.
+**Escrito el 2026-07-30, apagado por default.** El interruptor es `DASH_WRITES`: una lista de tabs
+por coma (o `todo`). Vacía = read-only. Encender un tab recrea `dash` y no toca al bot.
 
-- [ ] Aprobaciones — `approveDraft`, `reviseDraft`, `discardDraft`, `approvePendingReply`,
+Piezas nuevas: [dashboard/server/actions.js](../dashboard/server/actions.js) (registro de acciones +
+validación + el gate por tab), `POST /api/w/<tab>/<accion>` en el server,
+[dashboard/src/Escrituras.jsx](../dashboard/src/Escrituras.jsx) en el frontend, y
+[selftest-escrituras.js](../dashboard/server/selftest-escrituras.js).
+
+- [x] Aprobaciones — `approveDraft`, `reviseDraft`, `discardDraft`, `approvePendingReply`,
       `revisePendingReply`, `discardPendingReply` (reemplaza `/aprobaciones` y `/respuestas`)
-- [ ] Grupos — `setGroupApproval`, `setGroupPersona`, `deleteGroupPersona` (`/persona`,
+- [x] Grupos — `setGroupApproval`, `setGroupPersona`, `deleteGroupPersona` (`/persona`,
       `/confirmaciones`)
-- [ ] Programados — `createScheduledMessage`, `cancelScheduledMessage` (`/programados`)
-- [ ] Outreach — `createOutreach`, `finishOutreach` (`schedule_outreach`)
-- [ ] Tareas — `setTaskStatus` (`/tareas`)
-- [ ] Negocio — `setBusinessFactStatus` (`/negocio`)
-- [ ] Recordatorios — `saveReminder`, `cancelReminder`, `snoozeReminder` (`manage_reminders`)
-- [ ] Toggles — `setCalendlyPaused`, `setCloserPaused`, `setDmApproval` (`/calendly on|off`,
-      `/confirmaciones dm`)
+- [x] Programados — `createScheduledMessage`, `cancelScheduledMessage` (`/programados`)
+- [x] Outreach — `finishOutreach` (`schedule_outreach`). **`createOutreach` NO se expone**, ver abajo
+- [x] Tareas — `setTaskStatus` (`/tareas`), en dos acciones y no un `estado` genérico: **cerrar una
+      tarea le avisa al que la pidió, descartarla no** (ver abajo)
+- [x] Negocio — `setBusinessFactStatus` (`/negocio`)
+- [x] Recordatorios — `saveReminder`, `cancelReminder`, `snoozeReminder` (`manage_reminders`)
+- [x] Toggles — `setCalendlyPaused`, `setCloserPaused`, `setDmApproval` (`/calendly on|off`,
+      `/confirmaciones dm`). Tab nuevo: en F1 los interruptores solo se veían dentro de Salud
+- [ ] **Desplegar y encender el primer tab.** Sugerencia de orden, del más reversible al menos:
+      `toggles` → `tareas,negocio` → `aprobaciones` → `grupos,programados,recordatorios`.
+
+### Cuatro decisiones que se tomaron al construirlo
+
+- **`createOutreach` NO se expone; solo cancelar.** Armar un outreach en el bot son ~80 líneas de
+  reglas de negocio: resolver el contacto por nombre o número, validar el teléfono, respetar el piso
+  anti-spam `OUTREACH_MIN_INTERVAL_MIN`, calcular la parada por default y el `next_due_at`, y
+  resolver de parte de quién va el mensaje (§18.Y). Reimplementarlas en el dashboard las pone en dos
+  lugares que van a divergir, y estos mensajes salen a **terceros que no son del equipo**. Crear
+  sigue siendo por DM; apagar uno que se está portando mal es lo urgente y eso sí está.
+  Es el mismo criterio que ya excluía a `deauthorizeGroup`.
+- **Confirmación explícita para todo lo que termina en un WhatsApp real.** El servidor marca esas
+  acciones con `sale: true` (aprobar un draft o una respuesta, crear un recurrente, crear un
+  recordatorio) y las expone en `/api/meta`; la UI pide confirmación mostrando destinatario y texto.
+  Es la regla que el roadmap fijaba para el chat de F6, aplicada desde ya.
+- **Cerrar una tarea desde la UI avisa al solicitante, como lo hace `/tareas hecha`.** El comando
+  manda un DM "✅ Listo lo que pediste" a `created_by` después de marcarla; `setTaskStatus` sola no
+  lo hace. Sin replicarlo, una tarea cerrada desde el dashboard se cerraba **en silencio** para el
+  jefe: el mismo agujero que este proyecto existe para tapar, del otro lado. El aviso sale por el
+  outbox de `reminders` (el dash no tiene socket), así que llega prefijado:
+  «⏰ Recordatorio: ✅ Listo lo que pediste: …». Se lee bien y no vale un cambio en el bot.
+  `/negocio` en cambio **no** avisa a nadie, así que ahí no hay nada que replicar.
+- **`cancelReminder`/`snoozeReminder` están scopeadas por `created_by`** para que por WhatsApp nadie
+  toque los recordatorios de otra persona. El dashboard es consola de admin y le pasa el `created_by`
+  de la propia fila, o sea que **sí** puede cancelar los de cualquiera: misma decisión que "en un
+  tailnet de dos personas la red ES la auth". Las filas con `created_by` NULL no se pueden tocar
+  desde acá y la UI lo dice en vez de fallar en silencio.
 
 **`deauthorizeGroup` NO se expone.** En el bot va acompañado de `leaveGroup()` y el dash no tiene
 socket; además volver a entrar a un grupo requiere que alguien invite al bot. Que salir de un grupo
 siga siendo un acto deliberado por WhatsApp es lo correcto.
 
-**Verificación:** aprobar un draft desde la UI y confirmar que el cron de `group-messages` lo
-publica. Pausar un closer desde la UI y verlo reflejado en `/calendly` por WhatsApp (misma fuente de
-verdad, `settings.calendly_pause:<email>`).
+### Verificación de F2
+
+Lo que se probó en el Mac (sin base nativa, ver la línea base de tests):
+
+- Las 21 acciones rechazan un cuerpo vacío, y los casos límite de cada validador (día 7, hora
+  `9:00`, `estado` inventado, sello de fecha sin segundos, `texto` y `brief` juntos, grupo no
+  autorizado). El recorrido es sobre la tabla `ACCIONES` entera, así que una acción nueva sin
+  validación aparece sola en el selftest.
+- La capa HTTP: `POST` a un tab apagado → 400 con el mensaje del interruptor; JSON roto → 400;
+  acción inexistente → 400; `PUT` → 405; `/api/deploy` sin token → 400. `/api/meta` publica el
+  catálogo de escrituras y `deploy: false`.
+- `npm run build` del frontend compila.
+
+Lo que hay que probar **en el contenedor**, porque acá no hay binding de `better-sqlite3`:
+
+```bash
+docker exec -e DB_PATH=/tmp/copia.sqlite -e DASH_WRITES=todo juanito-dash node /app/dashboard/server/selftest-escrituras.js
+```
+
+Y el end-to-end real, que es el que importa: aprobar un draft desde la UI y confirmar que el cron de
+`group-messages` lo publica. Pausar un closer desde la UI y verlo reflejado en `/calendly` por
+WhatsApp (misma fuente de verdad, `settings.calendly_pause:<email>`).
 
 ## F3 — Registries editables (opcional, la parte cara)
 
@@ -531,8 +610,10 @@ docker run --rm -v /root/dash-verify/src:/app/src:ro -v /root/dash-verify/test:/
 
 ## Preguntas abiertas
 
-- ¿Qué prefijo le pone el job de recordatorios al texto? Define si el outbox por `reminders` se lee
-  bien o hay que ajustar el copy de las alertas.
+- ~~¿Qué prefijo le pone el job de recordatorios al texto?~~ **Respondida:**
+  [src/scheduler/reminders.js:24](../src/scheduler/reminders.js) manda
+  `⏰ Recordatorio: ${text}`, hardcodeado. Por eso las alertas del watchdog empiezan con 🚨 y el
+  aviso de tarea cerrada con ✅: el prefijo se asume, no se pelea.
 - ¿Se desdifiere el fix de `skip_reason` para desbloquear el panel de motivos de skip? Es el
   candidato número uno: una línea, alto valor, ya es pendiente aceptado del repo (§18.AV pieza 2).
 - ¿El jefe entra algún día? Si sí, la exposición sube de Tailscale a Cloudflare Access y hace falta

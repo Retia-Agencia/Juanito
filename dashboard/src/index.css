@@ -109,6 +109,7 @@ tbody tr:hover { background: var(--panel-2); }
 td.num { font-family: var(--mono); }
 
 .seccion { margin-bottom: 26px; }
+.rejilla + .seccion { margin-top: 22px; }
 .seccion h3 { margin: 0 0 9px; font-size: 13px; color: var(--tenue); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
 
 .vacio { padding: 22px; color: var(--tenue); text-align: center; font-size: 13px; }
@@ -116,6 +117,52 @@ td.num { font-family: var(--mono); }
 .error-caja { border-left-color: var(--error); color: var(--error); }
 
 code { font-family: var(--mono); font-size: 12px; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+
+/* ── Escrituras (F2) ──────────────────────────────────────────────────────── */
+
+.botones { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.accion {
+  font: 11px/1 inherit; padding: 6px 9px; border-radius: 5px; cursor: pointer;
+  background: var(--panel-2); color: var(--texto); border: 1px solid var(--linea);
+  white-space: nowrap;
+}
+.accion:hover { border-color: var(--acento); color: var(--acento); }
+/* Rojo para lo destructivo o lo que apaga algo: descartar, cancelar, pausar. */
+.accion.peligro:hover { border-color: var(--error); color: var(--error); }
+
+/* La columna de acciones no se recorta ni se estira como las de datos. */
+td.acciones { max-width: none; overflow: visible; width: 1%; }
+
+.tab .pill.escribe { background: rgba(77,163,255,.16); color: var(--acento); font-size: 10px; }
+
+.tarjeta .estado { font: 600 12px/1 var(--mono); letter-spacing: .06em; }
+.tarjeta .estado.si { color: var(--ok); }
+.tarjeta .estado.no { color: var(--warn); }
+
+.deploy { margin-top: auto; padding: 12px 8px 0; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--linea); }
+
+/* Formas de creación: cerradas por default, para que el tab siga siendo la tabla. */
+.forma { margin-bottom: 16px; background: var(--panel); border: 1px solid var(--linea); border-radius: 9px; padding: 11px 14px; }
+.forma summary { cursor: pointer; color: var(--acento); font-size: 12.5px; }
+.forma .campos { display: grid; gap: 11px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); margin-top: 13px; }
+.forma .campos .ancho { grid-column: 1 / -1; }
+.forma label { display: flex; flex-direction: column; gap: 5px; color: var(--tenue); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.forma input, .forma select, .forma textarea {
+  font: 13px/1.45 inherit; padding: 7px 9px; border-radius: 5px;
+  background: var(--bg); color: var(--texto); border: 1px solid var(--linea);
+}
+.forma textarea { resize: vertical; font-family: inherit; }
+.forma .dias { display: flex; gap: 4px; flex-wrap: wrap; }
+.forma .dia {
+  font: 11px/1 var(--mono); padding: 7px 8px; border-radius: 5px; cursor: pointer;
+  background: var(--bg); color: var(--tenue); border: 1px solid var(--linea);
+}
+.forma .dia.activo { background: rgba(77,163,255,.14); border-color: var(--acento); color: var(--acento); }
+
+.aviso.ok { border-left-color: var(--ok); }
+.aviso.warn { border-left-color: var(--warn); }
+.aviso .cerrar { float: right; background: none; border: 0; color: var(--tenue); cursor: pointer; font-size: 16px; line-height: 1; padding: 0 0 0 10px; }
 
 @media (max-width: 720px) {
   .app { grid-template-columns: 1fr; }
