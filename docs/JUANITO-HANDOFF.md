@@ -4046,7 +4046,7 @@ WhatsApp, watchdog cada 15 min con dedupe persistente, y los registries (program
 closers/ignorados) visibles sin abrir un archivo fuente. Los dos Repository secrets (`VPS_HOST`,
 `VPS_PASSWORD`) quedaron creados el 30-jul, así que el workflow de deploy ya puede correr.
 
-**F2 — escrituras: código en el repo, APAGADO por default (2026-07-30).** 21 acciones sobre 8 tabs,
+**F2 — escrituras: DESPLEGADO y APAGADO por default (2026-07-30).** 21 acciones sobre 8 tabs,
 cada una llamando a la MISMA función de `src/db/index.js` que su comando de WhatsApp equivalente
 (cero SQL nuevo en el dashboard, así que los dos lados no pueden divergir). El interruptor es
 `DASH_WRITES` en el `.env` del VPS: lista de tabs por coma o `todo`; **vacía = el read-only de F1**,
@@ -4071,9 +4071,20 @@ También quedó el **botón Deploy** (`POST /api/deploy` → `workflow_dispatch`
 humano: `DASH_GITHUB_TOKEN` en el `.env` del VPS, un PAT con `actions:write`. Es secreto del
 **contenedor**, no un Repository secret. Sin él la ruta no existe y la UI no dibuja los botones.
 
-**Corregido de paso:** la cabecera de `selftest.js` mandaba a correrlo en `juanito-agent`, y ese
-contenedor **no tiene `/app/dashboard`** (el Dockerfile no lo copia y el bot no lo bind-montea). Los
-dos selftests van en `juanito-dash`.
+**El pipeline se estrenó el 30-jul** (`gh workflow run deploy.yml -f alcance=dash`): 35s, y el bot
+**no se reinició** (`StartedAt` idéntico antes y después, `Up 10 hours`). El selftest de escrituras
+corrió dentro de `juanito-dash` contra una copia de la base de producción y salió **todo verde**
+(round-trips reales de toggles, recordatorios, recurrentes, personas de grupo y default-deny); la
+base viva quedó intacta, verificado después.
+
+**Dos cosas corregidas de paso, las dos de F1:**
+- La cabecera de `selftest.js` mandaba a correrlo en `juanito-agent`, y ese contenedor **no tiene
+  `/app/dashboard`** (el Dockerfile no lo copia y el bot no lo bind-montea). Los dos selftests van
+  en `juanito-dash`.
+- `/api/meta` reportaba `sha: desconocido` incluso después de un deploy por pipeline. El workflow
+  deja `DEPLOYED_SHA` en los dos lugares del host, pero adentro solo existe
+  `/app/dashboard/DEPLOYED_SHA` (es lo único bind-monteado), y el server leía `/app/DEPLOYED_SHA`.
+  Era justo la pregunta ("¿qué versión corre?") que el mecanismo existe para responder.
 
 **Tres cosas que solo se supieron construyéndolo** (detalle en el roadmap):
 1. *"Host ignorado que sigue agendando" NO es detectable desde la DB.* Un host en

@@ -1,24 +1,19 @@
 # Dashboard centralizado de Juanito — Roadmap
 
-> **Estado: F1 COMPLETO y en producción · F2 ESCRITA, sin desplegar** (2026-07-30). El dashboard
-> corre en **`https://juanito.tail2df10b.ts.net`** sin haber reiniciado el bot ni una vez. El código
-> de F2 (escrituras tab por tab) está en el repo y **apagado por default**: sin `DASH_WRITES` el
-> dashboard sigue siendo exactamente el read-only de F1. **Próximo paso: desplegar F2 y encender el
-> primer tab** (§F2), o **F6** (pase de diseño Jarvis) — son independientes.
+> **Estado: F1 y F2 en producción · las escrituras APAGADAS** (2026-07-30). El dashboard corre en
+> **`https://juanito.tail2df10b.ts.net`** sin haber reiniciado el bot ni una vez. El código de F2
+> (escrituras tab por tab) ya está desplegado y **apagado**: mientras `DASH_WRITES` esté vacía, el
+> dashboard es exactamente el read-only de F1. **Próximo paso: encender el primer tab** (§F2), o
+> **F6** (pase de diseño Jarvis) — son independientes.
 > **Fuente de verdad de este proyecto.** Si retomas en otra sesión, lee este archivo completo antes
 > de tocar nada. Decisión arquitectónica formal en [ADR 0002](adr/0002-dashboard-y-superficie-http.md).
 
 ## Cómo retomar en frío
 
 1. Lee este archivo entero (son ~15 min y te ahorran repetir la discusión).
-2. `git log --oneline -10` y revisa qué casillas de abajo están marcadas.
-   ⚠️ **F2 vive en la rama `feat/dashboard-f2-escrituras`, todavía sin mergear.** Si estás en `main`
-   no la vas a ver. El workflow de deploy despliega **`main`** (`ref: main`), así que F2 no llega al
-   VPS hasta que se mergee — y como nace apagada (`DASH_WRITES` vacío), mergearla no cambia nada en
-   producción por sí sola:
-   ```bash
-   git checkout main && git merge feat/dashboard-f2-escrituras
-   ```
+2. `git log --oneline -10` y revisa qué casillas de abajo están marcadas. F2 ya está mergeada en
+   `main` y desplegada (la rama `feat/dashboard-f2-escrituras` quedó como rastro, se puede borrar).
+   El pipeline despliega **`main`** (`ref: main`): lo que no esté empujado ahí, no está en el VPS.
 3. Revisa la tabla **Interruptores y sus defaults** para saber en qué estado quedó el sistema.
 4. Sigue por la primera casilla sin marcar. Las fases son independientes y pausables.
 
@@ -332,6 +327,14 @@ Estado de cada flag. **Mantener esta tabla actualizada es parte del trabajo.**
       contenedor `dash` — el bot ni se entera. Solo los cambios en `src/` o el `Dockerfile` obligan a
       reconstruir `agent`, y eso reconecta Baileys: unos pocos por hora, nunca en loop. El backoff de
       `entrypoint.sh` existe por un softban real.
+      ✅ **Estrenado el 2026-07-30** con `gh workflow run deploy.yml -f alcance=dash`: 34-35s por
+      corrida, y el bot NO se reinició (`StartedAt` idéntico antes y después, `Up 10 hours`).
+      🐛 **La primera corrida destapó un bug de F1:** `/api/meta` seguía diciendo
+      `sha: desconocido`. El workflow deja `DEPLOYED_SHA` en los dos lugares del host, pero el
+      contenedor solo bind-montea `./dashboard:/app/dashboard`, así que `/app/DEPLOYED_SHA` **no
+      existe adentro** — el archivo llega a `/app/dashboard/DEPLOYED_SHA`. Corregido; la segunda
+      corrida ya reporta el sha real. Es exactamente la pregunta ("¿qué versión corre?") que este
+      mecanismo existe para responder, así que valía el viaje.
 - [ ] **Botón Deploy** en la UI → `POST /repos/Agencia-Dani/Juanito/actions/workflows/deploy.yml/dispatches`.
 - [x] **API del dash** (`dashboard/api/`): importa `src/db/index.js` con `DB_PATH` apuntando al mismo
       archivo, e importa `src/calendly/{programs,accounts,closers}.js` para el tab de registries.
@@ -423,7 +426,11 @@ validación + el gate por tab), `POST /api/w/<tab>/<accion>` en el server,
 - [x] Recordatorios — `saveReminder`, `cancelReminder`, `snoozeReminder` (`manage_reminders`)
 - [x] Toggles — `setCalendlyPaused`, `setCloserPaused`, `setDmApproval` (`/calendly on|off`,
       `/confirmaciones dm`). Tab nuevo: en F1 los interruptores solo se veían dentro de Salud
-- [ ] **Desplegar y encender el primer tab.** Sugerencia de orden, del más reversible al menos:
+- [x] **Desplegado** el 2026-07-30 con `alcance: dash` (dos corridas del workflow, ver §F1). El bot
+      no se reinició: `StartedAt` siguió en `2026-07-30T00:30:02Z` y `docker ps` lo mostró `Up 10
+      hours` en las dos. `/api/meta` responde `escrituras: {}` → read-only, como debe arrancar.
+- [ ] **Encender el primer tab.** `DASH_WRITES=<tab>` en el `.env` del VPS + `docker compose up -d
+      --no-deps --force-recreate dash`. Orden sugerido, del más reversible al menos:
       `toggles` → `tareas,negocio` → `aprobaciones` → `grupos,programados,recordatorios`.
 
 ### Cuatro decisiones que se tomaron al construirlo
@@ -469,15 +476,22 @@ Lo que se probó en el Mac (sin base nativa, ver la línea base de tests):
   catálogo de escrituras y `deploy: false`.
 - `npm run build` del frontend compila.
 
-Lo que hay que probar **en el contenedor**, porque acá no hay binding de `better-sqlite3`:
+Y en el contenedor, sobre una copia de la base de producción (2026-07-30, **todo verde, exit 0**):
 
 ```bash
 docker exec -e DB_PATH=/tmp/copia.sqlite -e DASH_WRITES=todo juanito-dash node /app/dashboard/server/selftest-escrituras.js
 ```
 
-Y el end-to-end real, que es el que importa: aprobar un draft desde la UI y confirmar que el cron de
-`group-messages` lo publica. Pausar un closer desde la UI y verlo reflejado en `/calendly` por
-WhatsApp (misma fuente de verdad, `settings.calendly_pause:<email>`).
+Los round-trips que corrieron contra datos reales: toggles global de Calendly y de aprobación de DMs
+(cambia y se restaura), pausa por identidad de un closer, recordatorio crear → posponer → cancelar →
+cancelar-otra-vez-avisa, mensaje recurrente crear → verificar `days`/`time_hm` → cancelar →
+cancelar-otra-vez-no-aplica, default-deny de un grupo no autorizado, y persona de grupo poner → leer
+de vuelta → borrar. **La base viva quedó intacta**, verificado después: `calendly_paused=0`, 0
+recordatorios pendientes, 2 mensajes recurrentes activos (los que había). La copia se borró.
+
+Falta el end-to-end de verdad, que necesita las escrituras encendidas: aprobar un draft desde la UI y
+confirmar que el cron de `group-messages` lo publica. Pausar un closer desde la UI y verlo reflejado
+en `/calendly` por WhatsApp (misma fuente de verdad, `settings.calendly_pause:<email>`).
 
 ## F3 — Registries editables (opcional, la parte cara)
 
