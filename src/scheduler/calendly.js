@@ -1699,7 +1699,11 @@ export async function runSkipAudit() {
     );
     avisados++;
   }
+  // Latido: loguea SIEMPRE, aunque no haya nada que reportar. Una red de seguridad que no se
+  // puede ver correr no sirve de red — si este job se cayera en silencio, el modo de fallo
+  // sería idéntico al que vino a resolver (nadie se entera de nada). Una línea por hora.
   if (avisados) console.warn(`[Calendly] auditoría de skips: ${avisados} closer(s) con pushes perdidos`);
+  else console.log(`[Calendly] auditoría de skips ✅ nadie sobre el umbral (${filas.length} closer(s) con algún push perdido)`);
   return avisados;
 }
 
