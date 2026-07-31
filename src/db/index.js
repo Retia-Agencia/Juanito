@@ -382,12 +382,47 @@ export function markCalendlyPushSent(id) {
     .run(id);
 }
 
-export function markCalendlyPushSkipped(id, reason = '') {
+// `reason` es el texto humano que se anexa al `message` (lo que se lee en el dashboard y en
+// los logs). `slug` es la clasificación ESTABLE, y es lo que consulta la auditoría: el texto
+// cambia con el copy, el slug no. Hasta acá la columna `skip_reason` estaba muerta (194 de 195
+// filas en NULL) y todo el mundo terminaba haciendo `message LIKE '%...%'`, que se rompe al
+// tocar una palabra. Ver SKIP_SLUGS/SKIP_ALERTABLES en src/calendly/skip-reasons.js.
+export function markCalendlyPushSkipped(id, reason = '', slug = null) {
   return db
     .prepare(
-      `UPDATE calendly_pushes SET status = 'skipped', message = COALESCE(message,'') || ' | skip: ' || ? WHERE id = ?`
+      `UPDATE calendly_pushes
+          SET status = 'skipped',
+              skip_reason = COALESCE(?, skip_reason),
+              message = COALESCE(message,'') || ' | skip: ' || ?
+        WHERE id = ?`
     )
-    .run(reason, id);
+    .run(slug, reason, id);
+}
+
+// Pushes REALMENTE perdidos por closer en las últimas `hours` horas: los que se saltaron por
+// una causa que un humano puede arreglar (ver SKIP_ALERTABLES). Cancelaciones, reagendas y
+// duplicados NO entran: son operación normal y contarlos volvería la alerta ruido.
+//
+// Filtra por la columna `skip_reason`, no por el texto de `message`. Consecuencia: las filas
+// anteriores a este cambio tienen la columna en NULL y quedan fuera. Es a propósito — la
+// auditoría mira hacia adelante y una ventana de 24h las deja atrás sola.
+export function getSkipsAlertablesPorCloser(slugs, hours = 24) {
+  const lista = [...slugs];
+  if (!lista.length) return [];
+  return db
+    .prepare(`
+      SELECT closer_email,
+             COUNT(*)                       AS n,
+             GROUP_CONCAT(DISTINCT skip_reason) AS motivos,
+             MAX(prospect_name)             AS ejemplo
+        FROM calendly_pushes
+       WHERE status = 'skipped'
+         AND skip_reason IN (${lista.map(() => '?').join(',')})
+         AND call_start >= datetime('now', ?)
+       GROUP BY closer_email
+       ORDER BY n DESC
+    `)
+    .all(...lista, `-${Number(hours) || 24} hours`);
 }
 
 // ─── Calendly: outcomes post-call (§18.AB) ────────────────────────────────────
@@ -765,6 +800,7 @@ export function supersedeManualPushes(manualUuid, realUuid) {
     .prepare(`
       UPDATE calendly_pushes
       SET status = 'skipped',
+          skip_reason = 'superseded',
           message = COALESCE(message, '') || ' | skip: superseded por evento real ' || ?
       WHERE event_uuid = ? AND status = 'scheduled'
     `)
@@ -822,6 +858,7 @@ export function supersedeHubspotPushes(closerEmail, callStartUtc, realUuid) {
     .prepare(`
       UPDATE calendly_pushes
       SET status = 'skipped',
+          skip_reason = 'superseded',
           message = COALESCE(message, '') || ' | skip: la cita entró por Calendly como ' || ?
       WHERE event_uuid LIKE 'hubspot:%'
         AND status = 'scheduled'

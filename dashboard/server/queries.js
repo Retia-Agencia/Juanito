@@ -37,6 +37,7 @@ import db, {
 
 import { PROGRAMS, COMPANIES, PROGRAM_LABELS } from '../../src/calendly/programs.js';
 import { ACCOUNTS } from '../../src/calendly/accounts.js';
+import { SKIP_ALERTABLES, ETIQUETA_SKIP } from '../../src/calendly/skip-reasons.js';
 import { CLOSERS, CLOSER_LIDS, IGNORED_CLOSERS } from '../../src/calendly/closers.js';
 
 const TZ = () => process.env.TZ || 'America/Bogota';
@@ -109,17 +110,19 @@ export function pushesAtascados(minutos = 10) {
   };
 }
 
-// Motivos de skip. `skip_reason` es columna MUERTA (194 de 195 filas NULL): la razón
-// se concatena dentro de `message` como ' | skip: <razón>'. Ver el diferido en el
-// roadmap. Mientras no se arregle, la extraemos del texto — feo pero es solo lectura
-// y da el panel hoy sin tocar el bot.
-// Extrae el motivo de skip de una fila. Dos sutilezas que ya costaron un falso positivo:
+// Motivos de skip. `skip_reason` YA se escribe (slug estable de src/calendly/skip-reasons.js),
+// así que para las filas nuevas se lee la columna y se traduce a algo legible. El parseo del
+// `message` queda SOLO como fallback de las filas anteriores al cambio, que tienen la columna
+// en NULL: borrarlo dejaría en blanco todo el histórico del panel.
+//
+// Dos sutilezas del fallback que ya costaron un falso positivo:
 //  · `.*` inicial es GREEDY a propósito → se queda con el ÚLTIMO ' | skip: ' cuando un
 //    push acumuló varios (markCalendlyPushSkipped concatena, no reemplaza).
 //  · Hay que mirar SOLO el motivo, nunca el `message` completo: ese campo guarda además
 //    el copy de WhatsApp, donde frases como "sin teléfono" aparecen de forma legítima.
 export function motivoDeSkip(message, skipReason = null) {
-  if (skipReason) return String(skipReason).trim();
+  const slug = String(skipReason || '').trim();
+  if (slug) return ETIQUETA_SKIP[slug] || slug;
   const m = /.*\|\s*skip:\s*(.+)$/s.exec(String(message || ''));
   return m ? m[1].trim() : 'sin motivo registrado';
 }
@@ -151,17 +154,19 @@ export function motivosDeSkip(dias = 7) {
     label: `Motivos de skip (${dias}d)`,
     level: 'ok',
     count: lista.reduce((s, x) => s + x.n, 0),
-    detail: 'Extraídos del texto de `message`: la columna skip_reason no se está escribiendo',
+    detail: 'Por `skip_reason`; las filas viejas (columna en NULL) caen al texto de `message`',
     rows: lista,
   };
 }
 
 // Pushes que NO salieron por falta de configuración, no por una razón legítima.
 //
-// Un skip por 'cita canceled' o 'rescheduled' es el sistema haciendo su trabajo. Un
-// skip por 'closer sin opt-in' o 'sin hilo establecido' es un push que el closer
-// debía recibir y no recibió — y hoy eso no dispara nada. Es exactamente la familia
-// del §18.AV, donde el dato estuvo en la DB una semana sin que nadie lo mirara.
+// Un skip por 'cita canceled' o 'rescheduled' es el sistema haciendo su trabajo. Un skip
+// 'sin-optin', 'sin-hilo' u 'obsoleto' es un push que el closer debía recibir y no recibió.
+// Misma clasificación que usa la alerta del bot (SKIP_ALERTABLES), a propósito: si el panel
+// y la alerta contaran distinto, uno de los dos estaría mintiendo.
+//
+// El regex queda para las filas viejas sin slug — mismo motivo que en motivoDeSkip.
 const SKIPS_QUE_IMPORTAN = /sin opt-in|sin hilo establecido|contact_jid|sin mapear|sin teléfono/i;
 
 export function pushesNoEntregados(horas = 24) {
@@ -173,8 +178,13 @@ export function pushesNoEntregados(horas = 24) {
     `-${horas} hours`
   );
   const rows = filas
-    .map(({ message, skip_reason, ...r }) => ({ ...r, motivo: motivoDeSkip(message, skip_reason) }))
-    .filter((r) => SKIPS_QUE_IMPORTAN.test(r.motivo));
+    .map(({ message, skip_reason, ...r }) => ({
+      ...r,
+      slug: String(skip_reason || '').trim(),
+      motivo: motivoDeSkip(message, skip_reason),
+    }))
+    .filter((r) => (r.slug ? SKIP_ALERTABLES.has(r.slug) : SKIPS_QUE_IMPORTAN.test(r.motivo)))
+    .map(({ slug, ...r }) => r);
   return {
     key: 'pushes_no_entregados',
     label: `Pushes no entregados por configuración (${horas}h)`,
