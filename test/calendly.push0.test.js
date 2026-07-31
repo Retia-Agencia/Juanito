@@ -152,13 +152,13 @@ test('dedup: dos polls seguidos → un solo Push 0', async () => {
   assert.equal(wa.sent.length, 1);
 });
 
-test('anti-ban: Push 0 sin opt-in → no se envía, queda skipped', async () => {
+test('anti-ban: Push 0 sin opt-in → no se envía, pero queda reintentable', async () => {
   const events = [makeEvent({ uuid: 'noopt', startIso: CALL_TODAY, createdInMin: -2, closerEmail: SALAZAR, nowMs: NOW_POST })];
   const { store, wa } = installHarness(scheduler, { events, optins: [], nowMs: NOW_POST });
   await scheduler.runCalendlyPoll();
   await scheduler.runCalendlyDelivery();
   assert.equal(wa.sent.length, 0, 'el Push 0 respeta el gate de opt-in igual que los demás');
-  assert.equal(push0Rows(store)[0].status, 'skipped');
+  assert.equal(push0Rows(store)[0].status, 'scheduled', 'sigue vivo para reintentar, no quemado');
 });
 
 test('flag CALENDLY_PUSH0_ENABLED=false → no se agenda Push 0', async () => {

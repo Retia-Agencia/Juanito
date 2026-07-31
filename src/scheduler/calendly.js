@@ -437,9 +437,11 @@ function dryRunForCloser(closerEmail) {
 // Devuelve 'sent' | 'dry-run' | 'skipped-optin' | 'skipped-no-thread'
 //          | 'paused' | 'paused-closer'.
 // Anti-baneo: nunca enviamos a un closer que no haya escrito antes a Juanito.
-// `to` es el número canónico del closer (closers.js): sirve de clave del opt-in y
-// para agrupar digests. El ENVÍO, en cambio, va EXCLUSIVAMENTE a la identidad que YA
-// estableció hilo con Juanito (`contact_jid` del opt-in). Entrega ESTRICTA (Item 1):
+// `to` es solo el fallback del número canónico del closer: la clave del opt-in se
+// re-resuelve adentro contra `closers.js` a partir de `closerEmail` (ver paso 0), para que
+// una rotación de número no deje huérfanas las filas ya agendadas. El ENVÍO, en cambio, va
+// EXCLUSIVAMENTE a la identidad que YA estableció hilo con Juanito (`contact_jid` del
+// opt-in). Entrega ESTRICTA (Item 1):
 // sin `contact_jid` NO se entrega — preferimos perder un push antes que mandar en frío
 // a un número que jamás escribió (el patrón que dispara softbans).
 //
@@ -453,17 +455,29 @@ function dryRunForCloser(closerEmail) {
 // nuevo hacia closers: el dry-run se resuelve SIEMPRE por `accountOfCloser(closerEmail)`,
 // nunca leyendo DRY_RUN() directo — si no, ese canal se le escapa a la cuenta muda.
 async function deliver(d, to, text, tag, closerEmail) {
+  // 0) La llave del opt-in se resuelve SIEMPRE contra el roster vivo, nunca con el número
+  //    que venga en `to`. Las filas de `calendly_pushes` congelan `closer_phone` al AGENDAR
+  //    (hasta 48h antes) y `outcomes` hace lo mismo: rotarle el número a un closer dejaba
+  //    huérfano todo lo ya agendado, y como el skip es terminal, arreglar el roster no lo
+  //    recuperaba (Daniela, 29-jul: 5 leads sin precall). Resolver acá y no en cada call
+  //    site es a propósito — es el punto ÚNICO por el que pasan push 3/4/5, digests,
+  //    outcomes y reagendas. `to` queda de fallback para un closer que ya salió del roster.
+  const phone = resolveCloser(closerEmail)?.phone || to;
   // 1) Pausa global: botón de pánico — apaga absolutamente todo.
   if (d.isCalendlyPaused && d.isCalendlyPaused()) {
-    console.log(`[Calendly] PAUSADO (global) → ${to}: omito (${tag})`);
+    console.log(`[Calendly] PAUSADO (global) → ${phone}: omito (${tag})`);
     return 'paused';
   }
   // 2) Opt-in GANADO requerido (anti-ban).
-  if (REQUIRE_OPTIN() && !d.isOptedIn(to)) {
-    console.log(`[Calendly] OMITIDO (${tag}) → ${to}: el closer aún no le ha escrito a Juanito (sin opt-in)`);
+  if (REQUIRE_OPTIN() && !d.isOptedIn(phone)) {
+    // Throttle 1h: desde que el push 3 reintenta en vez de quemarse, un closer sin opt-in
+    // con agenda llena repetiría esta línea cada minuto y taparía el resto del log. La
+    // clave lleva prefijo propio para no chocar con las de notifyAdmins.
+    if (shouldAlert(`log:optin:${phone}`, 3600 * 1000))
+      console.log(`[Calendly] OMITIDO (${tag}) → ${phone}: el closer aún no le ha escrito a Juanito (sin opt-in)`);
     return 'skipped-optin';
   }
-  const optin = d.getOptin ? d.getOptin(to) : null;
+  const optin = d.getOptin ? d.getOptin(phone) : null;
   // 3) Pausa por-closer, por IDENTIDAD (email de la CITA): una persona con dos identidades (misma
   //    línea, dos Calendly) se apaga por programa. El opt-in se comparte por teléfono, pero la
   //    pausa vive por email en `settings`. Ver isCloserPaused/setCloserPaused y la invariante en
@@ -475,10 +489,11 @@ async function deliver(d, to, text, tag, closerEmail) {
   // 4) Entrega estricta: solo a un hilo YA establecido (contact_jid). Sin él, no se envía.
   const target = optin?.contact_jid;
   if (!target) {
-    console.log(`[Calendly] OMITIDO (${tag}) → ${to}: sin hilo establecido (contact_jid) — no se entrega para evitar envío en frío`);
+    if (shouldAlert(`log:jid:${phone}`, 3600 * 1000))
+      console.log(`[Calendly] OMITIDO (${tag}) → ${phone}: sin hilo establecido (contact_jid) — no se entrega para evitar envío en frío`);
     return 'skipped-no-thread';
   }
-  const via = ` [hilo de opt-in; closer ${to}]`;
+  const via = ` [hilo de opt-in; closer ${phone}]`;
   // 5) Dry-run de la cuenta del closer (último filtro, igual que antes).
   if (dryRunForCloser(closerEmail)) {
     console.log(`[Calendly][DRY-RUN:${accountOfCloser(closerEmail)}] (${tag}) → ${target}${via}\n${text}\n`);
@@ -1293,10 +1308,22 @@ export async function runCalendlyDelivery() {
           // Pausa = botón de pánico TEMPORAL: no consumir el push. Revertir a
           // 'scheduled' para reanudar al despausar (la llamada puede seguir en el futuro).
           if (d.revertCalendlyPush) d.revertCalendlyPush(p.id);
-        } else if (result === 'skipped-no-thread') {
-          d.markCalendlyPushSkipped(p.id, 'sin hilo establecido (contact_jid)');
+        } else if (result === 'skipped-optin' || result === 'skipped-no-thread') {
+          // Falta de opt-in / de hilo es TRANSITORIA: el closer puede escribirle a Juanito
+          // cinco minutos después. Antes se quemaba el push en el primer intento y ni
+          // arreglar la causa lo revivía (`decidePushAction` → 'inactive-status'). Se
+          // revierte a 'scheduled' y se reintenta al minuto siguiente, igual que la pausa.
+          //
+          // El reintento está ACOTADO por el guard de obsolescencia de arriba, que mata la
+          // fila apenas la llamada empieza: techo de ~LEAD_MIN intentos. Por eso esto vale
+          // SOLO para push 0/3, que pasan por el guard — push 4 y 5 salen antes con
+          // `continue` y revertirlos los volvería filas inmortales.
+          if (d.revertCalendlyPush) d.revertCalendlyPush(p.id);
         } else {
-          d.markCalendlyPushSkipped(p.id, 'closer sin opt-in');
+          // Cualquier resultado no contemplado. Antes caía acá y se etiquetaba como
+          // 'closer sin opt-in', que ensuciaba el diagnóstico con una causa falsa.
+          d.markCalendlyPushSkipped(p.id, `resultado inesperado: ${result}`);
+          console.warn(`[Calendly] Push ${p.push_n} #${p.id}: resultado inesperado "${result}"`);
         }
         procesados++;
       } catch (e) {
