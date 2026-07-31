@@ -157,6 +157,26 @@ test('resolveCloserByPushName: nombre completo resuelve a la persona correcta (o
   }
 });
 
+// pushNames REALES de producción. El roster guarda el nombre corto a propósito (ej. "Sebastian
+// Marin", no "Juan Sebastian Marin") y el match es por contención, así que un nombre extra
+// adelante o un sufijo de empresa atrás no estorban. Vale fijarlo porque cuando esto falla, falla
+// EN SILENCIO: el closer escribe, no se registra, y Juanito tampoco le contesta nada.
+//
+// Marín depende enteramente de esto: rotó de línea el 2026-07-30 y quedó sin `workLid`, así que
+// su pushName es la única vía de reconocimiento hasta que se le declare el LID nuevo.
+test('resolveCloserByPushName tolera nombres extra y sufijos (pushNames reales)', () => {
+  for (const nombre of ['Juan Sebastian Marin - 30X', 'Juan Sebastian Marín - 30X']) {
+    assert.equal(
+      resolveCloserByPushName(nombre)?.email,
+      'sebastian.marin@30x.com',
+      `"${nombre}" debe resolver a Marín — si no, su opt-in falla en silencio`
+    );
+  }
+  // Sin apellido no hay match: una sola palabra es ambigua por diseño.
+  assert.equal(resolveCloserByPushName('Juan Sebastian'), null);
+  assert.equal(resolveCloserByPushName('Marin'), null);
+});
+
 test('un closer de nombre único NO se resuelve por pushName (ni él ni un extraño)', () => {
   // Por qué importa: handleCloserOptin le pone al opt-in del closer el contact_jid de QUIEN
   // ESCRIBIÓ. Si un desconocido llamado "Andrea Restrepo" le escribe a Juanito y matchea a
