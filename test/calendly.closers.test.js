@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 const {
   CLOSERS,
   CLOSER_LIDS,
+  PEOPLE,
   accountOfCloser,
   resolveCloser,
   resolveCloserByPhone,
@@ -93,6 +94,30 @@ test('CLOSER_LIDS apunta solo a emails que existen en CLOSERS', () => {
   for (const [lid, email] of Object.entries(CLOSER_LIDS)) {
     assert.ok(CLOSERS[email], `el LID ${lid} apunta a "${email}", que no está en CLOSERS`);
     assert.match(lid, /^\d+$/, `el LID ${lid} debe ser solo dígitos (sin @lid)`);
+  }
+});
+
+// Declarar un `workLid` PINNEA la entrega a ese hilo (optin.js: `contactJid = workJid || from`),
+// así que un LID repetido mandaría los pushes de dos identidades al mismo WhatsApp. La estructura
+// del mapa ya lo impide (lid → email, una entrada por LID), pero el error se cometería al EDITAR
+// el roster: copiar la línea de un closer y olvidar cambiarle el LID. Eso se detecta acá.
+//
+// La otra mitad del invariante (que el LID declarado coincida con el `contact_jid` real del
+// opt-in) NO se puede probar acá: compara código contra datos de producción. Vive en
+// `scripts/calendly-optins.js`, que corre contra la DB viva.
+test('INVARIANTE: ningún workLid se declara dos veces', () => {
+  const vistos = new Map();
+  for (const p of Object.values(PEOPLE)) {
+    for (const id of p.identities) {
+      if (!id.workLid) continue;
+      const duenio = vistos.get(id.workLid);
+      assert.equal(
+        duenio,
+        undefined,
+        `el workLid ${id.workLid} está en ${id.email} y también en ${duenio} — los pushes de ambos irían al mismo hilo`
+      );
+      vistos.set(id.workLid, id.email);
+    }
   }
 });
 

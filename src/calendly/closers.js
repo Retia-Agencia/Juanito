@@ -45,6 +45,19 @@
 import { phonesMatch } from '../common/utils.js';
 import { DEFAULT_ACCOUNT, accountOf } from './accounts.js';
 
+// ⚠️ Sobre `workLid` (backfill 2026-07-30). Declararlo hace DOS cosas: PINNEA la entrega a ese
+// LID (`handleCloserOptin` hace `contactJid = workJid || from`, ver optin.js) y vuelve el destino
+// VERIFICABLE — sin él, el `contact_jid` es un `@lid` opaco que no se puede contrastar contra
+// nada, que es justo el hueco por el que el bug de Pablo Suarez (§18.AJ) vivió una semana.
+//
+// Por eso solo se declara sobre identidades con ENTREGA PROBADA: se tomó el `contact_jid` vigente
+// de quienes venían respondiendo los Push 4 (una respuesta demuestra que el hilo está vivo).
+// Declarar un LID equivocado CEMENTA el error, porque a partir de ahí el opt-in ignora desde
+// dónde escriba el closer. Las identidades sin prueba de vida (las 3 de Retia, que no reciben
+// Push 4, y Marín mientras rota de línea) quedan SIN declarar a propósito, hasta capturar su LID
+// de un mensaje nuevo. El test de invariante en calendly.closers.test.js vigila que lo declarado
+// coincida con el opt-in real.
+//
 // Exportado (F3a) para que el seed de registries pueda guardar la PERSONA. Los mapas derivados
 // de abajo son por IDENTIDAD y ya no saben quién es quién: dos identidades de Sebastian
 // Rodriguez no se distinguen de dos personas homónimas (que existen — ver Andrea Machado).
@@ -56,7 +69,7 @@ export const PEOPLE = {
     // ⚠️ Rotar un número tiene DOS pasos: este roster es solo la LLAVE del opt-in; el destino
     // real de los pushes es `calendly_optins.contact_jid`. Ver el patrón de Pablo Suarez (§18.AJ)
     // y el runbook de rotación en docs/JUANITO-HANDOFF.md.
-    identities: [{ connection: '30x', email: 'daniela.camacho@30x.com', phone: '+573018094666' }],
+    identities: [{ connection: '30x', email: 'daniela.camacho@30x.com', phone: '+573018094666', workLid: '68604267614366' }],
   },
   // Sebastian Rodriguez: UNA persona, DOS identidades. Cierra AI Second Brain en 30X y "De Cero a
   // Tactical Investor" en Retia, con host/teléfono distinto en cada Calendly. Antes eran dos
@@ -108,15 +121,28 @@ export const PEOPLE = {
   },
   pablo_lozano: {
     name: 'Pablo Lozano',
-    identities: [{ connection: '30x', email: 'pablo.lozano@30x.com', phone: '+573046131437' }],
+    identities: [{ connection: '30x', email: 'pablo.lozano@30x.com', phone: '+573046131437', workLid: '254051828641894' }],
   },
+  // Teléfono rotado 2026-07-30 (jefe): +573212100048 → +573170623894. Es un WhatsApp NUEVO,
+  // no el mismo número portado, así que su `contact_jid` viejo (248489795702847@lid) era el
+  // aparato ANTERIOR y se puso en NULL a propósito: conservarlo habría repetido el bug de
+  // Pablo Suarez (§18.AJ), con los pushes yéndose al teléfono viejo y el log en verde.
+  //
+  // Queda SIN `workLid` a propósito hasta que escriba desde la línea nueva: `handleCloserOptin`
+  // hace `contactJid = workJid || from` (src/calendly/optin.js), así que declarar acá el LID
+  // viejo devolvería la entrega al aparato anterior y anularía esta rotación. Cuando escriba y
+  // se verifique la fila, ahí sí se declara.
+  //
+  // ⚠️ Al no tener `workLid` y ser línea nueva, su reconocimiento cuelga ENTERO de
+  // `resolveCloserByPushName`: su nombre de WhatsApp debe traer "Sebastian" Y "Marin". Si dice
+  // solo "Sebastian", falla en silencio → `scripts/calendly-optin-set.js "Sebastian Marin" "<lid>"`.
   sebastian_marin: {
     name: 'Sebastian Marin',
-    identities: [{ connection: '30x', email: 'sebastian.marin@30x.com', phone: '+573212100048' }],
+    identities: [{ connection: '30x', email: 'sebastian.marin@30x.com', phone: '+573170623894' }],
   },
   lucas_mendoza: {
     name: 'Lucas Mendoza',
-    identities: [{ connection: '30x', email: 'lucas.mendoza@30x.com', phone: '+573014477044' }],
+    identities: [{ connection: '30x', email: 'lucas.mendoza@30x.com', phone: '+573014477044', workLid: '145540016799830' }],
   },
   // OJO: su email NO lleva punto (pablosuarez@), a diferencia de pablo.lozano@ — personas
   // distintas, ambas activas. Entró 2026-07-14.
@@ -128,7 +154,7 @@ export const PEOPLE = {
     // al mes — la agenda del día no veía UNA sola call de AI for Developers y el diagnóstico
     // parecía "developers no existe en HubSpot". Ver §18.AN.
     identities: [
-      { connection: '30x', email: 'pablosuarez@30x.com', phone: '+573189248507', hubspotEmail: 'pablosuarez+hubspot@30x.com' },
+      { connection: '30x', email: 'pablosuarez@30x.com', phone: '+573189248507', hubspotEmail: 'pablosuarez+hubspot@30x.com', workLid: '31001912856621' },
     ],
   },
   // ─── Retia (agencia #2) — programa "De Cero a Tactical Investor" ───────────
