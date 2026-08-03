@@ -4,7 +4,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { daysToCsv, normalizeTimeHm, csvToDayLabels, zonedNowParts, zonedStamp } from '../scheduler/recurring-logic.js';
-import { validatePhone } from '../common/utils.js';
+import { validatePhone, normalizeLeadName } from '../common/utils.js';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -78,13 +78,17 @@ export function __resetDeps() {
 
 async function resolveDeps() {
   if (_injectedDeps) return _injectedDeps;
-  const [db, contacts, whatsapp, routing, documents] = await Promise.all([
-    import('../db/index.js'),
-    import('../contacts/index.js'),
-    import('../whatsapp/index.js'),
-    import('../common/approval-routing.js'),
-    import('../documents/index.js'),
-  ]);
+  const [db, contacts, whatsapp, routing, documents, setteoCapture, setteoMetricas, setteoParse] =
+    await Promise.all([
+      import('../db/index.js'),
+      import('../contacts/index.js'),
+      import('../whatsapp/index.js'),
+      import('../common/approval-routing.js'),
+      import('../documents/index.js'),
+      import('../setteo/capture.js'),
+      import('../setteo/metricas.js'),
+      import('../setteo/parse.js'),
+    ]);
   return {
     // db
     saveMessage: db.saveMessage,
@@ -152,6 +156,13 @@ async function resolveDeps() {
     buildDocument: documents.buildDocument,
     // ruteo de avisos al equipo (tool capture_task)
     approvalsTarget: routing.approvalsTarget,
+    // setteo del closer (§18.AV) — las tres tools de CLOSER_TOOLS
+    listSetteosForCloser: db.listSetteosForCloser,
+    deleteSetteo: db.deleteSetteo,
+    updateSetteoFlags: db.updateSetteoFlags,
+    guardarSetteos: setteoCapture.guardarSetteos,
+    buildMisSetteos: setteoMetricas.buildMisSetteos,
+    localDateISO: setteoParse.localDateISO,
     // claude (mismo módulo)
     summarizeGroupMessages,
   };
@@ -596,6 +607,78 @@ const TOOLS = [
       required: ['topic', 'fact'],
     },
   },
+  // ─── Tools del CLOSER (§18.AV) ───────────────────────────────────────────────
+  // Solo se exponen en el DM de un closer (ver toolsForRole). Ninguna recibe la identidad
+  // del closer como parámetro: sale SIEMPRE del JID de quien escribe, en dispatchTool. Si
+  // fuera un campo del schema, el modelo podría registrarle setteos a otro closer.
+  {
+    name: 'registrar_setteo',
+    description:
+      'Registra los leads que el closer tocó hoy (su "setteo") con el resultado de cada uno. ' +
+      'Úsala cuando te cuente a quién le escribió y cómo le fue. Un lead por entrada. ' +
+      'Si no te dio NOMBRES sino solo una cantidad ("toqué 20"), NO la uses: pídele los nombres, ' +
+      'porque sin nombre no se puede cruzar con HubSpot y no cuenta.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        leads: {
+          type: 'array',
+          description: 'Los leads que tocó. Uno por objeto.',
+          items: {
+            type: 'object',
+            properties: {
+              nombre: { type: 'string', description: 'Nombre del LEAD (el prospecto), tal como lo dijo el closer. Nunca lo completes ni lo corrijas.' },
+              contesto: { type: 'boolean', description: 'true si el lead respondió algo.' },
+              agendo: { type: 'boolean', description: 'true solo si quedó una llamada o reunión agendada.' },
+              vendio: { type: 'boolean', description: 'true solo si se cerró la venta.' },
+            },
+            required: ['nombre'],
+          },
+        },
+        fecha: {
+          type: 'string',
+          description: 'Opcional, AAAA-MM-DD. El día del setteo si NO fue hoy. Nunca una fecha futura.',
+        },
+      },
+      required: ['leads'],
+    },
+  },
+  {
+    name: 'consultar_mis_setteos',
+    description:
+      'Devuelve las métricas de setteo DEL CLOSER que te está escribiendo: cuántos reportó, ' +
+      'cuántos figuran registrados en HubSpot y cuál era su cuota según sus horas libres. ' +
+      'Úsala cuando pregunte cómo va, cuántos lleva, si va a alcanzar la cuota, o por su brecha.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        dias: { type: 'number', description: 'Ventana en días hacia atrás. 1 = hoy (default).' },
+      },
+    },
+  },
+  {
+    name: 'corregir_setteo',
+    description:
+      'Corrige o borra un setteo YA registrado del closer que te escribe. Úsala cuando diga que ' +
+      'se equivocó ("María no agendó, me confundí", "borrá el de Juan"). Es la única forma de ' +
+      'QUITAR un resultado: registrar de nuevo solo suma, nunca baja.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        nombre: { type: 'string', description: 'Nombre del lead a corregir, como lo registró antes.' },
+        accion: {
+          type: 'string',
+          enum: ['corregir', 'borrar'],
+          description: '"corregir" cambia los resultados; "borrar" elimina el setteo entero.',
+        },
+        contesto: { type: 'boolean', description: 'Solo con accion=corregir. El valor correcto.' },
+        agendo: { type: 'boolean', description: 'Solo con accion=corregir. El valor correcto.' },
+        vendio: { type: 'boolean', description: 'Solo con accion=corregir. El valor correcto.' },
+        fecha: { type: 'string', description: 'Opcional, AAAA-MM-DD. Por defecto hoy.' },
+      },
+      required: ['nombre', 'accion'],
+    },
+  },
 ];
 
 // Prefijo de namespace para las notas del jefe: memoria SANDBOXED que se presenta al
@@ -649,6 +732,12 @@ const BOSS_IN_GROUP_TOOLS = new Set([
 // ni lectura de datos privados (es un espacio compartido). Ver handleApprovalConsole.
 const APPROVALS_CONSOLE_TOOLS = new Set(['manage_drafts', 'manage_replies']);
 
+// Set del CLOSER (§18.AV): SOLO lo suyo. Ni memoria, ni recordatorios, ni búsqueda en los
+// datos del jefe, ni nada que toque a otro closer. Es el privilegio más bajo que ejecuta
+// acciones en este bot, y el gateo a nivel de API es lo que lo hace real: lo que no está en
+// el array, el modelo no lo puede invocar por más que se lo pidan.
+const CLOSER_TOOLS = new Set(['registrar_setteo', 'consultar_mis_setteos', 'corregir_setteo']);
+
 // Devuelve el subconjunto de tools que se le expone a Claude según el rol y el contexto.
 // Gatear acá (a nivel de API) es más fuerte que pedirlo en el prompt: lo que no está
 // en el array, el modelo NO lo puede invocar pase lo que pase.
@@ -661,7 +750,13 @@ export function toolsForRole(role, { isGroup = false, publicDm = false, bossInGr
   // Jefe/admin dando órdenes DESDE un grupo: set acotado (ya verificado estrictamente
   // por el router con isStrictPrivileged). El resto del grupo NO entra por esta rama.
   if (isGroup && bossInGroup) return TOOLS.filter((t) => BOSS_IN_GROUP_TOOLS.has(t.name));
-  let tools = TOOLS;
+  // Closer: solo sus tres tools de setteo, y SOLO en DM. En un grupo no se expone ninguna —
+  // registrar el setteo de alguien en un chat compartido filtraría nombres de leads y sus
+  // resultados a todo el grupo.
+  if (role === 'closer') return isGroup ? [] : TOOLS.filter((t) => CLOSER_TOOLS.has(t.name));
+  // Las tools del closer NO son para nadie más: el jefe tiene /setteos (el consolidado) y
+  // los admins su propio camino. Sin esto quedarían expuestas en el DM del jefe.
+  let tools = TOOLS.filter((t) => !CLOSER_TOOLS.has(t.name));
   // En grupos no exponemos escrituras de memoria.
   if (isGroup) tools = tools.filter((t) => !GROUP_DENIED_TOOLS.has(t.name));
   // El jefe (no-admin) no recibe las tools sensibles.
@@ -738,7 +833,7 @@ ${replies
 
 // Exportado para tests: permite verificar el aislamiento del prompt de grupo
 // (que NO toca memoria/recordatorios/resúmenes ni inyecta datos privados).
-export async function buildSystemPrompt(deps, { isGroup = false, role = 'boss', chatId = null, publicDm = false, bossInGroup = false, groupName = null, approvalsConsole = false, ownerLid = null } = {}) {
+export async function buildSystemPrompt(deps, { isGroup = false, role = 'boss', chatId = null, publicDm = false, bossInGroup = false, groupName = null, approvalsConsole = false, ownerLid = null, closerName = null } = {}) {
   const now = new Date().toLocaleString('es-CO', {
     timeZone: process.env.TZ || 'America/Bogota',
     dateStyle: 'full',
@@ -782,6 +877,46 @@ Sobre este contexto (importante):
 - Si te preguntan por "tus tareas", "tus recordatorios", "lo que recuerdas", o por
   datos/agenda del jefe, aclara con naturalidad que aquí solo eres un chatbot general.
 - No ofrezcas guardar nada ni hacer seguimientos, ni hagas preguntas de seguimiento.
+
+${securityBlock}`.trim();
+  }
+
+  // ── Contexto de CLOSER (§18.AV) ───────────────────────────────────────────
+  // Un closer del roster te escribe por DM. Contexto ACOTADO A LO SUYO: registra y consulta
+  // SU setteo, y nada más. No ve memoria, ni recordatorios, ni datos del jefe, ni el roster,
+  // ni el setteo de ningún otro closer — ni por el prompt ni por las tools (toolsForRole).
+  if (role === 'closer') {
+    const quien = closerName ? ` Se llama ${closerName}.` : '';
+    return `Eres ${botName}, el asistente del equipo comercial. Te escribe un CLOSER por privado.${quien}
+Tu único trabajo con él es su SETTEO: anotarlo y decirle cómo va.
+
+Fecha y hora actual: ${now}
+
+Qué es el setteo: los leads a los que el closer le escribe por WhatsApp para conseguir que
+agenden una llamada. La unidad es "1 lead tocado = 1 setteo", una vez por día por lead. Un
+lead que YA tiene cita agendada no es setteo (ese se mide aparte, en la llamada).
+
+Qué haces:
+- Si te cuenta a quién tocó y cómo le fue → registrar_setteo. Un lead por entrada.
+- Si te pregunta cómo va, cuánto lleva o por su cuota → consultar_mis_setteos.
+- Si te dice que se equivocó o que borres algo → corregir_setteo.
+- Si te pregunta otra cosa (una duda, una idea, algo de su día), respóndele normal y breve.
+  No fuerces ninguna herramienta.
+
+Reglas que no se negocian:
+- NUNCA inventes un nombre de lead. Si te dice una cantidad sin nombres ("toqué 20 hoy"),
+  pídele los nombres: sin nombre no se puede cruzar con HubSpot y no le cuenta. Registrar
+  "Lead 1, Lead 2" para cuadrar el número sería falsear su reporte.
+- Copia los nombres TAL COMO te los dice. No completes apellidos ni corrijas la ortografía:
+  el cruce con HubSpot depende de eso.
+- Solo puedes ver y tocar SUS setteos. Si te pide los de otro closer, o los del equipo,
+  dile que eso lo tiene el jefe. No lo tienes y no lo puedes consultar.
+- Anotar en tu registro NO lo registra en HubSpot. Si nota la diferencia entre lo que te
+  contó y lo que aparece en el CRM, esa brecha es real y la tiene que cerrar él allá: sin
+  registro en HubSpot su gestión no cuenta para comisión. Díselo claro, sin regañarlo.
+- No le prometas nada que no puedas hacer con tus herramientas.
+
+Personalidad: directo, cálido y corto. Es WhatsApp en medio de su jornada, no un reporte.
 
 ${securityBlock}`.trim();
   }
@@ -1807,6 +1942,85 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
         : `No encontré nada relacionado con "${query}".`;
     }
 
+    // ─── Tools del CLOSER (§18.AV) ────────────────────────────────────────────
+    // El closer sale de ctx.closer, que el router deriva del JID de quien escribe. NUNCA de
+    // `input`: si el modelo pudiera nombrar al closer, un mensaje bien redactado bastaría
+    // para escribirle setteos a otro. Sin ctx.closer no se ejecuta nada.
+    case 'registrar_setteo': {
+      if (!ctx.closer) return 'Esta herramienta solo funciona en el chat de un closer.';
+      const leads = Array.isArray(input.leads) ? input.leads : [];
+      const items = [];
+      const vistos = new Set();
+      for (const l of leads) {
+        const leadName = String(l?.nombre || '').trim().slice(0, 80);
+        const leadNorm = normalizeLeadName(leadName);
+        if (!leadNorm || leadNorm.length < 2) continue;
+        if (vistos.has(leadNorm)) continue;
+        vistos.add(leadNorm);
+        const agendo = l?.agendo ? 1 : 0;
+        const vendio = l?.vendio ? 1 : 0;
+        items.push({ leadName, leadNorm, contesto: l?.contesto || agendo || vendio ? 1 : 0, agendo, vendio });
+      }
+      if (!items.length) {
+        return 'No me diste ningún nombre de lead. Pídeselos: sin nombre no se puede cruzar con HubSpot.';
+      }
+
+      const hoy = deps.localDateISO?.() || new Date().toISOString().slice(0, 10);
+      const f = String(input.fecha || '').trim();
+      // Una fecha futura o fuera de rango se ignora en silencio a favor de hoy: el modelo no
+      // puede mandarle el setteo del closer a otro mes.
+      const fecha = /^\d{4}-\d{2}-\d{2}$/.test(f) && f <= hoy ? f : hoy;
+
+      const r = await deps.guardarSetteos?.({ closer: ctx.closer, fecha, items, source: 'ia' });
+      if (!r) return 'No pude guardar el setteo ahora.';
+      const avisos = [];
+      if (r.calls) avisos.push(`${r.calls} ya tenían cita agendada (cuentan como call, no como setteo)`);
+      if (r.ambiguos) avisos.push(`${r.ambiguos} con homónimos en HubSpot, sin cruzar`);
+      if (r.sinMatch) avisos.push(`${r.sinMatch} no aparecen en HubSpot`);
+      return (
+        `Guardados ${r.guardados} setteo(s) del ${fecha}: ${r.nombres.join(', ')}.` +
+        (avisos.length ? ` Avísale: ${avisos.join('; ')}.` : '')
+      );
+    }
+
+    case 'consultar_mis_setteos': {
+      if (!ctx.closer) return 'Esta herramienta solo funciona en el chat de un closer.';
+      const dias = Math.min(Math.max(Number(input.dias) || 1, 1), 90);
+      const out = await deps.buildMisSetteos?.({ closer: ctx.closer, dias });
+      return out || 'No pude leer tus métricas ahora.';
+    }
+
+    case 'corregir_setteo': {
+      if (!ctx.closer) return 'Esta herramienta solo funciona en el chat de un closer.';
+      const leadNorm = normalizeLeadName(input.nombre);
+      if (!leadNorm) return 'Necesito el nombre del lead a corregir.';
+
+      const hoy = deps.localDateISO?.() || new Date().toISOString().slice(0, 10);
+      const f = String(input.fecha || '').trim();
+      const fecha = /^\d{4}-\d{2}-\d{2}$/.test(f) ? f : hoy;
+
+      // El email va en el filtro: solo puede tocar filas SUYAS.
+      const filas = (await deps.listSetteosForCloser?.({ closerEmail: ctx.closer.email, desde: fecha, hasta: fecha })) || [];
+      const fila = filas.find((x) => x.lead_norm === leadNorm);
+      if (!fila) return `No encontré ningún setteo de "${input.nombre}" el ${fecha}. Pregúntale la fecha.`;
+
+      if (input.accion === 'borrar') {
+        const n = await deps.deleteSetteo?.({ id: fila.id, closerEmail: ctx.closer.email });
+        return n ? `Borrado el setteo de ${fila.lead_name} del ${fecha}.` : 'No pude borrarlo.';
+      }
+
+      const n = await deps.updateSetteoFlags?.({
+        id: fila.id,
+        closerEmail: ctx.closer.email,
+        contesto: input.contesto,
+        agendo: input.agendo,
+        vendio: input.vendio,
+      });
+      return n
+        ? `Corregido el setteo de ${fila.lead_name} del ${fecha}.`
+        : 'No me dijiste qué cambiar. Pregúntale si contestó, si agendó o si compró.';
+    }
+
     default:
       return `Herramienta desconocida: ${name}.`;
   }
@@ -1857,7 +2071,7 @@ async function withRetry(fn, { retries = 3, baseDelay = 1000 } = {}) {
 
 // ─── Función principal ────────────────────────────────────────────────────────
 
-export async function chat(userMessage, chatId = null, { isGroup = false, role = 'boss', publicDm = false, bossInGroup = false, groupName = null, groupId = null, createdBy = null, approvalsConsole = false, quotedText = null, senderName = null } = {}) {
+export async function chat(userMessage, chatId = null, { isGroup = false, role = 'boss', publicDm = false, bossInGroup = false, groupName = null, groupId = null, createdBy = null, approvalsConsole = false, quotedText = null, senderName = null, closer = null } = {}) {
   const deps = await resolveDeps();
   // currentGroupId/currentGroupName: para que las tools del jefe-en-grupo apunten a ESTE
   // grupo cuando dice "aquí"/"en este grupo" sin nombrarlo (set_group_instructions,
@@ -1876,6 +2090,10 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
     // Nombre de quien habla (su pushName de WhatsApp) → para que un outreach que ordena un admin
     // salga "de parte de" él, no del jefe (schedule_outreach). Ver §18.Y.
     senderName,
+    // Identidad del closer (§18.AV), resuelta por el ROUTER desde el JID. Las tools de setteo
+    // la leen de acá y nunca de `input`: es lo que impide que el modelo —o alguien que le
+    // dicte al modelo— registre o consulte setteos a nombre de otro closer.
+    closer,
   };
 
   // Reply-awareness universal: si el usuario respondió CITANDO un mensaje, anteponemos su
@@ -1911,7 +2129,7 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
   // ownerLid: solo jefe/admin tienen memoria PERSONAL, y se carga la de QUIEN habla (ctx.createdBy).
   // Desconocidos/grupos → null → solo memoria del sistema, nunca notas personales ajenas (§18 1B).
   const ownerLid = role === 'boss' || role === 'admin' ? ctx.createdBy : null;
-  const system = await buildSystemPrompt(deps, { isGroup, role, chatId, publicDm, bossInGroup, groupName, approvalsConsole, ownerLid });
+  const system = await buildSystemPrompt(deps, { isGroup, role, chatId, publicDm, bossInGroup, groupName, approvalsConsole, ownerLid, closerName: closer?.name || null });
   // Tools gateadas por rol/contexto. En grupos y en DM público devuelve [] → no se
   // pasa a la API (la API rechaza tools:[]).
   const tools = toolsForRole(role, { isGroup, publicDm, bossInGroup, approvalsConsole });

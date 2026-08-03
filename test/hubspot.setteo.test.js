@@ -102,3 +102,49 @@ test('format: singular/plural correcto (1 setteo)', () => {
   assert.match(txt, /1 setteo\b/);
   assert.doesNotMatch(txt, /1 setteos/);
 });
+
+// ─── Brecha reportado vs. HubSpot (§18.AV) ────────────────────────────────────
+
+test('format: sin `reportado` el bloque sale como antes', () => {
+  const agg = aggregateSetteos([{ ownerId: '1', esCall: false }, { ownerId: '2', esCall: false }], OWNERS);
+  const txt = formatSetteoBlock(agg, { dateLabel: 'hoy' });
+  assert.match(txt, /\*Sebastian Rodriguez\* — 1 setteo/);
+  assert.doesNotMatch(txt, /reportados/);
+});
+
+test('format: con `reportado` muestra las dos cifras y marca la brecha', () => {
+  const agg = aggregateSetteos([{ ownerId: '1', esCall: false }, { ownerId: '1', esCall: false }], OWNERS);
+  const txt = formatSetteoBlock(agg, { dateLabel: 'hoy', reportado: { 'Sebastian Rodriguez': 15 } });
+  assert.match(txt, /\*Sebastian Rodriguez\* — 15 reportados \/ 2 en HubSpot/);
+  assert.match(txt, /⚠️ 13 sin registrar/);
+});
+
+test('format: sin brecha no se marca la advertencia', () => {
+  const agg = aggregateSetteos([{ ownerId: '2', esCall: false }], OWNERS);
+  const txt = formatSetteoBlock(agg, { reportado: { 'Pablo Lozano': 1 } });
+  assert.match(txt, /1 reportado \/ 1 en HubSpot/);
+  assert.doesNotMatch(txt, /⚠️/, 'sin brecha no hay nada que marcar');
+});
+
+// El caso MÁS informativo: reportó gestión y no hay nada en el CRM. Si solo se listaran los
+// closers del agregado de HubSpot, este desaparecería justo cuando hay que verlo.
+test('format: un closer que reportó y NO registró nada igual aparece', () => {
+  const txt = formatSetteoBlock(aggregateSetteos([], OWNERS), { reportado: { 'Pablo Lozano': 11 } });
+  assert.ok(txt, 'no puede devolver null: hay algo que reportar');
+  assert.match(txt, /\*Pablo Lozano\* — 11 reportados \/ 0 en HubSpot/);
+  assert.match(txt, /⚠️ 11 sin registrar/);
+});
+
+// La brecha admite dos lecturas y el dato no distingue. Afirmar una sería fabricar una
+// conclusión, y esto va al DM del jefe.
+test('format: el pie explica la ambigüedad de la brecha, sin acusar a nadie', () => {
+  const agg = aggregateSetteos([{ ownerId: '1', esCall: false }], OWNERS);
+  const txt = formatSetteoBlock(agg, { reportado: { 'Sebastian Rodriguez': 9 } });
+  assert.match(txt, /gestión sin registrar o reporte inflado/);
+  assert.match(txt, /dependen las comisiones/);
+});
+
+test('format: sin datos de ningún lado sigue devolviendo null', () => {
+  assert.equal(formatSetteoBlock(aggregateSetteos([], OWNERS), { reportado: {} }), null);
+  assert.equal(formatSetteoBlock(null, {}), null);
+});

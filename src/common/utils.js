@@ -28,6 +28,24 @@ export function validatePhone(raw) {
   return { ok: true, digits, reason: null };
 }
 
+// ─── Normalizar el nombre de un lead (§18.AV) ─────────────────────────────────
+// Clave de deduplicación del setteo: "María Pérez", "maria perez" y "MARIA  PEREZ." son el
+// MISMO lead tocado. Vive acá, y no en el módulo de setteo, porque la usan dos capas que no
+// deben poder divergir: el UNIQUE de la tabla (db/index.js, al escribir) y el parser (al
+// agrupar lo que el closer dictó en un mismo mensaje). Si cada una normalizara a su manera,
+// el mismo lead entraría dos veces y el conteo se inflaría solo.
+// Quita tildes, puntuación y espacios repetidos. NO quita apellidos ni reordena: "Juan Pérez"
+// y "Pérez, Juan" son distintos a propósito — adivinar ahí escondería leads reales.
+export function normalizeLeadName(raw) {
+  return String(raw || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function phonesMatch(a, b) {
   const na = normalizePhone(a);
   const nb = normalizePhone(b);

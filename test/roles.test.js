@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 // El SDK de Anthropic exige una apiKey al construir el cliente (claude/index.js).
 process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || 'test-key';
 
-const { roleOf, isPrivileged, isStrictPrivileged, groupHasPrivilegedMember } = await import('../src/common/roles.js');
+const { roleOf, isPrivileged, isStrictPrivileged, groupHasPrivilegedMember, isCloser, closerOf } = await import('../src/common/roles.js');
 const { toolsForRole, splitMemory } = await import('../src/claude/index.js');
 
 // Helper: corre fn con env temporal y restaura al terminar.
@@ -68,6 +68,68 @@ test('roleOf: retrocompat — sin BOSS_LID, cualquier @lid no-admin es boss', ()
     assert.equal(roleOf('999999999999999@lid'), 'boss');
     // pero un LID admin sigue siendo admin aunque no haya BOSS_LID
     assert.equal(roleOf(ADMIN_LID), 'admin');
+  });
+});
+
+// ─── Rol closer (§18.AV) ──────────────────────────────────────────────────────
+// Se apoya en el roster real de calendly/closers.js: Pablo Lozano (una sola identidad,
+// sin workLid) y Sebastian Rodriguez (dos identidades, con workLid de trabajo).
+const CLOSER_PHONE_JID = '573046131437@s.whatsapp.net'; // Pablo Lozano
+const CLOSER_WORK_LID = '158025419608301@lid';          // Sebastian Rodriguez (30x)
+
+test('roleOf: closer por su teléfono canónico', () => {
+  withEnv({ BOSS_PHONE, BOSS_LID, ADMIN_LID }, () => {
+    assert.equal(roleOf(CLOSER_PHONE_JID), 'closer');
+  });
+});
+
+test('roleOf: closer por su LID de trabajo', () => {
+  withEnv({ BOSS_PHONE, BOSS_LID, ADMIN_LID }, () => {
+    assert.equal(roleOf(CLOSER_WORK_LID), 'closer');
+  });
+});
+
+// El bug que este test bloquea: el fallback retrocompat "cualquier @lid = boss" corre
+// cuando BOSS_LID no está configurado. Si la rama de closer fuera DESPUÉS, todo closer que
+// escribiera desde su LID quedaría como jefe y vería las tools del jefe.
+test('roleOf: SIN BOSS_LID, el LID de un closer es closer — no boss por retrocompat', () => {
+  withEnv({ BOSS_PHONE, BOSS_LID: undefined, ADMIN_LID }, () => {
+    assert.equal(roleOf(CLOSER_WORK_LID), 'closer');
+    // y el retrocompat sigue vivo para un @lid que NO es de nadie del roster
+    assert.equal(roleOf('999999999999999@lid'), 'boss');
+  });
+});
+
+test('roleOf: el equipo NO pierde su rol por estar también en el roster', () => {
+  withEnv({ BOSS_PHONE: '573046131437', BOSS_LID, ADMIN_LID }, () => {
+    // mismo número que Pablo Lozano, pero configurado como el jefe → gana boss
+    assert.equal(roleOf(CLOSER_PHONE_JID), 'boss');
+  });
+  withEnv({ BOSS_PHONE, BOSS_LID, ADMIN_LID: CLOSER_WORK_LID }, () => {
+    assert.equal(roleOf(CLOSER_WORK_LID), 'admin');
+  });
+});
+
+test('isPrivileged: un closer NO es privilegiado', () => {
+  assert.equal(isPrivileged('closer'), false);
+});
+
+test('isStrictPrivileged: un closer NO puede dar órdenes desde un grupo', () => {
+  withEnv({ BOSS_PHONE, BOSS_LID, ADMIN_LID }, () => {
+    assert.equal(isStrictPrivileged(CLOSER_WORK_LID), false);
+    assert.equal(isStrictPrivileged(CLOSER_PHONE_JID), false);
+  });
+});
+
+test('closerOf: devuelve la identidad; el pushName NO da rol de closer', () => {
+  withEnv({ BOSS_PHONE, BOSS_LID, ADMIN_LID }, () => {
+    assert.equal(closerOf(CLOSER_PHONE_JID)?.email, 'pablo.lozano@30x.com');
+    assert.equal(closerOf(CLOSER_WORK_LID)?.email, 'sebastian@30x.com');
+    assert.equal(closerOf('999999999999999@lid'), null);
+    // Un desconocido que se ponga "Pablo Lozano" de nombre de WhatsApp NO hereda el rol:
+    // el pushName lo elige quien escribe, así que nunca da privilegios.
+    assert.equal(isCloser('999999999999999@lid'), false);
+    assert.equal(roleOf('999999999999999@lid'), 'unknown');
   });
 });
 

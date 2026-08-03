@@ -6,9 +6,12 @@
 //
 //   admin   → equipo dev. Máximo privilegio (todas las tools, diagnósticos).
 //   boss    → el jefe. Privilegio acotado (no toca tools sensibles ni config).
-//   unknown → cualquier otro (closers, desconocidos). No llega a este flujo como jefe.
+//   closer  → alguien del roster de ventas. Privilegio MÍNIMO y acotado a LO SUYO:
+//             registra y consulta su propio setteo, nada más (§18.AV). No es privilegiado.
+//   unknown → cualquier otro (desconocidos).
 
 import { phonesMatch } from './utils.js';
+import { resolveCloserByPhone, resolveCloserByLid } from '../calendly/closers.js';
 
 const BOSS_PHONE = () => process.env.BOSS_PHONE;
 const BOSS_LID = () => process.env.BOSS_LID;
@@ -30,13 +33,39 @@ export function roleOf(sender) {
   // Jefe por su teléfono canónico.
   if (phonesMatch(sender, BOSS_PHONE())) return 'boss';
 
-  // Jefe por LID: su LID específico, o —retrocompat— cualquier @lid si BOSS_LID
-  // no está configurado todavía. Con tiering de capacidades, "ser jefe por defecto"
-  // ya no es catastrófico: el jefe está sandboxed.
+  // Jefe por LID EXPLÍCITO (el retrocompat va más abajo, después de los closers).
   const bossLid = BOSS_LID();
-  if (isLid && (sender === bossLid || !bossLid)) return 'boss';
+  if (isLid && bossLid && sender === bossLid) return 'boss';
+
+  // Closer del roster. Va DESPUÉS del jefe/admin (nadie del equipo pierde su rol por
+  // estar también en el roster) y ANTES del retrocompat de abajo: si no, en un despliegue
+  // sin BOSS_LID configurado TODOS los closers serían "boss" y verían las tools del jefe.
+  if (isCloser(sender)) return 'closer';
+
+  // Retrocompat: cualquier @lid es el jefe si BOSS_LID no está configurado todavía.
+  // Con tiering de capacidades, "ser jefe por defecto" ya no es catastrófico: el jefe
+  // está sandboxed. Los closers ya salieron arriba, así que este fallback no los toca.
+  if (isLid && !bossLid) return 'boss';
 
   return 'unknown';
+}
+
+// ¿Este sender es un closer del roster? Resuelve por teléfono o por LID de trabajo
+// (CLOSER_LIDS). NO usa pushName: el nombre de WhatsApp lo elige quien escribe, así que
+// un desconocido podría llamarse "Pablo Lozano" y heredar el rol. El pushName sirve para
+// el opt-in (donde el peor caso es no registrar a nadie), no para dar privilegios.
+export function isCloser(sender) {
+  if (!sender) return false;
+  return Boolean(resolveCloserByPhone(sender) || resolveCloserByLid(sender));
+}
+
+// El closer detrás de un sender: { email, name, phone } | null. Fuente ÚNICA de la
+// identidad del closer para todo lo de setteo — el email SIEMPRE sale de acá (del JID de
+// quien escribe), NUNCA del texto del mensaje ni de un argumento del comando. Es lo que
+// impide que un closer consulte o registre setteos a nombre de otro.
+export function closerOf(sender) {
+  if (!sender) return null;
+  return resolveCloserByPhone(sender) || resolveCloserByLid(sender) || null;
 }
 
 // ¿Tiene acceso al flujo de "jefe" (DM atendido por Claude)?

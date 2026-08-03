@@ -8,6 +8,10 @@
 
 import { csvToDayLabels, zonedNowParts } from '../scheduler/recurring-logic.js';
 import { accountOf, DEFAULT_ACCOUNT } from '../calendly/accounts.js';
+// closerOf resuelve la identidad del closer desde su JID. Es un módulo PURO (roster + roles),
+// no arrastra deps nativas → este archivo se sigue pudiendo testear sin better-sqlite3.
+import { closerOf } from '../common/roles.js';
+import { parseSetteoReply } from '../setteo/parse.js';
 
 // Reconoce el comando unificado de reportes y sus alias (/reportes, /reporte, /metricas).
 // `cmd` es el texto en minúsculas y sin espacios al borde. Exportado para que el router
@@ -92,6 +96,25 @@ export async function handleCommand({ text, sender, role }, deps = {}) {
   if (cmd === '/setteos' || cmd === '/setteo' || cmd.startsWith('/setteos ')) {
     if (role !== 'admin' && role !== 'boss') return 'Ese comando es solo para el jefe o el equipo 🙂';
     return handleSetteos(deps);
+  }
+
+  // /missetteos [7|30] — las TRES cifras del closer que escribe: reportado, registrado en
+  // HubSpot y cuota por horas libres (§18.AV). Es el comando del CLOSER, no del jefe.
+  // 🔒 La identidad sale de `sender` vía closerOf, NUNCA de un argumento: por eso no acepta
+  // un nombre de closer. El jefe tiene `/setteos`, que ya es el consolidado de todos.
+  if (cmd === '/missetteos' || cmd === '/missetteo' || cmd.startsWith('/missetteos ')) {
+    const closer = closerOf(sender);
+    if (!closer) return 'Este comando es para los closers del equipo 🙂';
+    const dias = Number((cmd.split(/\s+/)[1] || '1').replace(/\D/g, '')) || 1;
+    return handleMisSetteos({ closer, dias: Math.min(dias, 90) }, deps);
+  }
+
+  // /nuevosetteo <texto> — registro explícito. La captura por texto libre ya corre sola
+  // (setteo/capture.js); esto es para quien prefiere ser explícito o quiere ver el formato.
+  if (cmd === '/nuevosetteo' || cmd.startsWith('/nuevosetteo ') || cmd === '/nuevosetteos') {
+    const closer = closerOf(sender);
+    if (!closer) return 'Este comando es para los closers del equipo 🙂';
+    return handleNuevoSetteo({ closer, text }, deps);
   }
 
   // /persona — personalidad específica por grupo (se inyecta en el prompt de ese
@@ -603,6 +626,7 @@ function buildHelp(role) {
       '• /reportes [leads|metricas] — preview (en grupo lo publica; jefe/admin)',
       '• /reportejefe — scorecard consolidado (todos los programas + closers)',
       '• /setteos — conteo de setteos por closer (leads tocados sin cita)',
+      '• /missetteos — lo que reportó un closer vs. HubSpot vs. su cuota',
       '• /status — estado del sistema',
       '• /whoami · /id — tu ID y rol',
     ].join('\n');
@@ -623,7 +647,22 @@ function buildHelp(role) {
     ].join('\n');
   }
 
-  // unknown / closer
+  // Closer: solo lo suyo — su setteo. Nada del jefe ni de otros closers.
+  if (role === 'closer') {
+    return [
+      '👋 Hola, soy Juanito.',
+      '',
+      'Contame tu setteo como quieras y yo lo anoto:',
+      '_"toqué a Juan Pérez y María Gómez, María agendó"_',
+      '',
+      '• /missetteos — cómo vas hoy (lo tuyo, lo que hay en HubSpot y tu cuota)',
+      '• /missetteos 7 — los últimos 7 días',
+      '• /nuevosetteo <texto> — registrar de forma explícita',
+      '• /whoami — tu ID y rol',
+    ].join('\n');
+  }
+
+  // unknown
   return [
     '👋 Soy Juanito, un asistente. Escríbeme tu consulta y te ayudo.',
     '(/whoami te dice tu ID y rol.)',
@@ -669,6 +708,59 @@ async function handleSetteos({ buildSetteoBlock } = {}) {
     return message || 'No hay setteos registrados en la ventana (o el scope está vacío).';
   } catch (e) {
     return `No pude generar el conteo de setteos ahora: ${e.message}`;
+  }
+}
+
+// /missetteos — las tres cifras del closer (§18.AV). `closer` ya viene resuelto desde el JID.
+async function handleMisSetteos({ closer, dias }, { buildMisSetteos } = {}) {
+  if (!buildMisSetteos) return 'Las métricas de setteo no están disponibles ahora.';
+  try {
+    return await buildMisSetteos({ closer, dias });
+  } catch (e) {
+    console.error('[Comandos] /missetteos falló:', e.message);
+    return 'No pude armar tus métricas ahora 😖. Probá de nuevo en un momento.';
+  }
+}
+
+// /nuevosetteo <texto> — registro explícito. Sin texto, muestra el formato en vez de fallar.
+// Reusa el MISMO parser + guardado que la captura libre: una sola puerta a la tabla.
+async function handleNuevoSetteo({ closer, text }, { guardarSetteos, parseSetteoWithAi } = {}) {
+  const cuerpo = String(text || '').replace(/^\/nuevosetteos?\s*/i, '').trim();
+  if (!cuerpo) {
+    return (
+      '🧲 *Registrar setteo*\n\n' +
+      'Contámelo como quieras, con los nombres de los leads:\n' +
+      '_"toqué a Juan Pérez, María Gómez y Pedro Ruiz; María agendó"_\n\n' +
+      'O uno por línea:\n`Juan Pérez | no contestó`\n`María Gómez | agendó`\n\n' +
+      'También podés escribírmelo sin el comando, lo entiendo igual.'
+    );
+  }
+  if (!guardarSetteos) return 'El registro de setteo no está disponible ahora.';
+
+  try {
+    let parsed = parseSetteoReply(cuerpo);
+    if (parsed.kind === 'agregado') {
+      const { buildPedirNombres } = await import('../setteo/format.js');
+      return buildPedirNombres(parsed.conteo);
+    }
+    if (parsed.kind === 'none' && parseSetteoWithAi) {
+      parsed = await parseSetteoWithAi(cuerpo);
+    }
+    if (parsed.kind !== 'setteos') {
+      return (
+        'No logré entender a quién tocaste 🙈. Pasame los *nombres*, así:\n' +
+        '_"toqué a Juan Pérez y María Gómez; María agendó"_'
+      );
+    }
+    const resultado = await guardarSetteos({
+      closer, fecha: parsed.fecha, items: parsed.items, rawReply: cuerpo, source: 'comando',
+    });
+    const { buildConfirmacion } = await import('../setteo/format.js');
+    const { localDateISO } = await import('../setteo/parse.js');
+    return buildConfirmacion({ fecha: parsed.fecha, items: parsed.items, resultado, hoy: localDateISO() });
+  } catch (e) {
+    console.error('[Comandos] /nuevosetteo falló:', e.message);
+    return 'No pude guardar eso 😖. Volvé a mandármelo en un momento.';
   }
 }
 

@@ -186,6 +186,20 @@ services:
       # reporte del jefe. SETTEO_REPORT_CLOSERS vacío → cae al scope del nudge (PUSH4_CLOSERS).
       - SETTEO_REPORT_ENABLED=${SETTEO_REPORT_ENABLED:-false}
       - SETTEO_REPORT_CLOSERS=${SETTEO_REPORT_CLOSERS:-}
+      # Setteo REPORTADO por el closer (§18.AV): él se lo cuenta a Juanito por WhatsApp, se
+      # guarda en SQLite y se cruza con HubSpot (read-only). Le da /missetteos con las tres
+      # cifras (reportado / registrado en HubSpot / cuota por horas libres) y su propio
+      # contexto agéntico. Con SETTEO_CAPTURE_ENABLED=false, un closer ve lo mismo que hoy.
+      - SETTEO_CAPTURE_ENABLED=${SETTEO_CAPTURE_ENABLED:-false}
+      - SETTEO_CAPTURE_CLOSERS=${SETTEO_CAPTURE_CLOSERS:-}
+      - SETTEO_AI_FALLBACK=${SETTEO_AI_FALLBACK:-true}
+      - SETTEO_AI_MODEL=${SETTEO_AI_MODEL:-claude-haiku-4-5-20251001}
+      - SETTEO_AI_TIMEOUT_MS=${SETTEO_AI_TIMEOUT_MS:-8000}
+      - SETTEO_CUOTA_POR_HORA=${SETTEO_CUOTA_POR_HORA:-15}
+      - SETTEO_JORNADA_INICIO=${SETTEO_JORNADA_INICIO:-8}
+      - SETTEO_JORNADA_FIN=${SETTEO_JORNADA_FIN:-17}
+      - SETTEO_MINUTOS_POR_CALL=${SETTEO_MINUTOS_POR_CALL:-60}
+      - CLOSER_DAILY_LIMIT=${CLOSER_DAILY_LIMIT:-60}
       # Los 3 reportes diarios por DM (§18.AL): agenda 7am · progreso 12pm · cierre 9pm.
       # Off por default; se prende con DAILY_REPORTS_ENABLED + al menos un DM destino.
       - DAILY_REPORTS_ENABLED=${DAILY_REPORTS_ENABLED:-false}

@@ -3,12 +3,16 @@
 
 import 'dotenv/config';
 import { connect, sendMessage, isConnected, leaveGroup, listGroups } from './whatsapp/index.js';
-import { handleBossMessage, handleGroupMessage, handlePublicDm, handleApprovalConsole } from './bot/index.js';
+import { handleBossMessage, handleGroupMessage, handlePublicDm, handleApprovalConsole, handleCloserMessage } from './bot/index.js';
 import { handleCommand, isReportCommand, wantsMetrics } from './bot/commands.js';
 import { handleCloserOptin } from './calendly/optin.js';
 import { captureOutcomeReply } from './calendly/outcome-capture.js';
+import { captureSetteoReply, guardarSetteos, isSetteoCaptureOn } from './setteo/capture.js';
+import { buildMisSetteos } from './setteo/metricas.js';
+import { parseSetteoWithAi } from './setteo/setteo-ai.js';
+import { isCloserInScope } from './setteo/format.js';
 import { startAllJobs } from './scheduler/index.js';
-import { roleOf, isPrivileged } from './common/roles.js';
+import { roleOf, isPrivileged, closerOf } from './common/roles.js';
 import { maskJid } from './common/utils.js';
 import {
   listOptins,
@@ -173,6 +177,10 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
         // /setteos — conteo de setteos por closer + anexo (gated) al reporte del jefe
         buildSetteoBlock,
         isSetteoReportEnabled,
+        // /missetteos + /nuevosetteo — las tres cifras del closer y su registro (§18.AV)
+        buildMisSetteos,
+        guardarSetteos,
+        parseSetteoWithAi,
         // /persona — personalidad por grupo
         setGroupPersona,
         getGroupPersona,
@@ -241,6 +249,16 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
     });
     if (outcomeCaptured) return;
 
+    // Reporte de setteo de un closer (§18.AV) → captúralo. Va DESPUÉS del Push 4 (si hay un
+    // outcome abierto, ese mensaje es su respuesta) y ANTES del opt-in (que devuelve true
+    // para cualquier mensaje de un closer conocido y se tragaría el reporte).
+    // Solo consume el mensaje si de verdad entendió un setteo; si no, el flujo sigue igual.
+    const setteoCaptured = await captureSetteoReply({ from: sender, pushName, text, messageId }).catch((e) => {
+      console.error('[Main] captureSetteoReply:', e.message);
+      return false;
+    });
+    if (setteoCaptured) return;
+
     // DM de un closer → registrar su opt-in (si es un closer conocido). Devuelve true
     // si lo manejó. Pasa pushName para resolver closers cuando el LID no se mapea a teléfono.
     const handled = await handleCloserOptin({ from: sender, pushName, messageId }).catch((e) => {
@@ -248,6 +266,22 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
       return false;
     });
     if (handled) return;
+
+    // Closer del roster con la captura PRENDIDA → su propio contexto agéntico, acotado a su
+    // setteo (§18.AV). Va después del opt-in (que solo consume el PRIMER mensaje de cada
+    // closer) y antes del asistente público, que lo trataría como un desconocido: sin tools
+    // y con 5 mensajes al día.
+    // Gateado por el mismo scope del piloto que la captura: fuera de él, un closer sigue
+    // viendo exactamente lo de hoy.
+    if (role === 'closer' && isSetteoCaptureOn()) {
+      const closer = closerOf(sender);
+      if (closer && isCloserInScope(closer.email)) {
+        await handleCloserMessage({ from: sender, text, messageId, closer, pushName, quotedText }).catch((e) =>
+          console.error('[Main] handleCloserMessage:', e.message)
+        );
+        return;
+      }
+    }
 
     // Cualquier otro DM (desconocido) → asistente general aislado. SIEMPRE es una
     // respuesta a un mensaje entrante: Juanito nunca escribe primero (regla anti-ban).

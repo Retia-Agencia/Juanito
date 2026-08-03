@@ -60,19 +60,47 @@ const plural = (n, sing, plu = sing + 's') => (n === 1 ? sing : plu);
 
 // Formatea el bloque de setteo para el DM del jefe. Devuelve el texto, o `null` si no hubo
 // NINGÚN setteo mapeado (nada útil que reportar → el reporte del jefe queda igual que hoy).
-export function formatSetteoBlock(agg, { dateLabel = 'hoy' } = {}) {
+//
+// `reportado` (opcional, §18.AV): { nombre del closer → nº de setteos que ÉL reportó por
+// WhatsApp }. Cuando viene, cada línea muestra las dos cifras y la BRECHA. Esa brecha es la
+// señal que hoy no existe en ningún lado: quién está gestionando sin registrar en el CRM.
+//
+// ⚠️ La brecha es AMBIGUA por naturaleza y se presenta como pregunta, no como veredicto: o el
+// closer no registró en HubSpot, o no hizo el trabajo que dice. Juanito no puede distinguirlo
+// (nunca escribe en HubSpot ni ve los mensajes del closer), así que no lo afirma. Decir
+// "Fulano no registra" sobre un dato que también admite "Fulano infla" sería fabricar una
+// conclusión que el dato no sostiene, y esto va al DM del jefe.
+export function formatSetteoBlock(agg, { dateLabel = 'hoy', reportado = null } = {}) {
   const { porCloser = [], sinMapear = 0 } = agg || {};
-  if (!porCloser.length && !sinMapear) return null;
+  const conReporte = reportado ? Object.entries(reportado).filter(([, n]) => n > 0) : [];
+  if (!porCloser.length && !sinMapear && !conReporte.length) return null;
 
   const total = porCloser.reduce((a, x) => a + x.setteos, 0);
-  const head = `🧲 *Setteo (backlog) — ${dateLabel}*\n${total} ${plural(total, 'setteo')}`;
+  const head = `🧲 *Setteo (backlog) — ${dateLabel}*\n${total} ${plural(total, 'setteo')} en HubSpot`;
 
-  const lines = porCloser.map((s) => `   • *${s.name}* — ${s.setteos} ${plural(s.setteos, 'setteo')}`);
+  // Todos los closers que aparecen en cualquiera de las dos fuentes. Un closer que reportó
+  // por WhatsApp y NO registró nada en HubSpot es justo el caso que hay que ver, así que no
+  // puede quedarse fuera por no estar en el agregado del CRM.
+  const nombres = [...new Set([...porCloser.map((s) => s.name), ...conReporte.map(([n]) => n)])];
+  const enHubspot = Object.fromEntries(porCloser.map((s) => [s.name, s.setteos]));
+
+  const lines = nombres
+    .map((name) => ({ name, hs: enHubspot[name] || 0, rep: reportado?.[name] ?? null }))
+    .sort((a, b) => Math.max(b.hs, b.rep || 0) - Math.max(a.hs, a.rep || 0) || a.name.localeCompare(b.name))
+    .map(({ name, hs, rep }) => {
+      if (rep === null) return `   • *${name}* — ${hs} ${plural(hs, 'setteo')}`;
+      const brecha = rep - hs;
+      const marca = brecha > 0 ? `  ⚠️ ${brecha} sin registrar` : '';
+      return `   • *${name}* — ${rep} ${plural(rep, 'reportado')} / ${hs} en HubSpot${marca}`;
+    });
   if (sinMapear) lines.push(`   • _sin mapear_ — ${sinMapear}`);
 
-  const footer =
-    `\n\n_Leads tocados sin cita agendada, por dueño en HubSpot. ` +
-    `Mide el registro de la gestión, no el esfuerzo real._`;
+  const footer = reportado
+    ? `\n\n_"Reportados" = lo que el closer le contó a Juanito. "En HubSpot" = lo que quedó ` +
+      `registrado, que es de lo que dependen las comisiones. La diferencia puede ser gestión sin ` +
+      `registrar o reporte inflado: el dato no distingue._`
+    : `\n\n_Leads tocados sin cita agendada, por dueño en HubSpot. ` +
+      `Mide el registro de la gestión, no el esfuerzo real._`;
 
   return `${head}\n${lines.join('\n')}${footer}`;
 }

@@ -46,7 +46,8 @@ Regla clave: **todo envío sale del proceso principal y pasa por la cola anti-ba
 | `src/bot/` | Router (`index.js`), comandos (`commands.js`), guard anti-secuestro de grupos (`group-guard.js`) |
 | `src/claude/index.js` | Claude: prompts, tool-use loop, memoria, reintentos |
 | `src/whatsapp/` | Baileys (`index.js`), cola anti-ban (`send-queue.js`), cache de subjects |
-| `src/common/roles.js` | Resolución de rol por LID (jefe / admin / closer) |
+| `src/common/roles.js` | Resolución de rol por LID (jefe / admin / **closer** / desconocido). `closerOf()` = identidad del closer desde su JID: fuente ÚNICA para todo lo de setteo |
+| `src/setteo/` | Setteo reportado por el closer (§18.AV). `parse.js`/`cuota.js`/`format.js` son PUROS (testeables en Windows); `capture.js`/`metricas.js` tocan DB + HubSpot. Captura determinista con fallback de IA (`setteo-ai.js`), calcado de `calendly/reschedule-ai.js` |
 | `src/scheduler/` | Cron jobs — `index.js` los arranca y lista todos |
 | `src/calendly/` | Recordatorios precall a closers. **`programs.js`** = registro `PROGRAMS` de primera clase (label, company, connection, eventType, pitch, materiales) — fuente única de la que se derivan los mapas de copy/ET. **`accounts.js`** = registro de **conexiones de Calendly** (token, org, dry-run; los eventTypes se derivan de `programs.js`). **`closers.js`** = roster keyeado por **persona con identidades** (una por conexión); deriva `CLOSERS`/`CLOSER_LIDS`. Modelo empresa/programa/closer: [ADR 0001](docs/adr/0001-modelo-empresa-programa-closer.md) + glosario [docs/agents/context.md](docs/agents/context.md). |
 | `src/sheets/` | Reporte diario de leads desde Google Sheets |
@@ -68,11 +69,21 @@ Juanito identifica a cada contacto por su **LID** de WhatsApp (no por número), 
 puede hacer (memoria, comandos admin, rate-limit) y qué prompt se usa. Existe swap de roles para
 pruebas. Detalle en §3 del handoff.
 
+⚠️ **El ORDEN de las ramas en `roleOf()` es una decisión de seguridad, no de estilo.** El fallback
+retrocompat *"cualquier `@lid` es el jefe si `BOSS_LID` no está configurado"* corre al final; la
+rama de **closer** va antes que él y después del jefe/admin explícito. Si se mueve, en un
+despliegue sin `BOSS_LID` todos los closers pasarían a ser `boss` y verían las tools del jefe.
+Hay tests que lo fijan en `test/roles.test.js`.
+
 ## Comandos (DM admin)
 
 `/confirmaciones [dm|grupo …] on|off` · `/calendly on|off [closer] [cuenta|todo]` · `/grupos` ·
 `/reporte(s)` · `/persona <grupo> | <texto>` · `/programados` · `/aprobaciones` · `/respuestas` ·
 `/status` · `/whoami` · `/id` — manual completo en [docs/MANUAL-DE-USO.md](docs/MANUAL-DE-USO.md).
+
+**Del closer** (§18.AV): `/missetteos [días]` · `/nuevosetteo <texto>`. Ojo: `/setteo` ya era
+alias de `/setteos`, que es del JEFE (consolidado de todos) — por eso el del closer es
+`/nuevosetteo`. La identidad sale del JID, así que ningún comando de closer acepta un nombre.
 
 ## Variables de entorno
 
@@ -106,6 +117,18 @@ loop rápido de reconexiones desde datacenter → WhatsApp lo detectó.
 - No agregar dependencias sin justificación clara
 - `src/db/migrate.js` es idempotente — seguro de correr múltiples veces
 - Los tests usan `__setDeps()` en `src/claude/index.js` para inyectar mocks
+- **En Windows `npm test` da ~64 fallos que NO son reales:** `better-sqlite3` no tiene binario
+  para Node 24 y no compila sin VS Build Tools. Todo test que toque la DB revienta con
+  *"Could not locate the bindings file"*. El baseline REAL se saca en Linux:
+  ```
+  docker build -f Dockerfile.test -t juanito-test .    # node:22-alpine + python3/make/g++ + npm ci
+  docker run --rm -v "<repo>/src:/app/src:ro" -v "<repo>/test:/app/test:ro" juanito-test npm test
+  ```
+  (En Git Bash, prefijar con `MSYS_NO_PATHCONV=1` y usar rutas `C:/…` o el volumen no monta y
+  la suite reporta **0 tests** en verde, que es peor que fallar.)
+  Baseline al 2026-08-03: **910 tests, 907 verdes, 3 rojos conocidos** (#346 links de Retia,
+  #497/#498 agenda superseded). Por eso la lógica pura vive en módulos propios sin deps nativas:
+  es la parte que sí se puede iterar en Windows.
 
 ## Cómo retomar una sesión
 

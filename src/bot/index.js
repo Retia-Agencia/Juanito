@@ -88,6 +88,50 @@ export async function handleBossMessage(msg) {
   }
 }
 
+// ─── DM de un CLOSER (§18.AV) ─────────────────────────────────────────────────
+// Un closer del roster escribe por privado. Antes caía en handlePublicDm: asistente aislado,
+// SIN tools y con tope de 5 mensajes al día — con eso no podía ni reportar su setteo.
+// Acá tiene su propio contexto, acotado a LO SUYO (ver buildSystemPrompt + CLOSER_TOOLS).
+//
+// El tope diario propio existe igual: es el freno anti-ráfaga que protege el número de
+// WhatsApp, no una restricción de permisos. Se pasa alto porque un closer que reporta su día
+// en tandas manda muchos más mensajes que un desconocido preguntando algo.
+const CLOSER_DAILY_LIMIT = () => Number(process.env.CLOSER_DAILY_LIMIT || 60);
+
+export async function handleCloserMessage({ from, text, messageId, closer, pushName, quotedText }) {
+  if (!from || !text) return;
+  if (!markIfNew(messageId)) return;
+
+  const limit = CLOSER_DAILY_LIMIT();
+  const { allowed, count } = checkAndIncrementGroupUsage(`closer:${from}`, limit);
+  if (!allowed) {
+    console.log(`[Bot] Rate limit de closer para ${closer.name} — ignorando (intento ${count})`);
+    if (count === limit + 1) {
+      await sendMessage(
+        from,
+        `${closer.name.split(' ')[0]}, llegaste al tope de mensajes por hoy (${limit}). ` +
+          'Se reinicia mañana 🙂 — lo que ya me contaste quedó guardado.'
+      ).catch(() => {});
+    }
+    return;
+  }
+
+  console.log(`[Bot] Closer ${closer.name}: ${text.slice(0, 60)}`);
+
+  try {
+    const { text: reply } = await chat(text, from, {
+      role: 'closer',
+      closer,
+      quotedText,
+      senderName: pushName || closer.name,
+    });
+    await sendMessage(from, reply);
+  } catch (err) {
+    console.error('[Bot] Error en DM de closer:', err.message);
+    await sendMessage(from, 'Perdón, algo falló de mi lado. Intentá de nuevo 🙏').catch(() => {});
+  }
+}
+
 // ─── DM de cualquiera (desconocido) ───────────────────────────────────────────
 // Juanito responde a quien le escriba por privado como un asistente general AISLADO
 // (sin datos privados ni tools — ver buildSystemPrompt publicDm). Es SIEMPRE una

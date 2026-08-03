@@ -1,0 +1,24 @@
+# Dockerfile.test — imagen SOLO para correr la suite.
+#
+# Por qué existe: en Windows `npm test` da ~64 fallos que NO son reales. `better-sqlite3` es
+# nativo, no trae binario para Node 24 y no compila sin Visual Studio Build Tools, así que todo
+# test que toque la DB revienta con "Could not locate the bindings file". Acá se compila contra
+# musl (igual que la imagen de producción) y el baseline sale limpio.
+#
+# Uso (desde la raíz del repo):
+#   docker build -f Dockerfile.test -t juanito-test .
+#   docker run --rm -v "<repo>/src:/app/src:ro" -v "<repo>/test:/app/test:ro" juanito-test npm test
+#
+# ⚠️ En Git Bash: prefijar con MSYS_NO_PATHCONV=1 y usar rutas estilo C:/… — si no, el volumen
+# no monta y la suite reporta "0 tests" EN VERDE, que es peor que fallar.
+#
+# A diferencia del Dockerfile de producción, este instala también las devDeps y NO copia src/
+# ni test/: se montan como volumen para iterar sin reconstruir la imagen.
+FROM node:22-alpine
+
+RUN apk add --no-cache python3 make g++
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci

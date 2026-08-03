@@ -1539,6 +1539,150 @@ export function listRecentPublishedDrafts(scheduledId, limit = 3) {
     .map((r) => r.draft);
 }
 
+// ─── Setteo reportado por el closer (§18.AV) ──────────────────────────────────
+// Contraparte de lo que HubSpot registra. Todas las funciones exigen closer_email y lo
+// llevan SIEMPRE en el WHERE: la identidad sale del JID de quien escribe (roles.closerOf),
+// nunca del texto del mensaje. Es lo que impide que un closer lea o borre lo de otro.
+
+// Inserta o acumula un setteo. Idempotente por (closer, lead, fecha): reportar dos veces al
+// mismo lead el mismo día NO duplica la fila.
+//
+// Los flags se acumulan con MAX(viejo, nuevo) y NUNCA bajan de 1 a 0. Es deliberado: el
+// closer reporta en tandas ("toqué a Juan" … 2h después … "Juan agendó"), así que el segundo
+// mensaje llega sin los flags del primero. Con un UPDATE plano, ese segundo mensaje borraría
+// el "contestó" que ya estaba. Bajar un flag es el trabajo de updateSetteoFlags.
+//
+// Coherencia del embudo: agendó ⇒ contestó, y vendió ⇒ contestó. Un lead no puede agendar sin
+// haber contestado, así que se cierra acá y no en el parser — el parser tiene varias entradas
+// (regex, IA, tool) y esta es la única puerta a la tabla.
+export function upsertSetteo({
+  closerEmail, closerPhone = null, closerName = null,
+  leadName, leadNorm, fecha,
+  contesto = 0, agendo = 0, vendio = 0,
+  hubspotContactId = null, hubspotMatch = null, esCall = 0,
+  rawReply = null, source = 'libre',
+}) {
+  if (!closerEmail || !leadNorm || !fecha) {
+    throw new Error('upsertSetteo: closerEmail, leadNorm y fecha son obligatorios');
+  }
+  const c = contesto || agendo || vendio ? 1 : 0; // agendó/vendió implican que contestó
+  return db
+    .prepare(`
+      INSERT INTO setteos (closer_email, closer_phone, closer_name, lead_name, lead_norm, fecha,
+                           contesto, agendo, vendio, hubspot_contact_id, hubspot_match, es_call,
+                           raw_reply, source)
+      VALUES (@closerEmail, @closerPhone, @closerName, @leadName, @leadNorm, @fecha,
+              @c, @agendo, @vendio, @hubspotContactId, @hubspotMatch, @esCall,
+              @rawReply, @source)
+      ON CONFLICT(closer_email, lead_norm, fecha) DO UPDATE SET
+        contesto = MAX(contesto, excluded.contesto),
+        agendo   = MAX(agendo,   excluded.agendo),
+        vendio   = MAX(vendio,   excluded.vendio),
+        -- el cruce con HubSpot solo se pisa si el nuevo trae algo: una 2ª mención sin
+        -- consultar el CRM no debe borrar el match que ya se había resuelto
+        hubspot_contact_id = COALESCE(excluded.hubspot_contact_id, hubspot_contact_id),
+        hubspot_match      = COALESCE(excluded.hubspot_match, hubspot_match),
+        es_call    = MAX(es_call, excluded.es_call),
+        raw_reply  = TRIM(COALESCE(raw_reply, '') || ' | ' || COALESCE(excluded.raw_reply, '')),
+        updated_at = datetime('now')
+    `)
+    .run({
+      closerEmail: String(closerEmail).toLowerCase().trim(), closerPhone, closerName,
+      leadName, leadNorm, fecha, c, agendo: agendo ? 1 : 0, vendio: vendio ? 1 : 0,
+      hubspotContactId, hubspotMatch, esCall: esCall ? 1 : 0, rawReply, source,
+    });
+}
+
+// Setteos de UN closer en un rango de fechas LOCALES (ambos extremos inclusive).
+export function listSetteosForCloser({ closerEmail, desde, hasta }) {
+  if (!closerEmail) return [];
+  return db
+    .prepare(`
+      SELECT * FROM setteos
+      WHERE closer_email = ? AND fecha >= ? AND fecha <= ?
+      ORDER BY fecha DESC, created_at DESC
+    `)
+    .all(String(closerEmail).toLowerCase().trim(), desde, hasta);
+}
+
+// Resumen del embudo de un closer. `total` EXCLUYE los leads que resultaron ser de call (esos
+// los mide el Push 4) — si no, el mismo lead contaría en dos métricas.
+// `tasaSetteo` va sobre los que CONTESTARON, no sobre el total: una tasa sobre el total premia
+// a quien tiene la lista más caliente, no a quien setea mejor.
+export function summarizeSetteos({ closerEmail, desde, hasta }) {
+  const email = String(closerEmail || '').toLowerCase().trim();
+  const row =
+    db
+      .prepare(`
+        SELECT COUNT(*)                  AS total,
+               COALESCE(SUM(contesto),0) AS contestaron,
+               COALESCE(SUM(agendo),0)   AS agendaron,
+               COALESCE(SUM(vendio),0)   AS vendieron,
+               COALESCE(SUM(CASE WHEN hubspot_match = 'ambiguous' THEN 1 ELSE 0 END),0) AS ambiguos
+        FROM setteos
+        WHERE closer_email = ? AND fecha >= ? AND fecha <= ? AND es_call = 0
+      `)
+      .get(email, desde, hasta) || {};
+  const calls =
+    db
+      .prepare(`SELECT COUNT(*) AS n FROM setteos
+                WHERE closer_email = ? AND fecha >= ? AND fecha <= ? AND es_call = 1`)
+      .get(email, desde, hasta)?.n || 0;
+  return {
+    total: row.total || 0,
+    contestaron: row.contestaron || 0,
+    agendaron: row.agendaron || 0,
+    vendieron: row.vendieron || 0,
+    ambiguos: row.ambiguos || 0,
+    eranCall: calls,
+    tasaRespuesta: row.total ? row.contestaron / row.total : null,
+    tasaSetteo: row.contestaron ? row.agendaron / row.contestaron : null,
+  };
+}
+
+// Setteos de la ventana agrupados por closer — para el bloque del jefe.
+export function setteosByCloser({ desde, hasta }) {
+  return db
+    .prepare(`
+      SELECT closer_email, MAX(closer_name) AS closer_name, COUNT(*) AS setteos,
+             COALESCE(SUM(contesto),0) AS contestaron,
+             COALESCE(SUM(agendo),0)   AS agendaron,
+             COALESCE(SUM(vendio),0)   AS vendieron
+      FROM setteos
+      WHERE fecha >= ? AND fecha <= ? AND es_call = 0
+      GROUP BY closer_email
+      ORDER BY setteos DESC, closer_email
+    `)
+    .all(desde, hasta);
+}
+
+// Borra un setteo del closer. El email va en el WHERE (no solo el id) para que un id ajeno
+// —adivinado o filtrado— no borre la fila de otro. Devuelve el nº de filas borradas.
+export function deleteSetteo({ id, closerEmail }) {
+  if (!id || !closerEmail) return 0;
+  return db
+    .prepare(`DELETE FROM setteos WHERE id = ? AND closer_email = ?`)
+    .run(Number(id), String(closerEmail).toLowerCase().trim()).changes;
+}
+
+// Corrige los flags de un setteo ya guardado — la ÚNICA vía para bajar un flag, que
+// upsertSetteo nunca hace. Solo toca lo que se le pasa explícitamente.
+export function updateSetteoFlags({ id, closerEmail, contesto, agendo, vendio }) {
+  if (!id || !closerEmail) return 0;
+  const sets = [];
+  const args = {};
+  for (const [k, v] of Object.entries({ contesto, agendo, vendio })) {
+    if (v === undefined || v === null) continue;
+    sets.push(`${k} = @${k}`);
+    args[k] = v ? 1 : 0;
+  }
+  if (!sets.length) return 0;
+  return db
+    .prepare(`UPDATE setteos SET ${sets.join(', ')}, updated_at = datetime('now')
+              WHERE id = @id AND closer_email = @email`)
+    .run({ ...args, id: Number(id), email: String(closerEmail).toLowerCase().trim() }).changes;
+}
+
 // ─── Limpieza periódica ───────────────────────────────────────────────────────
 
 export function cleanup() {

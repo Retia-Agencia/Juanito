@@ -3928,6 +3928,111 @@ Notas del deploy, para la próxima:
 
 ---
 
+### 18.AV 🔵 El closer le cuenta su setteo a Juanito, y ve su propia brecha con HubSpot (2026-08-03)
+
+**Rama `feat/setteo-closer`. Todo APAGADO por default (`SETTEO_CAPTURE_ENABLED=false`): con el
+flag off, un closer ve exactamente lo de antes.**
+
+**El hueco que cierra.** §18.AI ya cuenta setteos por closer, pero desde HubSpot: mide lo que el
+closer **registró**, no lo que hizo. El setteo por WhatsApp que nunca llega al CRM es invisible
+para todos — para el jefe y para el propio closer, que se entera cuando le liquidan la comisión.
+Acá el closer se lo cuenta a Juanito en lenguaje natural, se guarda aparte y se **cruzan las dos
+cifras**.
+
+**Lo primero que había que arreglar, y no era la feature.** Un closer que le escribía a Juanito
+caía en `handlePublicDm`: asistente aislado, **sin tools y con tope de 5 mensajes al día**. El rol
+`closer` **no existía** en `roles.js` (el archivo lo mencionaba en un comentario, pero `roleOf`
+solo devolvía admin/boss/unknown). Con ese tope no podía ni reportar su día.
+⚠️ **Dónde va la rama importa:** el fallback retrocompat *"cualquier `@lid` es el jefe si no hay
+`BOSS_LID`"* corre antes que `unknown`. Si la rama de closer fuera después, en un despliegue sin
+`BOSS_LID` **todos los closers serían boss** y verían las tools del jefe. Va después del jefe/admin
+explícito y antes de ese fallback; hay test que lo fija.
+
+**Modelo de datos: flags acumulativos, no un estado único.** Tabla `setteos`, una fila por
+`(closer, lead, fecha)` — la regla del training S3 ("una interacción por día por canal"). Los
+flags `contesto`/`agendo`/`vendio` **se acumulan con MAX y nunca bajan solos**: el closer reporta
+en tandas ("toqué a Juan" … 2h después … "Juan agendó") y un UPDATE plano borraría el flag
+anterior. Bajar uno es trabajo de `updateSetteoFlags` (tool `corregir_setteo`).
+Con un estado excluyente —como el prototipo HTML que originó esto— "agendó" se borraría al cerrar
+la venta, y **no se podría calcular la tasa que mide al setter**: agendados sobre los que
+CONTESTARON. Sobre el total premia a quien tiene la lista más caliente, no a quien setea mejor.
+
+**Captura: determinista primero, IA después.** Mismo patrón que el Push 4 con las reagendas
+(`reschedule-parse` → `reschedule-ai`). `setteo/parse.js` es **deliberadamente conservador** y
+devuelve `none` ante la duda; `setteo-ai.js` (Haiku, 1 llamada, timeout 8s) toma lo que quedó y
+degrada a repregunta si falla. Un falso positivo escribe un lead **inventado** en la tabla que
+alimenta una conversación sobre comisiones: repreguntar es más barato.
+
+**Tres trampas del parseo que costaron un test cada una:**
+1. `"ninguno contestó"` contiene `"contestó"` → sin evaluar los negativos primero, quedaba como
+   que SÍ respondió. `ninguno|nadie` viven en el patrón negativo.
+2. `"toqué a Juan, María agendó"` → la cola habla de **María**, no de la lista entera. Si la cola
+   contiene otro nombre propio, no se aplica a todos; la regla nombre-primero se encarga.
+3. `"toqué a Juan Pérez y María Gómez, María agendó"` creaba **dos filas para María** (`maria` y
+   `maria gomez`). `consolidar()` funde el nombre corto en el largo del mismo mensaje — y **no lo
+   hace si encaja en dos largos distintos**, que sería adjudicarle la gestión al lead equivocado.
+
+**Cuota: 15 leads por HORA LIBRE**, no 15 al día (*Protocolo Máquina de Ventas*, 2026-06-10).
+Hora libre = jornada − horas con call. Dos correcciones que la aritmética ingenua se come:
+- **Las dobles reservas son reales** (§18.AU: 8 de 14 colisiones eran dos leads distintos en el
+  mismo slot). Dos calls solapadas ocupan **una** hora; sumar duraciones le inventaría horas
+  ocupadas y le bajaría la cuota sin razón.
+- Una call fuera de jornada no consume hora libre, pero una a caballo del cierre **se recorta**.
+
+⚠️ **La cuota NO lee `getScheduledCallsInWindow` a secas.** Se exportó `agendaCallsForToday` de
+`scheduler/daily-reports.js`: es la unión **deduplicada** Calendly + HubSpot que ya usa la agenda
+del jefe. Calendly solo no ve las citas agendadas a mano en el CRM (§18.AU midió 27 de 43), y eso
+le habría inflado la cuota justo a quien más citas tiene en HubSpot.
+
+**Privacidad — la regla que sostiene todo.** La identidad del closer sale **siempre del JID** de
+quien escribe (`roles.closerOf`), nunca del texto, nunca de un argumento del comando, nunca de un
+campo del schema de la tool. En `dispatchTool` viene por `ctx.closer`; sin él, las tres tools se
+niegan a hacer nada. `closer_email` va en el WHERE de todo SELECT, UPDATE y DELETE — un id ajeno
+no borra la fila de otro. Si el modelo pudiera nombrar al closer, un mensaje bien redactado
+bastaría para escribirle setteos a otra persona.
+
+**`/missetteos` — tres cifras, porque responden preguntas distintas:** reportado (qué hiciste),
+HubSpot (qué quedó registrado, de lo que dependen las comisiones) y cuota (qué te tocaba).
+- Si HubSpot no responde se muestra **`—`, nunca 0**: un cero falso le haría creer que no registró.
+- La tasa de setteo **se omite con menos de 5 contestados**: "100%" con n=1 es ruido presentado
+  como dato (el error que tenía el prototipo HTML).
+
+**La brecha se presenta como pregunta, no como veredicto.** En el bloque del jefe cada closer
+muestra `reportados / en HubSpot` y la diferencia. Esa diferencia es **ambigua por naturaleza**: o
+no registró, o infló el reporte. Juanito no puede distinguirlo (nunca escribe en HubSpot ni ve sus
+mensajes), así que el pie lo dice y no acusa a nadie. Un closer que reportó y **no registró nada**
+igual aparece en la lista — es el caso más informativo, y listar solo a los del agregado de HubSpot
+lo habría escondido justo cuando hay que verlo.
+
+**Lo que esto NO hace, y no puede:** registrar en HubSpot. Se mantiene la decisión del 2026-07-20.
+Lo que logra es que el closer vea su brecha **el mismo día**.
+
+**Archivos.** NUEVOS: `src/setteo/{parse,cuota,format,capture,metricas,setteo-ai}.js` +
+6 tests. EDITADOS: `common/roles.js` (rol `closer`, `isCloser`, `closerOf`), `common/utils.js`
+(`normalizeLeadName`, compartida por el UNIQUE de la tabla y el parser para que no diverjan),
+`db/migrate.js` + `db/index.js`, `bot/index.js` (`handleCloserMessage`), `bot/commands.js`
+(`/missetteos`, `/nuevosetteo`, help del closer), `claude/index.js` (3 tools + rama `closer` en
+`toolsForRole`/`buildSystemPrompt`/`dispatchTool`), `hubspot/setteo.js` (brecha),
+`scheduler/setteo.js` (`countSetteosDeCloser`), `scheduler/daily-reports.js` (export),
+`.env.example` + `docker-compose.yml`.
+⚠️ `/setteo` YA era alias de `/setteos` (el del jefe) → el comando del closer es `/nuevosetteo`.
+
+**Gotcha reaplicado:** las 10 env vars nuevas están en el `environment:` del `docker-compose.yml`.
+Es el bug que ya mordió dos veces (`HUBSPOT_AGENDA_HARVEST` y el propio §18.AI).
+
+**Tests: 910 (907 verdes).** Los 3 rojos son preexistentes en `main` y no se tocaron: links de
+Retia (#346) y dos de agenda superseded (#497/#498).
+⚠️ **En Windows fallan 64** por `better-sqlite3` sin binario para Node 24 (no hay VS Build Tools).
+El baseline real se saca en Linux:
+`docker build -f Dockerfile.test -t juanito-test . && docker run --rm -v .../src:/app/src:ro -v .../test:/app/test:ro juanito-test npm test`
+
+**Pendiente antes de prender:** (1) `/whoami` de un closer del piloto para confirmar que
+`roleOf` lo ve como `closer` **en el VPS** (depende de `BOSS_LID`/`CLOSER_LIDS` reales);
+(2) smoke de `/nuevosetteo` y `/missetteos` con Sebastian; (3) cuadrar a mano las tres cifras
+contra HubSpot y Calendly de ese día antes de abrir a los 7.
+
+---
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):

@@ -140,6 +140,43 @@ db.exec(`
     created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
+  -- Setteo REPORTADO por el closer (§18.AV). Complementa —no reemplaza— el conteo que
+  -- sale de HubSpot (hubspot/setteo.js): ese solo ve lo que el closer REGISTRÓ en el CRM,
+  -- y el setteo por WhatsApp que nunca llega allá es invisible para todos. Esta tabla es
+  -- lo que el closer le contó a Juanito; la BRECHA entre las dos cifras es la métrica.
+  -- ⚠️ Juanito NUNCA escribe en HubSpot (decisión 2026-07-20): esto no registra nada por
+  -- el closer, solo le muestra su propia brecha el mismo día.
+  --
+  -- Los flags son ACUMULATIVOS a propósito, no un estado único: un lead que contestó Y
+  -- agendó Y compró tiene los tres en 1. Con un estado excluyente, "agendó" se borraría al
+  -- cerrar la venta y se perdería la tasa de setteo. Es lo que permite calcular "de los que
+  -- contestaron, cuántos agendaron", que es lo que mide la habilidad del setter (una tasa
+  -- sobre el total premia a quien tiene la lista más caliente, no al que setea mejor).
+  --
+  -- UNIQUE(closer, lead, fecha) implementa la regla del training S3 "una interacción por día
+  -- por canal": 1 lead tocado = 1 setteo. Reportar dos veces al mismo lead el mismo día es
+  -- idempotente (los flags se acumulan, la fila no se duplica).
+  CREATE TABLE IF NOT EXISTS setteos (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    closer_email  TEXT NOT NULL,             -- identidad del roster, derivada del JID (nunca del texto)
+    closer_phone  TEXT,
+    closer_name   TEXT,
+    lead_name     TEXT NOT NULL,             -- como lo escribió el closer (se muestra tal cual)
+    lead_norm     TEXT NOT NULL,             -- minúsculas sin tildes ni puntuación → clave de dedup
+    fecha         TEXT NOT NULL,             -- 'YYYY-MM-DD' LOCAL del negocio, NUNCA UTC
+    contesto      INTEGER NOT NULL DEFAULT 0,
+    agendo        INTEGER NOT NULL DEFAULT 0,
+    vendio        INTEGER NOT NULL DEFAULT 0,
+    hubspot_contact_id TEXT,                 -- id del contacto cruzado, si hubo match exacto
+    hubspot_match TEXT,                      -- exact | ambiguous | none | skipped (HubSpot apagado)
+    es_call       INTEGER NOT NULL DEFAULT 0,-- tiene cita agendada → lo mide el Push 4, no cuenta acá
+    raw_reply     TEXT,                      -- texto crudo del closer (auditoría)
+    source        TEXT,                      -- comando | libre | ia
+    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(closer_email, lead_norm, fecha)
+  );
+
   -- Opt-in de closers: solo se les envía si primero le escribieron a Juanito
   -- (práctica anti-baneo: el bot nunca escribe a quien no lo contactó antes)
   CREATE TABLE IF NOT EXISTS calendly_optins (
@@ -427,6 +464,10 @@ db.exec(`
   -- §18.AB: outcomes pendientes por closer (captura de respuesta) + insistencia por asked_at.
   CREATE INDEX IF NOT EXISTS idx_call_outcomes_pending ON call_outcomes(status, closer_phone, asked_at);
   CREATE INDEX IF NOT EXISTS idx_call_outcomes_program ON call_outcomes(program, call_start);
+  -- §18.AV: el query caliente del setteo es siempre "los de ESTE closer en ESTA ventana"
+  -- (/missetteos y el bloque del jefe). El UNIQUE ya cubre (closer, lead, fecha), pero
+  -- arranca por lead_norm → no sirve para filtrar por rango de fechas.
+  CREATE INDEX IF NOT EXISTS idx_setteos_closer_fecha ON setteos(closer_email, fecha);
 `);
 
 console.log('✅ Base de datos lista en', DB_PATH);

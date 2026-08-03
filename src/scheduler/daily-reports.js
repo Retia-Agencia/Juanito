@@ -88,7 +88,13 @@ async function hubspotCallsForToday(now) {
 // otra (ver hubspot/meetings.js), así que este es el único conteo real de calls del día — lo
 // usan los tres reportes, para que el denominador del mediodía coincida con lo que dijo el
 // de las 7am. `tag` solo rotula el log.
-async function agendaCallsForToday(now, tag) {
+//
+// Exportada (§18.AV): la cuota de setteo se calcula sobre las HORAS LIBRES del closer, así que
+// necesita el MISMO conteo de calls que la agenda. Leer `getScheduledCallsInWindow` a secas
+// desde el módulo de setteo contaría de menos —Calendly no ve las citas agendadas a mano en el
+// CRM (§18.AU: 27 de 43 calls vivas en una medición real)— y le inflaría la cuota justo a
+// quien más citas tiene en HubSpot.
+export async function agendaCallsForToday(now, tag) {
   const calendly = callsForToday(now);
   const hubspot = await hubspotCallsForToday(now);
 
