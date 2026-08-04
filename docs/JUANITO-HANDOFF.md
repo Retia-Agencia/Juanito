@@ -4465,7 +4465,46 @@ El baseline real se saca en Linux:
 
 ---
 
+#### 18.AZ-revisión — lo desplegado tenía la mitad muerta (2026-08-04, tarde)
+
+Auditoría de la rama antes de prender el piloto. La suite estaba verde y la seguridad bien, pero
+había **una feature a medias en producción y dos daños colaterales del deploy manual**:
+
+**🔴 El contexto agéntico del closer nunca corría.** `handleCloserOptin` devuelve `true` para
+**cualquier** mensaje de un closer conocido —no solo el primero— y el router lo llamaba antes de
+`handleCloserMessage`, así que las tres tools, el prompt de closer y `CLOSER_DAILY_LIMIT` eran
+código muerto. El comentario del router afirmaba la premisa contraria. Funcionaban los comandos y
+la captura por texto libre (van antes del opt-in); lo que se perdía era todo lo conversacional:
+*"¿cómo voy?"* o *"borrá el de Juan"* se los tragaba el opt-in y el closer **no recibía nada**.
+**Ningún test lo agarró porque ninguno llamaba a `handleCloserOptin`** — los 134 del setteo
+probaban las piezas, no el orden en que el router las usa. Arreglado con un modo `consume:false`
+(registra sin consumir ni reclamar el dedup) + `test/calendly.optin.test.js`.
+⚠️ **La lección portable: verde no es lo mismo que alcanzable.** Cuando una feature entra por el
+router, el test que falta es el del ORDEN, y es el único que no se escribe solo.
+
+**🔴 El deploy manual borró el servicio `dash` del compose de producción.** La rama salía de un
+`main` local 10 commits atrás, y el `pscp` del `docker-compose.yml` se llevó por delante la
+definición del dashboard. `juanito-dash` siguió vivo de puro huérfano: un `down`, un
+`up -d --remove-orphans` o el rollback de acá abajo lo mataban sin forma de recrearlo. Se arregló
+mergeando `origin/main` en la rama (que además destapó la colisión de §18.AV → esta sección es
+§18.AZ). **Regla que sale de acá: no se copia un `docker-compose.yml` a producción desde una rama
+que no está al día con `main`** — el compose es de todo el repo, no de tu feature.
+
+**⚠️ Y el que sigue abierto:** `.github/workflows/deploy.yml` revierte esto sin avisar mientras
+la rama no esté en `main`. `alcance: dash` sube el compose (restaura `dash`, se lleva las vars
+`SETTEO_*` → la feature ya no se puede prender); `alcance: todo` rsyncea `src/` y **borra
+`src/setteo/`**. En los dos casos el bot arranca igual y nadie lo nota.
+
+**Lo que faltaba del pedido:** `/missetteos` daba las cifras pero no la **lista** de leads.
+`listSetteosForCloser` existía y solo la usaba `corregir_setteo` por dentro. El setteómetro —el
+prototipo del que salió todo esto— tenía su tabla de contactos a la vista, y sin ella el closer no
+puede revisar ni corregir lo que no ve. Ahora la lista sale al final, con las mismas cuatro
+etiquetas del prototipo y el ⚠️ de la brecha con HubSpot **lead por lead**.
+
 #### 18.AZ-deploy — en producción desde 2026-08-04 15:52 UTC, APAGADO
+
+⚠️ **Lo que hay en el VPS es la versión con el bug de arriba.** Los tres arreglos (router, lista,
+compose con `dash`) están en la rama, **sin desplegar**.
 
 **Estado:** código desplegado, feature off. Un closer ve hoy exactamente lo mismo que antes.
 Imagen nueva `4eaabb42`; la anterior quedó etiquetada **`juanito-agent:pre-18AV-20260803`**.
@@ -4500,8 +4539,13 @@ scope hereda `CALENDLY_PUSH4_CLOSERS` = **6 closers**, no los 2 del piloto acord
 fijarlo abre la feature a seis personas de golpe.
 
 **Lo que falta, en orden:**
+0. **Re-desplegar la rama** (`alcance: todo`, o `sh scripts/deploy-setteo.sh` en el VPS). Sin esto
+   el piloto se prende sobre la versión con el contexto agéntico muerto y sin la lista de leads.
+   El compose que suba tiene que ser el de la rama **ya mergeada con `main`**, o se vuelve a caer
+   el servicio `dash`. Verificar después: `docker compose config --services` → `agent` y `dash`.
 1. **Smoke acotado** — prender para UNA identidad primero y ver los mensajes reales
-   (`/nuevosetteo`, `/missetteos`) antes de que los vea un closer.
+   (`/nuevosetteo`, `/missetteos`, y una pregunta suelta tipo *"¿cómo voy?"* que es justo lo que
+   antes no contestaba) antes de que los vea un closer.
 2. **Piloto de 2:** en el `.env` del VPS `SETTEO_CAPTURE_ENABLED=true` +
    `SETTEO_CAPTURE_CLOSERS=sebastian@30x.com,pablo.lozano@30x.com`, y aplicar **solo env**
    (`docker compose up -d`, sin `--build` → una sola reconexión).
