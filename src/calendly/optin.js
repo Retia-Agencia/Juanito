@@ -11,12 +11,20 @@ import { sendMessage } from '../whatsapp/index.js';
 import { normalizePhone, maskJid } from '../common/utils.js';
 import { approvalsTarget } from '../common/approval-routing.js';
 
-// Devuelve true si manejó el mensaje (era un closer), false si no.
+// Devuelve true si CONSUMIÓ el mensaje (era un closer), false si no.
 // `pushName` es el nombre WA del remitente: fallback para cuando `from` es un @lid
 // no resuelto a teléfono (WA multi-device). La respuesta se envía a `from` (el @lid
 // también es enrutable por Baileys); el opt-in se guarda por el teléfono canónico
 // del closer (no por el @lid) para que delivery funcione correctamente.
-export async function handleCloserOptin({ from, pushName, messageId }) {
+//
+// ⚠️ El valor de retorno NO es "era su primer mensaje": es true para TODO mensaje de un
+// closer conocido, ya registrado o no. El router lo usa como "no sigas bajando".
+//
+// `consume: false` → registra igual (que es lo que re-pinea el contact_jid, o sea a dónde
+// salen los pushes) pero NI consume el mensaje NI reclama el dedup, porque abajo hay OTRO
+// handler que va a atender ese mismo mensaje: el contexto agéntico del closer (§18.AV).
+// Si reclamara el dedup, el de abajo vería el mensaje como duplicado y no respondería nunca.
+export async function handleCloserOptin({ from, pushName, messageId, consume = true }) {
   let closer = resolveCloserByPhone(from);
   // LID de trabajo conocido (CLOSER_LIDS): recupera a quien escribe desde un @lid que no mapea a su
   // teléfono y cuyo pushName no permite el match (ej: Sebas). Reconocerlo aquí AUTOCORRIGE su opt-in.
@@ -30,8 +38,11 @@ export async function handleCloserOptin({ from, pushName, messageId }) {
   }
   if (!closer) return false; // no es un closer conocido → ignorar (no responder a desconocidos)
 
-  // Dedup del mensaje entrante
-  if (messageId && !markIfNew(messageId)) return true;
+  // Dedup del mensaje entrante. En modo `consume:false` NO se reclama: el slot es del
+  // handler que de verdad va a responder. Una entrega duplicada de Baileys vuelve a pasar
+  // por acá, pero registerOptin es idempotente y el saludo solo sale si `!yaEstaba` —que en
+  // la segunda pasada ya es false—, así que no se duplica nada visible.
+  if (consume && messageId && !markIfNew(messageId)) return true;
 
   const yaEstaba = isOptedIn(closer.phone);
   // source:'self' → opt-in GANADO (el closer escribió): habilita el envío.
@@ -83,5 +94,5 @@ export async function handleCloserOptin({ from, pushName, messageId }) {
     console.log(`[Calendly] Closer ya registrado, mensaje recibido: ${closer.name}`);
   }
 
-  return true;
+  return consume;
 }

@@ -249,9 +249,28 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
     });
     if (outcomeCaptured) return;
 
+    // ¿Es un closer DEL PILOTO de setteo (§18.AV)? Se resuelve ANTES del opt-in porque el
+    // opt-in devuelve true para CUALQUIER mensaje de un closer conocido —no solo el primero—
+    // y con su semántica normal se tragaría todo lo que va abajo.
+    const closerPiloto =
+      role === 'closer' && isSetteoCaptureOn() ? closerOf(sender) : null;
+    const enPiloto = Boolean(closerPiloto && isCloserInScope(closerPiloto.email));
+
+    // DM de un closer → registrar su opt-in (si es un closer conocido). Pasa pushName para
+    // resolver closers cuando el LID no se mapea a teléfono.
+    //
+    // Para el closer del piloto corre en modo `consume:false`: registra igual —y ese registro
+    // es el que re-pinea el contact_jid, o sea A DÓNDE salen los pushes (§18.AR)— pero deja
+    // pasar el mensaje a los dos handlers de abajo. Para todos los demás se comporta
+    // exactamente como hoy.
+    const handled = await handleCloserOptin({ from: sender, pushName, messageId, consume: !enPiloto }).catch((e) => {
+      console.error('[Main] handleCloserOptin:', e.message);
+      return false;
+    });
+    if (handled) return;
+
     // Reporte de setteo de un closer (§18.AV) → captúralo. Va DESPUÉS del Push 4 (si hay un
-    // outcome abierto, ese mensaje es su respuesta) y ANTES del opt-in (que devuelve true
-    // para cualquier mensaje de un closer conocido y se tragaría el reporte).
+    // outcome abierto, ese mensaje es su respuesta).
     // Solo consume el mensaje si de verdad entendió un setteo; si no, el flujo sigue igual.
     const setteoCaptured = await captureSetteoReply({ from: sender, pushName, text, messageId }).catch((e) => {
       console.error('[Main] captureSetteoReply:', e.message);
@@ -259,28 +278,15 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
     });
     if (setteoCaptured) return;
 
-    // DM de un closer → registrar su opt-in (si es un closer conocido). Devuelve true
-    // si lo manejó. Pasa pushName para resolver closers cuando el LID no se mapea a teléfono.
-    const handled = await handleCloserOptin({ from: sender, pushName, messageId }).catch((e) => {
-      console.error('[Main] handleCloserOptin:', e.message);
-      return false;
-    });
-    if (handled) return;
-
-    // Closer del roster con la captura PRENDIDA → su propio contexto agéntico, acotado a su
-    // setteo (§18.AV). Va después del opt-in (que solo consume el PRIMER mensaje de cada
-    // closer) y antes del asistente público, que lo trataría como un desconocido: sin tools
-    // y con 5 mensajes al día.
-    // Gateado por el mismo scope del piloto que la captura: fuera de él, un closer sigue
-    // viendo exactamente lo de hoy.
-    if (role === 'closer' && isSetteoCaptureOn()) {
-      const closer = closerOf(sender);
-      if (closer && isCloserInScope(closer.email)) {
-        await handleCloserMessage({ from: sender, text, messageId, closer, pushName, quotedText }).catch((e) =>
-          console.error('[Main] handleCloserMessage:', e.message)
-        );
-        return;
-      }
+    // Closer del piloto que escribió algo que NO era un reporte ("¿cómo voy?", "borrá el de
+    // Juan") → su propio contexto agéntico, acotado a su setteo (§18.AV). Sin esta rama caería
+    // en el asistente público, que lo trataría como un desconocido: sin tools y con 5 mensajes
+    // al día. Fuera del piloto, un closer sigue viendo exactamente lo de hoy.
+    if (enPiloto) {
+      await handleCloserMessage({ from: sender, text, messageId, closer: closerPiloto, pushName, quotedText }).catch((e) =>
+        console.error('[Main] handleCloserMessage:', e.message)
+      );
+      return;
     }
 
     // Cualquier otro DM (desconocido) → asistente general aislado. SIEMPRE es una
