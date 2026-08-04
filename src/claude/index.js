@@ -647,8 +647,10 @@ const TOOLS = [
     name: 'consultar_mis_setteos',
     description:
       'Devuelve las métricas de setteo DEL CLOSER que te está escribiendo: cuántos reportó, ' +
-      'cuántos figuran registrados en HubSpot y cuál era su cuota según sus horas libres. ' +
-      'Úsala cuando pregunte cómo va, cuántos lleva, si va a alcanzar la cuota, o por su brecha.',
+      'cuántos figuran registrados en HubSpot, su cuota según las horas libres, y la LISTA de ' +
+      'los leads que reportó con el resultado de cada uno. Úsala cuando pregunte cómo va, ' +
+      'cuántos lleva, si va a alcanzar la cuota, por su brecha, o a quiénes tocó / qué le ' +
+      'anotaste hasta ahora.',
     input_schema: {
       type: 'object',
       properties: {

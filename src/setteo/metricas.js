@@ -11,7 +11,7 @@
 import { localDateISO, shiftDateISO } from './parse.js';
 import { calcularCuota } from './cuota.js';
 import { formatMisSetteos, formatMisSetteosVacio } from './format.js';
-import { summarizeSetteos } from '../db/index.js';
+import { summarizeSetteos, listSetteosForCloser } from '../db/index.js';
 import { countSetteosDeCloser } from '../scheduler/setteo.js';
 import { agendaCallsForToday } from '../scheduler/daily-reports.js';
 
@@ -45,6 +45,9 @@ export async function buildMisSetteos({ closer, now = new Date(), dias = 1 } = {
   const desde = dias > 1 ? shiftDateISO(hoy, -(dias - 1)) : hoy;
 
   const reportado = summarizeSetteos({ closerEmail: closer.email, desde, hasta: hoy });
+  // Las filas mismas: el closer pidió ver sus setteos, no solo el conteo. El email va en el
+  // WHERE (dentro de listSetteosForCloser), así que nunca puede ver los de otro.
+  const filas = listSetteosForCloser({ closerEmail: closer.email, desde, hasta: hoy });
 
   // La cuota es siempre la de HOY: es una meta del día, no acumulable hacia atrás.
   const calls = await callsDelCloser(closer, now);
@@ -66,5 +69,6 @@ export async function buildMisSetteos({ closer, now = new Date(), dias = 1 } = {
     hubspot,
     cuota,
     hoyLabel: dias > 1 ? 'de hoy' : 'del día',
+    filas,
   });
 }

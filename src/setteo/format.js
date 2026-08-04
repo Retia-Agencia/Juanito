@@ -76,7 +76,34 @@ export function buildPedirNombres(conteo) {
 // saber cuál (nunca escribe en HubSpot), así que no lo afirma.
 const pad = (n, w) => String(n).padStart(w);
 
-export function formatMisSetteos({ closerName, dateLabel, reportado, hubspot, cuota, hoyLabel = 'del día' }) {
+// El estado de UNA fila, con las mismas cuatro etiquetas del setteómetro (el prototipo del que
+// salió esto): agendó · venta · en seguimiento · no contestó. Los flags de la tabla son
+// acumulativos, así que se lee de mayor a menor: quien vendió también agendó y también contestó.
+export function estadoDeSetteo(fila) {
+  if (fila.es_call) return 'ya tenía cita';
+  if (fila.vendio) return 'venta';
+  if (fila.agendo) return 'agendó';
+  if (fila.contesto) return 'contestó';
+  return 'no contestó';
+}
+
+// Lista de los leads reportados. El setteómetro tenía su tabla de contactos a la vista y el
+// closer la usaba para saber a quién ya tocó — sin esto, `/missetteos` le da el número pero no
+// le dice de quiénes salió, y no puede corregir lo que no ve.
+// Se corta en `max` porque esto es WhatsApp: una lista de 60 nombres no se lee, se ignora.
+export function formatListaSetteos(filas = [], { max = 15, conFecha = false } = {}) {
+  if (!filas.length) return [];
+  const L = [''];
+  for (const f of filas.slice(0, max)) {
+    const fecha = conFecha ? `${f.fecha.slice(8)}/${f.fecha.slice(5, 7)} ` : '';
+    const marca = f.hubspot_match === 'none' ? ' ⚠️' : '';
+    L.push(`   • ${fecha}${f.lead_name} — ${estadoDeSetteo(f)}${marca}`);
+  }
+  if (filas.length > max) L.push(`   _…y ${filas.length - max} más._`);
+  return L;
+}
+
+export function formatMisSetteos({ closerName, dateLabel, reportado, hubspot, cuota, hoyLabel = 'del día', filas = [] }) {
   const L = [`🧲 *Mis setteos* — ${dateLabel}`, ''];
 
   const w = Math.max(String(reportado.total).length, String(hubspot ?? '—').length, String(cuota.cuota).length);
@@ -123,6 +150,17 @@ export function formatMisSetteos({ closerName, dateLabel, reportado, hubspot, cu
   }
   if (cuota.callsFuera) {
     L.push(`_(${cuota.callsFuera} ${cuota.callsFuera === 1 ? 'call cayó' : 'calls cayeron'} fuera de la jornada: no te bajan la cuota.)_`);
+  }
+
+  // La lista de a QUIÉNES. Va al final: las cifras son lo que se mira de un vistazo, los
+  // nombres son para cuando quiere revisar o corregir.
+  const lista = formatListaSetteos(filas, { conFecha: hoyLabel !== 'del día' });
+  if (lista.length) {
+    L.push(`\n*Tus setteos:*`);
+    L.push(...lista.slice(1));
+    if (filas.some((f) => f.hubspot_match === 'none')) {
+      L.push(`_⚠️ = no lo encontré en HubSpot._`);
+    }
   }
 
   return L.join('\n');

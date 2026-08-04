@@ -655,7 +655,7 @@ function buildHelp(role) {
       'Contame tu setteo como quieras y yo lo anoto:',
       '_"toqué a Juan Pérez y María Gómez, María agendó"_',
       '',
-      '• /missetteos — cómo vas hoy (lo tuyo, lo que hay en HubSpot y tu cuota)',
+      '• /missetteos — cómo vas hoy: tus cifras, lo que hay en HubSpot, tu cuota y a quiénes tocaste',
       '• /missetteos 7 — los últimos 7 días',
       '• /nuevosetteo <texto> — registrar de forma explícita',
       '• /whoami — tu ID y rol',

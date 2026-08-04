@@ -9,7 +9,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const { handleCommand } = await import('../src/bot/commands.js');
-const { formatMisSetteos, formatMisSetteosVacio } = await import('../src/setteo/format.js');
+const { formatMisSetteos, formatMisSetteosVacio, formatListaSetteos, estadoDeSetteo } =
+  await import('../src/setteo/format.js');
 
 // Identidades reales del roster (calendly/closers.js).
 const SEBAS_LID = '158025419608301@lid';   // sebastian@30x.com
@@ -204,4 +205,62 @@ test('formato vacío: muestra la cuota y cómo reportar', () => {
   assert.match(msg, /Todavía no me contaste/);
   assert.match(msg, /\*45\*/);
   assert.match(msg, /toqué a Juan Pérez/);
+});
+
+// ─── La lista de setteos (a QUIÉNES, no solo cuántos) ─────────────────────────
+// El setteómetro —el prototipo del que salió esta feature— tenía la tabla de contactos a la
+// vista. Sin la lista, el closer ve el número pero no puede revisar ni corregir lo que no ve.
+
+const fila = (over = {}) => ({
+  lead_name: 'Juan Pérez', fecha: '2026-08-06',
+  contesto: 1, agendo: 0, vendio: 0, es_call: 0, hubspot_match: 'exact', ...over,
+});
+
+test('lista: las cuatro etiquetas del setteómetro salen de los flags acumulativos', () => {
+  assert.equal(estadoDeSetteo(fila({ contesto: 0 })), 'no contestó');
+  assert.equal(estadoDeSetteo(fila()), 'contestó'); // "en seguimiento" del setteómetro
+  assert.equal(estadoDeSetteo(fila({ agendo: 1 })), 'agendó');
+  // Quien vendió tiene los tres flags en 1: gana el de más arriba, no se muestra "contestó".
+  assert.equal(estadoDeSetteo(fila({ agendo: 1, vendio: 1 })), 'venta');
+  // El lead que ya tenía cita se rotula aparte: no cuenta como setteo y hay que poder verlo.
+  assert.equal(estadoDeSetteo(fila({ agendo: 1, es_call: 1 })), 'ya tenía cita');
+});
+
+test('lista: aparece en /missetteos con nombre y estado', () => {
+  const msg = formatMisSetteos({
+    closerName: 'S', dateLabel: 'hoy', reportado: reportado(), hubspot: 9, cuota: cuota(),
+    filas: [fila(), fila({ lead_name: 'María Gómez', agendo: 1 })],
+  });
+  assert.match(msg, /Tus setteos:/);
+  assert.match(msg, /• Juan Pérez — contestó/);
+  assert.match(msg, /• María Gómez — agendó/);
+});
+
+test('lista: marca los que no están en HubSpot (es la brecha, lead por lead)', () => {
+  const msg = formatMisSetteos({
+    closerName: 'S', dateLabel: 'hoy', reportado: reportado(), hubspot: 9, cuota: cuota(),
+    filas: [fila({ hubspot_match: 'none' })],
+  });
+  assert.match(msg, /• Juan Pérez — contestó ⚠️/);
+  assert.match(msg, /no lo encontré en HubSpot/);
+});
+
+test('lista: se corta para que el mensaje siga siendo leíble en WhatsApp', () => {
+  const filas = Array.from({ length: 20 }, (_, i) => fila({ lead_name: `Lead ${i}` }));
+  const L = formatListaSetteos(filas, { max: 15 });
+  assert.equal(L.filter((l) => l.includes('•')).length, 15);
+  assert.ok(L.some((l) => /y 5 más/.test(l)));
+});
+
+test('lista: con ventana de varios días cada línea lleva su fecha', () => {
+  const L = formatListaSetteos([fila({ fecha: '2026-08-06' })], { conFecha: true });
+  assert.ok(L.some((l) => l.includes('06/08 Juan Pérez')));
+});
+
+test('lista: sin filas no ensucia el mensaje', () => {
+  assert.deepEqual(formatListaSetteos([]), []);
+  const msg = formatMisSetteos({
+    closerName: 'S', dateLabel: 'hoy', reportado: reportado(), hubspot: 9, cuota: cuota(), filas: [],
+  });
+  assert.doesNotMatch(msg, /Tus setteos:/);
 });
