@@ -3930,8 +3930,9 @@ Notas del deploy, para la próxima:
 
 ### 18.AV 🔵 El closer le cuenta su setteo a Juanito, y ve su propia brecha con HubSpot (2026-08-03)
 
-**Rama `feat/setteo-closer`. Todo APAGADO por default (`SETTEO_CAPTURE_ENABLED=false`): con el
-flag off, un closer ve exactamente lo de antes.**
+**Rama `feat/setteo-closer`. ✅ DESPLEGADO AL VPS 2026-08-04 15:52 UTC, con la feature APAGADA
+(`SETTEO_CAPTURE_ENABLED=false`): con el flag off, un closer ve exactamente lo de antes.**
+Ver §18.AV-deploy al final de esta sección para el estado en producción y lo que falta.
 
 **El hueco que cierra.** §18.AI ya cuenta setteos por closer, pero desde HubSpot: mide lo que el
 closer **registró**, no lo que hizo. El setteo por WhatsApp que nunca llega al CRM es invisible
@@ -4026,10 +4027,54 @@ Retia (#346) y dos de agenda superseded (#497/#498).
 El baseline real se saca en Linux:
 `docker build -f Dockerfile.test -t juanito-test . && docker run --rm -v .../src:/app/src:ro -v .../test:/app/test:ro juanito-test npm test`
 
-**Pendiente antes de prender:** (1) `/whoami` de un closer del piloto para confirmar que
-`roleOf` lo ve como `closer` **en el VPS** (depende de `BOSS_LID`/`CLOSER_LIDS` reales);
-(2) smoke de `/nuevosetteo` y `/missetteos` con Sebastian; (3) cuadrar a mano las tres cifras
-contra HubSpot y Calendly de ese día antes de abrir a los 7.
+---
+
+#### 18.AV-deploy — en producción desde 2026-08-04 15:52 UTC, APAGADO
+
+**Estado:** código desplegado, feature off. Un closer ve hoy exactamente lo mismo que antes.
+Imagen nueva `4eaabb42`; la anterior quedó etiquetada **`juanito-agent:pre-18AV-20260803`**.
+Respaldos: `juanito-backup-20260803-210003-pre18AV.tar.gz` (44M) + `brain-backup-…-pre18AV.sqlite`.
+Rollback: `docker compose down && docker tag juanito-agent:pre-18AV-20260803 juanito-agent && docker compose up -d`
+
+**Verificado en el deploy:** guard OK · WA reconectó en ~5s **sin QR** · vars nuevas 10/10 ·
+tabla `setteos` + índice 1/1 · `SETTEO_CAPTURE_ENABLED=false`. Y 18 min después, en vivo: se
+entregó un **Push 3 real** a Sebastián y el poll de Calendly sigue limpio — no se perdió ninguna
+entrega por el reinicio. Tabla con 0 filas, la feature no se activó sola.
+
+**🔑 Dos herramientas nuevas que valen para CUALQUIER deploy de este repo, no solo para esta:**
+
+- **`scripts/preflight-setteo.mjs`** — corre el `src` NUEVO contra el `.env` REAL de producción
+  **sin desplegar nada**: `docker run --rm --env-file .env -v /root/juanito/src:/app/src:ro
+  juanito-agent node scripts/preflight-setteo.mjs`. Read-only, no conecta a WA. Respondió el
+  bloqueante del rollout ANTES de tocar producción. Patrón replicable: montar el src nuevo sobre
+  la imagen vieja para probar lógica pura con el entorno real.
+- **`scripts/deploy-18AV.sh`** — rebuild + verificación con un **guard que aborta si hay un push
+  por entregar en los próximos 10 min**. El paso caro nunca fue el build (segundos, con las capas
+  de `npm ci` cacheadas): es la RECONEXIÓN de WhatsApp. Un Push 3 es un recordatorio precall que
+  sale 15 min antes de la llamada; perderlo por un rebuild es un closer entrando a una call sin
+  aviso. Probado en vivo: abortó correctamente con 4 pushes pendientes.
+
+**Cómo se eligió la ventana** (§18.AU decía "reiniciar en el hueco entre tandas", esto lo hace
+concreto): se listan los `due_at` pendientes y se buscan huecos ≥25 min. Se desplegó en el de
+15:50–16:15 UTC. ⚠️ Con 14 pushes en 90 min y 28 calls en el día, en horario laboral casi no hay
+hueco: los de la jornada son de 20–30 min y el largo es el nocturno (~740 min).
+
+**⚠️ Hallazgo del pre-flight, todavía SIN RESOLVER:** sin `SETTEO_CAPTURE_CLOSERS` explícito el
+scope hereda `CALENDLY_PUSH4_CLOSERS` = **6 closers**, no los 2 del piloto acordado. Prender sin
+fijarlo abre la feature a seis personas de golpe.
+
+**Lo que falta, en orden:**
+1. **Smoke acotado** — prender para UNA identidad primero y ver los mensajes reales
+   (`/nuevosetteo`, `/missetteos`) antes de que los vea un closer.
+2. **Piloto de 2:** en el `.env` del VPS `SETTEO_CAPTURE_ENABLED=true` +
+   `SETTEO_CAPTURE_CLOSERS=sebastian@30x.com,pablo.lozano@30x.com`, y aplicar **solo env**
+   (`docker compose up -d`, sin `--build` → una sola reconexión).
+3. **Cuadrar las tres cifras a mano** contra HubSpot y Calendly de ese día antes de abrir a los 7.
+
+**Visto de paso, no tocado:** un `warn` de Baileys, `Cannot find package 'link-preview-js'`, al
+generar la previsualización de los links `wa.me` del Push 3. **No es de este deploy** — el build
+reusó la capa cacheada de `npm ci`, así que `node_modules` es idéntico al de antes. El mensaje se
+entrega igual. Instalarla sería tocar dependencias en producción por una miniatura.
 
 ---
 
