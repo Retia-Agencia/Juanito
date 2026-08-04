@@ -5,11 +5,26 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-07-30** (§18.AW: dashboard F1 en producción + F2 escrita y apagada)
+Última actualización: **2026-08-04** (§18.AZ: setteo del closer — arreglos hechos, **deploy PENDIENTE**)
 
 ---
 
 ## 0. TL;DR — estado al 2026-06-12 (leer primero)
+
+> ## 🔴🔴 PENDIENTE ABIERTO: **DEPLOY de §18.AZ** (setteo del closer) 🔴🔴
+> La rama **`feat/setteo-closer`** está pusheada, mergeada con `main` y verde (950 tests, 947
+> verdes), pero **NO desplegada**. Lo que corre hoy en el VPS es la versión del 2026-08-04 15:52
+> UTC, que tiene **dos problemas ya arreglados en la rama pero vivos en producción**:
+> 1. **El contexto agéntico del closer no corre** — el opt-in se traga todos sus mensajes. Con la
+>    feature prendida, un closer que escriba *"¿cómo voy?"* **no recibe respuesta**.
+> 2. **El `docker-compose.yml` de producción no tiene el servicio `dash`** — el deploy manual lo
+>    pisó con la versión de una rama atrasada. `juanito-dash` sigue vivo pero **huérfano**: un
+>    `down`, un `up -d --remove-orphans` o el rollback de §18.AZ lo matan sin forma de recrearlo.
+>
+> **No prender `SETTEO_CAPTURE_ENABLED` antes de re-desplegar.** El orden está en §18.AZ-deploy
+> → *Lo que falta*, paso 0. Y mientras esto no esté en `main`, el workflow `deploy.yml` **revierte
+> el setteo sin avisar**: `alcance: dash` se lleva las vars `SETTEO_*`, `alcance: todo` borra
+> `src/setteo/`. En los dos casos el bot arranca igual y nadie lo nota.
 
 > ## 🟠🟠 RECORDATORIO GRANDE: `CLAUDE_THINKING` ESTÁ **OFF** 🟠🟠
 > El código de **extended/adaptive thinking** está desplegado en el VPS (LIVE 2026-06-26) pero
