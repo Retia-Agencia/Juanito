@@ -1,5 +1,5 @@
 // test/setteo.capture.test.js
-// Partes puras de la captura (§18.AV, src/setteo/format.js): el scope del piloto y los
+// Partes puras de la captura (§18.AZ, src/setteo/format.js): el scope del piloto y los
 // mensajes que ve el closer. Sin red ni DB → corren en Windows.
 // La orquestación (capture.js: DB + HubSpot + WhatsApp) se verifica en el smoke en vivo;
 // acá se cubre lo que se puede romper en silencio: que el scope no se abra solo y que la

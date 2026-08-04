@@ -1,5 +1,5 @@
 // test/data.setteos.test.js
-// Tests del SQL real de la tabla `setteos` (§18.AV): dedup por (closer, lead, fecha),
+// Tests del SQL real de la tabla `setteos` (§18.AZ): dedup por (closer, lead, fecha),
 // acumulación de flags entre tandas, coherencia del embudo, aislamiento por closer y el
 // resumen que alimenta /missetteos.
 // REQUIERE better-sqlite3 nativo → corre en Docker/VPS, no en Windows.

@@ -3,6 +3,10 @@
 > **Estado vivo del proyecto → [docs/JUANITO-HANDOFF.md](docs/JUANITO-HANDOFF.md)** (fuente de
 > verdad: features, decisiones y pendientes en §18). Este archivo es guía de manejo del repo,
 > no documentación — mantenerlo esencial y conciso.
+>
+> **Dashboard centralizado (en construcción) → [docs/DASHBOARD-ROADMAP.md](docs/DASHBOARD-ROADMAP.md)**
+> — fases, tareas e interruptores. Decisión arquitectónica en
+> [ADR 0002](docs/adr/0002-dashboard-y-superficie-http.md).
 
 ## Qué es esto
 
@@ -38,16 +42,22 @@ Todo lo demás ───────┴─▶ src/whatsapp/send-queue.js (cola F
 
 Regla clave: **todo envío sale del proceso principal y pasa por la cola anti-ban**.
 
+**Segundo contenedor: `juanito-dash`** (solo lectura). Lee el MISMO SQLite desde otro proceso e
+importa `src/db/index.js` y `src/calendly/*.js` en vez de reimplementarlos. Va aparte del bot por el
+crash domain, no por recursos. Para alertar por WhatsApp **no tiene socket**: inserta en la tabla
+`reminders`, que el cron del bot despacha por la cola anti-ban — la regla de arriba se mantiene.
+
 ## Archivos clave
 
 | Ruta | Rol |
 |---|---|
 | `src/index.js` | Entry point: wira Baileys → bot |
+| `dashboard/` | Consola de operación (contenedor `dash`). `server/` = API `node:http` (GET de lectura + POST de escritura en `actions.js`, apagados salvo los tabs de `DASH_WRITES`) + watchdog + botón Deploy; `src/` = SPA Vite/React; los dos `server/selftest*.js` ejercitan lectura y escritura contra una copia de la DB. Guía: [docs/DASHBOARD-ROADMAP.md](docs/DASHBOARD-ROADMAP.md) |
 | `src/bot/` | Router (`index.js`), comandos (`commands.js`), guard anti-secuestro de grupos (`group-guard.js`) |
 | `src/claude/index.js` | Claude: prompts, tool-use loop, memoria, reintentos |
 | `src/whatsapp/` | Baileys (`index.js`), cola anti-ban (`send-queue.js`), cache de subjects |
 | `src/common/roles.js` | Resolución de rol por LID (jefe / admin / **closer** / desconocido). `closerOf()` = identidad del closer desde su JID: fuente ÚNICA para todo lo de setteo |
-| `src/setteo/` | Setteo reportado por el closer (§18.AV). `parse.js`/`cuota.js`/`format.js` son PUROS (testeables en Windows); `capture.js`/`metricas.js` tocan DB + HubSpot. Captura determinista con fallback de IA (`setteo-ai.js`), calcado de `calendly/reschedule-ai.js` |
+| `src/setteo/` | Setteo reportado por el closer (§18.AZ). `parse.js`/`cuota.js`/`format.js` son PUROS (testeables en Windows); `capture.js`/`metricas.js` tocan DB + HubSpot. Captura determinista con fallback de IA (`setteo-ai.js`), calcado de `calendly/reschedule-ai.js` |
 | `src/scheduler/` | Cron jobs — `index.js` los arranca y lista todos |
 | `src/calendly/` | Recordatorios precall a closers. **`programs.js`** = registro `PROGRAMS` de primera clase (label, company, connection, eventType, pitch, materiales) — fuente única de la que se derivan los mapas de copy/ET. **`accounts.js`** = registro de **conexiones de Calendly** (token, org, dry-run; los eventTypes se derivan de `programs.js`). **`closers.js`** = roster keyeado por **persona con identidades** (una por conexión); deriva `CLOSERS`/`CLOSER_LIDS`. Modelo empresa/programa/closer: [ADR 0001](docs/adr/0001-modelo-empresa-programa-closer.md) + glosario [docs/agents/context.md](docs/agents/context.md). |
 | `src/sheets/` | Reporte diario de leads desde Google Sheets |
@@ -81,7 +91,7 @@ Hay tests que lo fijan en `test/roles.test.js`.
 `/reporte(s)` · `/persona <grupo> | <texto>` · `/programados` · `/aprobaciones` · `/respuestas` ·
 `/status` · `/whoami` · `/id` — manual completo en [docs/MANUAL-DE-USO.md](docs/MANUAL-DE-USO.md).
 
-**Del closer** (§18.AV): `/missetteos [días]` · `/nuevosetteo <texto>`. Ojo: `/setteo` ya era
+**Del closer** (§18.AZ): `/missetteos [días]` · `/nuevosetteo <texto>`. Ojo: `/setteo` ya era
 alias de `/setteos`, que es del JEFE (consolidado de todos) — por eso el del closer es
 `/nuevosetteo`. La identidad sale del JID, así que ningún comando de closer acepta un nombre.
 
@@ -97,9 +107,17 @@ hardening) tiene default seguro.
 - La IP fija es crítica — no migrar sin planificarlo
 - Número del agente: SIM física, conecta via Baileys al arrancar
 - **Acceso SSH:** `root@157.230.152.202`, auth por password. La contraseña es `VPS_KEY` del `.env`
-  local. No hay clave pública cargada → usar **`plink`** (PuTTY, ya instalado en
-  `C:\Program Files\PuTTY\`): `plink -ssh -batch -pw "<VPS_KEY>" root@157.230.152.202 "<cmd>"`.
-  Deploy de archivos con `pscp` (mismo `-pw`). Ojo: `/root/juanito` **no es git** — se copia con `pscp`.
+  local. No hay clave pública cargada → en Windows usar **`plink`** (PuTTY en
+  `C:\Program Files\PuTTY\`): `plink -ssh -batch -pw "<VPS_KEY>" root@157.230.152.202 "<cmd>"`;
+  en Mac/Linux, **`sshpass -e ssh`** con `SSHPASS` exportado.
+- **Deploy:** workflow `.github/workflows/deploy.yml` (`workflow_dispatch`, con `alcance: dash|todo`).
+  Hace **rsync de una allowlist** — el VPS no tiene credenciales de GitHub porque el repo es privado,
+  así que `git pull` allá no funciona y `/root/juanito` **no es un repo git**. `alcance: dash` no
+  toca el bot; `alcance: todo` reconstruye la imagen y **reconecta Baileys** (ojo con el softban).
+- **Dashboard:** `https://juanito.tail2df10b.ts.net` (solo desde el tailnet de Tailscale).
+- `/root/juanito` es un directorio de trabajo con años de respaldos a mano (`.env.bak-*`,
+  `src.bak-*`, `brain.sqlite.bak-*`). El rsync del deploy **no** usa `--delete` fuera de
+  `dashboard/`, justamente para no barrerlos.
 
 ## Historia técnica importante
 
@@ -126,9 +144,10 @@ loop rápido de reconexiones desde datacenter → WhatsApp lo detectó.
   ```
   (En Git Bash, prefijar con `MSYS_NO_PATHCONV=1` y usar rutas `C:/…` o el volumen no monta y
   la suite reporta **0 tests** en verde, que es peor que fallar.)
-  Baseline al 2026-08-03: **910 tests, 907 verdes, 3 rojos conocidos** (#346 links de Retia,
-  #497/#498 agenda superseded). Por eso la lógica pura vive en módulos propios sin deps nativas:
-  es la parte que sí se puede iterar en Windows.
+  Baseline al 2026-08-04: **950 tests, 947 verdes, 3 rojos conocidos** (links de Retia + los dos
+  de agenda superseded; los números de test se corren al agregar archivos, así que se buscan por
+  nombre, no por índice). Por eso la lógica pura vive en módulos propios sin deps nativas: es la
+  parte que sí se puede iterar en Windows.
 
 ## Cómo retomar una sesión
 

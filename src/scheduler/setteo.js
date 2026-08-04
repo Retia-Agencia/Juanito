@@ -37,7 +37,7 @@ function dateLabel(now) {
 
 // Agregado CRUDO de HubSpot para una lista de emails. Devuelve { agg, ownerEmailMap } o null si
 // no se puede consultar (sin scope / sin owners / HubSpot apagado). Separado del formateo para
-// que `/missetteos` (§18.AV) pueda pedir el conteo de UN closer sin armar el bloque del jefe.
+// que `/missetteos` (§18.AZ) pueda pedir el conteo de UN closer sin armar el bloque del jefe.
 async function fetchSetteoAgg(emails, { now = new Date(), daysBack = 0 } = {}) {
   if (!emails.length) return null;
 
@@ -71,7 +71,7 @@ async function fetchSetteoAgg(emails, { now = new Date(), daysBack = 0 } = {}) {
 export async function buildSetteoBlock({ now = new Date(), daysBack = 0 } = {}) {
   const r = await fetchSetteoAgg(scopeEmails(), { now, daysBack });
 
-  // Lo que los closers reportaron por WhatsApp (§18.AV). Best-effort: si la tabla no existe
+  // Lo que los closers reportaron por WhatsApp (§18.AZ). Best-effort: si la tabla no existe
   // todavía o algo falla, el bloque sale como antes (solo HubSpot), nunca se cae.
   let reportado = null;
   try {
@@ -92,7 +92,7 @@ export async function buildSetteoBlock({ now = new Date(), daysBack = 0 } = {}) 
   return formatSetteoBlock(r?.agg || { porCloser: [], sinMapear: 0 }, { dateLabel: dateLabel(now), reportado });
 }
 
-// Cuántos setteos tiene REGISTRADOS en HubSpot UN closer en el día (§18.AV). Es la segunda de
+// Cuántos setteos tiene REGISTRADOS en HubSpot UN closer en el día (§18.AZ). Es la segunda de
 // las tres cifras de `/missetteos`: mide el registro en el CRM, que es de lo que dependen las
 // comisiones, no el esfuerzo real.
 // Devuelve un número, o `null` si no se pudo consultar (HubSpot apagado, owner no encontrado,

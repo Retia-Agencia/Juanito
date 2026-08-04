@@ -1,5 +1,5 @@
 // scripts/preflight-setteo.mjs
-// Pre-flight de §18.AV. READ-ONLY: no toca la DB, no manda nada, no conecta a WhatsApp.
+// Pre-flight de §18.AZ. READ-ONLY: no toca la DB, no manda nada, no conecta a WhatsApp.
 //
 // Responde la pregunta que BLOQUEA el rollout: con el entorno REAL de producción
 // (BOSS_LID / ADMIN_LID / CALENDLY_PUSH4_CLOSERS), ¿`roleOf` ve a cada closer como 'closer'?
@@ -20,7 +20,7 @@ import { parseSetteoReply } from '../src/setteo/parse.js';
 const ok = (b) => (b ? '✅' : '❌');
 let fallos = 0;
 
-console.log('═══ PRE-FLIGHT §18.AV — setteo del closer ═══\n');
+console.log('═══ PRE-FLIGHT §18.AZ — setteo del closer ═══\n');
 
 // ── 1. Entorno ───────────────────────────────────────────────────────────────
 console.log('── Entorno ──');

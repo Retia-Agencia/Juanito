@@ -66,7 +66,7 @@ test('prospectPhoneOf usa text_reminder_number (null si vacío)', () => {
 
 test('resolveCloser mapea closers por email (case-insensitive)', () => {
   assert.equal(resolveCloser('sebastian.salazar@30x.com').phone, '+573054312905');
-  assert.equal(resolveCloser('SEBASTIAN.MARIN@30x.com').phone, '+573212100048'); // case-insensitive
+  assert.equal(resolveCloser('SEBASTIAN.MARIN@30x.com').phone, '+573170623894'); // case-insensitive · rotado 2026-07-30
   assert.equal(resolveCloser('lucas.mendoza@30x.com').name, 'Lucas Mendoza');
   assert.equal(resolveCloser('mateo.leon@30x.com'), null);      // salió del equipo
   assert.equal(resolveCloser('equipo@estadox.com'), null);      // EstadoX en standby
@@ -79,7 +79,8 @@ test('resolveCloserByPhone identifica al closer por su número entrante', () => 
   assert.equal(resolveCloserByPhone('573054312905@s.whatsapp.net').email, 'sebastian.salazar@30x.com');
   assert.equal(resolveCloserByPhone('+57 301 809 4666').name, 'Daniela Camacho'); // rotado 2026-07-28
   assert.equal(resolveCloserByPhone('573103062287'), null);                       // número viejo → ya no resuelve
-  assert.equal(resolveCloserByPhone('573212100048').email, 'sebastian.marin@30x.com'); // closer nuevo
+  assert.equal(resolveCloserByPhone('573170623894').email, 'sebastian.marin@30x.com'); // rotado 2026-07-30
+  assert.equal(resolveCloserByPhone('573212100048'), null);                       // número viejo → ya no resuelve
   assert.equal(resolveCloserByPhone('573014477044').name, 'Lucas Mendoza');
   assert.equal(resolveCloserByPhone('573003558574'), null); // Mateo salió → ya no resuelve
   assert.equal(resolveCloserByPhone('573999999999'), null);
@@ -141,7 +142,9 @@ test('workLidForCloser: closer mapeado en CLOSER_LIDS → devuelve su LID de tra
 });
 
 test('workLidForCloser: closer sin LID mapeado / vacío → null', () => {
-  assert.equal(workLidForCloser('pablo.lozano@30x.com'), null);
+  // Marín queda SIN workLid a propósito mientras rota de línea (2026-07-30): declararlo lo
+  // pinnearía al aparato viejo, porque el opt-in hace `contactJid = workJid || from`.
+  assert.equal(workLidForCloser('sebastian.marin@30x.com'), null);
   assert.equal(workLidForCloser('desconocido@30x.com'), null);
   assert.equal(workLidForCloser(''), null);
   assert.equal(workLidForCloser(null), null);

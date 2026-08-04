@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 const {
   CLOSERS,
   CLOSER_LIDS,
+  PEOPLE,
   accountOfCloser,
   resolveCloser,
   resolveCloserByPhone,
@@ -96,6 +97,30 @@ test('CLOSER_LIDS apunta solo a emails que existen en CLOSERS', () => {
   }
 });
 
+// Declarar un `workLid` PINNEA la entrega a ese hilo (optin.js: `contactJid = workJid || from`),
+// así que un LID repetido mandaría los pushes de dos identidades al mismo WhatsApp. La estructura
+// del mapa ya lo impide (lid → email, una entrada por LID), pero el error se cometería al EDITAR
+// el roster: copiar la línea de un closer y olvidar cambiarle el LID. Eso se detecta acá.
+//
+// La otra mitad del invariante (que el LID declarado coincida con el `contact_jid` real del
+// opt-in) NO se puede probar acá: compara código contra datos de producción. Vive en
+// `scripts/calendly-optins.js`, que corre contra la DB viva.
+test('INVARIANTE: ningún workLid se declara dos veces', () => {
+  const vistos = new Map();
+  for (const p of Object.values(PEOPLE)) {
+    for (const id of p.identities) {
+      if (!id.workLid) continue;
+      const duenio = vistos.get(id.workLid);
+      assert.equal(
+        duenio,
+        undefined,
+        `el workLid ${id.workLid} está en ${id.email} y también en ${duenio} — los pushes de ambos irían al mismo hilo`
+      );
+      vistos.set(id.workLid, id.email);
+    }
+  }
+});
+
 // ─── resolveCloserByPushName: la ambigüedad que rompe el opt-in en silencio ────
 
 // Nombres AMBIGUOS a propósito: mismo nombre en TELÉFONOS DISTINTOS → pushName resuelve a null
@@ -130,6 +155,26 @@ test('resolveCloserByPushName: nombre completo resuelve a la persona correcta (o
       assert.equal(hit.phone, c.phone, `"${c.name}" resuelve a otra persona (${hit.email})`);
     }
   }
+});
+
+// pushNames REALES de producción. El roster guarda el nombre corto a propósito (ej. "Sebastian
+// Marin", no "Juan Sebastian Marin") y el match es por contención, así que un nombre extra
+// adelante o un sufijo de empresa atrás no estorban. Vale fijarlo porque cuando esto falla, falla
+// EN SILENCIO: el closer escribe, no se registra, y Juanito tampoco le contesta nada.
+//
+// Marín depende enteramente de esto: rotó de línea el 2026-07-30 y quedó sin `workLid`, así que
+// su pushName es la única vía de reconocimiento hasta que se le declare el LID nuevo.
+test('resolveCloserByPushName tolera nombres extra y sufijos (pushNames reales)', () => {
+  for (const nombre of ['Juan Sebastian Marin - 30X', 'Juan Sebastian Marín - 30X']) {
+    assert.equal(
+      resolveCloserByPushName(nombre)?.email,
+      'sebastian.marin@30x.com',
+      `"${nombre}" debe resolver a Marín — si no, su opt-in falla en silencio`
+    );
+  }
+  // Sin apellido no hay match: una sola palabra es ambigua por diseño.
+  assert.equal(resolveCloserByPushName('Juan Sebastian'), null);
+  assert.equal(resolveCloserByPushName('Marin'), null);
 });
 
 test('un closer de nombre único NO se resuelve por pushName (ni él ni un extraño)', () => {
@@ -196,13 +241,25 @@ test('resolveIdentitiesByName lista las DOS identidades aunque compartan teléfo
   assert.equal(new Set(ids.map((i) => i.phone)).size, 1, 'ambas identidades comparten teléfono');
   assert.deepEqual(
     ids.map((i) => i.email).sort(),
-    ['sebastian.salazar@30x.com', 'sebastiansalazar1410@gmail.com']
+    ['equipo@ttrading.co', 'sebastian.salazar@30x.com']
   );
 });
 
-test('Dana salió: equipo@ttrading.co queda ignorado y fuera de CLOSERS', () => {
-  assert.ok(isIgnoredCloser('equipo@ttrading.co'), 'equipo@ debe estar en IGNORED_CLOSERS');
-  assert.ok(!CLOSERS['equipo@ttrading.co'], 'equipo@ no debe seguir en CLOSERS');
+test('el buzón-rol equipo@ttrading.co es la identidad retia de Salazar, NO un host ignorado', () => {
+  // Regresión del 2026-07-29: del 22 al 29 de julio equipo@ estuvo en IGNORED_CLOSERS porque se
+  // asumió que Salazar tendría cuenta personal en el Calendly de Retia. Nunca se creó, así que sus
+  // citas caían en el skip SILENCIOSO del poll (sin log ni alerta) y estuvo una semana sin pushes.
+  assert.ok(!isIgnoredCloser('equipo@ttrading.co'), 'equipo@ NO debe estar en IGNORED_CLOSERS');
+  const c = CLOSERS['equipo@ttrading.co'];
+  assert.ok(c, 'equipo@ debe estar en CLOSERS');
+  assert.equal(c.name, 'Sebastian Salazar');
+  assert.equal(c.account, 'retia');
+  // Mismo teléfono que su identidad 30x: una sola línea de WhatsApp, un solo opt-in.
+  assert.equal(c.phone, CLOSERS['sebastian.salazar@30x.com'].phone);
+});
+
+test('el correo personal que nunca existió en Calendly no quedó en el roster', () => {
+  assert.ok(!CLOSERS['sebastiansalazar1410@gmail.com'], 'el correo fantasma no debe estar en CLOSERS');
 });
 
 test('resolveIdentitiesByName de un closer de identidad única devuelve exactamente una', () => {

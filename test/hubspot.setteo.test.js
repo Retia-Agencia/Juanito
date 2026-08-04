@@ -103,7 +103,7 @@ test('format: singular/plural correcto (1 setteo)', () => {
   assert.doesNotMatch(txt, /1 setteos/);
 });
 
-// ─── Brecha reportado vs. HubSpot (§18.AV) ────────────────────────────────────
+// ─── Brecha reportado vs. HubSpot (§18.AZ) ────────────────────────────────────
 
 test('format: sin `reportado` el bloque sale como antes', () => {
   const agg = aggregateSetteos([{ ownerId: '1', esCall: false }, { ownerId: '2', esCall: false }], OWNERS);

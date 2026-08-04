@@ -45,14 +45,31 @@
 import { phonesMatch } from '../common/utils.js';
 import { DEFAULT_ACCOUNT, accountOf } from './accounts.js';
 
-const PEOPLE = {
+// ⚠️ Sobre `workLid` (backfill 2026-07-30). Declararlo hace DOS cosas: PINNEA la entrega a ese
+// LID (`handleCloserOptin` hace `contactJid = workJid || from`, ver optin.js) y vuelve el destino
+// VERIFICABLE — sin él, el `contact_jid` es un `@lid` opaco que no se puede contrastar contra
+// nada, que es justo el hueco por el que el bug de Pablo Suarez (§18.AJ) vivió una semana.
+//
+// Por eso solo se declara sobre identidades con ENTREGA PROBADA: se tomó el `contact_jid` vigente
+// de quienes venían respondiendo los Push 4 (una respuesta demuestra que el hilo está vivo).
+// Declarar un LID equivocado CEMENTA el error, porque a partir de ahí el opt-in ignora desde
+// dónde escriba el closer. Las identidades sin prueba de vida (las 3 de Retia, que no reciben
+// Push 4, y Marín mientras rota de línea) quedan SIN declarar a propósito, hasta capturar su LID
+// de un mensaje nuevo. El test de invariante en calendly.closers.test.js vigila que lo declarado
+// coincida con el opt-in real.
+//
+// Exportado (F3a) para que el seed de registries pueda guardar la PERSONA. Los mapas derivados
+// de abajo son por IDENTIDAD y ya no saben quién es quién: dos identidades de Sebastian
+// Rodriguez no se distinguen de dos personas homónimas (que existen — ver Andrea Machado).
+// Nadie más debería consumir esto: el resto del código habla de CLOSERS/CLOSER_LIDS.
+export const PEOPLE = {
   daniela_camacho: {
     name: 'Daniela Camacho',
     // Teléfono actualizado 2026-07-28 (jefe): +573103062287 → +573018094666.
     // ⚠️ Rotar un número tiene DOS pasos: este roster es solo la LLAVE del opt-in; el destino
     // real de los pushes es `calendly_optins.contact_jid`. Ver el patrón de Pablo Suarez (§18.AJ)
     // y el runbook de rotación en docs/JUANITO-HANDOFF.md.
-    identities: [{ connection: '30x', email: 'daniela.camacho@30x.com', phone: '+573018094666' }],
+    identities: [{ connection: '30x', email: 'daniela.camacho@30x.com', phone: '+573018094666', workLid: '68604267614366' }],
   },
   // Sebastian Rodriguez: UNA persona, DOS identidades. Cierra AI Second Brain en 30X y "De Cero a
   // Tactical Investor" en Retia, con host/teléfono distinto en cada Calendly. Antes eran dos
@@ -84,24 +101,48 @@ const PEOPLE = {
   // `settings`), no por teléfono → se apaga un programa sin el otro (`/calendly off Sebastian
   // Salazar retia`). Reemplazó a Dana en Retia (2026-07-22). El nombre queda corto ("Sebastian
   // Salazar", no "Juan Sebastian Salazar") para no romper el match por pushName de su hilo 30x.
+  //
+  // ⚠️ CORRECCIÓN 2026-07-29 — su identidad de retia es el BUZÓN-ROL `equipo@ttrading.co`, NO un
+  // correo personal. El 22-jul se asumió que tendría cuenta propia (sebastiansalazar1410@gmail.com)
+  // y en el mismo movimiento se retiró el buzón a IGNORED_CLOSERS. Esa cuenta NUNCA se creó: medido
+  // contra la API de Retia el 29-jul, la org tiene 4 miembros (equipo@, jvieira@, registro@,
+  // sebasrr321@) y no hay invitación pendiente para ese gmail. Resultado: CERO filas de push para
+  // el correo fantasma y 10 citas reales hosteadas por equipo@ cayendo en el `continue` SILENCIOSO
+  // de isIgnoredCloser — una semana sin pushes y sin una sola alerta. En Retia los cupos se
+  // atienden por BUZÓN-ROL (mismo patrón que registro@ → Andrea Machado), no por cuenta personal.
+  // Al rotar la persona del buzón hay que cambiar el TELÉFONO acá (este roster es solo la LLAVE del
+  // opt-in; el destino real es `calendly_optins.contact_jid` — runbook en docs/JUANITO-HANDOFF.md).
   sebastian_salazar: {
     name: 'Sebastian Salazar',
     identities: [
       { connection: '30x', email: 'sebastian.salazar@30x.com', phone: '+573054312905' },
-      { connection: 'retia', email: 'sebastiansalazar1410@gmail.com', phone: '+573054312905' },
+      { connection: 'retia', email: 'equipo@ttrading.co', phone: '+573054312905' },
     ],
   },
   pablo_lozano: {
     name: 'Pablo Lozano',
-    identities: [{ connection: '30x', email: 'pablo.lozano@30x.com', phone: '+573046131437' }],
+    identities: [{ connection: '30x', email: 'pablo.lozano@30x.com', phone: '+573046131437', workLid: '254051828641894' }],
   },
+  // Teléfono rotado 2026-07-30 (jefe): +573212100048 → +573170623894. Es un WhatsApp NUEVO,
+  // no el mismo número portado, así que su `contact_jid` viejo (248489795702847@lid) era el
+  // aparato ANTERIOR y se puso en NULL a propósito: conservarlo habría repetido el bug de
+  // Pablo Suarez (§18.AJ), con los pushes yéndose al teléfono viejo y el log en verde.
+  //
+  // Queda SIN `workLid` a propósito hasta que escriba desde la línea nueva: `handleCloserOptin`
+  // hace `contactJid = workJid || from` (src/calendly/optin.js), así que declarar acá el LID
+  // viejo devolvería la entrega al aparato anterior y anularía esta rotación. Cuando escriba y
+  // se verifique la fila, ahí sí se declara.
+  //
+  // ⚠️ Al no tener `workLid` y ser línea nueva, su reconocimiento cuelga ENTERO de
+  // `resolveCloserByPushName`: su nombre de WhatsApp debe traer "Sebastian" Y "Marin". Si dice
+  // solo "Sebastian", falla en silencio → `scripts/calendly-optin-set.js "Sebastian Marin" "<lid>"`.
   sebastian_marin: {
     name: 'Sebastian Marin',
-    identities: [{ connection: '30x', email: 'sebastian.marin@30x.com', phone: '+573212100048' }],
+    identities: [{ connection: '30x', email: 'sebastian.marin@30x.com', phone: '+573170623894' }],
   },
   lucas_mendoza: {
     name: 'Lucas Mendoza',
-    identities: [{ connection: '30x', email: 'lucas.mendoza@30x.com', phone: '+573014477044' }],
+    identities: [{ connection: '30x', email: 'lucas.mendoza@30x.com', phone: '+573014477044', workLid: '145540016799830' }],
   },
   // OJO: su email NO lleva punto (pablosuarez@), a diferencia de pablo.lozano@ — personas
   // distintas, ambas activas. Entró 2026-07-14.
@@ -113,7 +154,7 @@ const PEOPLE = {
     // al mes — la agenda del día no veía UNA sola call de AI for Developers y el diagnóstico
     // parecía "developers no existe en HubSpot". Ver §18.AN.
     identities: [
-      { connection: '30x', email: 'pablosuarez@30x.com', phone: '+573189248507', hubspotEmail: 'pablosuarez+hubspot@30x.com' },
+      { connection: '30x', email: 'pablosuarez@30x.com', phone: '+573189248507', hubspotEmail: 'pablosuarez+hubspot@30x.com', workLid: '31001912856621' },
     ],
   },
   // ─── Retia (agencia #2) — programa "De Cero a Tactical Investor" ───────────
@@ -122,8 +163,9 @@ const PEOPLE = {
   // al siguiente → al rotar, actualizar el teléfono acá (patrón "Equipo EstadoX").
   // "Andrea Machado" choca de nombre con andrea.machado@30x.com (DEPARTIDA, en IGNORED_CLOSERS):
   // persona DISTINTA, no está en el roster → no confunde a resolveCloserByPushName.
-  // Dana salió (2026-07-22): la reemplazó Sebastian Salazar con email PROPIO (ver arriba), no
-  // heredó el buzón-rol → equipo@ttrading.co quedó retirado (IGNORED_CLOSERS).
+  // Dana salió (2026-07-22): la reemplazó Sebastian Salazar, que SÍ heredó el buzón-rol
+  // equipo@ttrading.co (ver PEOPLE.sebastian_salazar y la corrección del 2026-07-29). Retia opera
+  // con DOS buzones-rol —registro@ y equipo@—, ninguno con cuenta personal detrás.
   andrea_machado: {
     name: 'Andrea Machado',
     identities: [{ connection: 'retia', email: 'registro@ttrading.co', phone: '+573132484664' }],
@@ -200,8 +242,9 @@ export const IGNORED_CLOSERS = new Set([
   'jvieira@ttrading.co',      // Juan Pablo Vieira VENDE el programa (cara), no es closer. Tomó citas
                               // en el pasado (12 en la ventana) pero YA NO → skip silencioso.
   'alejocarpa1108@gmail.com', // salió de Tactical Investor 2026-07-21; lo reemplazó Sebastian Rodriguez.
-  'equipo@ttrading.co',       // buzón-rol de Dana; salió 2026-07-22, la reemplazó Sebastian Salazar
-                              // con email propio → buzón retirado (no lo hereda nadie).
+  // NO agregar 'equipo@ttrading.co': es el buzón-rol que hoy atiende Sebastian Salazar y vive en
+  // CLOSERS (ver PEOPLE.sebastian_salazar). Estuvo acá del 22 al 29 de julio por asumir que Salazar
+  // tendría cuenta propia, y ese skip silencioso le costó una semana de pushes.
   // Owner de HubSpot, NO de Calendly. Decisión del jefe 2026-07-27: se ignora para que el poll de
   // meetings no dispare alertas de "closer sin mapear" ni le meta sesiones a la agenda del jefe.
   //

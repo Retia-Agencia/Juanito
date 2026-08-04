@@ -1,5 +1,5 @@
 // src/setteo/metricas.js
-// Capa IMPURA de `/missetteos` (§18.AV): junta las tres cifras del closer.
+// Capa IMPURA de `/missetteos` (§18.AZ): junta las tres cifras del closer.
 //   1. Reportado  → SQLite (lo que le contó a Juanito)
 //   2. HubSpot    → el CRM en vivo (lo que quedó REGISTRADO, de lo que dependen las comisiones)
 //   3. Cuota      → horas libres × 15 (Protocolo Máquina de Ventas)

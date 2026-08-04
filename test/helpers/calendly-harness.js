@@ -224,12 +224,33 @@ export function makeStore({ optins = [], nowRef } = {}) {
         r.sent_at = new Date(now()).toISOString();
       }
     },
-    markCalendlyPushSkipped(id, reason = '') {
+    markCalendlyPushSkipped(id, reason = '', slug = null) {
       const r = rows.find((x) => x.id === id);
       if (r) {
         r.status = 'skipped';
+        // Mismo COALESCE que el SQL: un slug nulo no pisa el que ya estuviera.
+        r.skip_reason = slug ?? r.skip_reason ?? null;
         r.message = `${r.message || ''} | skip: ${reason}`;
       }
+    },
+    // Espejo de db.getSkipsAlertablesPorCloser: agrupa por closer los skips cuya causa es
+    // accionable, en una ventana relativa a `call_start`.
+    getSkipsAlertablesPorCloser(slugs, hours = 24) {
+      const permitidos = new Set(slugs);
+      const desde = now() - hours * 3600000;
+      const porCloser = new Map();
+      for (const r of rows) {
+        if (r.status !== 'skipped' || !permitidos.has(r.skip_reason)) continue;
+        if (sqliteUtcToMs(r.call_start) < desde) continue;
+        const e = porCloser.get(r.closer_email) || { closer_email: r.closer_email, n: 0, motivos: new Set(), ejemplo: null };
+        e.n += 1;
+        e.motivos.add(r.skip_reason);
+        e.ejemplo = r.prospect_name;
+        porCloser.set(r.closer_email, e);
+      }
+      return [...porCloser.values()]
+        .map((e) => ({ ...e, motivos: [...e.motivos].join(',') }))
+        .sort((a, b) => b.n - a.n);
     },
     isOptedIn(phone) {
       const p = normalizePhone(phone);
@@ -522,6 +543,7 @@ export function installHarness(
     revertCalendlyPush: store.revertCalendlyPush,
     markCalendlyPushSent: store.markCalendlyPushSent,
     markCalendlyPushSkipped: store.markCalendlyPushSkipped,
+    getSkipsAlertablesPorCloser: store.getSkipsAlertablesPorCloser,
     isOptedIn: store.isOptedIn,
     getOptin: store.getOptin,
     isCalendlyPaused: store.isCalendlyPaused,

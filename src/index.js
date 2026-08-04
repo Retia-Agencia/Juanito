@@ -177,7 +177,7 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
         // /setteos — conteo de setteos por closer + anexo (gated) al reporte del jefe
         buildSetteoBlock,
         isSetteoReportEnabled,
-        // /missetteos + /nuevosetteo — las tres cifras del closer y su registro (§18.AV)
+        // /missetteos + /nuevosetteo — las tres cifras del closer y su registro (§18.AZ)
         buildMisSetteos,
         guardarSetteos,
         parseSetteoWithAi,
@@ -249,7 +249,7 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
     });
     if (outcomeCaptured) return;
 
-    // ¿Es un closer DEL PILOTO de setteo (§18.AV)? Se resuelve ANTES del opt-in porque el
+    // ¿Es un closer DEL PILOTO de setteo (§18.AZ)? Se resuelve ANTES del opt-in porque el
     // opt-in devuelve true para CUALQUIER mensaje de un closer conocido —no solo el primero—
     // y con su semántica normal se tragaría todo lo que va abajo.
     const closerPiloto =
@@ -269,7 +269,7 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
     });
     if (handled) return;
 
-    // Reporte de setteo de un closer (§18.AV) → captúralo. Va DESPUÉS del Push 4 (si hay un
+    // Reporte de setteo de un closer (§18.AZ) → captúralo. Va DESPUÉS del Push 4 (si hay un
     // outcome abierto, ese mensaje es su respuesta).
     // Solo consume el mensaje si de verdad entendió un setteo; si no, el flujo sigue igual.
     const setteoCaptured = await captureSetteoReply({ from: sender, pushName, text, messageId }).catch((e) => {
@@ -279,7 +279,7 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
     if (setteoCaptured) return;
 
     // Closer del piloto que escribió algo que NO era un reporte ("¿cómo voy?", "borrá el de
-    // Juan") → su propio contexto agéntico, acotado a su setteo (§18.AV). Sin esta rama caería
+    // Juan") → su propio contexto agéntico, acotado a su setteo (§18.AZ). Sin esta rama caería
     // en el asistente público, que lo trataría como un desconocido: sin tools y con 5 mensajes
     // al día. Fuera del piloto, un closer sigue viendo exactamente lo de hoy.
     if (enPiloto) {

@@ -89,7 +89,7 @@ async function hubspotCallsForToday(now) {
 // usan los tres reportes, para que el denominador del mediodía coincida con lo que dijo el
 // de las 7am. `tag` solo rotula el log.
 //
-// Exportada (§18.AV): la cuota de setteo se calcula sobre las HORAS LIBRES del closer, así que
+// Exportada (§18.AZ): la cuota de setteo se calcula sobre las HORAS LIBRES del closer, así que
 // necesita el MISMO conteo de calls que la agenda. Leer `getScheduledCallsInWindow` a secas
 // desde el módulo de setteo contaría de menos —Calendly no ve las citas agendadas a mano en el
 // CRM (§18.AU: 27 de 43 calls vivas en una medición real)— y le inflaría la cuota justo a

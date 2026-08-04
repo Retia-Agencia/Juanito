@@ -1,5 +1,5 @@
 // test/setteo.tools.test.js
-// Tools del closer agéntico (§18.AV): gateo por rol, dispatch y AISLAMIENTO del prompt.
+// Tools del closer agéntico (§18.AZ): gateo por rol, dispatch y AISLAMIENTO del prompt.
 // Sin red ni DB (todo mockeado) → corre en Windows.
 //
 // Lo que estos tests protegen: que la identidad del closer venga SIEMPRE del JID y nunca del

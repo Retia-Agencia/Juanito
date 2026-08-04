@@ -71,7 +71,7 @@ test('roleOf: retrocompat — sin BOSS_LID, cualquier @lid no-admin es boss', ()
   });
 });
 
-// ─── Rol closer (§18.AV) ──────────────────────────────────────────────────────
+// ─── Rol closer (§18.AZ) ──────────────────────────────────────────────────────
 // Se apoya en el roster real de calendly/closers.js: Pablo Lozano (una sola identidad,
 // sin workLid) y Sebastian Rodriguez (dos identidades, con workLid de trabajo).
 const CLOSER_PHONE_JID = '573046131437@s.whatsapp.net'; // Pablo Lozano

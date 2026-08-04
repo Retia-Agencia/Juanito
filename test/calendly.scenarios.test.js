@@ -167,14 +167,18 @@ test('bug #1: dos entregas concurrentes → el Push 3 se envía UNA sola vez', a
 
 // ─── Anti-ban: opt-in ─────────────────────────────────────────────────────────
 
-test('anti-ban: closer sin opt-in → no se envía, se marca skipped', async () => {
+test('anti-ban: closer sin opt-in → no se envía, pero queda reintentable', async () => {
+  // Lo innegociable sigue igual: CERO envíos sin opt-in. Lo que cambió es que el push ya no
+  // se quema en el primer intento — la falta de opt-in es transitoria (el closer puede
+  // escribirle a Juanito en cualquier momento antes de la call), así que la fila vuelve a
+  // 'scheduled' y se reintenta. Antes moría acá y ni arreglar la causa la revivía.
   const now = Date.now();
   const events = [makeEvent({ uuid: 'noopt', startInMin: 20, closerEmail: SALAZAR, nowMs: now })];
   const h = installHarness(scheduler, { events, optins: [], nowMs: now }); // sin opt-ins
   await scheduler.runCalendlyPoll();
   await scheduler.runCalendlyDelivery();
   assert.equal(h.wa.sent.length, 0);
-  assert.equal(h.store._rows[0].status, 'skipped');
+  assert.equal(h.store._rows[0].status, 'scheduled', 'sigue vivo para reintentar, no quemado');
 });
 
 test('anti-ban: la entrega va al contact_jid del opt-in (hilo real), no al número canónico', async () => {
@@ -207,7 +211,7 @@ test('entrega estricta: opt-in sin contact_jid (sembrado/grandfathered) → NO e
   await scheduler.runCalendlyPoll();
   await scheduler.runCalendlyDelivery();
   assert.equal(h.wa.sent.length, 0, 'sin contact_jid no se entrega nada');
-  assert.equal(h.store._rows[0].status, 'skipped', 'el push queda omitido, no enviado');
+  assert.equal(h.store._rows[0].status, 'scheduled', 'no se entrega, pero queda reintentable por si abre el hilo');
 });
 
 // ─── Item 2: botón de pánico (/calendly on|off) ───────────────────────────────

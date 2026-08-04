@@ -1,0 +1,117 @@
+# Deploy a la VPS. Ver docs/DASHBOARD-ROADMAP.md (F1) y docs/adr/0002.
+#
+# Por qué rsync y no `git pull`: el repo es privado y el droplet no tiene credenciales
+# de GitHub. Este workflow ya tiene el código checkouteado, así que empuja una allowlist
+# de rutas por SSH. El VPS nunca necesita un token ni una deploy key.
+#
+# El `alcance` es EXPLÍCITO a propósito. Un deploy del dashboard no puede reiniciar el
+# bot ni por accidente: solo `alcance: todo` reconstruye la imagen, y eso reconecta
+# Baileys. El backoff de entrypoint.sh existe por un softban real — unos pocos deploys
+# por hora, nunca en loop.
+
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      alcance:
+        description: '¿Qué se despliega?'
+        required: true
+        default: dash
+        type: choice
+        options:
+          - dash   # solo el dashboard · NO toca el bot
+          - todo   # bot + dashboard · reconstruye la imagen y RECONECTA WhatsApp
+
+# Un deploy a la vez. Dos rsync simultáneos sobre el mismo directorio es pedir problemas.
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'          # igual que node:22-alpine de la imagen
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      # El bundle se compila ACÁ, nunca en el droplet: 1 vCPU no es lugar para un build.
+      - name: Compilar el frontend
+        working-directory: dashboard
+        run: |
+          npm ci
+          npm run build
+
+      - name: Sellar el commit desplegado
+        run: echo "${GITHUB_SHA}" > DEPLOYED_SHA
+
+      - name: Preparar SSH
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass rsync
+
+      # Allowlist explícita. Nunca .env, data/, node_modules/ ni los *.bak del VPS.
+      #
+      # Sin --delete fuera de dashboard/: el directorio del droplet acumula respaldos
+      # que el equipo dejó a mano (src.bak-*, .env.bak-*, brain.sqlite.bak-*) y borrarlos
+      # no es decisión de un pipeline. La deriva se audita con el diff de checksums
+      # documentado en el roadmap.
+      - name: Subir el dashboard
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          sshpass -e rsync -az --delete \
+            --exclude node_modules --exclude .vite \
+            -e "ssh -o StrictHostKeyChecking=accept-new" \
+            dashboard/ DEPLOYED_SHA \
+            root@${{ secrets.VPS_HOST }}:/root/juanito/dashboard/
+          sshpass -e rsync -az -e "ssh -o StrictHostKeyChecking=accept-new" \
+            DEPLOYED_SHA docker-compose.yml \
+            root@${{ secrets.VPS_HOST }}:/root/juanito/
+
+      - name: Subir el bot
+        if: inputs.alcance == 'todo'
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          sshpass -e rsync -az -e "ssh -o StrictHostKeyChecking=accept-new" \
+            src/ root@${{ secrets.VPS_HOST }}:/root/juanito/src/
+          sshpass -e rsync -az -e "ssh -o StrictHostKeyChecking=accept-new" \
+            scripts/ root@${{ secrets.VPS_HOST }}:/root/juanito/scripts/
+          sshpass -e rsync -az -e "ssh -o StrictHostKeyChecking=accept-new" \
+            package.json package-lock.json Dockerfile entrypoint.sh \
+            root@${{ secrets.VPS_HOST }}:/root/juanito/
+
+      - name: Reiniciar
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          if [ "${{ inputs.alcance }}" = "todo" ]; then
+            CMD='cd /root/juanito && docker compose up -d --build'
+          else
+            # Solo el dashboard. El contenedor del bot ni se entera.
+            CMD='cd /root/juanito && docker compose up -d --no-deps --force-recreate dash'
+          fi
+          sshpass -e ssh -o StrictHostKeyChecking=accept-new \
+            root@${{ secrets.VPS_HOST }} "$CMD"
+
+      - name: Verificar
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          sshpass -e ssh -o StrictHostKeyChecking=accept-new \
+            root@${{ secrets.VPS_HOST }} '
+              set -e
+              echo "── contenedores ──"
+              docker ps --format "{{.Names}}  {{.Status}}"
+              echo "── arranque del bot (debe ser viejo si alcance=dash) ──"
+              docker inspect juanito-agent --format "{{.State.StartedAt}}"
+              echo "── salud del dashboard ──"
+              curl -fsS http://127.0.0.1:8080/api/meta
+              echo
+              echo "── logs del dash ──"
+              docker logs --tail 15 juanito-dash 2>&1
+            '

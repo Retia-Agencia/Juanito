@@ -61,7 +61,7 @@ const plural = (n, sing, plu = sing + 's') => (n === 1 ? sing : plu);
 // Formatea el bloque de setteo para el DM del jefe. Devuelve el texto, o `null` si no hubo
 // NINGÚN setteo mapeado (nada útil que reportar → el reporte del jefe queda igual que hoy).
 //
-// `reportado` (opcional, §18.AV): { nombre del closer → nº de setteos que ÉL reportó por
+// `reportado` (opcional, §18.AZ): { nombre del closer → nº de setteos que ÉL reportó por
 // WhatsApp }. Cuando viene, cada línea muestra las dos cifras y la BRECHA. Esa brecha es la
 // señal que hoy no existe en ningún lado: quién está gestionando sin registrar en el CRM.
 //

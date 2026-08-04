@@ -1,5 +1,5 @@
 // src/setteo/setteo-ai.js
-// Fallback de IA para el setteo dictado en español suelto (§18.AV). Solo corre cuando el
+// Fallback de IA para el setteo dictado en español suelto (§18.AZ). Solo corre cuando el
 // parser determinista de parse.js NO entendió. Mismo contrato y mismas reglas de la casa que
 // calendly/reschedule-ai.js, que es de donde sale este patrón:
 //   UNA llamada · modelo barato · timeout corto · si algo falla, degrada a 'none' y Juanito

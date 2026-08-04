@@ -52,6 +52,7 @@ import { pickMeetingsToSchedule, callStartToIso, programLivesInThisHubspot } fro
 import { pickRescheduledAway } from '../hubspot/reschedule-detect.js';
 import { resolveCloser, isIgnoredCloser, accountOfCloser, HUBSPOT_OWNER_TO_CLOSER } from '../calendly/closers.js';
 import { accountOf, activeAccounts, DEFAULT_ACCOUNT } from '../calendly/accounts.js';
+import { SKIP_SLUGS, SKIP_ALERTABLES, ETIQUETA_SKIP } from '../calendly/skip-reasons.js';
 import {
   recordPollOk,
   recordPollError,
@@ -149,6 +150,14 @@ const DELIVER_CRON = () => process.env.CALENDLY_DELIVER_CRON || '* * * * *';
 const PUSH1_CRON = () => process.env.CALENDLY_PUSH1_CRON || '0 19 * * *'; // 7:00pm
 const PUSH2_CRON = () => process.env.CALENDLY_PUSH2_CRON || '30 6 * * *'; // 6:30am
 
+// Auditoría de skips: cada hora revisa qué pushes se perdieron de verdad y avisa al admin.
+// Existe porque el modo de fallo caro no es el ruidoso sino el MUDO — el caso Daniela se
+// descubrió porque un humano lo reportó dos días después, no porque el sistema avisara.
+const SKIP_AUDIT_CRON = () => process.env.CALENDLY_SKIP_AUDIT_CRON || '15 * * * *';
+// Umbral por closer. En 2 y no en 1 para no alertar por el caso aislado (un closer que se
+// dio de baja, una call rara); dos en la misma ventana ya huele a configuración rota.
+const SKIP_ALERT_MIN = () => Number(process.env.CALENDLY_SKIP_ALERT_MIN || 2);
+
 const ADMIN_LIDS = () =>
   (process.env.ADMIN_LID || '')
     .split(',')
@@ -209,6 +218,8 @@ async function deps() {
     revertCalendlyPush: db.revertCalendlyPush,
     markCalendlyPushSent: db.markCalendlyPushSent,
     markCalendlyPushSkipped: db.markCalendlyPushSkipped,
+    // Auditoría horaria: pushes perdidos por closer (ver runSkipAudit).
+    getSkipsAlertablesPorCloser: db.getSkipsAlertablesPorCloser,
     // §18.AB: outcomes post-call.
     createPendingOutcome: db.createPendingOutcome,
     recordAutoOutcome: db.recordAutoOutcome,
@@ -437,9 +448,11 @@ function dryRunForCloser(closerEmail) {
 // Devuelve 'sent' | 'dry-run' | 'skipped-optin' | 'skipped-no-thread'
 //          | 'paused' | 'paused-closer'.
 // Anti-baneo: nunca enviamos a un closer que no haya escrito antes a Juanito.
-// `to` es el número canónico del closer (closers.js): sirve de clave del opt-in y
-// para agrupar digests. El ENVÍO, en cambio, va EXCLUSIVAMENTE a la identidad que YA
-// estableció hilo con Juanito (`contact_jid` del opt-in). Entrega ESTRICTA (Item 1):
+// `to` es solo el fallback del número canónico del closer: la clave del opt-in se
+// re-resuelve adentro contra `closers.js` a partir de `closerEmail` (ver paso 0), para que
+// una rotación de número no deje huérfanas las filas ya agendadas. El ENVÍO, en cambio, va
+// EXCLUSIVAMENTE a la identidad que YA estableció hilo con Juanito (`contact_jid` del
+// opt-in). Entrega ESTRICTA (Item 1):
 // sin `contact_jid` NO se entrega — preferimos perder un push antes que mandar en frío
 // a un número que jamás escribió (el patrón que dispara softbans).
 //
@@ -453,17 +466,29 @@ function dryRunForCloser(closerEmail) {
 // nuevo hacia closers: el dry-run se resuelve SIEMPRE por `accountOfCloser(closerEmail)`,
 // nunca leyendo DRY_RUN() directo — si no, ese canal se le escapa a la cuenta muda.
 async function deliver(d, to, text, tag, closerEmail) {
+  // 0) La llave del opt-in se resuelve SIEMPRE contra el roster vivo, nunca con el número
+  //    que venga en `to`. Las filas de `calendly_pushes` congelan `closer_phone` al AGENDAR
+  //    (hasta 48h antes) y `outcomes` hace lo mismo: rotarle el número a un closer dejaba
+  //    huérfano todo lo ya agendado, y como el skip es terminal, arreglar el roster no lo
+  //    recuperaba (Daniela, 29-jul: 5 leads sin precall). Resolver acá y no en cada call
+  //    site es a propósito — es el punto ÚNICO por el que pasan push 3/4/5, digests,
+  //    outcomes y reagendas. `to` queda de fallback para un closer que ya salió del roster.
+  const phone = resolveCloser(closerEmail)?.phone || to;
   // 1) Pausa global: botón de pánico — apaga absolutamente todo.
   if (d.isCalendlyPaused && d.isCalendlyPaused()) {
-    console.log(`[Calendly] PAUSADO (global) → ${to}: omito (${tag})`);
+    console.log(`[Calendly] PAUSADO (global) → ${phone}: omito (${tag})`);
     return 'paused';
   }
   // 2) Opt-in GANADO requerido (anti-ban).
-  if (REQUIRE_OPTIN() && !d.isOptedIn(to)) {
-    console.log(`[Calendly] OMITIDO (${tag}) → ${to}: el closer aún no le ha escrito a Juanito (sin opt-in)`);
+  if (REQUIRE_OPTIN() && !d.isOptedIn(phone)) {
+    // Throttle 1h: desde que el push 3 reintenta en vez de quemarse, un closer sin opt-in
+    // con agenda llena repetiría esta línea cada minuto y taparía el resto del log. La
+    // clave lleva prefijo propio para no chocar con las de notifyAdmins.
+    if (shouldAlert(`log:optin:${phone}`, 3600 * 1000))
+      console.log(`[Calendly] OMITIDO (${tag}) → ${phone}: el closer aún no le ha escrito a Juanito (sin opt-in)`);
     return 'skipped-optin';
   }
-  const optin = d.getOptin ? d.getOptin(to) : null;
+  const optin = d.getOptin ? d.getOptin(phone) : null;
   // 3) Pausa por-closer, por IDENTIDAD (email de la CITA): una persona con dos identidades (misma
   //    línea, dos Calendly) se apaga por programa. El opt-in se comparte por teléfono, pero la
   //    pausa vive por email en `settings`. Ver isCloserPaused/setCloserPaused y la invariante en
@@ -475,10 +500,11 @@ async function deliver(d, to, text, tag, closerEmail) {
   // 4) Entrega estricta: solo a un hilo YA establecido (contact_jid). Sin él, no se envía.
   const target = optin?.contact_jid;
   if (!target) {
-    console.log(`[Calendly] OMITIDO (${tag}) → ${to}: sin hilo establecido (contact_jid) — no se entrega para evitar envío en frío`);
+    if (shouldAlert(`log:jid:${phone}`, 3600 * 1000))
+      console.log(`[Calendly] OMITIDO (${tag}) → ${phone}: sin hilo establecido (contact_jid) — no se entrega para evitar envío en frío`);
     return 'skipped-no-thread';
   }
-  const via = ` [hilo de opt-in; closer ${to}]`;
+  const via = ` [hilo de opt-in; closer ${phone}]`;
   // 5) Dry-run de la cuenta del closer (último filtro, igual que antes).
   if (dryRunForCloser(closerEmail)) {
     console.log(`[Calendly][DRY-RUN:${accountOfCloser(closerEmail)}] (${tag}) → ${target}${via}\n${text}\n`);
@@ -1040,7 +1066,7 @@ export async function runCalendlyDelivery() {
           }
           // Reagendada a otra hora → no preguntar ahora; el poll reagenda el Push 4.
           if (ev4 && ev4.status === 'active' && toSqliteUtc(new Date(ev4.start_time)) !== p.call_start) {
-            d.markCalendlyPushSkipped(p.id, 'reagendada (el poll reagenda el push 4)');
+            d.markCalendlyPushSkipped(p.id, 'reagendada (el poll reagenda el push 4)', SKIP_SLUGS.REAGENDADA);
             console.log(`[Calendly] Push 4 #${p.id} omitido: reagendada`);
             continue;
           }
@@ -1146,9 +1172,9 @@ export async function runCalendlyDelivery() {
           } else if (r4 === 'paused' || r4 === 'paused-closer') {
             if (d.revertCalendlyPush) d.revertCalendlyPush(p.id); // reintentar al despausar
           } else if (r4 === 'skipped-no-thread') {
-            d.markCalendlyPushSkipped(p.id, 'sin hilo establecido (contact_jid)');
+            d.markCalendlyPushSkipped(p.id, 'sin hilo establecido (contact_jid)', SKIP_SLUGS.SIN_HILO);
           } else {
-            d.markCalendlyPushSkipped(p.id, 'closer sin opt-in');
+            d.markCalendlyPushSkipped(p.id, 'closer sin opt-in', SKIP_SLUGS.SIN_OPTIN);
           }
           procesados++;
           continue;
@@ -1172,12 +1198,12 @@ export async function runCalendlyDelivery() {
             }
           }
           if (ev5 && ev5.status !== 'active') {
-            d.markCalendlyPushSkipped(p.id, `cita ${ev5.status}`);
+            d.markCalendlyPushSkipped(p.id, `cita ${ev5.status}`, SKIP_SLUGS.CANCELADA);
             console.log(`[Calendly] Push 5 #${p.id} omitido: cita ${ev5.status}`);
             continue;
           }
           if (ev5 && toSqliteUtc(new Date(ev5.start_time)) !== p.call_start) {
-            d.markCalendlyPushSkipped(p.id, 'reagendada (el poll agendará la nueva hora)');
+            d.markCalendlyPushSkipped(p.id, 'reagendada (el poll agendará la nueva hora)', SKIP_SLUGS.REAGENDADA);
             console.log(`[Calendly] Push 5 #${p.id} omitido: reagendada`);
             continue;
           }
@@ -1199,9 +1225,9 @@ export async function runCalendlyDelivery() {
           } else if (r5 === 'paused' || r5 === 'paused-closer') {
             if (d.revertCalendlyPush) d.revertCalendlyPush(p.id); // reintentar al despausar
           } else if (r5 === 'skipped-no-thread') {
-            d.markCalendlyPushSkipped(p.id, 'sin hilo establecido (contact_jid)');
+            d.markCalendlyPushSkipped(p.id, 'sin hilo establecido (contact_jid)', SKIP_SLUGS.SIN_HILO);
           } else {
-            d.markCalendlyPushSkipped(p.id, 'closer sin opt-in');
+            d.markCalendlyPushSkipped(p.id, 'closer sin opt-in', SKIP_SLUGS.SIN_OPTIN);
           }
           procesados++;
           continue;
@@ -1213,7 +1239,7 @@ export async function runCalendlyDelivery() {
         // strings UTC 'YYYY-MM-DD HH:MM:SS' = comparación cronológica. (Los digests
         // Push 1/2 no pasan por aquí; se calculan a hora fija por cron.)
         if (toSqliteUtc(new Date(d.now())) >= p.call_start) {
-          d.markCalendlyPushSkipped(p.id, 'llamada ya pasó (push obsoleto)');
+          d.markCalendlyPushSkipped(p.id, 'llamada ya pasó (push obsoleto)', SKIP_SLUGS.OBSOLETO);
           console.log(`[Calendly] Push ${p.push_n} #${p.id} omitido: llamada ya pasó (${p.call_start} UTC)`);
           continue;
         }
@@ -1227,12 +1253,12 @@ export async function runCalendlyDelivery() {
         }
         if (ev) {
           if (ev.status !== 'active') {
-            d.markCalendlyPushSkipped(p.id, `cita ${ev.status}`);
+            d.markCalendlyPushSkipped(p.id, `cita ${ev.status}`, SKIP_SLUGS.CANCELADA);
             console.log(`[Calendly] Push 3 #${p.id} omitido: cita ${ev.status}`);
             continue;
           }
           if (toSqliteUtc(new Date(ev.start_time)) !== p.call_start) {
-            d.markCalendlyPushSkipped(p.id, 'reagendada');
+            d.markCalendlyPushSkipped(p.id, 'reagendada', SKIP_SLUGS.REAGENDADA);
             console.log(`[Calendly] Push 3 #${p.id} omitido: reagendada (el poll agendará la nueva hora)`);
             continue;
           }
@@ -1293,10 +1319,22 @@ export async function runCalendlyDelivery() {
           // Pausa = botón de pánico TEMPORAL: no consumir el push. Revertir a
           // 'scheduled' para reanudar al despausar (la llamada puede seguir en el futuro).
           if (d.revertCalendlyPush) d.revertCalendlyPush(p.id);
-        } else if (result === 'skipped-no-thread') {
-          d.markCalendlyPushSkipped(p.id, 'sin hilo establecido (contact_jid)');
+        } else if (result === 'skipped-optin' || result === 'skipped-no-thread') {
+          // Falta de opt-in / de hilo es TRANSITORIA: el closer puede escribirle a Juanito
+          // cinco minutos después. Antes se quemaba el push en el primer intento y ni
+          // arreglar la causa lo revivía (`decidePushAction` → 'inactive-status'). Se
+          // revierte a 'scheduled' y se reintenta al minuto siguiente, igual que la pausa.
+          //
+          // El reintento está ACOTADO por el guard de obsolescencia de arriba, que mata la
+          // fila apenas la llamada empieza: techo de ~LEAD_MIN intentos. Por eso esto vale
+          // SOLO para push 0/3, que pasan por el guard — push 4 y 5 salen antes con
+          // `continue` y revertirlos los volvería filas inmortales.
+          if (d.revertCalendlyPush) d.revertCalendlyPush(p.id);
         } else {
-          d.markCalendlyPushSkipped(p.id, 'closer sin opt-in');
+          // Cualquier resultado no contemplado. Antes caía acá y se etiquetaba como
+          // 'closer sin opt-in', que ensuciaba el diagnóstico con una causa falsa.
+          d.markCalendlyPushSkipped(p.id, `resultado inesperado: ${result}`, SKIP_SLUGS.INESPERADO);
+          console.warn(`[Calendly] Push ${p.push_n} #${p.id}: resultado inesperado "${result}"`);
         }
         procesados++;
       } catch (e) {
@@ -1631,6 +1669,44 @@ export async function runHarvestSweep() {
 
 // ─── Arranque de los jobs ─────────────────────────────────────────────────────
 
+// ─── Auditoría de skips: avisar cuando un closer pierde pushes ────────────────
+// Cierra el pendiente de "detectar pushes que no salen sin depender del reporte del closer".
+// Corre cada hora sobre una ventana de 24h y solo mira las causas ACCIONABLES: cancelaciones,
+// reagendas y duplicados son operación normal y alertar por ellas volvería esto ruido.
+//
+// Es la red de seguridad, no la defensa principal: lo que se puede curar solo (falta de opt-in
+// antes de la call) ya se reintenta en el bucle de entrega. Acá cae lo que ya no tiene arreglo
+// automático y necesita que un humano mire.
+export async function runSkipAudit() {
+  const d = await deps();
+  if (!d.getSkipsAlertablesPorCloser) return 0; // job inerte si la DB no expone la consulta
+  const minimo = SKIP_ALERT_MIN();
+  const filas = d.getSkipsAlertablesPorCloser([...SKIP_ALERTABLES], 24);
+  let avisados = 0;
+  for (const f of filas) {
+    if (f.n < minimo) continue;
+    const nombre = resolveCloser(f.closer_email)?.name || f.closer_email;
+    const motivos = String(f.motivos || '')
+      .split(',')
+      .map((s) => ETIQUETA_SKIP[s.trim()] || s.trim())
+      .join(' · ');
+    await notifyAdmins(
+      d,
+      `${nombre}: ${f.n} push(es) NO entregados en 24h — ${motivos}. ` +
+        `Ej: ${f.ejemplo || 's/d'}. Primero revisa que su teléfono en src/calendly/closers.js ` +
+        `sea el mismo del hilo en calendly_optins.`,
+      `skips:${f.closer_email}`
+    );
+    avisados++;
+  }
+  // Latido: loguea SIEMPRE, aunque no haya nada que reportar. Una red de seguridad que no se
+  // puede ver correr no sirve de red — si este job se cayera en silencio, el modo de fallo
+  // sería idéntico al que vino a resolver (nadie se entera de nada). Una línea por hora.
+  if (avisados) console.warn(`[Calendly] auditoría de skips: ${avisados} closer(s) con pushes perdidos`);
+  else console.log(`[Calendly] auditoría de skips ✅ nadie sobre el umbral (${filas.length} closer(s) con algún push perdido)`);
+  return avisados;
+}
+
 export function startCalendlyJobs() {
   // Auto-desactivación: sin ninguna cuenta con token no hay nada que pollear.
   const accounts = activeAccounts();
@@ -1651,6 +1727,9 @@ export function startCalendlyJobs() {
     job(RESCHEDULE_PROMPT_CRON(), runReschedulePrompts, 'reagendas');
   if (HARVEST_ENABLED() && HARVEST_SWEEP_ENABLED())
     job(HARVEST_SWEEP_CRON(), runHarvestSweep, 'harvest-sweep');
+  // Sin condición: la auditoría no depende de ninguna integración opcional y su valor está
+  // justamente en correr siempre. Sin ADMIN_LID no se cae — notifyAdmins deja la alerta en el log.
+  job(SKIP_AUDIT_CRON(), runSkipAudit, 'skip-audit');
 
   console.log(
     `[Calendly] Jobs activos ✅  (reagendas: ${RESCHEDULE_ENABLED()}, harvest-sweep: ${HARVEST_ENABLED() && HARVEST_SWEEP_ENABLED()}` +

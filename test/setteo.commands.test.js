@@ -1,5 +1,5 @@
 // test/setteo.commands.test.js
-// Comandos del closer (§18.AV): /missetteos y /nuevosetteo. Sin red ni DB → corren en Windows
+// Comandos del closer (§18.AZ): /missetteos y /nuevosetteo. Sin red ni DB → corren en Windows
 // (commands.js no importa deps nativas; todo lo pesado se inyecta).
 //
 // Lo que estos tests protegen sobre todo es el AISLAMIENTO: un closer solo puede ver y

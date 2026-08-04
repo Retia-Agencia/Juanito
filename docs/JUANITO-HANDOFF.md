@@ -5,7 +5,7 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-07-16** (§11.11 + §18.AH: segunda cuenta de Calendly)
+Última actualización: **2026-07-30** (§18.AW: dashboard F1 en producción + F2 escrita y apagada)
 
 ---
 
@@ -3928,11 +3928,447 @@ Notas del deploy, para la próxima:
 
 ---
 
-### 18.AV 🔵 El closer le cuenta su setteo a Juanito, y ve su propia brecha con HubSpot (2026-08-03)
+### 18.AV 🔴 Una semana sin pushes en Retia: el correo que nunca existió y el skip que no deja rastro (2026-07-29)
+
+**Cómo se destapó:** Salazar le dijo al jefe que no le llegaban los pre-call de *De Cero a Tactical
+Investor*. A los otros closers de Retia sí. El jefe confirmó el celular (`+57 3054312905`) y
+preguntó si había que pedirle que le escribiera a Juanito.
+
+**El teléfono y el opt-in nunca fueron el problema.** Ese número ya estaba correcto en el roster, y
+Salazar tiene opt-in ganado desde el **2026-06-09** con hilo vivo (`contact_jid =
+39415653117990@lid`). Prueba de que el canal funciona: sus pushes de *IA para Abogados* (30x) se
+entregan por ese mismo hilo. `deliver()` resuelve el opt-in por **teléfono**, así que una sola fila
+sirve a sus dos identidades — pedirle que escribiera de nuevo no habría cambiado nada.
+
+#### La causa: un correo que solo existía en el repo
+
+El commit `6c833d5` (22-jul, "Salazar cierra Retia — reemplaza a Dana") asumió que Salazar tendría
+**cuenta personal** en el Calendly de Retia y, en el mismo movimiento, hizo dos cosas:
+
+1. Agregó la identidad `sebastiansalazar1410@gmail.com` (connection `retia`).
+2. Retiró `equipo@ttrading.co` a `IGNORED_CLOSERS` — *"buzón retirado, no lo hereda nadie"*.
+
+Esa cuenta **nunca se creó**. Medido el 29-jul contra la API de Retia:
+
+```
+Miembros de la org: equipo@ · jvieira@ · registro@ · sebasrr321@     ← 4, ninguno es el gmail
+Invitaciones: 5, todas accepted, ninguna para sebastiansalazar1410@   ← ni siquiera se envió
+```
+
+Salazar atiende el cupo desde el **buzón-rol `equipo@ttrading.co`** — el mismo que quedó ignorado.
+
+| Dato (29-jul) | Valor |
+|---|---|
+| Filas en `calendly_pushes` para `sebastiansalazar1410@gmail.com` | **0**, nunca existió una |
+| Citas Retia hosteadas por `equipo@` (últimos 8d + próximos 8d) | **10**, todas silenciadas |
+| Últimas filas de `equipo@` en la tabla | 22-jul, `skipped` — *antes* del commit |
+| Citas futuras que se iban a perder | hoy 18:30 COL y mañana 14:00 COL |
+
+#### Lo que lo hizo invisible una semana
+
+`IGNORED_CLOSERS` se salta **en silencio**: `if (isIgnoredCloser(email)) continue;`
+(`scheduler/calendly.js`) — sin log, sin `recordUnmapped`, sin alerta al admin. Es deliberado (evita
+spam por hosts que no gestionamos), pero significa que **un host ignorado que sigue agendando calls
+es indistinguible de uno dormido**. La rama de al lado, la del host desconocido, sí alerta. Aquí no
+saltó nada porque el correo estaba "conocido y decidido".
+
+**Regla que sale de esto:** retirar un correo a `IGNORED_CLOSERS` y dar de alta al reemplazo son dos
+movimientos que **hay que verificar contra la API antes de darlos por buenos**. La pregunta no es
+"¿a quién le asignamos el cupo?" sino "**¿qué correo aparece como host en las citas reales?**".
+
+#### Arreglo
+
+Reconocer el modelo real: **en Retia los cupos se atienden por buzón-rol, no por cuenta personal.**
+El precedente ya existía y funcionaba — `registro@ttrading.co` → Andrea Machado.
+
+- `closers.js`: la identidad `retia` de Salazar pasa a `equipo@ttrading.co` (mismo teléfono, misma
+  invariante *un teléfono = una persona*). Sale de `IGNORED_CLOSERS`, con un comentario en su lugar
+  que explica por qué **no** debe volver.
+- Tests: `resolveIdentitiesByName` espera el par nuevo; el test *"Dana salió: equipo@ queda
+  ignorado"* se invierte y pasa a ser regresión explícita de este bug; `calendly.sheet-push.test.js`
+  usaba el correo fantasma como constante.
+
+**Verificación:** 59/59 en closers+helpers+commands, 9/9 en sheet-push. Baseline de rojos en Mac:
+**solo `documents.test.js`** (binding de `better-sqlite3` para otro ABI de Node), idéntico con y sin
+el cambio — comparado con `git stash`. Ojo: el baseline de 64 que menciona §18.AU es el de Windows;
+depende de la máquina, comparar siempre contra el propio.
+
+**Lo que queda abierto:** la visibilidad. Un host ignorado con citas activas sigue sin dejar rastro.
+Lo barato sería, en el poll, avisar a los admins reusando `notifyAdmins` + `shouldAlert` (dedup 6h)
+que ya están en `calendly/health.js` — ~10 líneas. Habría cazado esto el 22-jul.
+
+**No confundir con el 405 del 28-jul (§18.AT).** Esa caída (contenedor abajo 23:32→02:04 UTC) costó
+15 pushes omitidos y 7 enviados con 110-144 min de retraso, repartidos entre casi todos los closers,
+y ya está resuelta. Lo de Salazar lleva roto desde el 22-jul, una semana antes, y es solo suyo.
+
+#### Desplegado 2026-07-29 17:08 UTC
+
+Swap en el hueco de 17:08→17:15 (la tanda anterior ya había disparado). Bajó ~20 s; **WA reconectó
+sin QR y sin 405**. Un ciclo de poll después, las filas aparecieron solas:
+
+```
+id=2106 push3 equipo@ttrading.co +573054312905  Juan Felipe Rodriguez Reyna  due 2026-07-29 23:05
+id=2107 push5 …                                  (misma call, 23:30 UTC = 18:30 COL)
+id=2108 push3 equipo@ttrading.co +573054312905  Francisco fernandez          due 2026-07-30 18:35
+id=2109 push5 …                                  (misma call, 19:00 UTC = 14:00 COL)
+```
+
+Ojo al `closer_phone`: **+573054312905** (Salazar), no el +573169835624 de Dana que llevaban las
+filas viejas del buzón. Las 5 compuertas de `deliver()` ejercitadas contra los módulos reales dentro
+del contenedor: pausa global activa, opt-in ✅, sin pausa por identidad, hilo `39415653117990@lid`,
+cuenta `retia` en vivo → **se envía**.
+
+Notas para la próxima:
+- **La imagen NO incluye `test/`** (el Dockerfile solo copia lo que corre). Correr la suite con
+  `docker run --rm --entrypoint node juanito-agent:latest --test …` devuelve vacío y parece que pasó.
+  Para verificar dentro del contenedor, ejercitar los **módulos** (importar `closers.js` y
+  comprobar `CLOSERS[...]` / `isIgnoredCloser`), no la suite.
+- Respaldos: DB en `brain-backup-20260729-pre-18AV.sqlite`, imagen `juanito-agent:pre-18AV`,
+  archivo en `src/calendly/closers.js.bak-20260729-pre18AV`.
+- **Las filas viejas del buzón (22-jul, `skipped`, teléfono de Dana) no se tocaron.** Son historia;
+  el fix no las revive ni hace falta.
+
+---
+
+### 18.AW ✅ Dashboard centralizado para operar y mantener a Juanito (F1 EN PRODUCCIÓN · F2 escrita y apagada, 2026-07-30)
+
+**Estado: F1 desplegado y corriendo** en `https://juanito.tail2df10b.ts.net` (solo tailnet, TLS
+real), en modo **solo lectura**. Contenedor `juanito-dash`, 18 MB, aparte del bot.
+
+**Costo total en código del bot: UNA línea** — `db.pragma('busy_timeout = 5000')` en
+`src/db/index.js`. Todo lo demás son archivos nuevos (`dashboard/`, `.github/workflows/deploy.yml`)
+más el servicio `dash` en `docker-compose.yml`. **El bot no se reinició ni una vez** durante toda la
+construcción (`StartedAt` verificado de principio a fin), y la suite quedó igual que la línea base
+(742/127 en Mac, 61/63 en contenedor — los 2 rojos son preexistentes).
+
+Lo que ya sirve: 11 checks de salud, 13 tabs de lectura sobre todo lo que hoy son comandos de
+WhatsApp, watchdog cada 15 min con dedupe persistente, y los registries (programas/conexiones/
+closers/ignorados) visibles sin abrir un archivo fuente. Los dos Repository secrets (`VPS_HOST`,
+`VPS_PASSWORD`) quedaron creados el 30-jul, así que el workflow de deploy ya puede correr.
+
+**F2 — escrituras: COMPLETA y encendida (`DASH_WRITES=todo`, 2026-07-30).** Los 8 tabs escriben, 21
+acciones, y el botón Deploy quedó activo con su PAT. ⚠️ **Nadie ha abierto todavía la interfaz:** el
+tailnet tiene un solo nodo (el VPS), así que la URL da NXDOMAIN desde cualquier otra máquina hasta
+que se instale Tailscale con la misma cuenta. Todo lo verificado hasta hoy fue por `curl` y por los
+selftests.
+El round-trip está verificado en producción: escritura desde el dashboard → tabla `settings` → el
+texto de `/calendly` (renderizado con el código del bot, sin mandar WhatsApp) muestra el cambio, y de
+reversa vuelve al estado original. Se hizo pausando un **email centinela que no existe en el roster**
+(`dashboard-selftest@30x.invalid`), porque pausar a un closer real aunque sea por segundos arriesga
+que un push que caiga en esa ventana quede `skipped` y se pierda: el modo de fallo del §18.AV.
+**Observado de paso:** `dm_approval = 1` en producción, o sea la aprobación de DMs de desconocidos
+está encendida; nadie lo había mirado y ahora se ve en el tab Toggles. 21 acciones sobre 8 tabs,
+cada una llamando a la MISMA función de `src/db/index.js` que su comando de WhatsApp equivalente
+(cero SQL nuevo en el dashboard, así que los dos lados no pueden divergir). El interruptor es
+`DASH_WRITES` en el `.env` del VPS: lista de tabs por coma o `todo`; **vacía = el read-only de F1**,
+sin botones ni columna de acciones. Sigue costando **cero líneas en `src/`**. Cuatro cosas que
+conviene saber sin abrir el roadmap:
+
+1. **`createOutreach` no se expone, solo cancelar.** Armar un outreach son ~80 líneas de reglas en el
+   bot (resolver contacto, validar teléfono, piso anti-spam, `next_due_at`, de parte de quién va
+   §18.Y) y esos mensajes salen a terceros. Duplicarlas en el dash las pone en dos lugares que van a
+   divergir. Mismo criterio que ya excluía a `deauthorizeGroup` (que además necesita `leaveGroup()`).
+2. **Cerrar una tarea desde la UI le avisa al solicitante**, como `/tareas hecha`. `setTaskStatus`
+   sola no manda nada, así que sin esto una tarea cerrada desde el dashboard se cerraba en silencio
+   para el jefe. El aviso sale por el outbox de `reminders`.
+3. **Todo lo que termina en un WhatsApp real pide confirmación explícita** mostrando destinatario y
+   texto: el servidor marca esas acciones con `sale: true` y las publica en `/api/meta`. Es la regla
+   que el roadmap fijaba para el chat de F6, aplicada desde ya.
+4. **Respondida la pregunta abierta del prefijo:** `src/scheduler/reminders.js:24` manda
+   `⏰ Recordatorio: ${text}` hardcodeado. Por eso las alertas del watchdog abren con 🚨 y el aviso de
+   tarea cerrada con ✅.
+
+También quedó el **botón Deploy** (`POST /api/deploy` → `workflow_dispatch`), que necesita un dato
+humano: `DASH_GITHUB_TOKEN` en el `.env` del VPS, un PAT con `actions:write`. Es secreto del
+**contenedor**, no un Repository secret. Sin él la ruta no existe y la UI no dibuja los botones.
+
+**El pipeline se estrenó el 30-jul** (`gh workflow run deploy.yml -f alcance=dash`): 35s, y el bot
+**no se reinició** (`StartedAt` idéntico antes y después, `Up 10 hours`). El selftest de escrituras
+corrió dentro de `juanito-dash` contra una copia de la base de producción y salió **todo verde**
+(round-trips reales de toggles, recordatorios, recurrentes, personas de grupo y default-deny); la
+base viva quedó intacta, verificado después.
+
+**Dos cosas corregidas de paso, las dos de F1:**
+- La cabecera de `selftest.js` mandaba a correrlo en `juanito-agent`, y ese contenedor **no tiene
+  `/app/dashboard`** (el Dockerfile no lo copia y el bot no lo bind-montea). Los dos selftests van
+  en `juanito-dash`.
+- `/api/meta` reportaba `sha: desconocido` incluso después de un deploy por pipeline. El workflow
+  deja `DEPLOYED_SHA` en los dos lugares del host, pero adentro solo existe
+  `/app/dashboard/DEPLOYED_SHA` (es lo único bind-monteado), y el server leía `/app/DEPLOYED_SHA`.
+  Era justo la pregunta ("¿qué versión corre?") que el mecanismo existe para responder.
+
+**Tres cosas que solo se supieron construyéndolo** (detalle en el roadmap):
+1. *"Host ignorado que sigue agendando" NO es detectable desde la DB.* Un host en
+   `IGNORED_CLOSERS` nunca genera fila de push, o sea no deja rastro — que es precisamente lo que
+   hizo invisible al §18.AV. El dashboard hace lo único posible sin tocar el bot: mostrar la lista
+   para auditarla. El detector real sigue siendo la pieza 1 del pendiente de abajo.
+2. *El breakdown de motivos de skip NO estaba bloqueado por el bug de `skip_reason`.* La razón se
+   extrae del texto de `message`, donde `markCalendlyPushSkipped` la concatena. El fix de la columna
+   sigue siendo deseable, pero no bloqueaba el panel.
+3. *Apareció un check que no estaba en el plan y resultó el más valioso:* `pushes_no_entregados`
+   separa un skip legítimo (cancelada, reagendada, obsoleta) de uno que significa **que un push no
+   salió por falta de configuración** (sin opt-in, sin hilo, sin mapear). Esa es la familia entera
+   del §18.AV. ⚠️ Al implementarlo salió un falso positivo instructivo: probar el regex contra
+   `message` completo marca filas sanas, porque ese campo guarda **también el copy de WhatsApp**,
+   donde frases como "sin teléfono" aparecen legítimamente. Hay que probar contra el motivo extraído.
+
+**Validado contra historia real:** el check encontró 8 pushes de Daniela saltados por falta de
+opt-in entre el 8 y el 28 de julio. Diagnóstico: era §18.AR (su opt-in estaba bajo `…4666` desde el
+14-jul, pero los pushes se construían con el número viejo `…2287`), y **ya estaba arreglado** — el
+roster se corrigió el 28-jul y el último skip es de ese día. La ventana de 24h reporta 0, que es lo
+correcto. Lo que prueba: de haber existido el dashboard el 8 de julio, lo habría marcado ese mismo
+día en vez de tres semanas después.
+
+**Hallazgo nuevo sin resolver:** el push **#898** (Push 3, Pablo Lozano, 9-jul) lleva desde entonces
+en `sending`. Si el proceso muere entre `claimCalendlyPush` y `markCalendlyPushSent`, la fila queda
+huérfana y nadie la reintenta. **1 caso en toda la historia**, así que no es urgente; el arreglo
+natural es revertir a `scheduled` los `sending` viejos con `revertCalendlyPush`, que ya existe.
+
+**Otro dato útil que salió de la recon:** la deriva entre `/root/juanito` y `main` es **CERO**. Un
+primer diff mostró 44 archivos "distintos" pero era **puro CRLF** (los deploys históricos se hacían
+con `pscp` desde Windows). Procedimiento para repetir la medición, en el roadmap.
+
+Tareas, fases, interruptores y kill-switches viven en
+**[docs/DASHBOARD-ROADMAP.md](DASHBOARD-ROADMAP.md)** (ese es el documento de trabajo; esta entrada
+solo deja el rastro). Decisión arquitectónica en
+[ADR 0002](adr/0002-dashboard-y-superficie-http.md).
+
+**El problema:** operar a Juanito solo se puede por comandos de WhatsApp, y modificarlo solo editando
+código y desplegando a mano. `/root/juanito` no es un repo git, así que la versión en producción es
+una incógnita. Los logs se borran al recrear el contenedor. El pendiente de abajo (el push que no
+sale) es un síntoma directo.
+
+**Restricción que define todo el diseño:** es una adición visual y de manejo, **Juanito sigue
+funcionando**, y la construcción se puede pausar en cualquier punto y retomar semanas después.
+
+**Lo que hace que sea barato — el hallazgo del grill:** el dashboard corre en un contenedor aparte
+y **importa el código existente** en vez de reimplementarlo (`src/db/index.js` con sus ~122 funciones
+idempotentes, y `src/calendly/{programs,accounts,closers}.js` que son JS puro). El watchdog vive en
+el dash y detecta el push que no sale por SQL. Y **para mandar el DM de alerta usa la tabla
+`reminders` como outbox**: el cron de recordatorios corre cada minuto, siempre encendido, y ya
+despacha a `to_phone` por la cola anti-ban. Resultado: las fases 1 a 3 cuestan **una línea de código
+en `src/`** (`db.pragma('busy_timeout = 5000')`), más `docker-compose.yml` y archivos nuevos.
+
+**Decisiones clave:**
+- Contenedor aparte por el **crash domain**, no por saturación (el droplet está en load 0.00 con el
+  bot en 80 MB). `src/index.js:297` hace `process.exit(1)` y `entrypoint.sh` duerme 30-300s: un bug
+  HTTP dentro del bot tumbaría WhatsApp hasta 5 minutos.
+- **La regla de no exponer puertos se conserva literalmente.** Bind a `127.0.0.1` + Tailscale
+  (`tailscale serve` da HTTPS en `*.ts.net`, gratis, sin dominio).
+- Vite + React (mismo techo estético que Next con 1/3 del runtime; Vercel descartado porque la data
+  es un SQLite en el droplet y obligaría a exponer la API a internet).
+- `migrate.js` **no se toca** hasta la fase 3: `entrypoint.sh:11` es `migrate && index`, o sea una
+  migración que falle deja al bot sin arrancar.
+- Los registries a DB van detrás de flags por registry con default `code`; la invariante de copy
+  precall byte-idéntico (ADR 0001) se protege con un test de equivalencia y un preview en la UI.
+
+**Diferidos anotados en el roadmap** (mejoras reales, ninguna necesaria): borrar el `COPY assets/`
+muerto del Dockerfile, el fix de `skip_reason` (pieza 2 del pendiente de abajo — candidato número uno
+a desdiferir), la alerta de host ignorado que sigue agendando (pieza 1), instrumentar los 22 jobs, el
+shim de logs sobre los ~71 `console.error`, y el control server dentro del bot.
+
+---
+
+### 18.AX ✅ Rotar un teléfono mataba en silencio todos los pushes ya agendados (2026-07-30)
+
+**Cómo se destapó:** un compañero reportó que "el push 3 no se está enviando". No era cierto a nivel
+sistema: ese día salieron **47 pushes reales, 0 en dry-run**, con todos los jobs activos. Pero
+barriendo closer por closer apareció un caso real.
+
+**El caso:** a Daniela se le rotó el teléfono el 28-jul (`0de7d25`, +573103062287 → +573018094666).
+Las 8 filas ya agendadas para las calls del 29 habían quedado **estampadas con el número viejo**, no
+hicieron match contra su opt-in y murieron como `skipped: closer sin opt-in`. **5 leads sin precall**
+(Valentina Peña, Juan Se Pinilla, Galileo Patiño, Julián segura, David Pulido). Nadie se enteró
+hasta que se reportó, dos días después.
+
+#### La causa no fue el número: fue el acoplamiento
+
+`calendly_pushes` **denormaliza `closer_phone` al AGENDAR** (hasta 48h antes) y la entrega enrutaba
+con esa copia congelada (`deliver(d, p.closer_phone, …)`). El roster es la fuente de verdad, pero las
+filas pendientes cargaban una foto vieja de la llave del opt-in. Y como el skip era **terminal**
+(`decidePushAction` → `'inactive-status'`), corregir el roster no las revivía.
+
+Empeora con escala: entre más empresas y programas, más identidades por persona, más llaves que se
+pueden desincronizar.
+
+#### Los dos arreglos (commit `b573551`)
+
+1. **Enrutar por identidad, no por la foto.** El teléfono se re-resuelve contra el roster vivo
+   **al entregar**, desde `closer_email`, con fallback a `closer_phone` para un closer que ya salió.
+   Va dentro de `deliver()` y no en cada call site a propósito: es el punto ÚNICO por el que pasan
+   push 3/4/5, digests, outcomes y reagendas. Mismo criterio que `f8a18b4` ya había aplicado al
+   teléfono del **lead**; esto cierra el lado del **closer**.
+2. **Los skips recuperables dejan de ser terminales.** Falta de opt-in o de hilo revierte a
+   `scheduled` y reintenta, en vez de quemar el push. **Acotado** por el guard de obsolescencia, y
+   **solo para push 0/3**: push 4 y 5 salen antes con `continue`, así que revertirlos los volvería
+   filas inmortales. Los logs de omisión llevan throttle de 1h (reusa `shouldAlert`).
+
+**Radio medido antes de desplegar:** 82 filas pendientes, **80 ya con el teléfono correcto**
+(re-resolver da el mismo valor → cambio nulo) y **2 de Daniela** con el viejo, que estaban
+garantizadas a fallar. El cambio arregló esas 2 y no tocó las otras 80.
+
+#### La alerta que faltaba (commits `0c57e15`, `21f7857`)
+
+Cierra las piezas **2 y 3** del pendiente de abajo:
+
+- **`skip_reason` deja de ser columna muerta** (194 de 195 filas en NULL). Los 11 call sites pasan
+  ahora un slug estable, más los dos `supersede`. El texto humano sigue yendo al `message`: el copy
+  cambia, el slug no. Se respetó `'rescheduled'` tal cual porque `getRescheduledAwayCalls` ya lo leía.
+- **`src/calendly/skip-reasons.js`** como fuente única de la clasificación, sin deps nativas para que
+  el dashboard (otro contenedor) la importe. `SKIP_ALERTABLES` separa lo que un humano debe arreglar
+  de lo que es operación normal.
+- **`runSkipAudit()`**: cada hora, sobre 24h, avisa cuando un closer junta 2+ pushes perdidos.
+  Reusa `notifyAdmins` (dedup 6h, degrada a log sin `ADMIN_LID`). Loguea **siempre**, aunque esté
+  limpio: una red de seguridad que no se puede ver correr tiene el mismo modo de fallo que vino a
+  resolver.
+- El panel del dashboard clasifica con el MISMO `SKIP_ALERTABLES` que la alerta. Si contaran
+  distinto, uno de los dos estaría mintiendo.
+
+⚠️ **Consecuencia del arreglo 2 que cambió el diseño de la alerta:** desde que los pushes
+recuperables se reintentan, un closer sin opt-in **ya no deja filas `sin-optin`** en push 0/3 —
+reintenta hasta que la llamada arranca y muere como **`obsoleto`**. Por eso `obsoleto` es alertable.
+Sin eso, la alerta habría sido ciega justo al caso que la motivó.
+
+---
+
+### 18.AY 🟡 A dónde llegan los pushes ahora es verificable (2026-07-30/31)
+
+**Cómo se destapó:** otro closer (Sebastian Rodriguez) reportó que no le llegaban. **Sí le llegaban**,
+y se pudo probar: sus dos identidades cuadran contra su `workLid` fijado, y en 14 días respondió
+**73 de 84** preguntas de Push 4 — un hilo muerto no contesta. Su hueco real era Retia, donde
+simplemente **no tenía citas** (medido contra la API: el 30 y 31 Retia tuvo 8 citas, todas de
+`registro@` y `equipo@`).
+
+**Lo que el audit destapó:** a **8 de 10 identidades no se les podía verificar el destino**. El
+`contact_jid` es un `@lid` opaco y `isNonCanonicalOptinJid` devuelve `false` para `@lid` a propósito.
+Solo las 2 de Sebastian Rodriguez tenían `workLid` declarado. **Es el hueco por el que el bug de
+Pablo Suarez (§18.AJ) vivió una semana** mandando al aparato viejo con los logs en verde.
+
+Prueba de vida por identidad: las de 30x contestan Push 4 y están vivas. **Las 3 de Retia no tienen
+ninguna señal**, porque Retia corre con `push4:false`. Si un hilo de Retia muriera, nadie se entera.
+
+#### Rotación de Sebastián Marín (commit `0af90c9`)
+
+`+573212100048` → `+573170623894`. **WhatsApp NUEVO**, no número portado. A diferencia de la
+rotación de Daniela, el `contact_jid` se puso en **NULL** en vez de conservarse: mantenerlo habría
+repetido §18.AJ. Fila migrada por `UPDATE` (backup:
+`/app/data/brain-backup-20260730-pre-marin-phone.sqlite`).
+
+Ahora falla **RUIDOSO**: sin `contact_jid` la entrega devuelve `skipped-no-thread`, reintenta hasta
+la hora de la call y al morir dispara la auditoría de 18.AX. Es justo lo que §18.AJ dejó propuesto y
+sin implementar.
+
+#### ⚠️ La trampa del `workLid` (leer antes de tocar el roster)
+
+`handleCloserOptin` hace **`contactJid = workJid || from`** (`src/calendly/optin.js`). Declarar un
+`workLid` **PINNEA** la entrega a ese LID e **ignora desde dónde escribió** el closer. Dos
+consecuencias que no son obvias:
+
+- **A Marín NO se le declara hasta que escriba desde la línea nueva.** Ponerle su LID actual haría
+  que, al escribir, el opt-in lo devolviera al aparato viejo y la rotación se anulara sola.
+- **Declarar un LID equivocado lo CEMENTA en código.** Solo se puede hacer sobre identidades con
+  entrega probada.
+
+Por eso el backfill fue selectivo: se declaró el `workLid` de las **4 con entrega probada** (Lozano,
+Mendoza, Suarez, Camacho), tomando su `contact_jid` vigente. **De 2 a 6 identidades verificables de
+10.** Las 3 de Retia y Marín quedan sin declarar a propósito, hasta capturar su LID de un mensaje
+nuevo.
+
+**Marín depende enteramente de su pushName** mientras no tenga `workLid`. Verificado: su nombre real
+`"Juan Sebastian Marin - 30X"` resuelve bien (el match es por contención y el roster guarda el nombre
+corto), y quedó fijado en test porque **cuando esto falla, falla en silencio**.
+
+#### Dónde vive la comprobación
+
+El invariante compara **código contra datos de producción**, así que no cabe en un test unitario.
+Vive en **`scripts/calendly-optins.js`**, que ahora reporta el destino de cada identidad y **sale con
+código 1** si hay desajustes. En la suite queda lo que sí es puro: ningún `workLid` repetido.
+
+⚠️ Ese chequeo se indexa por **teléfono**, no por email: `calendly_optins.phone` es la PK y dos
+identidades de la misma persona en una línea (Salazar) **comparten fila a propósito**. Indexar por
+email hacía ver como rota una configuración correcta — un chequeo que da falsas alarmas se ignora,
+que es exactamente lo que vino a evitar.
+
+#### Lo que NO se hizo, y por qué
+
+**Encender Push 4 en Retia para tener señal de vida: descartado.** Agregaría mensajes a closers que
+hoy no los reciben solo para obtener de rebote una prueba de entrega. Push 4 nunca fue un mecanismo
+de verificación; es el único mensaje que espera respuesta y por eso terminó sirviendo de señal por
+accidente.
+
+**La forma correcta, pendiente:** escuchar los acuses de entrega. Baileys 7 emite `messages.update`
+con `DELIVERY_ACK` y hoy `src/whatsapp/index.js` **solo escucha `messages.upsert`** — el acuse está
+disponible y se está ignorando. Registrarlo probaría que cada push llegó al aparato, sin mandar un
+mensaje extra ni depender de que el closer conteste. Requiere guardar el id del mensaje enviado en la
+fila del push para correlacionar: es una feature aparte, no un ajuste.
+
+---
+
+### 🔴 PENDIENTE — Enterarnos nosotros de que un push no sale, sin que lo reporte el closer (abierto 2026-07-29 · piezas 2 y 3 ✅ 2026-07-30)
+
+> **Nota 2026-07-29:** la fase 1 de [docs/DASHBOARD-ROADMAP.md](DASHBOARD-ROADMAP.md) ataca esto sin
+> tocar el bot: el watchdog del dashboard detecta por SQL los `calendly_pushes` vencidos sin enviar y
+> los hosts de `IGNORED_CLOSERS` con citas activas. Las piezas 1 y 2 de abajo siguen siendo mejores
+> (más precisas, en la fuente) y quedan anotadas ahí como diferidos.
+
+**Por qué está acá:** los dos últimos incidentes de pushes los descubrió un **closer avisando**, no
+el sistema. Salazar estuvo **una semana** sin pre-call de Retia (§18.AV) y Daniela reportó las dos
+calls que el digest no veía (§18.AU). En los dos casos el dato estaba en la DB desde el primer día.
+La meta: que un dev lo vea antes de que lo diga un humano.
+
+Tres piezas, de la más barata a la más cara. Son independientes: se pueden hacer por separado.
+
+> **Estado 2026-07-30 — quedan solo la 1 y el ACK.** Las piezas **2 y 3 están hechas y en
+> producción** (§18.AX): `skip_reason` se escribe con slugs estables desde
+> `src/calendly/skip-reasons.js`, y `runSkipAudit()` corre cada hora avisando por closer. La pieza
+> **1 sigue abierta** tal cual está descrita abajo. Se agregó además un pendiente nuevo y mejor que
+> el chequeo periódico: **registrar el `DELIVERY_ACK` de WhatsApp** (§18.AY), que prueba la entrega
+> real en vez de inferirla.
+>
+> Nota sobre la advertencia del final de esta sección ("preferir una alerta agregada al día"): la
+> auditoría corre **cada hora** pero **deduplica 6h por closer** y exige un **umbral de 2**, así que
+> el volumen hacia WhatsApp es equivalente al de una alerta agregada, con detección más rápida.
+
+**1. Host ignorado que sigue agendando → alertar.** Es exactamente el agujero del §18.AV.
+`isIgnoredCloser(email)` hace `continue` sin log, sin contador y sin alerta
+(`scheduler/calendly.js`, en el bucle del poll). Es deliberado —evita spam por hosts que no
+gestionamos— pero vuelve **indistinguible un host retirado de uno que factura calls todos los días**.
+Arreglo: contar los ignorados con citas activas y avisar reusando lo que ya existe en
+`calendly/health.js` (`recordUnmapped` como modelo, `notifyAdmins` + `shouldAlert(key, 6h)` para el
+dedup). ~10 líneas. Habría cazado esto el 22-jul en el primer poll.
+
+**2. `skip_reason` no se está guardando (columna muerta).** Medido el 29-jul: de **195** filas
+`skipped`, **194 tienen `skip_reason` NULL**. La causa es de una línea —
+`markCalendlyPushSkipped` (`src/db/index.js:381`) concatena la razón dentro de `message`:
+
+```sql
+UPDATE calendly_pushes SET status='skipped', message = COALESCE(message,'') || ' | skip: ' || ?
+```
+
+...y nunca toca la columna `skip_reason`, que existe justo para eso. El código pasa razones útiles
+en ~10 sitios (`sin hilo establecido (contact_jid)`, `closer sin opt-in`, `llamada ya pasó`,
+`cita canceled`…) y todas quedan enterradas en un blob de texto. Consecuencia práctica: **no se
+puede hacer `GROUP BY skip_reason`** para ver que un motivo se disparó esta semana. Escribir también
+la columna es trivial y desbloquea todo lo demás. Ojo: es cambio de escritura, las 194 filas viejas
+se quedan NULL (rellenarlas desde `message` es opcional y aparte).
+
+**3. Chequeo periódico de entrega.** Con (2) hecho, un job barato (¿diario, junto al reporte de las
+7am?) que compare por closer **citas de hoy vs. pushes entregados** y avise si alguien tiene calls y
+cero entregas, o si un motivo de skip pegó un salto. Cubre los modos que (1) no ve: pausa por
+identidad olvidada encendida, opt-in sin `contact_jid`, una cuenta que quedó en dry-run.
+
+**Cuidado al implementarlo:** el destino de las alertas son los `ADMIN_LID`, o sea **WhatsApp del
+equipo** — todo lo que se agregue acá compite con el anti-ban y con la paciencia del que lo lee. El
+TTL de `shouldAlert` existe por eso. Preferir **una alerta agregada al día** antes que una por
+evento; y si el volumen asusta, mandarlo a log y revisarlo a mano antes de conectarlo a WhatsApp.
+
+---
+
+### 18.AZ 🔵 El closer le cuenta su setteo a Juanito, y ve su propia brecha con HubSpot (2026-08-03)
 
 **Rama `feat/setteo-closer`. ✅ DESPLEGADO AL VPS 2026-08-04 15:52 UTC, con la feature APAGADA
 (`SETTEO_CAPTURE_ENABLED=false`): con el flag off, un closer ve exactamente lo de antes.**
-Ver §18.AV-deploy al final de esta sección para el estado en producción y lo que falta.
+Ver §18.AZ-deploy al final de esta sección para el estado en producción y lo que falta.
 
 **El hueco que cierra.** §18.AI ya cuenta setteos por closer, pero desde HubSpot: mide lo que el
 closer **registró**, no lo que hizo. El setteo por WhatsApp que nunca llega al CRM es invisible
@@ -4029,7 +4465,7 @@ El baseline real se saca en Linux:
 
 ---
 
-#### 18.AV-deploy — en producción desde 2026-08-04 15:52 UTC, APAGADO
+#### 18.AZ-deploy — en producción desde 2026-08-04 15:52 UTC, APAGADO
 
 **Estado:** código desplegado, feature off. Un closer ve hoy exactamente lo mismo que antes.
 Imagen nueva `4eaabb42`; la anterior quedó etiquetada **`juanito-agent:pre-18AV-20260803`**.
@@ -4048,7 +4484,7 @@ entrega por el reinicio. Tabla con 0 filas, la feature no se activó sola.
   juanito-agent node scripts/preflight-setteo.mjs`. Read-only, no conecta a WA. Respondió el
   bloqueante del rollout ANTES de tocar producción. Patrón replicable: montar el src nuevo sobre
   la imagen vieja para probar lógica pura con el entorno real.
-- **`scripts/deploy-18AV.sh`** — rebuild + verificación con un **guard que aborta si hay un push
+- **`scripts/deploy-setteo.sh`** — rebuild + verificación con un **guard que aborta si hay un push
   por entregar en los próximos 10 min**. El paso caro nunca fue el build (segundos, con las capas
   de `npm ci` cacheadas): es la RECONEXIÓN de WhatsApp. Un Push 3 es un recordatorio precall que
   sale 15 min antes de la llamada; perderlo por un rebuild es un closer entrando a una call sin
@@ -4076,6 +4512,7 @@ generar la previsualización de los links `wa.me` del Push 3. **No es de este de
 reusó la capa cacheada de `npm ci`, así que `node_modules` es idéntico al de antes. El mensaje se
 entrega igual. Instalarla sería tocar dependencias en producción por una miniatura.
 
+
 ---
 
 ### 🟢 Baja prioridad / Nice-to-have
@@ -4102,6 +4539,11 @@ entrega igual. Instalarla sería tocar dependencias en producción por una minia
   `calendly.sheet-push.test.js › el mensaje lleva los DOS links de Retia` que falla por formato de
   hora y **ya venía rojo antes**. Verificado con `git stash`: 64 antes y 64 después de los cambios
   del 2026-07-28. Al medir regresiones, **comparar contra ese 64**, no contra cero.
+  **El número depende de la máquina y del Node:** en el Mac con **Node v26** la misma causa da
+  **79** (medido el 2026-07-30, otra vez con `git stash`: 79 antes y 79 después). La regla no cambia
+  — medir la línea base ANTES de tocar nada y comparar contra ella. Se arregla con
+  `npm rebuild better-sqlite3`. La suite de Calendly, que es pura y no toca DB, sí debe estar en
+  verde entera (**267** al 2026-07-31).
 - **⚠️ Recrear el contenedor BORRA su historial de logs.** `docker compose up -d --build` deja
   `docker compose logs` empezando en el arranque nuevo. El 2026-07-28 eso invalidó una medición
   ("0 nudges en 14 días" cuando solo había 208 líneas de log). **Para medir histórico, ir a la DB,

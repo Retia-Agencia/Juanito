@@ -1,5 +1,5 @@
 // src/setteo/capture.js
-// Capa IMPURA de la captura de setteo (§18.AV): resuelve al closer, decide si el mensaje es
+// Capa IMPURA de la captura de setteo (§18.AZ): resuelve al closer, decide si el mensaje es
 // un reporte de setteo, lo cruza con HubSpot y lo guarda. La lógica pura vive en parse.js
 // (qué dijo) y cuota.js (cuánto le tocaba).
 //
@@ -24,7 +24,7 @@ import { sendMessage } from '../whatsapp/index.js';
 
 const ENABLED = () => process.env.SETTEO_CAPTURE_ENABLED === 'true';
 
-// Gate maestro (§18.AV). Lo consulta también el router para decidir si un closer entra a su
+// Gate maestro (§18.AZ). Lo consulta también el router para decidir si un closer entra a su
 // contexto agéntico: con la feature apagada, un closer ve EXACTAMENTE lo de hoy.
 export function isSetteoCaptureOn() {
   return ENABLED();

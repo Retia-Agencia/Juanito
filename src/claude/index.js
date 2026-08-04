@@ -156,7 +156,7 @@ async function resolveDeps() {
     buildDocument: documents.buildDocument,
     // ruteo de avisos al equipo (tool capture_task)
     approvalsTarget: routing.approvalsTarget,
-    // setteo del closer (§18.AV) — las tres tools de CLOSER_TOOLS
+    // setteo del closer (§18.AZ) — las tres tools de CLOSER_TOOLS
     listSetteosForCloser: db.listSetteosForCloser,
     deleteSetteo: db.deleteSetteo,
     updateSetteoFlags: db.updateSetteoFlags,
@@ -607,7 +607,7 @@ const TOOLS = [
       required: ['topic', 'fact'],
     },
   },
-  // ─── Tools del CLOSER (§18.AV) ───────────────────────────────────────────────
+  // ─── Tools del CLOSER (§18.AZ) ───────────────────────────────────────────────
   // Solo se exponen en el DM de un closer (ver toolsForRole). Ninguna recibe la identidad
   // del closer como parámetro: sale SIEMPRE del JID de quien escribe, en dispatchTool. Si
   // fuera un campo del schema, el modelo podría registrarle setteos a otro closer.
@@ -734,7 +734,7 @@ const BOSS_IN_GROUP_TOOLS = new Set([
 // ni lectura de datos privados (es un espacio compartido). Ver handleApprovalConsole.
 const APPROVALS_CONSOLE_TOOLS = new Set(['manage_drafts', 'manage_replies']);
 
-// Set del CLOSER (§18.AV): SOLO lo suyo. Ni memoria, ni recordatorios, ni búsqueda en los
+// Set del CLOSER (§18.AZ): SOLO lo suyo. Ni memoria, ni recordatorios, ni búsqueda en los
 // datos del jefe, ni nada que toque a otro closer. Es el privilegio más bajo que ejecuta
 // acciones en este bot, y el gateo a nivel de API es lo que lo hace real: lo que no está en
 // el array, el modelo no lo puede invocar por más que se lo pidan.
@@ -883,7 +883,7 @@ Sobre este contexto (importante):
 ${securityBlock}`.trim();
   }
 
-  // ── Contexto de CLOSER (§18.AV) ───────────────────────────────────────────
+  // ── Contexto de CLOSER (§18.AZ) ───────────────────────────────────────────
   // Un closer del roster te escribe por DM. Contexto ACOTADO A LO SUYO: registra y consulta
   // SU setteo, y nada más. No ve memoria, ni recordatorios, ni datos del jefe, ni el roster,
   // ni el setteo de ningún otro closer — ni por el prompt ni por las tools (toolsForRole).
@@ -1944,7 +1944,7 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
         : `No encontré nada relacionado con "${query}".`;
     }
 
-    // ─── Tools del CLOSER (§18.AV) ────────────────────────────────────────────
+    // ─── Tools del CLOSER (§18.AZ) ────────────────────────────────────────────
     // El closer sale de ctx.closer, que el router deriva del JID de quien escribe. NUNCA de
     // `input`: si el modelo pudiera nombrar al closer, un mensaje bien redactado bastaría
     // para escribirle setteos a otro. Sin ctx.closer no se ejecuta nada.
@@ -2092,7 +2092,7 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
     // Nombre de quien habla (su pushName de WhatsApp) → para que un outreach que ordena un admin
     // salga "de parte de" él, no del jefe (schedule_outreach). Ver §18.Y.
     senderName,
-    // Identidad del closer (§18.AV), resuelta por el ROUTER desde el JID. Las tools de setteo
+    // Identidad del closer (§18.AZ), resuelta por el ROUTER desde el JID. Las tools de setteo
     // la leen de acá y nunca de `input`: es lo que impide que el modelo —o alguien que le
     // dicte al modelo— registre o consulte setteos a nombre de otro closer.
     closer,

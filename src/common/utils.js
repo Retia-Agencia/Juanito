@@ -28,7 +28,7 @@ export function validatePhone(raw) {
   return { ok: true, digits, reason: null };
 }
 
-// ─── Normalizar el nombre de un lead (§18.AV) ─────────────────────────────────
+// ─── Normalizar el nombre de un lead (§18.AZ) ─────────────────────────────────
 // Clave de deduplicación del setteo: "María Pérez", "maria perez" y "MARIA  PEREZ." son el
 // MISMO lead tocado. Vive acá, y no en el módulo de setteo, porque la usan dos capas que no
 // deben poder divergir: el UNIQUE de la tabla (db/index.js, al escribir) y el parser (al

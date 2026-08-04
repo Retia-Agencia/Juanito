@@ -7,7 +7,7 @@
 //   admin   → equipo dev. Máximo privilegio (todas las tools, diagnósticos).
 //   boss    → el jefe. Privilegio acotado (no toca tools sensibles ni config).
 //   closer  → alguien del roster de ventas. Privilegio MÍNIMO y acotado a LO SUYO:
-//             registra y consulta su propio setteo, nada más (§18.AV). No es privilegiado.
+//             registra y consulta su propio setteo, nada más (§18.AZ). No es privilegiado.
 //   unknown → cualquier otro (desconocidos).
 
 import { phonesMatch } from './utils.js';

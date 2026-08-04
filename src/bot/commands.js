@@ -99,7 +99,7 @@ export async function handleCommand({ text, sender, role }, deps = {}) {
   }
 
   // /missetteos [7|30] — las TRES cifras del closer que escribe: reportado, registrado en
-  // HubSpot y cuota por horas libres (§18.AV). Es el comando del CLOSER, no del jefe.
+  // HubSpot y cuota por horas libres (§18.AZ). Es el comando del CLOSER, no del jefe.
   // 🔒 La identidad sale de `sender` vía closerOf, NUNCA de un argumento: por eso no acepta
   // un nombre de closer. El jefe tiene `/setteos`, que ya es el consolidado de todos.
   if (cmd === '/missetteos' || cmd === '/missetteo' || cmd.startsWith('/missetteos ')) {
@@ -711,7 +711,7 @@ async function handleSetteos({ buildSetteoBlock } = {}) {
   }
 }
 
-// /missetteos — las tres cifras del closer (§18.AV). `closer` ya viene resuelto desde el JID.
+// /missetteos — las tres cifras del closer (§18.AZ). `closer` ya viene resuelto desde el JID.
 async function handleMisSetteos({ closer, dias }, { buildMisSetteos } = {}) {
   if (!buildMisSetteos) return 'Las métricas de setteo no están disponibles ahora.';
   try {

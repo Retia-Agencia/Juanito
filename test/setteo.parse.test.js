@@ -1,5 +1,5 @@
 // test/setteo.parse.test.js
-// Parser PURO del setteo (§18.AV). Sin red ni DB → corre en Windows.
+// Parser PURO del setteo (§18.AZ). Sin red ni DB → corre en Windows.
 // El contrato: cubre las formas frecuentes y devuelve 'none' ante la duda; lo que no
 // entiende lo intenta setteo-ai.js. Un falso positivo escribe un lead inventado en la
 // tabla del closer, así que acá "no entendí" es un resultado CORRECTO.

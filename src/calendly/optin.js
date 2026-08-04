@@ -22,7 +22,7 @@ import { approvalsTarget } from '../common/approval-routing.js';
 //
 // `consume: false` → registra igual (que es lo que re-pinea el contact_jid, o sea a dónde
 // salen los pushes) pero NI consume el mensaje NI reclama el dedup, porque abajo hay OTRO
-// handler que va a atender ese mismo mensaje: el contexto agéntico del closer (§18.AV).
+// handler que va a atender ese mismo mensaje: el contexto agéntico del closer (§18.AZ).
 // Si reclamara el dedup, el de abajo vería el mensaje como duplicado y no respondería nunca.
 export async function handleCloserOptin({ from, pushName, messageId, consume = true }) {
   let closer = resolveCloserByPhone(from);

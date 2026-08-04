@@ -1,6 +1,8 @@
 #!/bin/sh
-# scripts/deploy-18AV.sh — despliegue de §18.AV (setteo del closer) al VPS.
-# Corre EN el VPS: sh /root/juanito/scripts/deploy-18AV.sh
+# scripts/deploy-setteo.sh — despliegue del setteo del closer (§18.AZ) al VPS.
+# Corre EN el VPS: sh /root/juanito/scripts/deploy-setteo.sh
+# (La copia que ya corrió allá se llama deploy-18AV.sh: §18.AV era el número de la sección
+#  antes del merge con main, donde esa letra ya estaba tomada por otra cosa.)
 #
 # Despliega el código con la feature APAGADA. No prende nada: SETTEO_CAPTURE_ENABLED
 # no se toca acá, se prende aparte después de verificar.
@@ -13,7 +15,7 @@
 set -e
 cd /root/juanito
 
-echo "═══ Deploy §18.AV — $(date -u '+%Y-%m-%d %H:%M:%S') UTC ═══"
+echo "═══ Deploy §18.AZ — $(date -u '+%Y-%m-%d %H:%M:%S') UTC ═══"
 
 # ── Guard de ventana ─────────────────────────────────────────────────────────
 PENDIENTES=$(docker exec juanito-agent node -e "

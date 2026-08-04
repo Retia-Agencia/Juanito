@@ -1,0 +1,172 @@
+/* dashboard/src/index.css
+   Shell funcional de F1. El sistema de diseño "Jarvis" es F6 (/impeccable) — acá solo
+   hay lo necesario para leer datos densos sin fricción. CSS plano a propósito: el repo
+   tiene una regla de no sumar dependencias sin justificación, y una hoja de estilos no
+   la necesita. */
+
+:root {
+  --bg: #0a0c10;
+  --panel: #12151c;
+  --panel-2: #171b24;
+  --linea: #232833;
+  --texto: #e4e7ee;
+  --tenue: #8b93a5;
+  --acento: #4da3ff;
+  --ok: #3fb96a;
+  --warn: #e2b33c;
+  --error: #f2555a;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--texto);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Layout ───────────────────────────────────────────────────────────────── */
+
+.app { display: grid; grid-template-columns: 208px 1fr; min-height: 100vh; }
+
+.lateral {
+  background: var(--panel);
+  border-right: 1px solid var(--linea);
+  padding: 16px 10px;
+  display: flex; flex-direction: column; gap: 2px;
+  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+}
+
+.marca { padding: 0 8px 14px; }
+.marca h1 { margin: 0; font-size: 15px; letter-spacing: .02em; }
+.marca .sub { color: var(--tenue); font-size: 11px; font-family: var(--mono); }
+
+.tab {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 7px 10px; border-radius: 6px; border: 0;
+  background: transparent; color: var(--tenue);
+  font: inherit; text-align: left; cursor: pointer; width: 100%;
+}
+.tab:hover { background: var(--panel-2); color: var(--texto); }
+.tab[aria-current="true"] { background: var(--panel-2); color: var(--texto); box-shadow: inset 2px 0 0 var(--acento); }
+.tab .pill {
+  font: 11px/1 var(--mono); padding: 3px 6px; border-radius: 20px;
+  background: #222836; color: var(--tenue);
+}
+.tab .pill.error { background: rgba(242,85,90,.16); color: var(--error); }
+.tab .pill.warn { background: rgba(226,179,60,.16); color: var(--warn); }
+
+.principal { padding: 22px 26px 60px; min-width: 0; }
+
+.encabezado { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
+.encabezado h2 { margin: 0; font-size: 19px; }
+.encabezado .meta { color: var(--tenue); font-family: var(--mono); font-size: 11px; }
+
+/* ── Salud ────────────────────────────────────────────────────────────────── */
+
+.rejilla { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); }
+
+.tarjeta {
+  background: var(--panel); border: 1px solid var(--linea);
+  border-radius: 9px; padding: 13px 15px;
+}
+.tarjeta.error { border-color: rgba(242,85,90,.45); }
+.tarjeta.warn { border-color: rgba(226,179,60,.4); }
+
+.tarjeta .fila { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.tarjeta .titulo { font-weight: 600; font-size: 13px; }
+.tarjeta .numero { font: 600 21px/1 var(--mono); }
+.tarjeta.error .numero { color: var(--error); }
+.tarjeta.warn .numero { color: var(--warn); }
+.tarjeta.ok .numero { color: var(--tenue); }
+.tarjeta .detalle { color: var(--tenue); font-size: 12px; margin-top: 5px; }
+
+.tarjeta details { margin-top: 10px; }
+.tarjeta summary { cursor: pointer; color: var(--acento); font-size: 12px; }
+.tarjeta details table { margin-top: 8px; }
+
+.semaforo { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; }
+.punto { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+.punto.warn { background: var(--warn); }
+.punto.error { background: var(--error); }
+
+/* ── Tablas ───────────────────────────────────────────────────────────────── */
+
+.envoltura { overflow-x: auto; border: 1px solid var(--linea); border-radius: 9px; background: var(--panel); }
+
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+th, td {
+  text-align: left; padding: 7px 11px; border-bottom: 1px solid var(--linea);
+  white-space: nowrap; max-width: 460px; overflow: hidden; text-overflow: ellipsis;
+}
+th { color: var(--tenue); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; position: sticky; top: 0; background: var(--panel-2); }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover { background: var(--panel-2); }
+td.num { font-family: var(--mono); }
+
+.seccion { margin-bottom: 26px; }
+.rejilla + .seccion { margin-top: 22px; }
+.seccion h3 { margin: 0 0 9px; font-size: 13px; color: var(--tenue); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+
+.vacio { padding: 22px; color: var(--tenue); text-align: center; font-size: 13px; }
+.aviso { background: var(--panel-2); border: 1px solid var(--linea); border-left: 3px solid var(--acento); border-radius: 6px; padding: 10px 13px; color: var(--tenue); font-size: 12.5px; margin-bottom: 16px; }
+.error-caja { border-left-color: var(--error); color: var(--error); }
+
+code { font-family: var(--mono); font-size: 12px; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+
+/* ── Escrituras (F2) ──────────────────────────────────────────────────────── */
+
+.botones { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.accion {
+  font: 11px/1 inherit; padding: 6px 9px; border-radius: 5px; cursor: pointer;
+  background: var(--panel-2); color: var(--texto); border: 1px solid var(--linea);
+  white-space: nowrap;
+}
+.accion:hover { border-color: var(--acento); color: var(--acento); }
+/* Rojo para lo destructivo o lo que apaga algo: descartar, cancelar, pausar. */
+.accion.peligro:hover { border-color: var(--error); color: var(--error); }
+
+/* La columna de acciones no se recorta ni se estira como las de datos. */
+td.acciones { max-width: none; overflow: visible; width: 1%; }
+
+.tab .pill.escribe { background: rgba(77,163,255,.16); color: var(--acento); font-size: 10px; }
+
+.tarjeta .estado { font: 600 12px/1 var(--mono); letter-spacing: .06em; }
+.tarjeta .estado.si { color: var(--ok); }
+.tarjeta .estado.no { color: var(--warn); }
+
+.deploy { margin-top: auto; padding: 12px 8px 0; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--linea); }
+
+/* Formas de creación: cerradas por default, para que el tab siga siendo la tabla. */
+.forma { margin-bottom: 16px; background: var(--panel); border: 1px solid var(--linea); border-radius: 9px; padding: 11px 14px; }
+.forma summary { cursor: pointer; color: var(--acento); font-size: 12.5px; }
+.forma .campos { display: grid; gap: 11px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); margin-top: 13px; }
+.forma .campos .ancho { grid-column: 1 / -1; }
+.forma label { display: flex; flex-direction: column; gap: 5px; color: var(--tenue); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.forma input, .forma select, .forma textarea {
+  font: 13px/1.45 inherit; padding: 7px 9px; border-radius: 5px;
+  background: var(--bg); color: var(--texto); border: 1px solid var(--linea);
+}
+.forma textarea { resize: vertical; font-family: inherit; }
+.forma .dias { display: flex; gap: 4px; flex-wrap: wrap; }
+.forma .dia {
+  font: 11px/1 var(--mono); padding: 7px 8px; border-radius: 5px; cursor: pointer;
+  background: var(--bg); color: var(--tenue); border: 1px solid var(--linea);
+}
+.forma .dia.activo { background: rgba(77,163,255,.14); border-color: var(--acento); color: var(--acento); }
+
+.aviso.ok { border-left-color: var(--ok); }
+.aviso.warn { border-left-color: var(--warn); }
+.aviso .cerrar { float: right; background: none; border: 0; color: var(--tenue); cursor: pointer; font-size: 16px; line-height: 1; padding: 0 0 0 10px; }
+
+@media (max-width: 720px) {
+  .app { grid-template-columns: 1fr; }
+  .lateral { position: static; height: auto; flex-direction: row; flex-wrap: wrap; }
+  .marca { width: 100%; }
+  .principal { padding: 16px; }
+}

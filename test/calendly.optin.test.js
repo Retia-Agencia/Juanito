@@ -1,7 +1,7 @@
 // test/calendly.optin.test.js
 // El CONTRATO de handleCloserOptin con el router (src/index.js), que es donde se rompió:
 // devuelve true para TODO mensaje de un closer conocido —no solo el primero—, así que el
-// router lo usa como "no sigas bajando". El modo `consume:false` (§18.AV) es lo que permite
+// router lo usa como "no sigas bajando". El modo `consume:false` (§18.AZ) es lo que permite
 // que el mensaje siga a los handlers de abajo (captura de setteo + contexto agéntico del
 // closer) SIN perder el registro del opt-in, que es lo que re-pinea el contact_jid.
 //
@@ -57,7 +57,7 @@ test('consume:true reclama el dedup — el handler de abajo vería el mensaje co
   assert.equal(markIfNew('optin-3'), false);
 });
 
-test('consume:false — registra pero NO consume ni reclama el dedup (§18.AV)', async () => {
+test('consume:false — registra pero NO consume ni reclama el dedup (§18.AZ)', async () => {
   const r = await handleCloserOptin({ from: jidDeUnCloser, messageId: 'optin-4', consume: false });
   assert.equal(r, false, 'el router tiene que poder seguir bajando al contexto agéntico');
   // El slot de dedup queda libre para el handler que de verdad responde.

@@ -88,7 +88,7 @@ export async function handleBossMessage(msg) {
   }
 }
 
-// ─── DM de un CLOSER (§18.AV) ─────────────────────────────────────────────────
+// ─── DM de un CLOSER (§18.AZ) ─────────────────────────────────────────────────
 // Un closer del roster escribe por privado. Antes caía en handlePublicDm: asistente aislado,
 // SIN tools y con tope de 5 mensajes al día — con eso no podía ni reportar su setteo.
 // Acá tiene su propio contexto, acotado a LO SUYO (ver buildSystemPrompt + CLOSER_TOOLS).

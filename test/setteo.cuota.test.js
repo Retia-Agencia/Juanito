@@ -1,5 +1,5 @@
 // test/setteo.cuota.test.js
-// Cuota de setteo (§18.AV): 15 leads por HORA LIBRE. PURO → corre en Windows.
+// Cuota de setteo (§18.AZ): 15 leads por HORA LIBRE. PURO → corre en Windows.
 // Lo que estos tests protegen: que las dobles reservas no le inventen horas ocupadas al
 // closer, y que una call fuera de jornada no le baje la cuota.
 
