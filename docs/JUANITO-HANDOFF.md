@@ -5,26 +5,35 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-08-04** (§18.AZ–§18.BF **DESPLEGADOS**; el smoke del setteo encontró
-y cerró seis bugs. El piloto sigue apagado a propósito)
+Última actualización: **2026-08-04** (§18.AZ–§18.BF desplegados; el setteo del closer quedó VIVO
+para los 6 closers de 30x)
 
 ---
 
 ## 0. TL;DR — estado al 2026-06-12 (leer primero)
 
-> ## 🟠🟠 EL SETTEO DEL CLOSER ESTÁ DESPLEGADO, PROBADO Y **APAGADO** 🟠🟠
-> `main` = `56e4dc0`. El smoke con un teléfono real (§18.BB) **encontró seis bugs que la suite no
-> podía ver** y los seis están cerrados y verificados en producción. Última corrida: el closer
-> pidió borrar tres leads, Juanito consultó cuáles eran y borró **exactamente esos tres**.
-> **993 tests, 990 verdes.**
+> ## 🟢🟢 EL SETTEO DEL CLOSER ESTÁ **VIVO** PARA LOS 6 CLOSERS DE 30x 🟢🟢
+> **Prendido el 2026-08-04 22:12 local** (03:12 UTC del 05), `main` = `a9f3e2a`. Decisión del
+> jefe: los **6**, no los 2 del piloto original. Verificado dentro del contenedor: captura `true`
+> · scope `6 de 6` · `CLAUDE_CLOSER_MODEL=claude-sonnet-5` · la cifra de HubSpot devuelve número
+> para los seis. **994 tests, 991 verdes.**
 >
-> **Lo que sigue apagado, a propósito:** `SETTEO_CAPTURE_ENABLED=false`. Para prenderlo, **nunca
-> sin `SETTEO_CAPTURE_CLOSERS` explícito**: hoy está vacío en el VPS, y vacío **hereda
-> `CALENDLY_PUSH4_CLOSERS` = 6 closers**, no los 2 del piloto acordado.
+> Los 6: `daniela.camacho` · `sebastian` · `pablo.lozano` · `sebastian.marin` · `lucas.mendoza` ·
+> `pablosuarez` (todos `@30x.com`). El scope se escribió **EXPLÍCITO** en `SETTEO_CAPTURE_CLOSERS`
+> aunque hoy coincida con `CALENDLY_PUSH4_CLOSERS`: vacío significa *"los que estén en Push 4 el
+> día que alguien mire"*, y el scope de una feature que ESCRIBE no se hereda por accidente.
 >
-> **Lo que el smoke NO pudo probar y hay que mirar el primer día con un closer real:** la cifra
-> *"registrado en HubSpot"* va por **owner**, y el closer de prueba no era owner de nada — salió
-> `—` siempre. Es la mitad del valor de la feature. Ver §18.BB → *Lo que dejó abierto*.
+> **Botón de pánico:** `SETTEO_CAPTURE_ENABLED=false` en `/root/juanito/.env` + `docker compose
+> up -d`. Sin `--build`, una reconexión, segundos. No hace falta rollback de imagen.
+> Respaldo del `.env` previo: `.env.bak-20260805-031054-pre-piloto6`.
+>
+> **🔴 Lo primero que hay que mirar:** que *"Registrados en HubSpot"* muestre NÚMEROS y no `—`.
+> Es lo único que el smoke no pudo probar (el closer de prueba no era owner de nada) y es la
+> mitad del valor de la feature. Y **cuadrar las tres cifras a mano** el primer día con datos
+> reales, contra HubSpot y Calendly.
+>
+> ⚠️ **Los closers NO estaban avisados al prenderlo** (22:12, decisión consciente: la feature es
+> reactiva, no manda nada sola, así que de noche no pasa nada). **Avisarles antes de las 8am.**
 
 > ## 🟠🟠 RECORDATORIO GRANDE: `CLAUDE_THINKING` ESTÁ **OFF** 🟠🟠
 > El código de **extended/adaptive thinking** está desplegado en el VPS (LIVE 2026-06-26) pero
