@@ -18,6 +18,12 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MODEL = process.env.CLAUDE_MODEL || 'claude-haiku-4-5-20251001';
 const GROUP_MODEL = process.env.CLAUDE_GROUP_MODEL || MODEL;
 const BOSS_MODEL = process.env.CLAUDE_BOSS_MODEL || MODEL;
+//   CLAUDE_CLOSER_MODEL → modelo SOLO para el DM de un closer (§18.BE). Su chat es corto y de
+//     bajo volumen —unos pocos mensajes al día por persona— pero cada uno decide si se ESCRIBE
+//     algo: registrar, corregir o borrar un setteo. Confundir "borrá el de Juan" con un reporte
+//     le crea un lead fantasma, y eso no lo arregla ninguna regla del prompt. Cae a MODEL si no
+//     se define, así que sin la var el comportamiento es el de antes.
+const CLOSER_MODEL = process.env.CLAUDE_CLOSER_MODEL || MODEL;
 // Modelo de RAZONAMIENTO para interlocutores privilegiados (jefe/admin), tanto en su DM
 // como cuando mencionan a Juanito en un grupo (bossInGroup). Un modelo más capaz clasifica
 // mejor "¿esto es una ORDEN que ejecuto con una tool, o una PREGUNTA normal que solo
@@ -2159,6 +2165,8 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
   //  - DM público y chatbot de grupo (aislados, alto volumen) → GROUP_MODEL (barato).
   //  - Jefe/admin mencionando en grupo (bossInGroup) o en su DM → REASONING_MODEL: mejor
   //    capacidad para distinguir ORDEN (ejecutar tool) vs PREGUNTA normal (solo responder).
+  //  - DM de un CLOSER → CLOSER_MODEL: sus tres tools ESCRIBEN, y distinguir "toqué a Juan"
+  //    de "borrá el de Juan" es exactamente donde un modelo flojo cuesta caro.
   //  - Cualquier otro DM (rol desconocido) → MODEL.
   const privileged = role === 'boss' || role === 'admin';
   const model = publicDm
@@ -2169,7 +2177,9 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
         ? GROUP_MODEL
         : privileged
           ? REASONING_MODEL
-          : MODEL;
+          : role === 'closer'
+            ? CLOSER_MODEL
+            : MODEL;
 
   // Thinking SOLO en el camino de razonamiento (modelo == REASONING_MODEL) y si el modelo lo
   // soporta. Apagado por default. Con tool-use, los bloques `thinking` deben devolverse SIN

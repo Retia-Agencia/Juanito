@@ -652,7 +652,7 @@ function buildHelp(role) {
     return [
       '👋 Hola, soy Juanito.',
       '',
-      'Contame tu setteo como quieras y yo lo anoto:',
+      'Cuéntame tu setteo como quieras y yo lo anoto:',
       '_"toqué a Juan Pérez y María Gómez, María agendó"_',
       '',
       '• /missetteos — cómo vas hoy: tus cifras, lo que hay en HubSpot, tu cuota y a quiénes tocaste',
@@ -729,10 +729,10 @@ async function handleNuevoSetteo({ closer, text }, { guardarSetteos, parseSetteo
   if (!cuerpo) {
     return (
       '🧲 *Registrar setteo*\n\n' +
-      'Contámelo como quieras, con los nombres de los leads:\n' +
+      'Cuéntamelo como quieras, con los nombres de los leads:\n' +
       '_"toqué a Juan Pérez, María Gómez y Pedro Ruiz; María agendó"_\n\n' +
       'O uno por línea:\n`Juan Pérez | no contestó`\n`María Gómez | agendó`\n\n' +
-      'También podés escribírmelo sin el comando, lo entiendo igual.'
+      'También puedes escribírmelo sin el comando, lo entiendo igual.'
     );
   }
   if (!guardarSetteos) return 'El registro de setteo no está disponible ahora.';
@@ -760,7 +760,7 @@ async function handleNuevoSetteo({ closer, text }, { guardarSetteos, parseSetteo
     return buildConfirmacion({ fecha: parsed.fecha, items: parsed.items, resultado, hoy: localDateISO() });
   } catch (e) {
     console.error('[Comandos] /nuevosetteo falló:', e.message);
-    return 'No pude guardar eso 😖. Volvé a mandármelo en un momento.';
+    return 'No pude guardar eso 😖. Vuelve a mandármelo en un momento.';
   }
 }
 

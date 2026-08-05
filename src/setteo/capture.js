@@ -15,7 +15,7 @@
 // ⚠️ Juanito NUNCA escribe en HubSpot (decisión 2026-07-20). Acá solo se LEE, para cruzar.
 
 import { closerOf } from '../common/roles.js';
-import { parseSetteoReply, localDateISO } from './parse.js';
+import { parseSetteoReply, localDateISO, esCorreccion } from './parse.js';
 import { parseSetteoWithAi } from './setteo-ai.js';
 import { isCloserInScope, buildConfirmacion, buildPedirNombres } from './format.js';
 import { upsertSetteo, markIfNew, saveMessage } from '../db/index.js';
@@ -144,6 +144,11 @@ export async function captureSetteoReply({ from, pushName, text, messageId }) {
   if (!closer) return false;
   if (!isCloserInScope(closer.email)) return false;
 
+  // "Descartá el de Juan" es una CORRECCIÓN, no un reporte. Esta capa solo sabe crear, así que
+  // no la toca: se deja pasar al contexto agéntico, que tiene `corregir_setteo`. Va ANTES de
+  // parsear porque el parser, si lo mira, encuentra "nombre + resultado" donde no lo hay.
+  if (esCorreccion(text)) return false;
+
   let parsed = parseSetteoReply(text);
   // 'agregado' = dijo cuántos pero no quiénes. Se le piden los nombres en vez de inventar
   // filas para cuadrar el número (la tabla es una fila por lead y el cruce necesita nombre).
@@ -188,7 +193,7 @@ export async function captureSetteoReply({ from, pushName, text, messageId }) {
     console.error('[Setteo] no se pudo guardar:', e.message);
     // Fallar en silencio sería peor que no tener la feature: el closer creería que quedó
     // registrado. Se le dice, y el mensaje crudo queda en el log para recuperarlo.
-    await sendMessage(from, 'Uy, no pude guardar eso 😖. Volvé a mandármelo en un momento.').catch(() => {});
+    await sendMessage(from, 'Uy, no pude guardar eso 😖. Vuelve a mandármelo en un momento.').catch(() => {});
   }
   return true;
 }

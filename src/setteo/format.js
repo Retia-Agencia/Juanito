@@ -49,9 +49,9 @@ export function buildConfirmacion({ fecha, items, resultado, hoy }) {
     lineas.push(`⚠️ ${resultado.ambiguos} con homónimos en HubSpot — no supe cuál era, quedó sin cruzar.`);
   }
   if (resultado.sinMatch) {
-    lineas.push(`⚠️ ${resultado.sinMatch} que no encontré en HubSpot. Si ya lo registraste allá, revisá el nombre.`);
+    lineas.push(`⚠️ ${resultado.sinMatch} que no encontré en HubSpot. Si ya lo registraste allá, revisa el nombre.`);
   }
-  lineas.push('\n_Escribí *`/missetteos`* para ver cómo vas._');
+  lineas.push('\n_Escribe *`/missetteos`* para ver cómo vas._');
   return lineas.join('\n');
 }
 
@@ -172,6 +172,6 @@ export function formatMisSetteosVacio({ dateLabel, cuota }) {
     `🧲 *Mis setteos* — ${dateLabel}\n\n` +
     `Todavía no me contaste ningún setteo.\n` +
     `Tu cuota de hoy son *${cuota.cuota}* (${cuota.horasLibres}h libres × 15).\n\n` +
-    `Contámelo como quieras: _"toqué a Juan Pérez y María Gómez, María agendó"_.`
+    `Cuéntamelo como quieras: _"toqué a Juan Pérez y María Gómez, María agendó"_.`
   );
 }

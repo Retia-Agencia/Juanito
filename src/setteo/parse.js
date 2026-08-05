@@ -115,9 +115,19 @@ const STOP = new Set(
    'contesto contesta contestaron respondio responde respondieron agendo agenda agendaron cita citas ' +
    'venta ventas vendio vendi cerro cerre compro pago seguimiento interesado interesada nada ' +
    'todavia aun ya tambien igual mas menos muy solo casi quedo quedamos hable hablamos leads lead ' +
-   'ninguno ninguna nadie todos todas ambos ninguna mismo tampoco')
+   'ninguno ninguna nadie todos todas ambos ninguna mismo tampoco ' +
+   // Verbos de CORRECCIÓN. Sin esto, "Elimina contestk" hacía que la regla 3 leyera "Elimina"
+   // como nombre propio (arranca en mayúscula) y "contestk" como resultado → el closer pedía
+   // BORRAR y se le CREABA un lead llamado "Elimina". Pasó en el smoke del 2026-08-04.
+   'elimina eliminar elimine borra borrar borre descarta descartar descarte quita quitar quite ' +
+   'anula anular corrige corregir corrige cambia cambiar olvida olvidar ignora ignorar')
     .split(/\s+/)
 );
+
+// Raíces de los verbos de RESULTADO. Una palabra que empieza así no es un nombre de lead, por
+// más que el closer la escriba con mayúscula o la tipee mal: "contestk", "agendoo",
+// "respondiio". STOP no alcanza porque es por palabra EXACTA y los typos son infinitos.
+const RAIZ_RESULTADO = /^(contest|respond|agend|vend|cerr|compr|pag|interes)/;
 
 // Corta una tirada de texto en un nombre plausible: hasta 4 palabras, sin stopwords,
 // sin dígitos. Devuelve '' si no queda nada usable.
@@ -128,6 +138,9 @@ function takeName(raw) {
     if (!clean) break;
     if (/\d/.test(clean)) break;
     if (STOP.has(strip(clean))) break;
+    // Un resultado mal escrito no es un lead. En el smoke, "toqué a Andrea Gomez, contestk"
+    // guardó DOS filas: Andrea y otra llamada "contestk".
+    if (RAIZ_RESULTADO.test(strip(clean))) break;
     words.push(clean);
     if (words.length === 4) break;
   }
@@ -176,6 +189,24 @@ export function consolidar(items) {
   }
 
   return items.filter((it) => !absorbido.has(it));
+}
+
+// ─── Guard de intención: esto NO es un reporte, es una corrección ─────────────
+// El closer que dice "descartá el de Juan" está pidiendo BORRAR, y la captura determinista
+// —que solo sabe crear— no tiene nada que hacer con ese mensaje. Sin este guard, en el smoke
+// del 2026-08-04 pasó tres veces seguidas: dijo *borra* y Juanito *creó*, incluido un lead
+// llamado "Elimina".
+//
+// Es DELIBERADAMENTE liberal, y se puede permitir serlo: el mensaje que este guard deja pasar
+// cae en el contexto agéntico, que tiene las TRES tools (registrar, consultar y corregir). O
+// sea que un falso positivo no pierde nada —el setteo se registra igual, por el otro camino—
+// mientras que un falso negativo le crea al closer un lead fantasma que después tiene que
+// pedir que le borren. Los costos no son simétricos, y el guard se inclina hacia el barato.
+const CORRECCION =
+  /\b(descarta\w*|elimina\w*|borra\w*|borre\w*|quita\w*|quite\w*|anula\w*|corrig\w*|olvida\w*|ignora\w*|no era|no fue|me equivoqu\w*|estaba mal|est[aá] mal|mentira\w*)\b/i;
+
+export function esCorreccion(text) {
+  return CORRECCION.test(strip(String(text || '')));
 }
 
 // ─── Entrada principal ────────────────────────────────────────────────────────

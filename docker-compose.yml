@@ -197,6 +197,10 @@ services:
       - SETTEO_AI_FALLBACK=${SETTEO_AI_FALLBACK:-true}
       - SETTEO_AI_MODEL=${SETTEO_AI_MODEL:-claude-haiku-4-5-20251001}
       - SETTEO_AI_TIMEOUT_MS=${SETTEO_AI_TIMEOUT_MS:-8000}
+      # Modelo SOLO para el DM de un closer (§18.BE). Sus tres tools ESCRIBEN, y distinguir
+      # "toqué a Juan" de "borrá el de Juan" es donde un modelo flojo cuesta caro: le crea un
+      # lead fantasma. Vacío = cae a CLAUDE_MODEL, o sea el comportamiento de antes.
+      - CLAUDE_CLOSER_MODEL=${CLAUDE_CLOSER_MODEL:-}
       # Identidad de PRUEBA para el smoke del setteo (§18.BB). Agrega un closer desechable al
       # roster — el smoke necesita que una persona real escriba, y el rol sale del JID. Apagada
       # por default; terminar la prueba es volver a false, sin deploy. Ver src/calendly/closers.js.
