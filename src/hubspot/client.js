@@ -17,6 +17,9 @@
 
 import { pipelineForProgram, pickDealForPipeline, classifyDealStage, isWonStage } from './deals.js';
 import { normalizePhone } from '../common/utils.js';
+// Solo el mapa de alias owner→closer (ownerIdForCloser). closers.js no importa nada de
+// hubspot/, así que no hay ciclo.
+import { HUBSPOT_OWNER_TO_CLOSER } from '../calendly/closers.js';
 
 const BASE = 'https://api.hubapi.com';
 const PAK = () => process.env.HUBSPOT_PAT || '';
@@ -250,6 +253,104 @@ export async function getPipelineStages(pipelineId) {
     console.warn(`[HubSpot] getPipelineStages(${pipelineId}) falló: ${e.message}`);
     return [];
   }
+}
+
+// Etapas en las que un lead TODAVÍA se settea. El proceso de ventas (verificado contra los 3
+// pipelines reales el 2026-08-04) es:
+//   Potencial → Registrado → En gestión → Contactado → Calificado → Agendado → Atendido → …
+// El closer persigue a los de **Registrado** y **Calificado** para que agenden; en cuanto
+// agendan salen del setteo. Por eso son estas dos y no las de al lado.
+//
+// Se resuelven por LABEL y no por id: los ids son distintos en cada pipeline (hay 3) y
+// cambiarían si se recrea uno. Tolerante a acentos y mayúsculas, igual que deals.js.
+// Override por si el equipo renombra una etapa: HUBSPOT_SETTEO_STAGES=registrado,calificado
+const SETTEO_STAGE_LABELS = () =>
+  (process.env.HUBSPOT_SETTEO_STAGES || 'registrado,calificado')
+    .split(',')
+    .map((s) => sinAcentos(s))
+    .filter(Boolean);
+
+const sinAcentos = (s) =>
+  String(s || '').trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+
+// Set con los stageId de TODOS los pipelines cuyas etapas son de setteo. Vacío si falla.
+export async function setteableStageIds() {
+  try {
+    const map = await loadPipelines();
+    const quiero = new Set(SETTEO_STAGE_LABELS());
+    const ids = new Set();
+    for (const stages of Object.values(map))
+      for (const s of stages) if (quiero.has(sinAcentos(s.label))) ids.add(String(s.stageId));
+    return ids;
+  } catch (e) {
+    console.warn(`[HubSpot] setteableStageIds falló: ${e.message}`);
+    return new Set();
+  }
+}
+
+// Deals de VARIOS contactos en 2 llamadas (asociaciones en batch + lectura en batch), sin
+// importar cuántos contactos sean. La alternativa —una vuelta por candidato— eran hasta 14
+// llamadas para UN lead ambiguo, y la API ya tira 429 con facilidad.
+// Devuelve Map(contactId → [{ dealstage, ownerId }]). Map vacío ante cualquier fallo.
+export async function dealsOfContacts(contactIds = []) {
+  const out = new Map();
+  const ids = [...new Set(contactIds.map(String).filter(Boolean))].slice(0, 20);
+  if (!isEnabled() || !ids.length) return out;
+  try {
+    const assoc = await request('/crm/v4/associations/contacts/deals/batch/read', {
+      method: 'POST',
+      body: { inputs: ids.map((id) => ({ id })) },
+    });
+    const porContacto = new Map();
+    const todos = new Set();
+    for (const r of assoc.results || []) {
+      const dealIds = (r.to || []).map((t) => String(t.toObjectId || t.id)).filter(Boolean);
+      porContacto.set(String(r.from?.id), dealIds);
+      for (const d of dealIds) todos.add(d);
+    }
+    if (!todos.size) return out;
+
+    const batch = await request('/crm/v3/objects/deals/batch/read', {
+      method: 'POST',
+      body: {
+        properties: ['dealstage', 'hubspot_owner_id'],
+        inputs: [...todos].slice(0, 100).map((id) => ({ id })),
+      },
+    });
+    const props = new Map((batch.results || []).map((d) => [String(d.id), d.properties || {}]));
+    for (const [cid, dealIds] of porContacto) {
+      out.set(
+        cid,
+        dealIds
+          .map((id) => props.get(id))
+          .filter(Boolean)
+          .map((p) => ({
+            dealstage: p.dealstage ? String(p.dealstage) : null,
+            ownerId: p.hubspot_owner_id ? String(p.hubspot_owner_id) : null,
+          }))
+      );
+    }
+  } catch (e) {
+    console.warn(`[HubSpot] dealsOfContacts falló: ${e.message}`);
+  }
+  return out;
+}
+
+// ownerId de HubSpot de un closer, a partir de su email CANÓNICO (el de Calendly). Pasa por
+// HUBSPOT_OWNER_TO_CLOSER porque no siempre son el mismo correo: Pablo Suarez es owner con
+// `pablosuarez+hubspot@` y hostea con `pablosuarez@` (§18.AN). null si no se resuelve.
+export async function ownerIdForCloser(email) {
+  const e = String(email || '').toLowerCase().trim();
+  if (!e || !isEnabled()) return null;
+  try {
+    const map = await getOwnerEmailMap(); // ownerId → email del owner
+    for (const [ownerId, ownerEmail] of Object.entries(map)) {
+      if (ownerEmail === e || HUBSPOT_OWNER_TO_CLOSER[ownerEmail] === e) return String(ownerId);
+    }
+  } catch (e2) {
+    console.warn(`[HubSpot] ownerIdForCloser(${e}) falló: ${e2.message}`);
+  }
+  return null;
 }
 
 // Deals asociados a un contacto, con las props que necesita el matcher. [] si falla.

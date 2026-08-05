@@ -19,7 +19,15 @@ import { parseSetteoReply, localDateISO } from './parse.js';
 import { parseSetteoWithAi } from './setteo-ai.js';
 import { isCloserInScope, buildConfirmacion, buildPedirNombres } from './format.js';
 import { upsertSetteo, markIfNew } from '../db/index.js';
-import { isEnabled as hubspotEnabled, searchContactsByName, contactHasScheduledDeal } from '../hubspot/client.js';
+import {
+  isEnabled as hubspotEnabled,
+  searchContactsByName,
+  contactHasScheduledDeal,
+  setteableStageIds,
+  dealsOfContacts,
+  ownerIdForCloser,
+} from '../hubspot/client.js';
+import { elegirContacto } from './desambiguar.js';
 import { sendMessage } from '../whatsapp/index.js';
 
 const ENABLED = () => process.env.SETTEO_CAPTURE_ENABLED === 'true';
@@ -33,19 +41,34 @@ export function isSetteoCaptureOn() {
 // Cruce con HubSpot de UN lead. Nunca lanza: si el CRM está apagado o falla, se guarda igual
 // con match 'skipped' — perder el setteo por un problema del CRM sería el peor resultado.
 // Devuelve { hubspotMatch, hubspotContactId, esCall }.
-async function cruzarConHubspot(leadName) {
+async function cruzarConHubspot(leadName, closerEmail = null) {
   if (!hubspotEnabled()) return { hubspotMatch: 'skipped', hubspotContactId: null, esCall: 0 };
   try {
     const candidatos = await searchContactsByName(leadName);
     if (!candidatos.length) return { hubspotMatch: 'none', hubspotContactId: null, esCall: 0 };
+
+    // Homónimos: NO se elige uno al azar, pero tampoco nos rendimos. Medido sobre 30 leads
+    // reales de Registrado/Calificado, rendirse costaba el 63% de los cruces — y una señal
+    // que falla 6 de cada 10 veces se deja de mirar. Se desambigua por el PROCESO (quién de
+    // los homónimos tiene un deal en etapa de setteo) y, si hace falta, por el owner.
+    // Todo el peso lo lleva `elegirContacto`, que es puro. Ver src/setteo/desambiguar.js.
+    let elegido = { id: String(candidatos[0].id), via: 'unico' };
     if (candidatos.length > 1) {
-      // Homónimos: NO se elige uno al azar. Se guarda como ambiguo y se muestra — descartar
-      // en silencio es el error que este repo ya evita en `sinMapear` (hubspot/setteo.js).
-      return { hubspotMatch: 'ambiguous', hubspotContactId: null, esCall: 0 };
+      const [etapasSetteables, dealsPorContacto, ownerId] = await Promise.all([
+        setteableStageIds(),
+        dealsOfContacts(candidatos.map((c) => c.id)),
+        ownerIdForCloser(closerEmail),
+      ]);
+      elegido = elegirContacto({ candidatos, dealsPorContacto, etapasSetteables, ownerId });
+      if (!elegido) {
+        console.log(`[Setteo] "${leadName}": ${candidatos.length} homónimos y ninguno desambiguable → ambiguo`);
+        return { hubspotMatch: 'ambiguous', hubspotContactId: null, esCall: 0 };
+      }
+      console.log(`[Setteo] "${leadName}": ${candidatos.length} homónimos → resuelto por ${elegido.via}`);
     }
-    const id = candidatos[0].id;
-    const esCall = (await contactHasScheduledDeal(id)) ? 1 : 0;
-    return { hubspotMatch: 'exact', hubspotContactId: String(id), esCall };
+
+    const esCall = (await contactHasScheduledDeal(elegido.id)) ? 1 : 0;
+    return { hubspotMatch: 'exact', hubspotContactId: String(elegido.id), esCall };
   } catch (e) {
     console.warn(`[Setteo] cruce con HubSpot de "${leadName}" falló: ${e.message}`);
     return { hubspotMatch: 'skipped', hubspotContactId: null, esCall: 0 };
@@ -59,7 +82,9 @@ export async function guardarSetteos({ closer, fecha, items, rawReply = null, so
   const res = { guardados: 0, calls: 0, ambiguos: 0, sinMatch: 0, nombres: [] };
 
   for (const it of items) {
-    const cruce = await cruzarConHubspot(it.leadName);
+    // El email del closer va al cruce: es el desempate final entre homónimos (el deal en
+    // etapa de setteo que además es SUYO). Sale del JID, nunca del texto del mensaje.
+    const cruce = await cruzarConHubspot(it.leadName, closer.email);
     upsertSetteo({
       closerEmail: closer.email,
       closerPhone: closer.phone,
