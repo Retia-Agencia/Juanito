@@ -13,6 +13,7 @@
 
 import { getOwnerEmailMap, searchTouchedContacts, contactHasScheduledDeal } from '../hubspot/client.js';
 import { aggregateSetteos, formatSetteoBlock } from '../hubspot/setteo.js';
+import { HUBSPOT_OWNER_TO_CLOSER } from '../calendly/closers.js';
 import { dayRangeUtc } from '../calendly/index.js';
 import { localDateISO, shiftDateISO } from '../setteo/parse.js';
 
@@ -45,8 +46,17 @@ async function fetchSetteoAgg(emails, { now = new Date(), daysBack = 0 } = {}) {
   if (!Object.keys(ownerEmailMap).length) return null;
 
   // email → ownerId (invertir el mapa) y quedarnos con los owners pedidos.
+  // Se indexa por las DOS formas del correo: la del owner en HubSpot y la CANÓNICA de Calendly,
+  // que no siempre coinciden (Pablo Suarez: owner `pablosuarez+hubspot@`, host `pablosuarez@`,
+  // §18.AN). Sin la segunda, pedir su conteo por el email del roster no resolvía ningún owner y
+  // `countSetteosDeCloser` devolvía null → en `/missetteos` le salía "— no pude consultarlo"
+  // SIEMPRE. Medido el 2026-08-04 sobre los 6 closers: era el único de los 6 que fallaba.
   const emailToOwner = {};
-  for (const [ownerId, email] of Object.entries(ownerEmailMap)) emailToOwner[email] = ownerId;
+  for (const [ownerId, email] of Object.entries(ownerEmailMap)) {
+    emailToOwner[email] = ownerId;
+    const canonico = HUBSPOT_OWNER_TO_CLOSER[email];
+    if (canonico) emailToOwner[canonico] = ownerId;
+  }
   const ownerIds = emails.map((e) => emailToOwner[e]).filter(Boolean);
   if (!ownerIds.length) return null;
 

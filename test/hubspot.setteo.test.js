@@ -13,6 +13,22 @@ const OWNERS = {
   4: 'maximo@30x.com', // no está en el roster → sin mapear
 };
 
+test('aggregate: un owner con ALIAS de HubSpot cuenta para su closer, no para "sin mapear"', () => {
+  // Pablo Suarez es owner con `pablosuarez+hubspot@` y hostea con `pablosuarez@` (§18.AN). Sin
+  // canonicalizar, resolveCloser no lo encuentra y TODOS sus setteos caían en `sinMapear` — en
+  // silencio, porque ese bucket se lee como "owners de fuera del roster". Estuvo así desde que
+  // existe el conteo (§18.AI); se detectó el 2026-08-04 midiendo los 6 closers antes del piloto.
+  const { porCloser, sinMapear } = aggregateSetteos(
+    [
+      { ownerId: '5', esCall: false },
+      { ownerId: '5', esCall: false },
+    ],
+    { 5: 'pablosuarez+hubspot@30x.com' }
+  );
+  assert.equal(sinMapear, 0, 'no puede quedar sin mapear: es un closer del roster');
+  assert.deepEqual(porCloser, [{ name: 'Pablo Suarez', setteos: 2 }]);
+});
+
 test('aggregate: cuenta 1 por contacto tocado sin cita, por closer', () => {
   const contacts = [
     { ownerId: '1', esCall: false },

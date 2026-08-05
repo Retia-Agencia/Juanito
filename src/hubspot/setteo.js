@@ -17,7 +17,7 @@
 // bucket `sinMapear` (visible, nunca descartado en silencio — mismo criterio que "closers sin
 // mapear" en commands.js).
 
-import { resolveCloser, isIgnoredCloser } from '../calendly/closers.js';
+import { resolveCloser, isIgnoredCloser, HUBSPOT_OWNER_TO_CLOSER } from '../calendly/closers.js';
 
 // Consolida los contactos tocados (ya anotados por la capa impura con su `esCall`) en el conteo
 // por closer. `contacts` = [{ ownerId, esCall }]. `ownerEmailMap` = { ownerId → email }.
@@ -36,7 +36,13 @@ export function aggregateSetteos(contacts = [], ownerEmailMap = {}) {
       calls++;
       continue;
     }
-    const email = ownerEmailMap[String(c.ownerId)] || null;
+    // El email con el que alguien es OWNER en HubSpot no siempre es con el que hostea en
+    // Calendly: Pablo Suarez es owner con `pablosuarez+hubspot@` y hostea con `pablosuarez@`
+    // (§18.AN). Sin canonicalizar, `resolveCloser` no lo encuentra y TODOS sus setteos caen en
+    // `sinMapear` — silenciosamente, porque ese bucket se lee como "owners de fuera del roster".
+    // Detectado el 2026-08-04 al medir la cifra de los 6 closers antes de abrir el piloto.
+    const emailOwner = ownerEmailMap[String(c.ownerId)] || null;
+    const email = emailOwner ? HUBSPOT_OWNER_TO_CLOSER[emailOwner] || emailOwner : null;
     if (email && isIgnoredCloser(email)) {
       ignorados++;
       continue;
