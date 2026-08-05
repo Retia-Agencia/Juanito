@@ -110,7 +110,16 @@ jobs:
               echo "── arranque del bot (debe ser viejo si alcance=dash) ──"
               docker inspect juanito-agent --format "{{.State.StartedAt}}"
               echo "── salud del dashboard ──"
-              curl -fsS http://127.0.0.1:8080/api/meta
+              # Con reintentos: el contenedor acaba de recrearse y tarda un par de segundos en
+              # escuchar. Sin esto el paso falla por una carrera y el deploy sale ROJO estando
+              # bien (pasó el 2026-08-05 con alcance=todo, donde el rebuild alarga el arranque).
+              # Un rojo que no significa nada es peor que no verificar: enseña a ignorarlo.
+              ok=0
+              for i in 1 2 3 4 5 6 7 8 9 10; do
+                if curl -fsS -m 5 http://127.0.0.1:8080/api/meta; then ok=1; break; fi
+                sleep 3
+              done
+              if [ "$ok" != 1 ]; then echo "el dashboard no respondió en ~30s"; exit 1; fi
               echo
               echo "── logs del dash ──"
               docker logs --tail 15 juanito-dash 2>&1
