@@ -189,6 +189,42 @@ export const PEOPLE = {
   },
 };
 
+// ─── Identidad de PRUEBA, gateada por entorno (§18.BB) ───────────────────────────────────────
+// El setteo del closer (§18.AZ) no se puede probar de punta a punta sin que una PERSONA REAL le
+// escriba a Juanito: el rol sale del JID de quien manda el mensaje, y `src/index.js` no es
+// testeable (importarlo conecta Baileys). Esto habilita una identidad desechable para ese smoke,
+// sin exponerle nada a un closer de verdad.
+//
+// **Apagada salvo que `TEST_CLOSER_ENABLED=true`.** El gate es la feature, no un detalle: sin él
+// esto sería una entrada suelta que alguien tiene que acordarse de borrar, y quitarla costaría
+// otro deploy con su reconexión de WhatsApp. Así, terminar la prueba es apagar un flag.
+//
+// ⚠️ Un closer de mentira NO ejercita la mitad de la feature. Su email no es owner de nada en
+// HubSpot, así que la cifra "registrado en HubSpot" sale 0 y TODOS los leads salen con el ⚠️ de
+// brecha; y como no tiene calls, la cuota se calcula sobre la jornada entera y sale altísima. Eso
+// es esperado, no un bug: lo que este smoke prueba es el ROUTER (que el mensaje del closer llegue
+// a su contexto agéntico, el bug que estaba vivo en producción), el parser y los comandos.
+//
+// ⚠️ El LID va declarado como `workLid` a propósito: en WhatsApp multi-device el mensaje llega
+// como `<lid>@lid` opaco, así que sin él el reconocimiento colgaría del pushName del teléfono —
+// que es justo la vía que falla EN SILENCIO. Capturado de la sesión de Baileys (2026-08-04).
+//
+// ⚠️ Y no alcanza con esto: mientras su LID esté en `ADMIN_LID`, `roleOf()` lo resuelve como
+// admin ANTES de llegar a la rama de closer. Hay que sacarlo del `.env` durante la prueba.
+if (process.env.TEST_CLOSER_ENABLED === 'true') {
+  PEOPLE.prueba_setteo = {
+    name: 'Prueba Setteo',
+    identities: [
+      {
+        connection: '30x',
+        email: 'prueba.setteo@30x.com', // no existe en Calendly ni en HubSpot: nunca recibe pushes
+        phone: '+573052933190',
+        workLid: '65756133896221',
+      },
+    ],
+  };
+}
+
 // ─── Derivación: mapa email → { name, phone, account? } (una entrada por IDENTIDAD) ──────────
 // account se emite SOLO cuando la connection no es la default → el CLOSERS resultante es idéntico
 // al roster histórico (las identidades 30x sin campo `account`, las de retia con account:'retia').

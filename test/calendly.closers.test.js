@@ -75,6 +75,17 @@ test('INVARIANTE: un teléfono = una PERSONA (nunca dos personas distintas)', ()
   }
 });
 
+test('INVARIANTE: la identidad de PRUEBA no existe si nadie prendió el gate', () => {
+  // §18.BB — `TEST_CLOSER_ENABLED` mete un closer desechable al roster para poder hacer el smoke
+  // del setteo. Esta es la red que impide que se quede: si algún día alguien borra el `if` y deja
+  // la entrada suelta, o la sube con el gate invertido, la suite entera lo dice acá.
+  // El comportamiento CON el gate prendido se prueba en calendly.closer-de-prueba.test.js, que
+  // corre en su propio proceso.
+  assert.equal(process.env.TEST_CLOSER_ENABLED, undefined, 'la suite no debería correr con el gate puesto');
+  assert.ok(!CLOSERS['prueba.setteo@30x.com'], 'el closer de prueba se coló al roster real');
+  assert.ok(!CLOSER_LIDS['65756133896221'], 'el LID de prueba se coló a CLOSER_LIDS');
+});
+
 test('ningún closer está a la vez en CLOSERS y en IGNORED_CLOSERS', () => {
   // Estar en ambos es contradictorio: uno dice "gestionar", el otro "ignorar en silencio".
   for (const email of Object.keys(CLOSERS)) {

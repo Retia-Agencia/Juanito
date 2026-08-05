@@ -197,6 +197,11 @@ services:
       - SETTEO_AI_FALLBACK=${SETTEO_AI_FALLBACK:-true}
       - SETTEO_AI_MODEL=${SETTEO_AI_MODEL:-claude-haiku-4-5-20251001}
       - SETTEO_AI_TIMEOUT_MS=${SETTEO_AI_TIMEOUT_MS:-8000}
+      # Identidad de PRUEBA para el smoke del setteo (§18.BB). Agrega un closer desechable al
+      # roster — el smoke necesita que una persona real escriba, y el rol sale del JID. Apagada
+      # por default; terminar la prueba es volver a false, sin deploy. Ver src/calendly/closers.js.
+      # ⚠️ No basta con prenderla: su LID tiene que salir de ADMIN_LID o roleOf() la ve admin.
+      - TEST_CLOSER_ENABLED=${TEST_CLOSER_ENABLED:-false}
       - SETTEO_CUOTA_POR_HORA=${SETTEO_CUOTA_POR_HORA:-15}
       - SETTEO_JORNADA_INICIO=${SETTEO_JORNADA_INICIO:-8}
       - SETTEO_JORNADA_FIN=${SETTEO_JORNADA_FIN:-17}
@@ -255,6 +260,10 @@ services:
       # PAT de GitHub con `actions:write` para el botón Deploy. Sin él la ruta no existe
       # y la UI no lo dibuja. El repo y la rama tienen default correcto en deploy.js.
       - DASH_GITHUB_TOKEN=${DASH_GITHUB_TOKEN:-}
+      # Mismo gate que el bot (§18.BB). Va acá para que el tab de registries muestre el MISMO
+      # roster que ejecuta el bot: un dashboard que contradice al proceso que audita es peor
+      # que no tenerlo — es la clase de dato falso que este panel existe para eliminar.
+      - TEST_CLOSER_ENABLED=${TEST_CLOSER_ENABLED:-false}
     ports:
       # NUNCA 0.0.0.0, y ni siquiera la interfaz del tailnet: el puerto escucha SOLO en
       # loopback. Quien lo publica es `tailscale serve`, que proxea
