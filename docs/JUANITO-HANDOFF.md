@@ -5,29 +5,25 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-08-05** (§18.BA: copia del push a un segundo aparato; **deploy de
-§18.AZ + §18.BA PENDIENTE**)
+Última actualización: **2026-08-05** (§18.AZ + §18.BA **DESPLEGADOS**; el piloto de setteo sigue
+apagado a propósito)
 
 ---
 
 ## 0. TL;DR — estado al 2026-06-12 (leer primero)
 
-> ## 🔴🔴 PENDIENTE ABIERTO: **DEPLOY de §18.AZ + §18.BA** 🔴🔴
-> La rama **`feat/setteo-closer`** está pusheada, mergeada con `main` y verde (961 tests, 958
-> verdes), pero **NO desplegada**. Lo que corre hoy en el VPS es la versión del 2026-08-04 15:52
-> UTC, que tiene **tres cosas ya resueltas en la rama pero pendientes en producción**:
-> 1. **El contexto agéntico del closer no corre** — el opt-in se traga todos sus mensajes. Con la
->    feature prendida, un closer que escriba *"¿cómo voy?"* **no recibe respuesta**.
-> 2. **El `docker-compose.yml` de producción no tiene el servicio `dash`** — el deploy manual lo
->    pisó con la versión de una rama atrasada. `juanito-dash` sigue vivo pero **huérfano**: un
->    `down`, un `up -d --remove-orphans` o el rollback de §18.AZ lo matan sin forma de recrearlo.
-> 3. **Marín sigue recibiendo en una sola línea** (§18.BA). Pidió las dos; el `extraJids` está en
->    la rama. No hay nada que prender en el `.env`: viaja en el código.
+> ## 🟠🟠 EL SETTEO DEL CLOSER ESTÁ DESPLEGADO Y **APAGADO** 🟠🟠
+> Deploy hecho el **2026-08-05 00:33 UTC** (`main` = `6e39c7d`, workflow `alcance: todo`). Se
+> cerraron los tres pendientes que arrastraba el TL;DR: el contexto agéntico del closer ya corre,
+> el compose volvió a tener **`agent` y `dash`**, y Marín recibe en sus dos líneas (§18.BA).
 >
-> **No prender `SETTEO_CAPTURE_ENABLED` antes de re-desplegar.** El orden está en §18.AZ-deploy
-> → *Lo que falta*, paso 0. Y mientras esto no esté en `main`, el workflow `deploy.yml` **revierte
-> el setteo sin avisar**: `alcance: dash` se lleva las vars `SETTEO_*`, `alcance: todo` borra
-> `src/setteo/`. En los dos casos el bot arranca igual y nadie lo nota.
+> **Lo que sigue apagado, a propósito:** `SETTEO_CAPTURE_ENABLED=false`. Para prenderlo hace falta
+> ANTES el smoke con una sola identidad (§18.AZ-deploy → *Lo que falta*), y **nunca sin
+> `SETTEO_CAPTURE_CLOSERS` explícito**: hoy está vacío en el VPS, y vacío **hereda
+> `CALENDLY_PUSH4_CLOSERS` = 6 closers**, no los 2 del piloto acordado.
+>
+> Ya no hay riesgo de que el workflow revierta nada: la rama está **en `main`**, así que cualquier
+> `deploy.yml` futuro despliega el setteo en vez de borrarlo.
 
 > ## 🟠🟠 RECORDATORIO GRANDE: `CLAUDE_THINKING` ESTÁ **OFF** 🟠🟠
 > El código de **extended/adaptive thinking** está desplegado en el VPS (LIVE 2026-06-26) pero
@@ -4557,13 +4553,9 @@ scope hereda `CALENDLY_PUSH4_CLOSERS` = **6 closers**, no los 2 del piloto acord
 fijarlo abre la feature a seis personas de golpe.
 
 **Lo que falta, en orden:**
-0. **Re-desplegar la rama** (`alcance: todo`, o `sh scripts/deploy-setteo.sh` en el VPS). Sin esto
-   el piloto se prende sobre la versión con el contexto agéntico muerto y sin la lista de leads.
-   El compose que suba tiene que ser el de la rama **ya mergeada con `main`**, o se vuelve a caer
-   el servicio `dash`. Verificar después: `docker compose config --services` → `agent` y `dash`.
-   El mismo deploy lleva **§18.BA** (la copia a la segunda línea de Marín): verificarlo en el
-   primer push suyo que salga — el log debe traer `enviado` y, seguido, `copia … [aparato
-   secundario]`. Si el primero aparece solo, el `extraJids` no viajó.
+0. ~~**Re-desplegar la rama.**~~ ✅ **HECHO el 2026-08-05 00:33 UTC** — ver *El deploy* al final
+   de §18.BA. Se mergeó `feat/setteo-closer` a `main` (fast-forward) y se corrió `deploy.yml` con
+   `alcance: todo`, que sube el compose del repo → el servicio `dash` volvió al compose.
 1. **Smoke acotado** — prender para UNA identidad primero y ver los mensajes reales
    (`/nuevosetteo`, `/missetteos`, y una pregunta suelta tipo *"¿cómo voy?"* que es justo lo que
    antes no contestaba) antes de que los vea un closer.
@@ -4650,8 +4642,37 @@ forma de JID y sin repetir, y todo extra queda reconocido en `CLOSER_LIDS`.
 - **Volumen:** duplica los mensajes que recibe Marín. Van por la cola anti-ban como todo lo
   demás, y son pocos por día, pero es una cifra a mirar si esto se extiende a más closers.
 
-**Estado:** en la rama `feat/setteo-closer`, **sin desplegar** — sale junto con el deploy pendiente
-de §18.AZ. Suite: **961 tests, 958 verdes** (los 3 rojos conocidos).
+Suite: **961 tests, 958 verdes** (los 3 rojos conocidos).
+
+#### El deploy (2026-08-05 00:33 UTC) — el mismo que saldó §18.AZ
+
+`feat/setteo-closer` → `main` **fast-forward** (9 commits, `main` no tenía nada propio) y
+`deploy.yml` con **`alcance: todo`** desde `main` = `6e39c7d`. **Ventana:** el primer push
+pendiente era 12h después (13:05 UTC) — el hueco nocturno de §18.AZ, cero riesgo de perder un
+precall. Respaldos previos: `juanito-backup-20260805-003301-pre18BA.tar.gz`,
+`brain-backup-20260805-003301-pre18BA.sqlite`, imagen `juanito-agent:pre-18BA-20260805-003301`.
+
+**Verificado, ejercitando el código real dentro del contenedor** (no solo "el bot levantó"):
+
+- `docker compose config --services` → **`agent` y `dash`** — el hueco de §18.AZ cerrado.
+- WA reconectó **sin QR** en ~1s (`opened connection to WA` + `[WhatsApp] Conectado ✅`), todos los
+  jobs activos.
+- `extraJidsForCloser('sebastian.marin@30x.com')` → `["248489795702847@lid"]`, y para Lozano `[]`
+  (el resto del roster sin cambios). `workLidForCloser` → `47657695375437@lid`, **el primario, no
+  el extra**. `resolveCloserByLid` de las dos líneas → Marín, y `roleOf` del LID viejo → `closer`.
+- **`scripts/calendly-optins.js` → exit 0, sin desajustes.** Marín pasó de *SIN VERIFICAR* a
+  **hilo fijado y verificado**; quedan 3 identidades opacas (Salazar ×2 y Machado), como antes.
+- Selftest de lectura del dashboard: **OK**, `/api/meta` sirviendo el sha nuevo.
+
+**⚠️ El workflow salió ROJO estando todo bien:** el `curl` de verificación corrió antes de que el
+`dash` recién recreado escuchara. Con `alcance: todo` el rebuild alarga el arranque y la carrera se
+vuelve probable. Arreglado en `d3a6b74` (10 intentos cada 3s). **Un rojo que no significa nada es
+peor que no verificar** — ese paso existe para atrapar el caso en que el dash NO vuelve, y se
+estaba entrenando a ignorarlo.
+
+**Lo único que falta de §18.BA:** ver el primer push real de Marín. El log debe traer `enviado
+(push3) → 47657695375437@lid` y, seguido, `copia (push3) → 248489795702847@lid [aparato
+secundario]`. Si sale solo el primero, la copia no está saliendo.
 
 ---
 
