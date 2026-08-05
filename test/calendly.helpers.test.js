@@ -150,7 +150,7 @@ test('workLidForCloser: closer sin LID mapeado / vacío → null', () => {
 });
 
 // Marín cerró su rotación de línea (2026-07-30 → contact_jid 47657695375437@lid, verificado en
-// producción) y desde el 2026-08-05 recibe COPIA en su línea vieja. Las dos mitades del contrato:
+// producción) y desde el 2026-08-04 recibe COPIA en su línea vieja. Las dos mitades del contrato:
 test('workLidForCloser devuelve el LID de TRABAJO, nunca el del aparato secundario', () => {
   // Si devolviera el extra, el opt-in pinnearía la entrega primaria al aparato viejo
   // (`contactJid = workJid || from`) y la "copia" se habría convertido en el destino.

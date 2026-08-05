@@ -58,7 +58,7 @@ import { DEFAULT_ACCOUNT, accountOf } from './accounts.js';
 // Push 4) quedan SIN declarar a propósito, hasta capturar su LID de un mensaje nuevo. El test de
 // invariante en calendly.closers.test.js vigila que lo declarado coincida con el opt-in real.
 //
-// ⚠️ Sobre `extraJids` (2026-08-05): lista de aparatos SECUNDARIOS que reciben COPIA de todo lo
+// ⚠️ Sobre `extraJids` (2026-08-04): lista de aparatos SECUNDARIOS que reciben COPIA de todo lo
 // que se le entrega a esa identidad. Es lo contrario de `workLid`, que ELIGE un destino: acá se
 // AGREGA uno. Misma exigencia de prueba de vida, y una más: el gate anti-ban de deliver() no lo
 // cubre. Ver CLOSER_EXTRA_JIDS abajo.
@@ -134,12 +134,12 @@ export const PEOPLE = {
   // Pablo Suarez (§18.AJ), con los pushes yéndose al teléfono viejo y el log en verde.
   //
   // La rotación SE COMPLETÓ: escribió desde la línea nueva y su opt-in quedó en
-  // 47657695375437@lid (verificado en la DB de producción el 2026-08-05, sesión de Baileys viva).
+  // 47657695375437@lid (verificado en la DB de producción el 2026-08-04, sesión de Baileys viva).
   // Por eso ahora SÍ lleva `workLid`: sin él, `contactJid = workJid || from` (optin.js) haría
   // driftear la entrega al aparato desde el que escriba, y con dos líneas activas (ver abajo)
   // eso es cuestión de horas.
   //
-  // ⚠️ DOS APARATOS por pedido suyo (2026-08-05, vía el jefe): quiere los pushes en la línea
+  // ⚠️ DOS APARATOS por pedido suyo (2026-08-04, vía el jefe): quiere los pushes en la línea
   // nueva Y en la vieja (+573212100048 = 248489795702847@lid, la misma que se había desconectado
   // en la rotación). `extraJids` NO mueve el destino primario: es una COPIA. El primario sigue
   // siendo el `contact_jid` del opt-in, con todos sus gates; el secundario es una entrega extra

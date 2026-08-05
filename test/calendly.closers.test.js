@@ -121,7 +121,7 @@ test('INVARIANTE: ningún workLid se declara dos veces', () => {
   }
 });
 
-// ─── extraJids: la COPIA a un segundo aparato (2026-08-05) ────────────────────
+// ─── extraJids: la COPIA a un segundo aparato (2026-08-04) ────────────────────
 // Es la única declaración del roster que saltea el gate anti-ban de deliver() (el primario se
 // valida contra el `contact_jid` real del opt-in; el secundario, contra el criterio de quien
 // edita el archivo). Por eso las invariantes de acá son más estrictas que las de workLid.
@@ -216,7 +216,7 @@ test('resolveCloserByPushName: nombre completo resuelve a la persona correcta (o
 // EN SILENCIO: el closer escribe, no se registra, y Juanito tampoco le contesta nada.
 //
 // Marín dependió enteramente de esto entre el 2026-07-30 (rotación de línea, sin `workLid`) y el
-// 2026-08-05, cuando se le declararon sus dos LIDs. Se mantiene fijado: el pushName sigue siendo
+// 2026-08-04, cuando se le declararon sus dos LIDs. Se mantiene fijado: el pushName sigue siendo
 // la red si algún día cambia de aparato otra vez.
 test('resolveCloserByPushName tolera nombres extra y sufijos (pushNames reales)', () => {
   for (const nombre of ['Juan Sebastian Marin - 30X', 'Juan Sebastian Marín - 30X']) {

@@ -144,7 +144,7 @@ loop rápido de reconexiones desde datacenter → WhatsApp lo detectó.
   ```
   (En Git Bash, prefijar con `MSYS_NO_PATHCONV=1` y usar rutas `C:/…` o el volumen no monta y
   la suite reporta **0 tests** en verde, que es peor que fallar.)
-  Baseline al 2026-08-05: **961 tests, 958 verdes, 3 rojos conocidos** (links de Retia + los dos
+  Baseline al 2026-08-04: **961 tests, 958 verdes, 3 rojos conocidos** (links de Retia + los dos
   de agenda superseded; los números de test se corren al agregar archivos, así que se buscan por
   nombre, no por índice). Por eso la lógica pura vive en módulos propios sin deps nativas: es la
   parte que sí se puede iterar en Windows.

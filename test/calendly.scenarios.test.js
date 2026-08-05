@@ -214,7 +214,7 @@ test('entrega estricta: opt-in sin contact_jid (sembrado/grandfathered) → NO e
   assert.equal(h.store._rows[0].status, 'scheduled', 'no se entrega, pero queda reintentable por si abre el hilo');
 });
 
-// ─── Aparato secundario: la COPIA del push (extraJids, 2026-08-05) ────────────
+// ─── Aparato secundario: la COPIA del push (extraJids, 2026-08-04) ────────────
 // Marín pidió recibir en sus DOS líneas. El roster declara `extraJids` en su identidad y
 // deliver() copia ahí después del primario. Lo que se fija acá es que la copia sea EXTRA y
 // SUBORDINADA: nunca reemplaza al destino real ni se salta un gate.

@@ -5,7 +5,7 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-08-05** (§18.AZ + §18.BA **DESPLEGADOS**; el piloto de setteo sigue
+Última actualización: **2026-08-04** (§18.AZ + §18.BA **DESPLEGADOS**; el piloto de setteo sigue
 apagado a propósito)
 
 ---
@@ -13,7 +13,8 @@ apagado a propósito)
 ## 0. TL;DR — estado al 2026-06-12 (leer primero)
 
 > ## 🟠🟠 EL SETTEO DEL CLOSER ESTÁ DESPLEGADO Y **APAGADO** 🟠🟠
-> Deploy hecho el **2026-08-05 00:33 UTC** (`main` = `6e39c7d`, workflow `alcance: todo`). Se
+> Deploy hecho el **2026-08-05 00:33 UTC** (19:33 del 04 en Bogotá; `main` = `6e39c7d`,
+> workflow `alcance: todo`). Se
 > cerraron los tres pendientes que arrastraba el TL;DR: el contexto agéntico del closer ya corre,
 > el compose volvió a tener **`agent` y `dash`**, y Marín recibe en sus dos líneas (§18.BA).
 >
@@ -4571,7 +4572,7 @@ entrega igual. Instalarla sería tocar dependencias en producción por una minia
 
 ---
 
-### 18.BA 🔵 Un closer con DOS líneas: la copia del push a un aparato secundario (2026-08-05)
+### 18.BA 🔵 Un closer con DOS líneas: la copia del push a un aparato secundario (2026-08-04)
 
 **El pedido:** Sebastián Marín quiere sus pushes en sus **dos** WhatsApp — el registrado
 (`+573170623894`) y `+573212100048` (`248489795702847@lid`). No es un número nuevo: es **la línea
@@ -4644,7 +4645,7 @@ forma de JID y sin repetir, y todo extra queda reconocido en `CLOSER_LIDS`.
 
 Suite: **961 tests, 958 verdes** (los 3 rojos conocidos).
 
-#### El deploy (2026-08-05 00:33 UTC) — el mismo que saldó §18.AZ
+#### El deploy (2026-08-05 00:33 UTC = 19:33 del 04 en Bogotá) — el mismo que saldó §18.AZ
 
 `feat/setteo-closer` → `main` **fast-forward** (9 commits, `main` no tenía nada propio) y
 `deploy.yml` con **`alcance: todo`** desde `main` = `6e39c7d`. **Ventana:** el primer push

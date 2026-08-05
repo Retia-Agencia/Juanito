@@ -112,7 +112,7 @@ jobs:
               echo "── salud del dashboard ──"
               # Con reintentos: el contenedor acaba de recrearse y tarda un par de segundos en
               # escuchar. Sin esto el paso falla por una carrera y el deploy sale ROJO estando
-              # bien (pasó el 2026-08-05 con alcance=todo, donde el rebuild alarga el arranque).
+              # bien (pasó el 2026-08-04 con alcance=todo, donde el rebuild alarga el arranque).
               # Un rojo que no significa nada es peor que no verificar: enseña a ignorarlo.
               ok=0
               for i in 1 2 3 4 5 6 7 8 9 10; do
