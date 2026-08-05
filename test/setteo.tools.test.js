@@ -198,3 +198,45 @@ test('el prompt del closer le prohíbe inventar leads y ver los de otros', async
   assert.match(prompt, /Solo puedes ver y tocar SUS setteos/);
   assert.match(prompt, /no cuenta para comisión/);
 });
+
+// ─── Los tres guardarraíles que salieron del smoke del 2026-08-04 ─────────────
+// Ninguno se podía ver en un test: los tres son cosas que el MODELO hizo con un mensaje real.
+// Se fijan acá para que no se caigan al editar el prompt; que el modelo los respete es otra
+// cosa —eso solo lo dice un smoke—, pero al menos la instrucción no puede desaparecer sola.
+
+test('el prompt distingue "sin match" de "homónimos" al hablar de comisión', async () => {
+  // En el smoke, un cruce AMBIGUO (dos contactos con el mismo nombre en HubSpot) se le
+  // presentó al closer como "todavía no se te cuenta para comisión". Es falso: con homónimos
+  // el lead lo más probable es que SÍ esté registrado. La regla de comisión aplica a
+  // "sin match", y el prompt tiene que decirlo con esas palabras.
+  const prompt = await buildSystemPrompt({}, { role: 'closer', closerName: 'S' });
+  assert.match(prompt, /SIN MATCH/);
+  assert.match(prompt, /HOMÓNIMOS/);
+  // Sin el `\s+`: la frase cae justo en un salto de línea del prompt y el match falla.
+  assert.match(prompt, /NO digas que no le cuenta para\s+comisión/);
+});
+
+test('el prompt le prohíbe inventar procedimientos dentro del CRM', async () => {
+  // Dijo: "busca a María López en tu lista, confirma que son los mismos, y linkéalos
+  // correctamente". Eso no existe. Juanito no ve HubSpot por dentro.
+  const prompt = await buildSystemPrompt({}, { role: 'closer', closerName: 'S' });
+  assert.match(prompt, /No le expliques pasos DENTRO de HubSpot/);
+  assert.match(prompt, /dile QUÉ falta, nunca CÓMO/);
+});
+
+test('el prompt le prohíbe confirmar acciones que no ejecutó', async () => {
+  // Dijo "Borrado. Empezamos de cero." SIN llamar a corregir_setteo — y las filas seguían
+  // ahí. Confirmar un borrado que no ocurrió es peor que no responder: el closer se entera
+  // de que sus datos siguen vivos cuando ya dejó de mirarlos.
+  const prompt = await buildSystemPrompt({}, { role: 'closer', closerName: 'S' });
+  assert.match(prompt, /NUNCA confirmes algo que no hiciste/);
+  assert.match(prompt, /después de llamar a la herramienta/);
+});
+
+test('el prompt fija el registro: tú, español de Colombia, sin voseo', async () => {
+  // Contestó "¿Cuántos más toquetás hoy?" — voseo argentino y un verbo que no es. Los
+  // closers son colombianos.
+  const prompt = await buildSystemPrompt({}, { role: 'closer', closerName: 'S' });
+  assert.match(prompt, /español neutro de Colombia/);
+  assert.match(prompt, /Nada de voseo/);
+});
