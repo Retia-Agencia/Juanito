@@ -4823,6 +4823,59 @@ del smoke.
 
 ---
 
+### 18.BG 🟡 PENDIENTE — métricas por temporalidad: la ventana existe, la comparación no (2026-08-04)
+
+**Pregunta del jefe al cerrar:** *"¿tiene la opción de ver métricas por temporalidad? setteos de
+hoy, métricas de la semana, del mes."* Se auditó el código: **existe a medias, y la mitad que
+falta es la que da sentido a la otra.**
+
+#### Lo que YA funciona
+
+`/missetteos [días]` acepta una ventana de **1 a 90 días** (`commands.js`, tope con
+`Math.min(dias, 90)`), y la tool `consultar_mis_setteos` tiene el mismo parámetro — así que
+*"¿cómo me fue esta semana?"* en lenguaje natural también entra, porque el modelo lo traduce a
+`dias: 7`. En ventanas largas la lista de leads sale **con fecha por línea** (`06/08 Juan Pérez`)
+y se corta en 15 con un *"…y N más"*.
+
+#### Las tres limitaciones, en orden de importancia
+
+**1. 🔑 La brecha con HubSpot SOLO existe para hoy.** En `metricas.js`:
+
+```js
+const hubspot = dias === 1 ? await countSetteosDeCloser(...) : null;
+```
+
+Con `dias > 1` la cifra sale `—`. El motivo es real —el conteo del CRM es por día y sumarlo
+serían N llamadas a la API por comando— pero la consecuencia es que **la razón de ser de la
+feature (reportado vs. registrado) no aplica a ninguna métrica histórica**. Un closer que pregunta
+por su semana recibe lo que reportó sin nada con qué compararlo, que es justo lo que ya tenía en
+su cabeza.
+
+**2. La cuota siempre es la de HOY**, aunque se pidan 30 días. Es deliberado (es una meta diaria,
+no acumulable — ver el comentario en `buildMisSetteos`), pero en un mensaje encabezado *"últimos
+30 días"* leer *"Cuota del día 135"* se lee como un error.
+
+**3. No hay semana ni mes CALENDARIO, solo "últimos N días".** `/missetteos 7` un miércoles
+devuelve de jueves a miércoles. Para "este mes" el closer tiene que calcular los días él.
+
+#### Las tres cosas que se pueden hacer, por rendimiento
+
+1. **Semana y mes calendario** (`/missetteos semana` · `mes`) — es aritmética de fechas sobre lo
+   que ya existe, y hace que *"cómo voy esta semana"* signifique lo mismo para todos. Lo más
+   barato de los tres.
+2. **La brecha de HubSpot en ventanas largas** — es lo que le devuelve el sentido al histórico.
+   Requiere resolver las N llamadas, probablemente **cacheando el conteo diario en una tabla**
+   (un job que corra una vez al día y persista el número por closer).
+3. **Tendencia: "esta semana vs. la anterior"** — es la pregunta que un closer se hace de verdad.
+   Los datos ya están en `setteos`; es formato, no cálculo nuevo.
+
+**Decisión al cerrar (2026-08-04): NO se hace ahora.** La feature se acababa de prender para los
+6 sin avisarles, y agregar superficie antes de ver un día de uso real es construir a ciegas. **El
+primer día va a decir cuál de las tres ventanas piden de verdad** — puede que ninguna, o puede que
+solo la #3.
+
+---
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):
