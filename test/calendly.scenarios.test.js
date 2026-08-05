@@ -214,6 +214,104 @@ test('entrega estricta: opt-in sin contact_jid (sembrado/grandfathered) → NO e
   assert.equal(h.store._rows[0].status, 'scheduled', 'no se entrega, pero queda reintentable por si abre el hilo');
 });
 
+// ─── Aparato secundario: la COPIA del push (extraJids, 2026-08-05) ────────────
+// Marín pidió recibir en sus DOS líneas. El roster declara `extraJids` en su identidad y
+// deliver() copia ahí después del primario. Lo que se fija acá es que la copia sea EXTRA y
+// SUBORDINADA: nunca reemplaza al destino real ni se salta un gate.
+
+const MARIN = 'sebastian.marin@30x.com';
+const MARIN_PHONE = '+573170623894';
+const MARIN_JID = '47657695375437@lid';       // línea nueva = contact_jid del opt-in real
+const MARIN_EXTRA = '248489795702847@lid';    // línea vieja = aparato secundario
+
+test('extraJids: el push llega al hilo del opt-in Y, con el mismo texto, al aparato secundario', async () => {
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'dos', startInMin: 20, closerEmail: MARIN, nowMs: now })];
+  const h = installHarness(scheduler, {
+    events,
+    optins: [{ phone: MARIN_PHONE, contactJid: MARIN_JID }],
+    nowMs: now,
+  });
+  await scheduler.runCalendlyPoll();
+  await scheduler.runCalendlyDelivery();
+
+  assert.equal(h.wa.sent.length, 2, 'un envío por aparato');
+  assert.equal(h.wa.sent[0].to, MARIN_JID, 'el PRIMERO es el hilo del opt-in, no la copia');
+  assert.equal(h.wa.sent[1].to, MARIN_EXTRA);
+  assert.equal(h.wa.sent[1].text, h.wa.sent[0].text, 'la copia es idéntica, no un resumen');
+  assert.equal(h.store._rows[0].status, 'sent');
+});
+
+test('extraJids: la copia hereda TODOS los gates del primario (pausa por-closer → cero envíos)', async () => {
+  // El escenario que haría inútil el botón de pánico: apagar a un closer y que igual siguiera
+  // recibiendo por la puerta de atrás. La copia se calcula después de los gates, no antes.
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'gate', startInMin: 20, closerEmail: MARIN, nowMs: now })];
+  const h = installHarness(scheduler, {
+    events,
+    optins: [{ phone: MARIN_PHONE, contactJid: MARIN_JID }],
+    nowMs: now,
+  });
+  h.store.setCloserPaused(MARIN, true);
+  await scheduler.runCalendlyPoll();
+  await scheduler.runCalendlyDelivery();
+  assert.equal(h.wa.sent.length, 0, 'pausado no recibe NI la copia');
+});
+
+test('extraJids: sin hilo establecido no hay copia (la copia no es una puerta al envío en frío)', async () => {
+  // El aparato secundario está declarado en CÓDIGO, así que sería la vía perfecta para saltarse
+  // la entrega estricta. No lo es: sin contact_jid no se calcula ni se envía nada.
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'frio', startInMin: 20, closerEmail: MARIN, nowMs: now })];
+  const h = installHarness(scheduler, {
+    events,
+    optins: [{ phone: MARIN_PHONE, contactJid: null }],
+    nowMs: now,
+  });
+  await scheduler.runCalendlyPoll();
+  await scheduler.runCalendlyDelivery();
+  assert.equal(h.wa.sent.length, 0, 'sin hilo primario, tampoco copia');
+});
+
+test('extraJids: si la copia falla, el push sigue contando como ENVIADO', async () => {
+  // Un aparato viejo desvinculado no puede marcar como fallido un push que SÍ se entregó:
+  // eso lo dejaría reintentable y el closer recibiría el mismo recordatorio dos veces.
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'falla', startInMin: 20, closerEmail: MARIN, nowMs: now })];
+  const h = installHarness(scheduler, {
+    events,
+    optins: [{ phone: MARIN_PHONE, contactJid: MARIN_JID }],
+    nowMs: now,
+  });
+  const original = h.deps.sendMessage;
+  h.deps.sendMessage = async (to, text) => {
+    if (to === MARIN_EXTRA) throw new Error('aparato desvinculado');
+    return original(to, text);
+  };
+  await scheduler.runCalendlyPoll();
+  await scheduler.runCalendlyDelivery();
+
+  assert.equal(h.wa.sent.length, 1, 'el primario salió');
+  assert.equal(h.wa.sent[0].to, MARIN_JID);
+  assert.equal(h.store._rows[0].status, 'sent', 'la copia caída NO revierte el push');
+});
+
+test('extraJids: si el opt-in ya apunta al aparato secundario, no se manda dos veces', async () => {
+  // Puede pasar de verdad: le escribe desde la línea vieja y algún día el contact_jid queda ahí.
+  // Sin el dedup recibiría el mismo push duplicado en el mismo chat.
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'mismo', startInMin: 20, closerEmail: MARIN, nowMs: now })];
+  const h = installHarness(scheduler, {
+    events,
+    optins: [{ phone: MARIN_PHONE, contactJid: MARIN_EXTRA }],
+    nowMs: now,
+  });
+  await scheduler.runCalendlyPoll();
+  await scheduler.runCalendlyDelivery();
+  assert.equal(h.wa.sent.length, 1, 'un solo mensaje al mismo hilo');
+  assert.equal(h.wa.sent[0].to, MARIN_EXTRA);
+});
+
 // ─── Item 2: botón de pánico (/calendly on|off) ───────────────────────────────
 
 test('pausa global: con DRY_RUN=false y opt-in válido, pausado NO envía y el push queda re-agendable', async () => {

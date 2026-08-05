@@ -3,8 +3,9 @@
 // Conexión de Calendly (ver ADR 0001): su email de host (event_memberships[0].user_email de
 // sus citas ES el closer), su teléfono canónico y, si aplica, su LID de trabajo. De este
 // roster se DERIVAN, con estructura idéntica a la de antes:
-//   · CLOSERS      — mapa email → { name, phone, account? }  (una entrada por IDENTIDAD)
-//   · CLOSER_LIDS  — mapa lid → email                        (de las identidades con workLid)
+//   · CLOSERS          — mapa email → { name, phone, account? }  (una entrada por IDENTIDAD)
+//   · CLOSER_LIDS      — mapa lid → email                        (de workLid + extraJids)
+//   · CLOSER_EXTRA_JIDS— mapa email → [jid, …]                   (aparatos secundarios)
 // El resto del código consume esos dos mapas; la persona es solo la unidad de autoría, para que
 // sumar/mover un closer sea editar UNA entrada aunque cierre para dos empresas.
 //
@@ -54,9 +55,13 @@ import { DEFAULT_ACCOUNT, accountOf } from './accounts.js';
 // de quienes venían respondiendo los Push 4 (una respuesta demuestra que el hilo está vivo).
 // Declarar un LID equivocado CEMENTA el error, porque a partir de ahí el opt-in ignora desde
 // dónde escriba el closer. Las identidades sin prueba de vida (las 3 de Retia, que no reciben
-// Push 4, y Marín mientras rota de línea) quedan SIN declarar a propósito, hasta capturar su LID
-// de un mensaje nuevo. El test de invariante en calendly.closers.test.js vigila que lo declarado
-// coincida con el opt-in real.
+// Push 4) quedan SIN declarar a propósito, hasta capturar su LID de un mensaje nuevo. El test de
+// invariante en calendly.closers.test.js vigila que lo declarado coincida con el opt-in real.
+//
+// ⚠️ Sobre `extraJids` (2026-08-05): lista de aparatos SECUNDARIOS que reciben COPIA de todo lo
+// que se le entrega a esa identidad. Es lo contrario de `workLid`, que ELIGE un destino: acá se
+// AGREGA uno. Misma exigencia de prueba de vida, y una más: el gate anti-ban de deliver() no lo
+// cubre. Ver CLOSER_EXTRA_JIDS abajo.
 //
 // Exportado (F3a) para que el seed de registries pueda guardar la PERSONA. Los mapas derivados
 // de abajo son por IDENTIDAD y ya no saben quién es quién: dos identidades de Sebastian
@@ -128,17 +133,29 @@ export const PEOPLE = {
   // aparato ANTERIOR y se puso en NULL a propósito: conservarlo habría repetido el bug de
   // Pablo Suarez (§18.AJ), con los pushes yéndose al teléfono viejo y el log en verde.
   //
-  // Queda SIN `workLid` a propósito hasta que escriba desde la línea nueva: `handleCloserOptin`
-  // hace `contactJid = workJid || from` (src/calendly/optin.js), así que declarar acá el LID
-  // viejo devolvería la entrega al aparato anterior y anularía esta rotación. Cuando escriba y
-  // se verifique la fila, ahí sí se declara.
+  // La rotación SE COMPLETÓ: escribió desde la línea nueva y su opt-in quedó en
+  // 47657695375437@lid (verificado en la DB de producción el 2026-08-05, sesión de Baileys viva).
+  // Por eso ahora SÍ lleva `workLid`: sin él, `contactJid = workJid || from` (optin.js) haría
+  // driftear la entrega al aparato desde el que escriba, y con dos líneas activas (ver abajo)
+  // eso es cuestión de horas.
   //
-  // ⚠️ Al no tener `workLid` y ser línea nueva, su reconocimiento cuelga ENTERO de
-  // `resolveCloserByPushName`: su nombre de WhatsApp debe traer "Sebastian" Y "Marin". Si dice
-  // solo "Sebastian", falla en silencio → `scripts/calendly-optin-set.js "Sebastian Marin" "<lid>"`.
+  // ⚠️ DOS APARATOS por pedido suyo (2026-08-05, vía el jefe): quiere los pushes en la línea
+  // nueva Y en la vieja (+573212100048 = 248489795702847@lid, la misma que se había desconectado
+  // en la rotación). `extraJids` NO mueve el destino primario: es una COPIA. El primario sigue
+  // siendo el `contact_jid` del opt-in, con todos sus gates; el secundario es una entrega extra
+  // declarada a mano. Solo se declara sobre aparatos con TRÁFICO ENTRANTE PROBADO — este lo
+  // tiene de sobra (fue su opt-in hasta el 30-jul y su sesión sigue activa).
   sebastian_marin: {
     name: 'Sebastian Marin',
-    identities: [{ connection: '30x', email: 'sebastian.marin@30x.com', phone: '+573170623894' }],
+    identities: [
+      {
+        connection: '30x',
+        email: 'sebastian.marin@30x.com',
+        phone: '+573170623894',
+        workLid: '47657695375437',
+        extraJids: ['248489795702847@lid'], // línea vieja +573212100048, a pedido suyo
+      },
+    ],
   },
   lucas_mendoza: {
     name: 'Lucas Mendoza',
@@ -207,13 +224,46 @@ export const HUBSPOT_OWNER_TO_CLOSER = Object.fromEntries(
   )
 );
 
-// LIDs de TRABAJO conocidos (derivados de las identidades con `workLid`): para closers cuyo @lid
-// no mapea a su teléfono canónico y cuyo pushName no permite el match. Mapear el LID de trabajo
-// hace que el bot lo reconozca y que su contact_jid se AUTOCORRIJA al hilo correcto en vez de
-// driftear al número equivocado. Clave = solo dígitos del LID (sin @lid); valor = email del closer.
+// LIDs CONOCIDOS de cada identidad: para closers cuyo @lid no mapea a su teléfono canónico y
+// cuyo pushName no permite el match. Mapear el LID hace que el bot lo RECONOZCA (rol de closer,
+// setteo, respuestas de Push 4) y que su contact_jid se AUTOCORRIJA al hilo correcto en vez de
+// driftear al número equivocado. Clave = solo dígitos del LID (sin @lid); valor = email.
+//
+// Incluye los `extraJids` a propósito: si un closer recibe copia en un segundo aparato, lo más
+// probable es que también CONTESTE desde ahí — y sin este mapeo su respuesta llegaría como la de
+// un desconocido. Reconocer no mueve la entrega: el destino primario lo fija `workLidForCloser`,
+// que lee `workLid` y NUNCA un extra (ver abajo).
 export const CLOSER_LIDS = Object.fromEntries(
   Object.values(PEOPLE).flatMap((person) =>
-    person.identities.filter((id) => id.workLid).map((id) => [id.workLid, id.email.toLowerCase()])
+    person.identities.flatMap((id) => {
+      const email = id.email.toLowerCase();
+      const lids = id.workLid ? [id.workLid] : [];
+      for (const jid of id.extraJids || []) {
+        const lid = String(jid).split('@')[0].replace(/\D/g, '');
+        if (lid) lids.push(lid);
+      }
+      return lids.map((lid) => [lid, email]);
+    })
+  )
+);
+
+// Aparatos SECUNDARIOS a los que se copia todo lo que sale hacia una identidad (`extraJids`).
+// Mapa email → [jid, …]. Se derivan por IDENTIDAD, no por persona, y es deliberado: dos
+// identidades de la misma persona pueden ser dos líneas distintas (Sebastian Rodriguez: una en
+// 30x y otra en retia), y copiarle el push de una empresa al WhatsApp que usa para la otra sería
+// filtrar leads entre clientes. Quien quiera la copia en las dos, la declara en las dos.
+//
+// ⚠️ Esto SALTEA el gate de "hilo establecido" de deliver(), que es la defensa anti-ban: el
+// primario se valida contra `calendly_optins.contact_jid` (prueba de que ese hilo escribió), el
+// secundario se valida contra el criterio de quien edita este archivo. Declararlo solo con
+// TRÁFICO ENTRANTE PROBADO — la receta está en docs/JUANITO-HANDOFF.md (los archivos
+// `session-<lid>_*.json` / `tctoken-<lid>@lid.json` de la sesión de Baileys solo existen si hubo
+// mensajes de verdad). Un JID inventado acá es exactamente el envío en frío que causó el softban.
+export const CLOSER_EXTRA_JIDS = Object.fromEntries(
+  Object.values(PEOPLE).flatMap((person) =>
+    person.identities
+      .filter((id) => id.extraJids?.length)
+      .map((id) => [id.email.toLowerCase(), [...id.extraJids]])
   )
 );
 
@@ -304,18 +354,32 @@ export function resolveCloserByLid(jid) {
   return c ? { email, name: c.name, phone: c.phone } : null;
 }
 
-// Devuelve el JID de TRABAJO canónico (`<lid>@lid`) de un closer si está mapeado en
-// CLOSER_LIDS, o null. Sirve para PINNEAR el contact_jid de entrega al hilo de trabajo:
+// Devuelve el JID de TRABAJO canónico (`<lid>@lid`) de un closer si su identidad declara
+// `workLid`, o null. Sirve para PINNEAR el contact_jid de entrega al hilo de trabajo:
 // aunque el closer escriba desde otro dispositivo (ej: Sebas desde su WhatsApp personal,
 // cuyo pushName "Sebastian Rodriguez" SÍ matchea y haría driftear el contact_jid), la
 // entrega se mantiene en el LID de trabajo. Mata el bug recurrente de "pushes al personal".
+//
+// ⚠️ Lee `workLid` del roster, NO CLOSER_LIDS. Antes escaneaba ese mapa y devolvía el primer LID
+// que apuntara al email, lo cual dejó de ser equivalente cuando CLOSER_LIDS pasó a incluir los
+// `extraJids`: para un closer con aparato secundario podía devolver el SECUNDARIO y pinear ahí
+// la entrega primaria — justo lo contrario de lo que "extra" significa.
 export function workLidForCloser(email) {
   if (!email) return null;
   const e = String(email).toLowerCase().trim();
-  for (const [lid, mapped] of Object.entries(CLOSER_LIDS)) {
-    if (mapped === e) return `${lid}@lid`;
+  for (const person of Object.values(PEOPLE)) {
+    for (const id of person.identities) {
+      if (id.workLid && id.email.toLowerCase() === e) return `${id.workLid}@lid`;
+    }
   }
   return null;
+}
+
+// Aparatos secundarios de una identidad (copia de todo lo que se le entrega). Array, vacío por
+// defecto — que es el caso de casi todo el roster. Ver CLOSER_EXTRA_JIDS para las advertencias.
+export function extraJidsForCloser(email) {
+  if (!email) return [];
+  return CLOSER_EXTRA_JIDS[String(email).toLowerCase().trim()] || [];
 }
 
 // Resuelve un closer por su nombre de WhatsApp (pushName), fallback cuando el LID

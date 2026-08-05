@@ -50,7 +50,7 @@ import { decideNudgeAction, buildDealNudgeMessage, buildCreateDealNudgeMessage, 
 import { meetingsToCalls, hubspotMeetingIdOf } from '../hubspot/meetings.js';
 import { pickMeetingsToSchedule, callStartToIso, programLivesInThisHubspot } from '../hubspot/agenda-poll.js';
 import { pickRescheduledAway } from '../hubspot/reschedule-detect.js';
-import { resolveCloser, isIgnoredCloser, accountOfCloser, HUBSPOT_OWNER_TO_CLOSER } from '../calendly/closers.js';
+import { resolveCloser, isIgnoredCloser, accountOfCloser, extraJidsForCloser, HUBSPOT_OWNER_TO_CLOSER } from '../calendly/closers.js';
 import { accountOf, activeAccounts, DEFAULT_ACCOUNT } from '../calendly/accounts.js';
 import { SKIP_SLUGS, SKIP_ALERTABLES, ETIQUETA_SKIP } from '../calendly/skip-reasons.js';
 import {
@@ -505,13 +505,33 @@ async function deliver(d, to, text, tag, closerEmail) {
     return 'skipped-no-thread';
   }
   const via = ` [hilo de opt-in; closer ${phone}]`;
+  // 4b) Aparatos SECUNDARIOS del roster (`extraJids`): copia de lo mismo, para closers que
+  //     trabajan con dos líneas y pidieron recibir en ambas. Se calcula acá —después de todos
+  //     los gates— para que la copia herede pausa, opt-in y dry-run del primario: un `/calendly
+  //     off` que apagara el principal y siguiera copiando al secundario sería lo peor de ambos.
+  //     Se descarta el que coincida con el primario (mismo hilo, no duplicar el mensaje).
+  const extras = extraJidsForCloser(closerEmail).filter((j) => j && j !== target);
   // 5) Dry-run de la cuenta del closer (último filtro, igual que antes).
   if (dryRunForCloser(closerEmail)) {
     console.log(`[Calendly][DRY-RUN:${accountOfCloser(closerEmail)}] (${tag}) → ${target}${via}\n${text}\n`);
+    for (const extra of extras)
+      console.log(`[Calendly][DRY-RUN:${accountOfCloser(closerEmail)}] copia (${tag}) → ${extra} [aparato secundario]`);
     return 'dry-run';
   }
   await d.sendMessage(target, text);
   console.log(`[Calendly] enviado (${tag}) → ${target}${via}`);
+  // La copia es BEST-EFFORT y va después del primario a propósito: si el secundario falla
+  // (aparato desvinculado, JID muerto), el push ya se entregó donde importa y el estado sigue
+  // siendo 'sent'. Si contara para el resultado, un teléfono viejo apagado marcaría el push como
+  // fallido y dispararía reintentos de algo que SÍ llegó.
+  for (const extra of extras) {
+    try {
+      await d.sendMessage(extra, text);
+      console.log(`[Calendly] copia (${tag}) → ${extra} [aparato secundario; closer ${phone}]`);
+    } catch (e) {
+      console.error(`[Calendly] ⚠️ copia (${tag}) a ${extra} falló (el primario SÍ salió): ${e.message}`);
+    }
+  }
   return 'sent';
 }
 

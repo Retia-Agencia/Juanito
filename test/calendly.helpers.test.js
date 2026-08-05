@@ -31,7 +31,7 @@ const LINKEDIN_ET = 'https://api.calendly.com/event_types/96ddf036-9174-459c-be7
 const DEVELOPERS_ET = 'https://api.calendly.com/event_types/dff3e48a-4859-417a-98fb-822048aef5d9';
 const OPERACIONES_ET = 'https://api.calendly.com/event_types/8462e92a-8210-4bb2-8e2b-583aa3c3d877';
 const INSTAGRAM_ET = 'https://api.calendly.com/event_types/d33075cb-d349-43ef-be43-6f80f9c5da03';
-const { resolveCloser, resolveCloserByPhone, resolveCloserByLid, resolveCloserByPushName, isNonCanonicalOptinJid, isIgnoredCloser, workLidForCloser } = await import('../src/calendly/closers.js');
+const { resolveCloser, resolveCloserByPhone, resolveCloserByLid, resolveCloserByPushName, isNonCanonicalOptinJid, isIgnoredCloser, workLidForCloser, extraJidsForCloser } = await import('../src/calendly/closers.js');
 
 // Encabezado del bloque de materiales, literal. Se repite acá a propósito (no se importa): si
 // alguien cambia el copy en index.js, este test tiene que fallar y obligar a decidirlo.
@@ -142,12 +142,36 @@ test('workLidForCloser: closer mapeado en CLOSER_LIDS → devuelve su LID de tra
 });
 
 test('workLidForCloser: closer sin LID mapeado / vacío → null', () => {
-  // Marín queda SIN workLid a propósito mientras rota de línea (2026-07-30): declararlo lo
-  // pinnearía al aparato viejo, porque el opt-in hace `contactJid = workJid || from`.
-  assert.equal(workLidForCloser('sebastian.marin@30x.com'), null);
+  // Retia no declara workLid (no recibe Push 4, así que no hay entrega probada que copiar).
+  assert.equal(workLidForCloser('registro@ttrading.co'), null);
   assert.equal(workLidForCloser('desconocido@30x.com'), null);
   assert.equal(workLidForCloser(''), null);
   assert.equal(workLidForCloser(null), null);
+});
+
+// Marín cerró su rotación de línea (2026-07-30 → contact_jid 47657695375437@lid, verificado en
+// producción) y desde el 2026-08-05 recibe COPIA en su línea vieja. Las dos mitades del contrato:
+test('workLidForCloser devuelve el LID de TRABAJO, nunca el del aparato secundario', () => {
+  // Si devolviera el extra, el opt-in pinnearía la entrega primaria al aparato viejo
+  // (`contactJid = workJid || from`) y la "copia" se habría convertido en el destino.
+  assert.equal(workLidForCloser('sebastian.marin@30x.com'), '47657695375437@lid');
+});
+
+test('extraJidsForCloser: solo los aparatos secundarios declarados, y vacío para el resto', () => {
+  assert.deepEqual(extraJidsForCloser('sebastian.marin@30x.com'), ['248489795702847@lid']);
+  assert.deepEqual(extraJidsForCloser('SEBASTIAN.MARIN@30X.COM'), ['248489795702847@lid']);
+  // El caso normal del roster: sin copia. Un `[]` acá es lo que hace que deliver() no cambie
+  // de comportamiento para los otros ocho closers.
+  assert.deepEqual(extraJidsForCloser('pablo.lozano@30x.com'), []);
+  assert.deepEqual(extraJidsForCloser('desconocido@30x.com'), []);
+  assert.deepEqual(extraJidsForCloser(''), []);
+  assert.deepEqual(extraJidsForCloser(null), []);
+});
+
+test('resolveCloserByLid reconoce también el aparato SECUNDARIO', () => {
+  // Si escribe desde la línea vieja y no lo reconociéramos, sería un desconocido: sin rol de
+  // closer, sin setteo y sin poder contestar un Push 4 que él mismo acaba de recibir ahí.
+  assert.equal(resolveCloserByLid('248489795702847@lid')?.email, 'sebastian.marin@30x.com');
 });
 
 test('isNonCanonicalOptinJid: número de trabajo (coincide) → false', () => {

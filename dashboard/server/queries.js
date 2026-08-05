@@ -38,7 +38,7 @@ import db, {
 import { PROGRAMS, COMPANIES, PROGRAM_LABELS } from '../../src/calendly/programs.js';
 import { ACCOUNTS } from '../../src/calendly/accounts.js';
 import { SKIP_ALERTABLES, ETIQUETA_SKIP } from '../../src/calendly/skip-reasons.js';
-import { CLOSERS, CLOSER_LIDS, IGNORED_CLOSERS } from '../../src/calendly/closers.js';
+import { CLOSERS, IGNORED_CLOSERS, workLidForCloser, extraJidsForCloser } from '../../src/calendly/closers.js';
 
 const TZ = () => process.env.TZ || 'America/Bogota';
 const REPLY_TTL_MIN = Number(process.env.REPLY_APPROVAL_TTL_MIN || 30);
@@ -482,12 +482,16 @@ export function registries() {
       sheets: a.sheets || null,
       eventTypes: a.eventTypes,
     })),
+    // `workLid` sale de workLidForCloser y NO de un find sobre CLOSER_LIDS: desde que ese mapa
+    // incluye también los aparatos secundarios (`extraJids`), el find podía devolver el LID
+    // SECUNDARIO y este panel mostraría como "hilo de trabajo" el que no lo es.
     closers: Object.entries(CLOSERS).map(([email, c]) => ({
       email,
       name: c.name,
       phone: c.phone,
       connection: c.account || '30x',
-      workLid: Object.entries(CLOSER_LIDS).find(([, e]) => e === email)?.[0] || null,
+      workLid: workLidForCloser(email)?.split('@')[0] || null,
+      extraJids: extraJidsForCloser(email),
     })),
     // Los emails que el poll salta EN SILENCIO. Vivían enterrados en un archivo fuente;
     // acá quedan a la vista para auditarlos. Un host retirado y uno que factura calls

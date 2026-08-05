@@ -59,7 +59,7 @@ crash domain, no por recursos. Para alertar por WhatsApp **no tiene socket**: in
 | `src/common/roles.js` | Resolución de rol por LID (jefe / admin / **closer** / desconocido). `closerOf()` = identidad del closer desde su JID: fuente ÚNICA para todo lo de setteo |
 | `src/setteo/` | Setteo reportado por el closer (§18.AZ). `parse.js`/`cuota.js`/`format.js` son PUROS (testeables en Windows); `capture.js`/`metricas.js` tocan DB + HubSpot. Captura determinista con fallback de IA (`setteo-ai.js`), calcado de `calendly/reschedule-ai.js` |
 | `src/scheduler/` | Cron jobs — `index.js` los arranca y lista todos |
-| `src/calendly/` | Recordatorios precall a closers. **`programs.js`** = registro `PROGRAMS` de primera clase (label, company, connection, eventType, pitch, materiales) — fuente única de la que se derivan los mapas de copy/ET. **`accounts.js`** = registro de **conexiones de Calendly** (token, org, dry-run; los eventTypes se derivan de `programs.js`). **`closers.js`** = roster keyeado por **persona con identidades** (una por conexión); deriva `CLOSERS`/`CLOSER_LIDS`. Modelo empresa/programa/closer: [ADR 0001](docs/adr/0001-modelo-empresa-programa-closer.md) + glosario [docs/agents/context.md](docs/agents/context.md). |
+| `src/calendly/` | Recordatorios precall a closers. **`programs.js`** = registro `PROGRAMS` de primera clase (label, company, connection, eventType, pitch, materiales) — fuente única de la que se derivan los mapas de copy/ET. **`accounts.js`** = registro de **conexiones de Calendly** (token, org, dry-run; los eventTypes se derivan de `programs.js`). **`closers.js`** = roster keyeado por **persona con identidades** (una por conexión); deriva `CLOSERS`/`CLOSER_LIDS`. `workLid` PINNEA el destino de los pushes; `extraJids` agrega una COPIA a un segundo aparato (§18.BA) y **saltea el gate anti-ban** → solo con tráfico entrante probado. Modelo empresa/programa/closer: [ADR 0001](docs/adr/0001-modelo-empresa-programa-closer.md) + glosario [docs/agents/context.md](docs/agents/context.md). |
 | `src/sheets/` | Reporte diario de leads desde Google Sheets |
 | `src/db/` | SQLite: operaciones (`index.js`) + migración idempotente (`migrate.js`) |
 | `entrypoint.sh` | Backoff exponencial entre crashes (softban) |
@@ -144,7 +144,7 @@ loop rápido de reconexiones desde datacenter → WhatsApp lo detectó.
   ```
   (En Git Bash, prefijar con `MSYS_NO_PATHCONV=1` y usar rutas `C:/…` o el volumen no monta y
   la suite reporta **0 tests** en verde, que es peor que fallar.)
-  Baseline al 2026-08-04: **950 tests, 947 verdes, 3 rojos conocidos** (links de Retia + los dos
+  Baseline al 2026-08-05: **961 tests, 958 verdes, 3 rojos conocidos** (links de Retia + los dos
   de agenda superseded; los números de test se corren al agregar archivos, así que se buscan por
   nombre, no por índice). Por eso la lógica pura vive en módulos propios sin deps nativas: es la
   parte que sí se puede iterar en Windows.

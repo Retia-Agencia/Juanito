@@ -121,6 +121,59 @@ test('INVARIANTE: ningún workLid se declara dos veces', () => {
   }
 });
 
+// ─── extraJids: la COPIA a un segundo aparato (2026-08-05) ────────────────────
+// Es la única declaración del roster que saltea el gate anti-ban de deliver() (el primario se
+// valida contra el `contact_jid` real del opt-in; el secundario, contra el criterio de quien
+// edita el archivo). Por eso las invariantes de acá son más estrictas que las de workLid.
+
+test('INVARIANTE: un extraJid nunca es el hilo de OTRA persona', () => {
+  // El peor error posible de este campo: copiar los pushes de un closer —con nombres y teléfonos
+  // de sus leads— al WhatsApp de otro. Un dígito de menos al transcribir un LID basta.
+  const duenioDeLid = new Map(); // lid → nombre de la persona
+  for (const p of Object.values(PEOPLE))
+    for (const id of p.identities) if (id.workLid) duenioDeLid.set(id.workLid, p.name);
+
+  for (const p of Object.values(PEOPLE)) {
+    for (const id of p.identities) {
+      for (const jid of id.extraJids || []) {
+        const lid = String(jid).split('@')[0];
+        const duenio = duenioDeLid.get(lid);
+        if (duenio) {
+          assert.equal(duenio, p.name, `${id.email} copia a ${jid}, que es el hilo de trabajo de ${duenio}`);
+        }
+      }
+    }
+  }
+});
+
+test('INVARIANTE: los extraJids tienen forma de JID y no se repiten entre identidades', () => {
+  const vistos = new Map();
+  for (const p of Object.values(PEOPLE)) {
+    for (const id of p.identities) {
+      for (const jid of id.extraJids || []) {
+        assert.match(jid, /^\d+@(lid|s\.whatsapp\.net)$/, `extraJid "${jid}" (${id.email}) no tiene forma de JID`);
+        const duenio = vistos.get(jid);
+        assert.equal(duenio, undefined, `el extraJid ${jid} está en ${id.email} y también en ${duenio}`);
+        vistos.set(jid, id.email);
+      }
+    }
+  }
+});
+
+test('todo extraJid queda RECONOCIDO en CLOSER_LIDS', () => {
+  // Recibir en un aparato y no ser reconocido al contestar desde él es la mitad rota de la
+  // feature: el Push 4 llega, el closer responde ahí y Juanito lo trata como un desconocido.
+  for (const p of Object.values(PEOPLE)) {
+    for (const id of p.identities) {
+      for (const jid of id.extraJids || []) {
+        const lid = String(jid).split('@')[0];
+        assert.equal(CLOSER_LIDS[lid], id.email.toLowerCase(), `${jid} no resuelve a ${id.email}`);
+        assert.equal(resolveCloserByLid(jid)?.email, id.email.toLowerCase());
+      }
+    }
+  }
+});
+
 // ─── resolveCloserByPushName: la ambigüedad que rompe el opt-in en silencio ────
 
 // Nombres AMBIGUOS a propósito: mismo nombre en TELÉFONOS DISTINTOS → pushName resuelve a null
@@ -162,8 +215,9 @@ test('resolveCloserByPushName: nombre completo resuelve a la persona correcta (o
 // adelante o un sufijo de empresa atrás no estorban. Vale fijarlo porque cuando esto falla, falla
 // EN SILENCIO: el closer escribe, no se registra, y Juanito tampoco le contesta nada.
 //
-// Marín depende enteramente de esto: rotó de línea el 2026-07-30 y quedó sin `workLid`, así que
-// su pushName es la única vía de reconocimiento hasta que se le declare el LID nuevo.
+// Marín dependió enteramente de esto entre el 2026-07-30 (rotación de línea, sin `workLid`) y el
+// 2026-08-05, cuando se le declararon sus dos LIDs. Se mantiene fijado: el pushName sigue siendo
+// la red si algún día cambia de aparato otra vez.
 test('resolveCloserByPushName tolera nombres extra y sufijos (pushNames reales)', () => {
   for (const nombre of ['Juan Sebastian Marin - 30X', 'Juan Sebastian Marín - 30X']) {
     assert.equal(

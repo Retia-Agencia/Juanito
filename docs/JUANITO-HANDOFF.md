@@ -5,21 +5,24 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-08-04** (§18.AZ: setteo del closer — arreglos hechos, **deploy PENDIENTE**)
+Última actualización: **2026-08-05** (§18.BA: copia del push a un segundo aparato; **deploy de
+§18.AZ + §18.BA PENDIENTE**)
 
 ---
 
 ## 0. TL;DR — estado al 2026-06-12 (leer primero)
 
-> ## 🔴🔴 PENDIENTE ABIERTO: **DEPLOY de §18.AZ** (setteo del closer) 🔴🔴
-> La rama **`feat/setteo-closer`** está pusheada, mergeada con `main` y verde (950 tests, 947
+> ## 🔴🔴 PENDIENTE ABIERTO: **DEPLOY de §18.AZ + §18.BA** 🔴🔴
+> La rama **`feat/setteo-closer`** está pusheada, mergeada con `main` y verde (961 tests, 958
 > verdes), pero **NO desplegada**. Lo que corre hoy en el VPS es la versión del 2026-08-04 15:52
-> UTC, que tiene **dos problemas ya arreglados en la rama pero vivos en producción**:
+> UTC, que tiene **tres cosas ya resueltas en la rama pero pendientes en producción**:
 > 1. **El contexto agéntico del closer no corre** — el opt-in se traga todos sus mensajes. Con la
 >    feature prendida, un closer que escriba *"¿cómo voy?"* **no recibe respuesta**.
 > 2. **El `docker-compose.yml` de producción no tiene el servicio `dash`** — el deploy manual lo
 >    pisó con la versión de una rama atrasada. `juanito-dash` sigue vivo pero **huérfano**: un
 >    `down`, un `up -d --remove-orphans` o el rollback de §18.AZ lo matan sin forma de recrearlo.
+> 3. **Marín sigue recibiendo en una sola línea** (§18.BA). Pidió las dos; el `extraJids` está en
+>    la rama. No hay nada que prender en el `.env`: viaja en el código.
 >
 > **No prender `SETTEO_CAPTURE_ENABLED` antes de re-desplegar.** El orden está en §18.AZ-deploy
 > → *Lo que falta*, paso 0. Y mientras esto no esté en `main`, el workflow `deploy.yml` **revierte
@@ -4558,6 +4561,9 @@ fijarlo abre la feature a seis personas de golpe.
    el piloto se prende sobre la versión con el contexto agéntico muerto y sin la lista de leads.
    El compose que suba tiene que ser el de la rama **ya mergeada con `main`**, o se vuelve a caer
    el servicio `dash`. Verificar después: `docker compose config --services` → `agent` y `dash`.
+   El mismo deploy lleva **§18.BA** (la copia a la segunda línea de Marín): verificarlo en el
+   primer push suyo que salga — el log debe traer `enviado` y, seguido, `copia … [aparato
+   secundario]`. Si el primero aparece solo, el `extraJids` no viajó.
 1. **Smoke acotado** — prender para UNA identidad primero y ver los mensajes reales
    (`/nuevosetteo`, `/missetteos`, y una pregunta suelta tipo *"¿cómo voy?"* que es justo lo que
    antes no contestaba) antes de que los vea un closer.
@@ -4571,6 +4577,81 @@ generar la previsualización de los links `wa.me` del Push 3. **No es de este de
 reusó la capa cacheada de `npm ci`, así que `node_modules` es idéntico al de antes. El mensaje se
 entrega igual. Instalarla sería tocar dependencias en producción por una miniatura.
 
+---
+
+### 18.BA 🔵 Un closer con DOS líneas: la copia del push a un aparato secundario (2026-08-05)
+
+**El pedido:** Sebastián Marín quiere sus pushes en sus **dos** WhatsApp — el registrado
+(`+573170623894`) y `+573212100048` (`248489795702847@lid`). No es un número nuevo: es **la línea
+vieja de su propia rotación de §18.AY**, que sigue usando.
+
+**Por qué no era configuración sino código.** El modelo era *un closer = un destino*:
+`calendly_optins` tiene `phone` como PK y **un** `contact_jid`, y `deliver()` entrega ahí y
+solo ahí. No había forma de expresar "y también acá".
+
+#### Lo que se agregó
+
+**`extraJids` en la identidad del roster** (`src/calendly/closers.js`) → `deliver()` manda la
+copia después del primario. Tres decisiones que definen la feature:
+
+- **Es una COPIA, no un destino.** El primario sigue siendo el `contact_jid` del opt-in con todos
+  sus gates; los extras se calculan **después** de pausa global, pausa por-closer, opt-in y
+  contact_jid. Un `/calendly off` que apagara el principal y siguiera copiando al secundario
+  sería lo peor de los dos mundos.
+- **Best-effort.** Si la copia falla (aparato desvinculado), el push queda `sent` igual. Si
+  contara para el resultado, un teléfono viejo apagado marcaría como fallido algo que SÍ llegó y
+  dispararía reintentos → el closer recibiría el recordatorio dos veces.
+- **Por IDENTIDAD, no por persona.** Sebastian Rodriguez tiene dos identidades en dos líneas
+  distintas (30x y Retia): copiarle el push de una empresa al WhatsApp que usa para la otra sería
+  filtrar leads entre clientes. Quien quiera la copia en las dos, la declara en las dos.
+
+**Y `workLid` a Marín, que era obligatorio, no cosmético.** §18.AY lo dejó sin declarar a
+propósito mientras rotaba. Esa rotación **ya se cerró** (opt-in verificado en producción:
+`47657695375437@lid`). Con dos líneas activas y sin `workLid`, `contactJid = workJid || from`
+haría driftear la entrega al aparato desde el que escribiera — y entonces la "copia" y el destino
+se habrían intercambiado solos.
+
+**Los extras entran a `CLOSER_LIDS`.** Recibir en un aparato y no ser reconocido al contestar
+desde él es la mitad rota de la feature: le llega el Push 4, responde ahí y Juanito lo trata como
+un desconocido. Con el mapeo, su respuesta resuelve a su email canónico (rol de closer, outcomes,
+setteo). **Efecto secundario que hubo que arreglar:** `workLidForCloser` escaneaba `CLOSER_LIDS` y
+devolvía el primer LID del email — desde que ese mapa incluye extras podía devolver el
+**secundario** y pinear ahí la entrega primaria. Ahora lee `workLid` del roster directamente.
+El dashboard hacía el mismo `find` y se corrigió igual.
+
+#### ⚠️ La regla al declarar un `extraJid`
+
+**Saltea el gate anti-ban.** El primario se valida contra datos (`contact_jid` = prueba de que ese
+hilo escribió); el secundario, contra el criterio de quien edita el archivo. **Solo sobre aparatos
+con tráfico entrante probado.** El de Marín lo tiene de sobra: fue su `contact_jid` hasta el
+30-jul y su sesión sigue viva. Verificado antes de escribir una línea, con la receta de §18.AR:
+
+```
+docker run --rm -v juanito_agent-data:/d alpine sh -c \
+  'cat /d/wa-session/lid-mapping-573212100048.json;           # → "248489795702847"
+   cat /d/wa-session/lid-mapping-248489795702847_reverse.json # → "573212100048"'
+```
+
+Más `session-<lid>_*.json` y `tctoken-<lid>@lid.json`, que solo existen si hubo mensajes de
+verdad. Un JID inventado ahí es exactamente el envío en frío que causó el softban.
+
+Tres invariantes nuevas en `test/calendly.closers.test.js`: un extraJid **nunca** es el hilo de
+trabajo de otra persona (un dígito mal transcrito le copiaría los leads de un closer a otro),
+forma de JID y sin repetir, y todo extra queda reconocido en `CLOSER_LIDS`.
+
+#### Lo que NO cubre
+
+- **Le llega el Push 4 en los dos aparatos y contesta en uno.** El otro queda con la pregunta
+  colgada; el outcome ya está cerrado, así que responderla no rompe nada, pero se ve raro. Mirar
+  en la práctica antes de complicar el flujo.
+- **Los `extraJids` solo aplican a lo que sale por `deliver()`** (pushes 0-5, recordatorios de
+  outcome, reagendas), que es todo lo automático hacia closers. Las respuestas de conversación
+  (opt-in, setteo, contexto agéntico) siguen yendo a quien escribió, que es lo correcto.
+- **Volumen:** duplica los mensajes que recibe Marín. Van por la cola anti-ban como todo lo
+  demás, y son pocos por día, pero es una cifra a mirar si esto se extiende a más closers.
+
+**Estado:** en la rama `feat/setteo-closer`, **sin desplegar** — sale junto con el deploy pendiente
+de §18.AZ. Suite: **961 tests, 958 verdes** (los 3 rojos conocidos).
 
 ---
 
