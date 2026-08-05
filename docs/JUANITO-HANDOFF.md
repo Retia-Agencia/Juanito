@@ -5,26 +5,26 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-08-04** (§18.AZ + §18.BA **DESPLEGADOS**; el piloto de setteo sigue
-apagado a propósito)
+Última actualización: **2026-08-04** (§18.AZ–§18.BF **DESPLEGADOS**; el smoke del setteo encontró
+y cerró seis bugs. El piloto sigue apagado a propósito)
 
 ---
 
 ## 0. TL;DR — estado al 2026-06-12 (leer primero)
 
-> ## 🟠🟠 EL SETTEO DEL CLOSER ESTÁ DESPLEGADO Y **APAGADO** 🟠🟠
-> Deploy hecho el **2026-08-05 00:33 UTC** (19:33 del 04 en Bogotá; `main` = `6e39c7d`,
-> workflow `alcance: todo`). Se
-> cerraron los tres pendientes que arrastraba el TL;DR: el contexto agéntico del closer ya corre,
-> el compose volvió a tener **`agent` y `dash`**, y Marín recibe en sus dos líneas (§18.BA).
+> ## 🟠🟠 EL SETTEO DEL CLOSER ESTÁ DESPLEGADO, PROBADO Y **APAGADO** 🟠🟠
+> `main` = `56e4dc0`. El smoke con un teléfono real (§18.BB) **encontró seis bugs que la suite no
+> podía ver** y los seis están cerrados y verificados en producción. Última corrida: el closer
+> pidió borrar tres leads, Juanito consultó cuáles eran y borró **exactamente esos tres**.
+> **993 tests, 990 verdes.**
 >
-> **Lo que sigue apagado, a propósito:** `SETTEO_CAPTURE_ENABLED=false`. Para prenderlo hace falta
-> ANTES el smoke con una sola identidad (§18.AZ-deploy → *Lo que falta*), y **nunca sin
-> `SETTEO_CAPTURE_CLOSERS` explícito**: hoy está vacío en el VPS, y vacío **hereda
+> **Lo que sigue apagado, a propósito:** `SETTEO_CAPTURE_ENABLED=false`. Para prenderlo, **nunca
+> sin `SETTEO_CAPTURE_CLOSERS` explícito**: hoy está vacío en el VPS, y vacío **hereda
 > `CALENDLY_PUSH4_CLOSERS` = 6 closers**, no los 2 del piloto acordado.
 >
-> Ya no hay riesgo de que el workflow revierta nada: la rama está **en `main`**, así que cualquier
-> `deploy.yml` futuro despliega el setteo en vez de borrarlo.
+> **Lo que el smoke NO pudo probar y hay que mirar el primer día con un closer real:** la cifra
+> *"registrado en HubSpot"* va por **owner**, y el closer de prueba no era owner de nada — salió
+> `—` siempre. Es la mitad del valor de la feature. Ver §18.BB → *Lo que dejó abierto*.
 
 > ## 🟠🟠 RECORDATORIO GRANDE: `CLAUDE_THINKING` ESTÁ **OFF** 🟠🟠
 > El código de **extended/adaptive thinking** está desplegado en el VPS (LIVE 2026-06-26) pero
@@ -4674,6 +4674,123 @@ estaba entrenando a ignorarlo.
 **Lo único que falta de §18.BA:** ver el primer push real de Marín. El log debe traer `enviado
 (push3) → 47657695375437@lid` y, seguido, `copia (push3) → 248489795702847@lid [aparato
 secundario]`. Si sale solo el primero, la copia no está saliendo.
+
+---
+
+### 18.BB 🔵 El smoke del setteo: seis bugs que ningún test podía ver (2026-08-04, noche)
+
+**Por qué hizo falta un teléfono de verdad.** El setteo del closer (§18.AZ) no se puede probar de
+punta a punta sin que una PERSONA escriba: el rol sale del JID, y `src/index.js` no es testeable
+(importarlo conecta Baileys). El bug de §18.AZ-revisión —el contexto agéntico inalcanzable— ya
+había demostrado que la suite verde no dice nada del camino real.
+
+**La identidad de prueba** (`TEST_CLOSER_ENABLED`, `prueba.setteo@30x.com`, +573052933190). El
+gate ES la feature: sin él sería una entrada suelta en el roster que alguien tiene que acordarse
+de borrar, y sacarla costaría un deploy con su reconexión. Así, terminar la prueba es apagar un
+flag. Dos redes en la suite: falla si la identidad aparece **sin** el gate, y un archivo aparte
+—proceso propio, porque los mapas derivados se calculan al importar— prueba el gate puesto.
+
+⚠️ **No basta con prender el flag.** El LID de ese teléfono estaba en `ADMIN_LID`, y `roleOf()`
+resuelve admin ANTES que closer: el smoke no habría probado nada. Hay que sacarlo mientras dure.
+
+⚠️ **Un closer de mentira no ejercita todo:** su email no es owner de nada, así que la cifra
+"registrado en HubSpot" sale `— (no pude consultarlo)`. Lo que SÍ se ejercita —y era lo que
+importaba— es el cruce **lead por lead**, que va por nombre y no por owner.
+
+#### Lo que el smoke encontró SANO
+
+El arreglo del router (el contexto agéntico corre), las dos vías de captura, la fecha local
+correcta a las 20:09 —el bug exacto que tenía el prototipo del setteómetro—, la degradación a
+`—` en vez de un `0` falso, y la repregunta ante números sueltos sin guardar nada.
+
+#### Los seis que encontró rotos
+
+**1. §18.BC — El cruce con HubSpot acertaba 11 de 30.** Se rendía ante cualquier homónimo, y con
+nombres colombianos eso es la norma. Medido sobre 30 leads reales de Registrado/Calificado: 19
+devolvían varios candidatos ("Santiago Moreno" → 7). La cifra que da sentido a la feature decía
+"no pude cruzarlo" 6 de cada 10 veces, y una señal que falla más de lo que acierta se deja de
+mirar.
+
+La regla nueva no es heurística, es **el proceso de ventas** (dictado por el jefe): un lead se
+settea mientras está en *Registrado* o *Calificado*; cuando agenda pasa a *Agendado* y deja de
+serlo. Así que **el homónimo con un deal en etapa setteable ES, por definición, el lead que el
+closer trabaja**. Si hay varios, desempata el owner. De los 19: 16 por etapa, 3 por owner, cero
+irresolubles. Cuesta **2 llamadas por lead ambiguo** (asociaciones en batch + deals en batch), no
+una por candidato. Las etapas se resuelven por **label**, no por id: hay muchos más de 3
+pipelines y los ids cambian al recrear uno.
+
+Y sigue negándose cuando debe: "Santiago Moreno" son 7 personas DISTINTAS, dos en etapa de setteo
+y de dos closers — con el owner equivocado no elige. Elegir mal ensucia el conteo de dos personas.
+
+**2. §18.BD — La captura determinista dejaba al Juanito conversacional sin memoria.** El closer
+reportó 3 leads por texto libre, se guardaron bien, y al preguntar *"¿cómo voy?"* contestó **"No
+reportaste nada todavía hoy"**. No inventaba: `captureSetteoReply` consumía el mensaje y respondía
+**sin persistir nada en `messages`**, así que en su historia lo último ocurrido era él mismo
+diciendo *"Borrado, empezamos de cero"*. Era **una inferencia correcta sobre una historia falsa**
+— el peor tipo de error, porque no se ve como bug.
+
+⚠️ **`source: 'bot'` no es decorativo:** `getRecentHistory` filtra por ese valor. Con cualquier
+otro, las filas se guardan y el contexto NUNCA las lee — el bug seguiría vivo con sensación de
+arreglado. El test lee por la MISMA puerta.
+
+**3. §18.BE — El closer decía "borra" y Juanito CREABA.** Tres veces en un minuto:
+`"Elimina contestk"` → *✅ Anotado: 1 setteo* (creó un lead llamado **"Elimina"**).
+Ninguna llegó al modelo: las agarró la capa de captura, que **solo sabe crear**. La primera la
+mordió el regex (regla 3: mayúscula + verbo de resultado); la segunda, el fallback de IA del
+parser. Arreglado con un **guard de intención** antes de parsear, deliberadamente liberal: un
+falso positivo NO pierde el setteo (el contexto agéntico también sabe registrarlo), un falso
+negativo le crea un lead fantasma. Los costos no son simétricos. Más el parser endurecido: los
+verbos de corrección entran a STOP y ninguna palabra que empiece por una raíz de resultado
+(`contest|agend|vend|…`) puede ser un lead — STOP no alcanzaba porque es por palabra exacta y los
+typos son infinitos.
+
+**4. 🔑 El prompt no alcanzó, el MODELO sí.** Dos veces Juanito confirmó borrados que no hizo
+(*"✅ Borrado. Empezamos de cero."*) sin llamar ninguna tool, incluso **con el historial completo
+y con el guardarraíl del prompt puesto**. Se subió el DM del closer a **Sonnet 5**
+(`CLAUDE_CLOSER_MODEL`) y el comportamiento cambió de una: consulta antes de actuar
+(`tool → consultar_mis_setteos`) y después ejecuta (`tool → corregir_setteo`). **Es el DM de
+menor volumen y el único donde cada mensaje puede ESCRIBIR: es donde más rinde pagar un modelo
+mejor.** Lección: hay clases de error que no se corrigen con reglas en el prompt.
+
+**5. §18.BF — El mensaje decía "3 con homónimos" y no marcaba cuáles.** Con eso, *"eliminá los 3
+que están con homónimos"* obligó a adivinar, y borró tres que no eran. La lista marcaba con ⚠️
+solo los `none` mientras el contador contaba los `ambiguous`: **el mismo símbolo para dos cosas
+distintas, y una sin marcar en ninguna parte**. Ahora son dos, y no es cosmético — son dos
+acciones distintas: **⚠️** = no lo encontré, regístralo allá · **❓** = hay varios con ese nombre,
+seguramente ya está. El contador usa el símbolo que marca la lista y cada leyenda sale solo si su
+símbolo aparece de verdad.
+
+**6. Voseo hardcodeado.** *"Escribí"*, *"revisá"*, *"Volvé a mandármelo"*, *"podés"* — en las
+plantillas, no en el prompt. Ningún cambio de modelo lo iba a arreglar. Los closers son
+colombianos.
+
+#### Observabilidad que faltaba
+
+**Ahora se loguea SIEMPRE que corre una tool** (`[Claude] tool → <nombre> (closer X)`), no solo al
+fallar. Dos veces en este smoke hubo que decidir si el modelo había llamado a una tool o
+contestado de memoria, y **el silencio se veía igual en los dos casos**.
+
+#### Cierre verificado
+
+Última corrida, con todo desplegado: `"Elimina los que estan con homonimos"` → consultó, borró
+**exactamente los tres marcados** y dejó vivos los dos que cruzaron; la respuesta coincide con la
+base, en tuteo. **993 tests, 990 verdes.**
+
+Limpieza hecha: filas de prueba borradas (respaldo
+`brain-backup-20260805-025038-pre-limpieza.sqlite`), LID de vuelta a `ADMIN_LID`, los tres flags
+en `false`. **`CLAUDE_CLOSER_MODEL=claude-sonnet-5` se queda**: es configuración del piloto, no
+del smoke.
+
+#### 🔴 Lo que este smoke dejó abierto
+
+- **La cifra "registrado en HubSpot" nunca se probó** (va por owner y el closer era falso). Es la
+  mitad del valor de la feature y solo se ve con un closer real.
+- **`searchContactsByName` busca por primera palabra + última.** "Ivan Camilo Contreras Ruiz"
+  busca *Ivan … Ruiz* y encuentra a otros; su contacto se llama "Camilo Contreras". Preexistente
+  y ortogonal a §18.BC: los nombres compuestos no cruzan aunque estén bien escritos.
+- **Nombres muy comunes siguen sin cruzar** aunque la desambiguación corra: "Andrea Gomez" dio
+  **12 candidatos** y ninguno desambiguable. Sale ❓, que es lo correcto, pero es la cola larga
+  que no se resuelve por esta vía.
 
 ---
 
