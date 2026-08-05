@@ -3204,8 +3204,28 @@ la consume el contenedor— y no debe copiarse al `.env` del VPS. Deploy: `pscp`
 
 ### 18.AL 🔵 3 reportes diarios por DM: agenda 7am · progreso 12pm · cierre 9pm (2026-07-22)
 
-**Estado: ✅ DESPLEGADO y ACTIVO — pero recién desde 2026-07-23 23:19 (ver "Postmortem" abajo).**
-En el VPS con `DAILY_REPORTS_ENABLED=true` y `DAILY_REPORTS_DM=129446371655733@lid` (el `@lid` del jefe
+> ### 🔴 ESTADO ACTUAL: **APAGADOS por orden del jefe (2026-08-04, noche)**
+> `DAILY_REPORTS_ENABLED=false` en el `.env` del VPS. Los tres reportes dejaron de salir para los
+> **dos** destinatarios (`144268136038585@lid` = jefe · `129446371655733@lid` = Alejandro).
+> Verificado en las dos capas: `docker compose config` → `"false"`, y el arranque loguea
+> `[DailyReports] reportes diarios por DM DESACTIVADOS`.
+>
+> **Se aplicó SOLO por `.env` + `docker compose up -d`** (sin `--build`: una reconexión, no un
+> rebuild). No pasó por `deploy.yml` **y no hacía falta**: el workflow tiene allowlist y nunca
+> sube el `.env`. Por eso el apagado **sobrevive a cualquier deploy futuro**, y el default del
+> compose (`${DAILY_REPORTS_ENABLED:-false}`) también es apagado.
+>
+> **Para revertir:** `DAILY_REPORTS_ENABLED=true` en `/root/juanito/.env` + `docker compose up -d`.
+> `DAILY_REPORTS_DM` quedó **intacto a propósito**, con los dos destinos: reactivar no debería
+> obligar a reconstruir la lista. Respaldo: `.env.bak-20260805-025729-pre-apagar-reportes`.
+>
+> ⚠️ **Esto vive solo en el servidor, no en `main`.** Se anota acá justamente porque la vez
+> anterior el mismo log —`DESACTIVADOS`— se leyó como configuración intencional durante días
+> cuando era un bug (ver *Postmortem* abajo). Ahora sí es intencional, y queda dicho.
+
+**Estado histórico (mientras estuvieron activos): ✅ DESPLEGADO y ACTIVO desde 2026-07-23 23:19
+(ver "Postmortem" abajo).** En el VPS con `DAILY_REPORTS_ENABLED=true` y
+`DAILY_REPORTS_DM=129446371655733@lid` (el `@lid` del jefe
 ya resuelto). Arranque verificado: `[DailyReports] Jobs activos ✅ (agenda "0 7 * * *" · progreso
 "0 12 * * *" · cierre "0 21 * * *", 1 DM)`. Pedido del jefe: partir el reporte diario en **tres entregas
 por DM** (por ahora a su propio número **+573174428980**, modo prueba — no a los grupos ni al DM de Dani):
