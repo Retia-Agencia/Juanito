@@ -18,7 +18,7 @@ import { closerOf } from '../common/roles.js';
 import { parseSetteoReply, localDateISO } from './parse.js';
 import { parseSetteoWithAi } from './setteo-ai.js';
 import { isCloserInScope, buildConfirmacion, buildPedirNombres } from './format.js';
-import { upsertSetteo, markIfNew } from '../db/index.js';
+import { upsertSetteo, markIfNew, saveMessage } from '../db/index.js';
 import {
   isEnabled as hubspotEnabled,
   searchContactsByName,
@@ -108,6 +108,32 @@ export async function guardarSetteos({ closer, fecha, items, rawReply = null, so
   return res;
 }
 
+// Deja constancia del intercambio en `messages`, con el MISMO chat_id que usa el contexto
+// agéntico del closer. No es telemetría: es la memoria de la conversación.
+//
+// 🔑 Sin esto, la captura determinista es INVISIBLE para el Juanito que conversa. Pasó en el
+// smoke del 2026-08-04: el closer reportó 3 leads por texto libre, los tres se guardaron bien,
+// y al preguntar "¿cómo voy?" Juanito contestó "No reportaste nada todavía hoy". No estaba
+// inventando — en su historia, lo último que había pasado era él mismo diciendo "Borrado,
+// empezamos de cero", y desde entonces nadie había dicho nada. La respuesta era una inferencia
+// CORRECTA sobre una historia FALSA, que es el peor tipo de error: no se ve como un bug.
+//
+// El mismo hueco explica el otro fallo del smoke: "descarta eso" llegó sin que el mensaje al
+// que se refería estuviera en la historia, y el modelo adivinó a qué apuntaba.
+//
+// Best-effort: si falla, el setteo YA quedó guardado y eso es lo que importa.
+// ⚠️ `source: 'bot'` NO es decorativo: `getRecentHistory` filtra por `source = 'bot'`, así que
+// con cualquier otro valor las filas se guardan pero el contexto agéntico NUNCA las lee — el
+// bug quedaría igual y encima con la sensación de estar arreglado.
+async function dejarRastro(chatId, texto, respuesta) {
+  try {
+    await saveMessage({ role: 'user', content: texto, source: 'bot', chatId });
+    if (respuesta) await saveMessage({ role: 'assistant', content: respuesta, source: 'bot', chatId });
+  } catch (e) {
+    console.warn(`[Setteo] no pude dejar rastro en la conversación: ${e.message}`);
+  }
+}
+
 // Devuelve true si el mensaje era un reporte de setteo (y lo manejó).
 export async function captureSetteoReply({ from, pushName, text, messageId }) {
   if (!ENABLED()) return false;
@@ -123,7 +149,11 @@ export async function captureSetteoReply({ from, pushName, text, messageId }) {
   // filas para cuadrar el número (la tabla es una fila por lead y el cruce necesita nombre).
   if (parsed.kind === 'agregado') {
     if (messageId && !markIfNew(messageId)) return true;
-    await sendMessage(from, buildPedirNombres(parsed.conteo)).catch(() => {});
+    const pedido = buildPedirNombres(parsed.conteo);
+    await sendMessage(from, pedido).catch(() => {});
+    // Este rastro importa especialmente: sin él, un "no, descartá eso" posterior llega sin
+    // el mensaje al que se refiere y el modelo tiene que adivinar.
+    await dejarRastro(from, text, pedido);
     return true;
   }
 
@@ -146,10 +176,14 @@ export async function captureSetteoReply({ from, pushName, text, messageId }) {
       `[Setteo] ${closer.name}: ${resultado.guardados} setteo(s) el ${parsed.fecha} ` +
         `(calls: ${resultado.calls}, ambiguos: ${resultado.ambiguos}, sin match: ${resultado.sinMatch})`
     );
-    await sendMessage(
-      from,
-      buildConfirmacion({ fecha: parsed.fecha, items: parsed.items, resultado, hoy: localDateISO() })
-    ).catch(() => {});
+    const confirmacion = buildConfirmacion({
+      fecha: parsed.fecha,
+      items: parsed.items,
+      resultado,
+      hoy: localDateISO(),
+    });
+    await sendMessage(from, confirmacion).catch(() => {});
+    await dejarRastro(from, text, confirmacion);
   } catch (e) {
     console.error('[Setteo] no se pudo guardar:', e.message);
     // Fallar en silencio sería peor que no tener la feature: el closer creería que quedó

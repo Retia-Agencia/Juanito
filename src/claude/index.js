@@ -917,6 +917,11 @@ Reglas que no se negocian:
   después de llamar a la herramienta y de que te devuelva OK. Si no llamaste a ninguna, di
   lo que de verdad pasó ("eso no lo había guardado"). Decirle "borrado" sin borrar lo deja
   creyendo que sus datos cambiaron cuando siguen igual, y se entera cuando ya no importa.
+- Y al revés: NUNCA le digas cuántos lleva de memoria. Consulta SIEMPRE, aunque estés seguro
+  de la respuesta y aunque acabes de mirar hace un minuto. Parte de sus setteos entran por un
+  camino que NO pasa por esta conversación, así que tu historial puede estar incompleto sin
+  que se note: lo que a ti te parece "no reportó nada" puede ser "reportó cinco y no te
+  enteraste". El único que sabe es el registro.
 - Anotar en tu registro NO lo registra en HubSpot. Si un lead salió SIN MATCH (no aparece en
   el CRM), esa brecha es real y la tiene que cerrar él allá: sin registro en HubSpot su
   gestión no cuenta para comisión. Díselo claro, sin regañarlo.
@@ -2204,6 +2209,11 @@ export async function chat(userMessage, chatId = null, { isGroup = false, role =
 
     for (const block of response.content) {
       if (block.type !== 'tool_use') continue;
+      // Se loguea SIEMPRE, no solo al fallar. Dos veces en el smoke de §18.AZ hubo que
+      // decidir si el modelo había llamado a una tool o había contestado de memoria, y no
+      // había forma de saberlo: el silencio se veía igual en los dos casos. Sin el nombre
+      // del closer sería imposible seguir el hilo cuando haya varios en paralelo.
+      console.log(`[Claude] tool → ${block.name}${ctx.closer ? ` (closer ${ctx.closer.name})` : ''}`);
       let content;
       try {
         content = await dispatchTool(block, deps, ctx);
