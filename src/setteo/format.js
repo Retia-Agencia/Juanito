@@ -46,7 +46,8 @@ export function buildConfirmacion({ fecha, items, resultado, hoy }) {
     );
   }
   if (resultado.ambiguos) {
-    lineas.push(`⚠️ ${resultado.ambiguos} con homónimos en HubSpot — no supe cuál era, quedó sin cruzar.`);
+    // Mismo símbolo que en /missetteos: ❓ es "hay varios con ese nombre", ⚠️ es "no está".
+    lineas.push(`❓ ${resultado.ambiguos} con homónimos en HubSpot — no supe cuál era, quedó sin cruzar.`);
   }
   if (resultado.sinMatch) {
     lineas.push(`⚠️ ${resultado.sinMatch} que no encontré en HubSpot. Si ya lo registraste allá, revisa el nombre.`);
@@ -91,13 +92,31 @@ export function estadoDeSetteo(fila) {
 // closer la usaba para saber a quién ya tocó — sin esto, `/missetteos` le da el número pero no
 // le dice de quiénes salió, y no puede corregir lo que no ve.
 // Se corta en `max` porque esto es WhatsApp: una lista de 60 nombres no se lee, se ignora.
+// Marca del cruce con HubSpot, POR LEAD. Dos problemas distintos, dos símbolos distintos:
+// "no lo encontré" es un lead que hay que registrar en el CRM; "hay varios con ese nombre" es
+// un lead que probablemente YA está registrado y solo no se pudo desambiguar. Decirle lo mismo
+// a los dos manda al closer a hacer el trabajo equivocado.
+export function marcaDeCruce(match) {
+  if (match === 'none') return ' ⚠️';
+  if (match === 'ambiguous') return ' ❓';
+  return '';
+}
+
+// Lista de los leads reportados. El setteómetro tenía su tabla de contactos a la vista y el
+// closer la usaba para saber a quién ya tocó — sin esto, `/missetteos` le da el número pero no
+// le dice de quiénes salió, y no puede corregir lo que no ve.
+// Se corta en `max` porque esto es WhatsApp: una lista de 60 nombres no se lee, se ignora.
+//
+// 🔑 La marca va POR LEAD y no solo en el contador de arriba. En el smoke del 2026-08-04 el
+// mensaje decía "3 con homónimos" y la lista no marcaba ninguno: al pedirle "eliminá los 3 que
+// están con homónimos", Juanito tuvo que ADIVINAR cuáles eran y borró tres que no eran. No fue
+// culpa del modelo — con ese mensaje, un closer humano tampoco podía saberlo.
 export function formatListaSetteos(filas = [], { max = 15, conFecha = false } = {}) {
   if (!filas.length) return [];
   const L = [''];
   for (const f of filas.slice(0, max)) {
     const fecha = conFecha ? `${f.fecha.slice(8)}/${f.fecha.slice(5, 7)} ` : '';
-    const marca = f.hubspot_match === 'none' ? ' ⚠️' : '';
-    L.push(`   • ${fecha}${f.lead_name} — ${estadoDeSetteo(f)}${marca}`);
+    L.push(`   • ${fecha}${f.lead_name} — ${estadoDeSetteo(f)}${marcaDeCruce(f.hubspot_match)}`);
   }
   if (filas.length > max) L.push(`   _…y ${filas.length - max} más._`);
   return L;
@@ -138,7 +157,10 @@ export function formatMisSetteos({ closerName, dateLabel, reportado, hubspot, cu
     );
   }
   if (reportado.ambiguos) {
-    L.push(`⚠️ ${reportado.ambiguos} con homónimos en HubSpot, sin cruzar.`);
+    // El símbolo tiene que ser el MISMO que marca a esos leads en la lista de abajo. Cuando el
+    // contador decía ⚠️ y la lista marcaba con ⚠️ otra cosa (los que no aparecen), el mensaje
+    // afirmaba "3 con homónimos" sin decir cuáles, y quien lo leyera tenía que adivinar.
+    L.push(`❓ ${reportado.ambiguos} con homónimos en HubSpot, sin cruzar (los marco abajo).`);
   }
 
   if (hubspot !== null && hubspot !== undefined && reportado.total - hubspot > 0) {
@@ -158,8 +180,14 @@ export function formatMisSetteos({ closerName, dateLabel, reportado, hubspot, cu
   if (lista.length) {
     L.push(`\n*Tus setteos:*`);
     L.push(...lista.slice(1));
+    // La leyenda solo menciona los símbolos que de verdad aparecen arriba: explicar una marca
+    // que no está en la lista es lo que hace que el closer (o Juanito) busque un lead que no
+    // existe. Y son DOS acciones distintas, así que se nombran distinto.
     if (filas.some((f) => f.hubspot_match === 'none')) {
-      L.push(`_⚠️ = no lo encontré en HubSpot._`);
+      L.push(`_⚠️ = no lo encontré en HubSpot. Si ya lo registraste, revisa cómo quedó escrito._`);
+    }
+    if (filas.some((f) => f.hubspot_match === 'ambiguous')) {
+      L.push(`_❓ = hay varios con ese nombre; no supe cuál era. Seguramente sí está registrado._`);
     }
   }
 

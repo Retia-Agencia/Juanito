@@ -245,6 +245,60 @@ test('lista: marca los que no están en HubSpot (es la brecha, lead por lead)', 
   assert.match(msg, /no lo encontré en HubSpot/);
 });
 
+// ─── El mensaje tiene que decir CUÁLES, no solo cuántos (§18.BF) ──────────────
+// En el smoke del 2026-08-04 el mensaje decía "3 con homónimos" y la lista no marcaba
+// ninguno. Al pedirle "eliminá los 3 que están con homónimos", Juanito tuvo que adivinar y
+// borró tres que no eran. No fue culpa del modelo: con ese mensaje, un closer humano tampoco
+// podía saber cuáles eran.
+
+test('lista: los homónimos se marcan lead por lead, con símbolo PROPIO', () => {
+  const msg = formatMisSetteos({
+    closerName: 'S', dateLabel: 'hoy', reportado: reportado({ ambiguos: 1 }), hubspot: 9, cuota: cuota(),
+    filas: [fila({ lead_name: 'Santiago Moreno', hubspot_match: 'ambiguous' })],
+  });
+  assert.match(msg, /• Santiago Moreno — contestó ❓/, 'el homónimo va marcado en la línea del lead');
+  assert.match(msg, /hay varios con ese nombre/, 'y con su leyenda propia');
+});
+
+test('el contador de homónimos usa el MISMO símbolo que marca la lista', () => {
+  // Si el contador dice ⚠️ y la lista marca ⚠️ otra cosa, "los 3 con homónimos" es imposible
+  // de resolver leyendo el mensaje. Ese fue exactamente el bug.
+  const msg = formatMisSetteos({
+    closerName: 'S', dateLabel: 'hoy', reportado: reportado({ ambiguos: 2 }), hubspot: 9, cuota: cuota(),
+    filas: [
+      fila({ lead_name: 'Santiago Moreno', hubspot_match: 'ambiguous' }),
+      fila({ lead_name: 'Maria Lopez', hubspot_match: 'ambiguous' }),
+    ],
+  });
+  assert.match(msg, /❓ 2 con homónimos/, 'el contador va con ❓');
+  assert.equal((msg.match(/❓/g) || []).length, 4, 'contador + 2 leads + leyenda');
+});
+
+test('"no está en HubSpot" y "hay varios con ese nombre" NO comparten símbolo', () => {
+  // Son dos acciones distintas del closer: uno hay que registrarlo, el otro ya está.
+  const msg = formatMisSetteos({
+    closerName: 'S', dateLabel: 'hoy', reportado: reportado({ ambiguos: 1 }), hubspot: 9, cuota: cuota(),
+    filas: [
+      fila({ lead_name: 'Fantasma Perez', hubspot_match: 'none' }),
+      fila({ lead_name: 'Santiago Moreno', hubspot_match: 'ambiguous' }),
+    ],
+  });
+  assert.match(msg, /• Fantasma Perez — contestó ⚠️/);
+  assert.match(msg, /• Santiago Moreno — contestó ❓/);
+  assert.match(msg, /no lo encontré en HubSpot/);
+  assert.match(msg, /hay varios con ese nombre/);
+});
+
+test('la leyenda solo aparece si el símbolo está de verdad en la lista', () => {
+  // Explicar una marca que no se usó manda a buscar algo que no existe.
+  const msg = formatMisSetteos({
+    closerName: 'S', dateLabel: 'hoy', reportado: reportado(), hubspot: 9, cuota: cuota(),
+    filas: [fila({ hubspot_match: 'exact' })],
+  });
+  assert.ok(!/no lo encontré en HubSpot/.test(msg), 'sin ⚠️ en la lista, no va su leyenda');
+  assert.ok(!/hay varios con ese nombre/.test(msg), 'sin ❓ en la lista, no va su leyenda');
+});
+
 test('lista: se corta para que el mensaje siga siendo leíble en WhatsApp', () => {
   const filas = Array.from({ length: 20 }, (_, i) => fila({ lead_name: `Lead ${i}` }));
   const L = formatListaSetteos(filas, { max: 15 });
