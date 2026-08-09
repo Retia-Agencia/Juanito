@@ -180,6 +180,61 @@ test('isStrictPrivileged: SIN BOSS_LID, un @lid cualquiera NO es privilegiado (n
   });
 });
 
+// ─── Admin identificado por TELÉFONO ──────────────────────────────────────────
+// Un DM del mismo admin llega como @lid o como phone-JID según haya alcanzado a
+// llenarse el lidMap de whatsapp/index.js (contacts.upsert). Cuando llegaba por
+// teléfono caía en 'unknown' y perdía el rol de forma intermitente.
+
+const ADMIN_PHONE = '573174428980';
+
+test('roleOf: admin por TELÉFONO configurado en ADMIN_LID', () => {
+  withEnv({ BOSS_PHONE, BOSS_LID, ADMIN_LID: `${ADMIN_LID},${ADMIN_PHONE}` }, () => {
+    assert.equal(roleOf(`${ADMIN_PHONE}@s.whatsapp.net`), 'admin');
+    // y el LID del mismo admin sigue funcionando
+    assert.equal(roleOf(ADMIN_LID), 'admin');
+  });
+});
+
+test('roleOf: el teléfono de admin admite sufijo @c.us y el formato con +', () => {
+  withEnv({ BOSS_PHONE, BOSS_LID, ADMIN_LID: `+${ADMIN_PHONE}` }, () => {
+    assert.equal(roleOf(`${ADMIN_PHONE}@c.us`), 'admin');
+    assert.equal(roleOf(`${ADMIN_PHONE}@s.whatsapp.net`), 'admin');
+  });
+});
+
+test('roleOf: el match de admin por teléfono es ESTRICTO, no por sufijo', () => {
+  // phonesMatch() compara con endsWith y autorizaría a cualquiera que termine igual.
+  // Acá se concede el MÁXIMO privilegio, así que se exige igualdad de dígitos.
+  withEnv({ BOSS_PHONE, BOSS_LID, ADMIN_LID: '4428980' }, () => {
+    assert.equal(roleOf(`${ADMIN_PHONE}@s.whatsapp.net`), 'unknown');
+  });
+  withEnv({ BOSS_PHONE, BOSS_LID, ADMIN_LID: ADMIN_PHONE }, () => {
+    assert.equal(roleOf(`57317442898@s.whatsapp.net`), 'unknown', 'prefijo no alcanza');
+    assert.equal(roleOf(`3174428980@s.whatsapp.net`), 'unknown', 'sufijo no alcanza');
+  });
+});
+
+test('roleOf: un teléfono en ADMIN_LID no convierte en admin al @lid de los mismos dígitos', () => {
+  // El cuerpo de un @lid es un número largo; no debe cruzarse con el bucket de teléfonos.
+  withEnv({ BOSS_PHONE, BOSS_LID, ADMIN_LID: '129446371655733' }, () => {
+    assert.equal(roleOf('129446371655733@lid'), 'unknown');
+  });
+});
+
+test('roleOf: admin por teléfono gana sobre el rol de closer', () => {
+  // El orden importa: la rama de admin corre ANTES que la de closer.
+  withEnv({ BOSS_PHONE, BOSS_LID, ADMIN_LID: '573046131437' }, () => {
+    assert.equal(roleOf(CLOSER_PHONE_JID), 'admin');
+  });
+});
+
+test('isStrictPrivileged: admin por teléfono también vale para órdenes desde un grupo', () => {
+  withEnv({ BOSS_PHONE, BOSS_LID, ADMIN_LID: ADMIN_PHONE }, () => {
+    assert.equal(isStrictPrivileged(`${ADMIN_PHONE}@s.whatsapp.net`), true);
+    assert.equal(isStrictPrivileged('573000000000@s.whatsapp.net'), false);
+  });
+});
+
 test('toolsForRole: jefe-en-grupo (bossInGroup) expone solo el set acotado', () => {
   const names = toolsForRole('boss', { isGroup: true, bossInGroup: true }).map((t) => t.name);
   assert.deepEqual(

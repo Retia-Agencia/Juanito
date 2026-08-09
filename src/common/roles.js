@@ -10,25 +10,52 @@
 //             registra y consulta su propio setteo, nada más (§18.AZ). No es privilegiado.
 //   unknown → cualquier otro (desconocidos).
 
-import { phonesMatch } from './utils.js';
+import { phonesMatch, normalizePhone } from './utils.js';
 import { resolveCloserByPhone, resolveCloserByLid } from '../calendly/closers.js';
 
 const BOSS_PHONE = () => process.env.BOSS_PHONE;
 const BOSS_LID = () => process.env.BOSS_LID;
-const ADMIN_LIDS = () =>
+
+// ADMIN_LID acepta DOS formas de identidad por entrada: un LID (`<num>@lid`) o un
+// TELÉFONO (dígitos, con o sin sufijo). Hacen falta las dos porque un DM del mismo
+// admin llega con una u otra según lo que WhatsApp haya sincronizado:
+// `whatsapp/index.js` traduce LID → teléfono con `lidMap`, que se llena de forma
+// oportunista desde `contacts.upsert`. Si el mapa aprendió al admin, el router ve
+// su phone-JID; si no, ve su @lid. Identificarlo solo por LID lo dejaba en
+// 'unknown' de forma intermitente, sin que nada hubiera cambiado en la config.
+// (Los closers nunca sufrieron esto: `isCloser()` ya resuelve por teléfono Y por LID.)
+const ADMIN_ENTRIES = () =>
   (process.env.ADMIN_LID || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+
+const ADMIN_LIDS = () => ADMIN_ENTRIES().filter((e) => e.endsWith('@lid'));
+
+const ADMIN_PHONES = () =>
+  ADMIN_ENTRIES()
+    .filter((e) => !e.endsWith('@lid'))
+    .map(normalizePhone)
+    .filter(Boolean);
+
+// ¿Este sender es del equipo dev? Resuelve por LID exacto o por teléfono.
+function isAdminSender(sender) {
+  if (sender.endsWith('@lid')) return ADMIN_LIDS().includes(sender);
+  // Igualdad ESTRICTA de dígitos, NO phonesMatch(): ese compara por sufijo
+  // (`na.endsWith(nb)`), y acá se concede el MÁXIMO privilegio — un número corto
+  // configurado por error autorizaría a cualquiera que termine igual.
+  const digits = normalizePhone(sender);
+  return Boolean(digits) && ADMIN_PHONES().includes(digits);
+}
 
 // Devuelve el rol de un sender (JID de WhatsApp: teléfono@... o <num>@lid).
 export function roleOf(sender) {
   if (!sender) return 'unknown';
   const isLid = sender.endsWith('@lid');
 
-  // Admin gana sobre todo: LIDs del equipo configurados en ADMIN_LID.
+  // Admin gana sobre todo: identidades del equipo configuradas en ADMIN_LID (LID o teléfono).
   // (Un dev de pruebas cuyo LID esté también en BOSS_LID se considera admin.)
-  if (isLid && ADMIN_LIDS().includes(sender)) return 'admin';
+  if (isAdminSender(sender)) return 'admin';
 
   // Jefe por su teléfono canónico.
   if (phonesMatch(sender, BOSS_PHONE())) return 'boss';
@@ -77,7 +104,7 @@ export function isPrivileged(role) {
 // A diferencia de roleOf(), NO usa el fallback retrocompat "cualquier @lid = jefe": en un
 // grupo TODOS los participantes llegan como @lid, así que ese fallback convertiría a todo el
 // grupo en jefe. Aquí exigimos identidad CONFIGURADA explícitamente:
-//   - LID en ADMIN_LID, o
+//   - identidad en ADMIN_LID (LID exacto o teléfono, ver isAdminSender), o
 //   - BOSS_LID definido y el sender es EXACTAMENTE ese LID, o
 //   - el teléfono canónico del jefe (BOSS_PHONE).
 // Si no hay BOSS_LID/ADMIN_LID/BOSS_PHONE configurados, devuelve false → la feature de
@@ -85,7 +112,7 @@ export function isPrivileged(role) {
 export function isStrictPrivileged(sender) {
   if (!sender) return false;
   const isLid = sender.endsWith('@lid');
-  if (isLid && ADMIN_LIDS().includes(sender)) return true;
+  if (isAdminSender(sender)) return true;
   const bossLid = BOSS_LID();
   if (isLid && bossLid && sender === bossLid) return true;
   if (phonesMatch(sender, BOSS_PHONE())) return true;
