@@ -4876,6 +4876,70 @@ solo la #3.
 
 ---
 
+### 18.BH 🔵 El admin que perdía el rol solo (2026-08-09) — EN PRODUCCIÓN
+
+**Reporte:** *"creo que Juanito me quitó el rol de admin"*. No se lo quitó nadie: su LID seguía en
+`ADMIN_LID`. **El rol se perdía en el camino, antes de evaluarse.**
+
+#### La causa
+
+`src/whatsapp/index.js` reescribe el `chatId` de los DMs traduciendo LID → teléfono con `lidMap`:
+
+```js
+const chatId = isGroup ? rawJid : (resolveJid(rawJid) || rawJid);
+```
+
+`lidMap` se llena de forma **oportunista** desde `contacts.upsert`. Si alcanzó a aprender al admin,
+el router recibe su **phone-JID**; si no, su `@lid`. Y `roleOf()` solo miraba `ADMIN_LID` cuando el
+sender terminaba en `@lid` → con phone-JID no matcheaba admin, tampoco `BOSS_PHONE` (es el de Dani),
+ni la rama de `BOSS_LID` (exige `isLid`), ni el retrocompat → **`unknown`** → `handlePublicDm`.
+
+**Es una carrera**, no un cambio de configuración: el mismo admin es admin o desconocido **según el
+arranque**, sin que nadie toque nada. Por eso "me funcionaba ayer" es cierto y no ayuda.
+
+**Los closers nunca lo sufrieron** — `isCloser()` ya resolvía por teléfono Y por LID. Los admins
+eran los únicos identificados solo por LID.
+
+#### El tell en los logs
+
+```
+[Debug] fromMe=false rawJid=<LID>@lid chatId=<teléfono>@s.whatsapp.net
+[Bot] DM público de <Nombre del admin>      ← "DM público" = cayó en unknown
+```
+
+`rawJid` es lo que mandó WhatsApp; `chatId` es lo que ve `roleOf()`. **Si difieren, el rol se
+resolvió contra la identidad equivocada.**
+
+#### El arreglo (`5f4584d`)
+
+`ADMIN_LID` acepta **LID o teléfono** por entrada. Se arregló en `roles.js` y no en
+`whatsapp/index.js` a propósito: reescribir el `chatId` de vuelta a LID cambiaría la clave de
+persistencia de todos los DMs y forkearía cada hilo.
+
+⚠️ El match por teléfono es **igualdad exacta de dígitos**, NO `phonesMatch()` — ese compara por
+sufijo (`na.endsWith(nb)`) y acá se concede el MÁXIMO privilegio: un número corto mal cargado
+autorizaría a cualquiera que termine igual. `BOSS_PHONE` sí usa `phonesMatch`. Hay tests que lo
+fijan. **El orden de ramas de `roleOf()` no se movió** (ver la advertencia del CLAUDE.md).
+
+El código solo habilita la forma; **no agrega a nadie**. Hay que cargar la identidad en el `.env`.
+
+#### 🟡 Pendiente
+
+**Solo está cargado el teléfono de Alejandro (`573174428980`).** Los otros dos admins
+(`147313234280449@lid`, `65756133896221@lid`) van a caer en lo mismo cuando `lidMap` los aprenda.
+**Cargar las DOS identidades de cada admin**, o sigue siendo una moneda al aire. Es `.env` +
+restart, no toca código.
+
+#### Nota de despliegue
+
+Se desplegó a mano por SSH (el dispatch del workflow quedó bloqueado). Dos cosas que el workflow
+hace y hay que replicar si se repite: **normalizar CRLF → LF** (un checkout de Windows sube CRLF y
+el runner sube LF ⇒ deriva permanente en el diff de checksums) y **sellar `DEPLOYED_SHA`** en
+`/root/juanito/` y en `dashboard/`, o el dashboard reporta un commit viejo. Baileys reconectó
+limpio reusando la sesión, sin 405.
+
+---
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):
