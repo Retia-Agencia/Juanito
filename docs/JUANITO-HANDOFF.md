@@ -4998,6 +4998,63 @@ limpio reusando la sesión, sin 405.
 
 ---
 
+### 18.BI 🟡 PENDIENTE — lo que quedó abierto del reporte de EstadoX (2026-08-12)
+
+Las cohortes múltiples y la venta neta MTD están **en producción y verificadas** (ver §18.B, bloque
+del 2026-08-12). Quedaron dos cosas sin cerrar. **La segunda no es de ese cambio y puede ser un bug
+vivo desde hace semanas.**
+
+#### 1. 🔴 `Bookearon Calendly: 0` — ¿la métrica murió o el negocio cambió?
+
+**Lo observado** (rendereando el reporte real contra producción el 2026-08-12): la línea del día dice
+`📅 Bookearon Calendly: 0`, y en la tendencia semanal el promedio diario de `cal` es **`0.0` en tres
+de las últimas cuatro semanas**:
+
+```
+• week (en curso): 18.4 leads · 0.0 cal · …
+• week-1:          27.5 leads · 0.0 cal · …
+• week-2:          57.9 leads · 0.0 cal (-100%) · …
+• week-3:          75.5 leads · 1.8 cal · …
+• week-4:          22.2 leads · 0.4 cal · …
+```
+
+Con leads entrando todos los días, **cero bookings tres semanas seguidas es sospechoso**. El corte
+entre `week-3` (1.8/día) y `week-2` (0.0) es abrupto, que es la firma de algo que se rompió, no de
+una tendencia comercial.
+
+**De dónde sale el número.** `summarize` (`src/sheets/aggregate.js`) cuenta filas de la ventana con
+la **columna I** no vacía (`COL.calendly`, la URL de invitee que el Form/automation escribe en el
+Sheet de leads). O sea: `calendlyBooked` mide *"la columna I tiene algo"*, **no** *"hubo una cita"*.
+Si la automatización que llena esa columna se cayó o cambió de columna, el reporte dice 0 y **no
+tiene forma de saber que está mintiendo** — no hay error, no hay warning, es un conteo legítimo de
+una columna vacía.
+
+**Cómo diagnosticarlo (en orden, el primero descarta la mitad de las hipótesis):**
+
+1. **Abrir el Sheet y mirar la columna I de las filas recientes.** Si tiene URLs → el bug está en el
+   código (índice de columna corrido, parseo de fecha). Si está vacía → el bug está aguas arriba,
+   en lo que llena el Sheet, y Juanito solo es el mensajero.
+2. **Contrastar contra una fuente que no dependa del Sheet:** las citas que Juanito ya conoce por
+   Calendly y HubSpot (`getScheduledCallsInWindow`, §18.AU). Si esos días hubo calls reales y la
+   columna I estaba vacía, queda confirmado que la línea del reporte lleva semanas en cero falso.
+3. **Ubicar cuándo se cortó:** correr `summarize` sobre ventanas diarias hacia atrás hasta encontrar
+   el último día con `calendlyBooked > 0`. Esa fecha es la pista de qué cambió.
+
+**Por qué importa más de lo que parece:** esa línea es el único punto del reporte que mide el paso
+*lead → cita agendada*. Si está en cero falso, Mariana y Alfredo vienen leyendo un embudo roto por
+el medio y ajustando sobre un dato inventado.
+
+#### 2. 🟡 La suite completa en Linux nunca se corrió
+
+Docker Desktop estuvo caído toda la sesión del 2026-08-12. Lo verificado son **72/72 verde en los
+cuatro archivos que cubren lo modificado** (`test/sheets.test.js`, `test/sheets-weekly.test.js`,
+`test/stripe.test.js`, `test/stripe.revenue.test.js`) más el hecho de que ningún test rojo de
+Windows importa los módulos tocados. **Eso es un argumento, no una medición.** Correr cuando Docker
+vuelva (receta en CLAUDE.md); baseline esperado ~994 + los 26 nuevos, con los 3 rojos conocidos
+(links de Retia + los dos de agenda superseded).
+
+---
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):
