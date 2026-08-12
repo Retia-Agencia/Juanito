@@ -16,7 +16,11 @@
 
 const API = 'https://api.stripe.com/v1/payment_intents';
 const SESSIONS_API = 'https://api.stripe.com/v1/checkout/sessions';
+const CHARGES_API = 'https://api.stripe.com/v1/charges';
 const MAX_PAGES = 10; // tope de seguridad: 10 × 100 intents cubre 35 días con margen
+// El bloque de venta neta mira DOS meses hacia atrás (MTD + el MTD anterior), así que
+// necesita más páginas que las funciones diarias. 20 × 100 = 2000 cargos en ~62 días.
+const MAX_PAGES_CHARGES = 20;
 
 export const STRIPE_API_KEY = () => (process.env.STRIPE_API_KEY || '').trim();
 
@@ -89,6 +93,59 @@ export async function fetchRecentPayments({ createdGteSec, fetchImpl = fetch } =
     if (!json?.has_more || data.length === 0) return out;
     startingAfter = data[data.length - 1].id;
   }
+  return out;
+}
+
+// Cargos (`/v1/charges`) desde `createdGteSec`, CON montos — para la línea de VENTA NETA
+// del reporte (§18.B, 2026-08-12). Tercera excepción consciente a la regla de arriba: son
+// AGREGADOS (se suman y se muestra un total por moneda, sin cliente ni id), y el bloque
+// que los usa sale SOLO por DM, nunca al grupo.
+//
+// Por qué charges y no payment_intents: "neta" = cobros − reembolsos, y el reembolso vive
+// en el CARGO (`amount_refunded`). El PaymentIntent no lo expone sin expandir `latest_charge`,
+// lo que igual exigiría el mismo permiso.
+//
+// ⚠️ Requiere que la restricted key tenga permiso "read" sobre **Charges** (además de
+// PaymentIntents y Checkout Sessions). Sin él, Stripe devuelve 403 → throw → el caller
+// omite el bloque y el reporte sale igual.
+//
+// `amount_refunded` atribuye el reembolso a la fecha del cargo ORIGINAL: un reembolso de
+// agosto sobre una venta de julio baja el número de julio. Es a propósito (venta neta por
+// fecha de cobro) y el mensaje lo dice al pie.
+export async function fetchChargesSince({ createdGteSec, fetchImpl = fetch } = {}) {
+  const key = STRIPE_API_KEY();
+  if (!key) throw new Error('[stripe] falta STRIPE_API_KEY');
+
+  const out = [];
+  let startingAfter = null;
+  for (let page = 0; page < MAX_PAGES_CHARGES; page++) {
+    const params = new URLSearchParams({ limit: '100' });
+    if (createdGteSec != null) params.set('created[gte]', String(Math.floor(createdGteSec)));
+    if (startingAfter) params.set('starting_after', startingAfter);
+
+    const res = await fetchImpl(`${CHARGES_API}?${params}`, { headers: { Authorization: `Bearer ${key}` } });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`[stripe] charges ${res.status}: ${body.slice(0, 200)}`);
+    }
+    const json = await res.json();
+    const data = json?.data || [];
+    for (const ch of data) {
+      if (ch?.created == null) continue;
+      out.push({
+        created: ch.created,
+        amount: ch.amount ?? 0,
+        amountRefunded: ch.amount_refunded ?? 0,
+        currency: ch.currency || null,
+        status: ch.status || null,
+      });
+    }
+    if (!json?.has_more || data.length === 0) return out;
+    startingAfter = data[data.length - 1].id;
+  }
+  console.warn(
+    `[stripe] corté la paginación de charges en ${MAX_PAGES_CHARGES} páginas; la venta neta podría quedar corta`
+  );
   return out;
 }
 

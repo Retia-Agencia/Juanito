@@ -1404,6 +1404,47 @@ completa contra parcial. Cambios:
 - El **bloque del día NO se tocó** (Total, Calendly, self-checkout, Pagos Stripe intactos). Tests
   actualizados: `test/sheets-weekly.test.js` 20/20, suite de sheets+stripe verde.
 
+**✅ COHORTES MÚLTIPLES + VENTA NETA MTD (2026-08-12, pedido de Alejandro para Mariana y Alfredo):**
+
+*1. Varias cohortes a la vez.* La cohorte era **una sola**, cableada en `SHEETS_COHORT_TAB`/`_LABEL`
+— rotarla **reemplazaba**, y con la cohorte 4 arrancando en septiembre mientras la 3 se dicta, el
+número habría caído de golpe. Ahora `COHORTS()` (`src/sheets/client.js`) lee **`SHEETS_COHORTS`**,
+una lista `pestaña::rótulo` separada por comas, y el reporte pinta **una línea por cohorte**. El
+`try/catch` del scheduler va **por pestaña**: si la del mes que viene todavía no existe en el Sheet,
+la actual igual sale. Sin `SHEETS_COHORTS` cae a las dos vars viejas (el VPS no se queda sin la
+línea entre el deploy y el cambio de config). Rotar en adelante = editar la lista, sin código.
+
+*2. Venta neta de Stripe, mes a la fecha.* Bloque nuevo al pie: MTD vs. **el mismo tramo del mes
+anterior** (1–11 ago vs. 1–11 jul), no contra el mes anterior completo. Tres decisiones que no son
+obvias:
+- **"Neta" = cobros − reembolsos, ANTES de la comisión de Stripe** — el mismo criterio que el "net
+  volume from sales" del dashboard, para que el número cuadre con lo que Mariana ve ahí. Sale de
+  **`/v1/charges`** (`fetchChargesSince`), no de PaymentIntents: el reembolso vive en el cargo
+  (`amount_refunded`). ⚠️ **Exige permiso "read" sobre Charges en la `rk_live_`**; sin él Stripe
+  devuelve 403, el bloque se omite y el resto del reporte sale igual.
+- **El reembolso baja el mes del cobro ORIGINAL** (atribución por fecha de cargo), así que un mes
+  cerrado puede moverse hacia atrás. El mensaje lo dice al pie, porque si no la primera vez que pase
+  se lee como un bug.
+- **Los montos salen SOLO por DM.** `formatReport(summary, win, { revenue: false })` arma la
+  variante sin dinero y `buildSheetsReport` devuelve **`message`** (DM, con montos) y
+  **`messageGroup`** (sin). Hoy el grupo está apagado, pero `SHEETS_REPORT_GROUP_ENABLED` sigue
+  existiendo: sin esta separación, prenderlo publicaría la facturación en "Ventas EstadoX".
+  `message` conserva el nombre a propósito → `/reporte` (`src/bot/commands.js`) no se tocó, y como
+  también es un DM, el jefe/admin sí ve la plata.
+
+Detalles de reloj y ventana (la trampa recurrente de este módulo): `monthToDateWindows`
+(`src/sheets/window.js`) devuelve las dos ventanas en el mismo epoch **naive** de Bogotá que usa
+todo el módulo, **clampeando el día** del mes anterior (31 de marzo compara contra el 28 de
+febrero); los `created` de Stripe se pasan por `toNaiveMs` antes de comparar — con el reloj UTC
+crudo, un cobro de las 00:30 UTC del 1 de agosto se contaría como venta de agosto cuando en Bogotá
+fue el 31 de julio. Y el `STRIPE_LOOKBACK_DAYS = 42` **no alcanzaba** para llegar al día 1 del mes
+anterior (a fin de mes son ~60 días): la llamada de charges calcula su propio lookback desde la
+ventana, con `MAX_PAGES_CHARGES = 20`.
+
+Lógica pura nueva en `src/stripe/revenue.js` (`sumNet` agrupa **por moneda** — sumar monedas
+distintas sería mentir) y tests en `test/stripe.revenue.test.js` (18) + `COHORTS` en
+`test/sheets.test.js` (4).
+
 ### 18.C 🔵 Aviso de "nueva call agendada" a los closers (idea Sebas — 2026-06-10)
 
 **Pedido de Sebas (textual):** *"Si nosotros borramos y generamos espacio en agenda, siguiendo el

@@ -66,6 +66,30 @@ export function lastFullWeekWindow(now = new Date(), tz = TZ) {
   return { startMs: endMs - WEEK_MS, endMs };
 }
 
+// Días que tiene el mes `m` (1-based) del año `y`. Date.UTC(y, m, 0) = último día del
+// mes anterior a `m+1`, o sea el último de `m`.
+function daysInMonth(y, m) {
+  return new Date(Date.UTC(y, m, 0)).getUTCDate();
+}
+
+// Mes a la fecha (MTD) y el MISMO tramo del mes anterior, para el bloque de venta neta
+// del reporte (§18.B). Si hoy es 12 de agosto y el corte son las 20:00:
+//   cur  = [1 ago 00:00, 12 ago 20:00)
+//   prev = [1 jul 00:00, 12 jul 20:00)
+// El día del mes anterior se CLAMPEA a su último día: el 31 de marzo compara contra el
+// 28 (o 29) de febrero, no contra un 31 que no existe. Mismo epoch "naive" que el resto
+// del módulo.
+export function monthToDateWindows(now = new Date(), { cutoffHour = 20, tz = TZ } = {}) {
+  const { y, m, d } = zonedParts(now, tz);
+  const py = m === 1 ? y - 1 : y;
+  const pm = m === 1 ? 12 : m - 1;
+  const pd = Math.min(d, daysInMonth(py, pm));
+  return {
+    cur: { startMs: Date.UTC(y, m - 1, 1), endMs: Date.UTC(y, m - 1, d, cutoffHour) },
+    prev: { startMs: Date.UTC(py, pm - 1, 1), endMs: Date.UTC(py, pm - 1, pd, cutoffHour) },
+  };
+}
+
 // Ventanas parciales like-for-like de las últimas `weeks` semanas (incluida la
 // actual): [lunes 00:00, hoy cutoffHour:00) desplazada k·7d — si hoy es miércoles,
 // lunes→miércoles de cada semana, todas con el mismo corte horario. Índice 0 =

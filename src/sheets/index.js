@@ -20,10 +20,11 @@ export {
   startOfWeekMonday,
   lastFullWeekWindow,
   partialWeekWindows,
+  monthToDateWindows,
 } from './window.js';
 export { summarize, countSelfCheckout, countCohortStudents, averagePriorDays } from './aggregate.js';
 export { windowTotals, buildWeeklySections } from './weekly.js';
-export { formatReport, formatWeeklySections } from './report.js';
+export { formatReport, formatWeeklySections, formatRevenueSection } from './report.js';
 export { formatMetrics, COMPANIES } from './metrics.js';
 export {
   fetchLeadRows,
@@ -35,4 +36,5 @@ export {
   SETTEO_TAB,
   COHORT_TAB,
   COHORT_LABEL,
+  COHORTS,
 } from './client.js';

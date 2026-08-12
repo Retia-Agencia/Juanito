@@ -11,6 +11,7 @@ import { computeWindow, zonedParts } from '../src/sheets/window.js';
 import { summarize, countSelfCheckout, averagePriorDays, countCohortStudents } from '../src/sheets/aggregate.js';
 import { formatReport } from '../src/sheets/report.js';
 import { COL, SETTEO } from '../src/sheets/columns.js';
+import { COHORTS } from '../src/sheets/client.js';
 
 // ─── parseSubmittedAt ─────────────────────────────────────────────────────────
 
@@ -269,4 +270,56 @@ test('countCohortStudents tolera vacío y filas cortas', () => {
   assert.equal(countCohortStudents([]), 0);
   assert.equal(countCohortStudents(null), 0);
   assert.equal(countCohortStudents([['header']]), 0); // solo encabezado
+});
+
+// ─── COHORTS (config de cohortes múltiples, 2026-08-12) ───────────────────────
+
+const COHORT_ENV = ['SHEETS_COHORTS', 'SHEETS_COHORT_TAB', 'SHEETS_COHORT_LABEL'];
+const COHORT_BACKUP = Object.fromEntries(COHORT_ENV.map((k) => [k, process.env[k]]));
+const restoreCohortEnv = () => {
+  for (const k of COHORT_ENV) {
+    if (COHORT_BACKUP[k] === undefined) delete process.env[k];
+    else process.env[k] = COHORT_BACKUP[k];
+  }
+};
+const setCohortEnv = (vals) => {
+  for (const k of COHORT_ENV) delete process.env[k];
+  Object.assign(process.env, vals);
+};
+
+test('COHORTS parsea la lista `pestaña::rótulo` en orden', (t) => {
+  t.after(restoreCohortEnv);
+  setCohortEnv({
+    SHEETS_COHORTS:
+      'Estudiantes Oficiales cohort Agosto::Cohorte 3 (Agosto), Estudiantes Oficiales cohort Septiembre::Cohorte 4 (Septiembre)',
+  });
+  assert.deepEqual(COHORTS(), [
+    { tab: 'Estudiantes Oficiales cohort Agosto', label: 'Cohorte 3 (Agosto)' },
+    { tab: 'Estudiantes Oficiales cohort Septiembre', label: 'Cohorte 4 (Septiembre)' },
+  ]);
+});
+
+test('COHORTS: sin rótulo usa el nombre de la pestaña, y descarta entradas sin pestaña', (t) => {
+  t.after(restoreCohortEnv);
+  setCohortEnv({ SHEETS_COHORTS: 'Cohort Septiembre,,   ::Cohorte 4' });
+  assert.deepEqual(COHORTS(), [{ tab: 'Cohort Septiembre', label: 'Cohort Septiembre' }]);
+});
+
+// Retrocompat: el VPS todavía tiene la config vieja de UNA cohorte, y entre el deploy y el
+// cambio de env el reporte NO se puede quedar sin la línea.
+test('COHORTS cae a SHEETS_COHORT_TAB/LABEL cuando SHEETS_COHORTS está vacía', (t) => {
+  t.after(restoreCohortEnv);
+  setCohortEnv({
+    SHEETS_COHORT_TAB: 'Estudiantes Oficiales cohort Agosto',
+    SHEETS_COHORT_LABEL: 'Cohorte 3 (Agosto)',
+  });
+  assert.deepEqual(COHORTS(), [
+    { tab: 'Estudiantes Oficiales cohort Agosto', label: 'Cohorte 3 (Agosto)' },
+  ]);
+});
+
+test('COHORTS sin nada configurado devuelve vacío (el reporte omite la línea)', (t) => {
+  t.after(restoreCohortEnv);
+  setCohortEnv({});
+  assert.deepEqual(COHORTS(), []);
 });

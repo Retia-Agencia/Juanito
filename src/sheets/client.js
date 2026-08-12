@@ -28,8 +28,35 @@ export const SETTEO_TAB = () => process.env.SHEETS_SETTEO_TAB || '📞 Setteo Pe
 
 // Pestaña de la cohorte actual (estudiantes ya confirmados). Sin default: si no está
 // configurada, el conteo se omite del reporte. Rota cada mes → se cambia por env var.
+// ⚠️ Config LEGACY de UNA sola cohorte: la sigue leyendo COHORTS() como fallback, pero lo
+// que se configura hoy es SHEETS_COHORTS (ver abajo).
 export const COHORT_TAB = () => (process.env.SHEETS_COHORT_TAB || '').trim();
 export const COHORT_LABEL = () => (process.env.SHEETS_COHORT_LABEL || 'Próxima cohorte').trim();
+
+// Cohortes a mostrar en el reporte (2026-08-12): durante la transición conviven la que
+// está EN CURSO y la que se está VENDIENDO — con una sola var, rotar reemplazaba y el
+// número caía de golpe.
+//
+// `SHEETS_COHORTS` = lista separada por comas de `pestaña::rótulo`:
+//   Estudiantes Oficiales cohort Agosto::Cohorte 3 (Agosto),Estudiantes … Septiembre::Cohorte 4 (Septiembre)
+//
+// Sin ella cae a SHEETS_COHORT_TAB/LABEL, así que el VPS sigue reportando igual entre el
+// deploy y el cambio de config. Sin ninguna de las dos, el reporte omite la línea.
+export function COHORTS() {
+  const raw = (process.env.SHEETS_COHORTS || '').trim();
+  if (raw) {
+    return raw
+      .split(',')
+      .map((chunk) => {
+        const [tab, label] = chunk.split('::');
+        return { tab: (tab || '').trim(), label: (label || '').trim() };
+      })
+      .filter((c) => c.tab)
+      .map((c) => ({ tab: c.tab, label: c.label || c.tab }));
+  }
+  const tab = COHORT_TAB();
+  return tab ? [{ tab, label: COHORT_LABEL() }] : [];
+}
 
 // Resuelve GOOGLE_SA_KEY a las credenciales del service account.
 export function loadCredentials(raw = process.env.GOOGLE_SA_KEY) {

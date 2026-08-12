@@ -126,13 +126,18 @@ services:
       - SHEETS_REPORT_GROUP=${SHEETS_REPORT_GROUP:-}
       - SHEETS_LEADS_ID=${SHEETS_LEADS_ID:-}
       - SHEETS_LEADS_TAB=${SHEETS_LEADS_TAB:-}
-      # Estudiantes confirmados de la cohorte actual (§18.B). Sin SHEETS_COHORT_TAB la línea se omite.
+      # Estudiantes confirmados por cohorte (§18.B): lista `pestaña::rótulo` separada por
+      # comas — conviven la cohorte en curso y la que se está vendiendo. Sin nada de esto,
+      # la línea se omite. SHEETS_COHORT_TAB/LABEL es la config vieja de UNA sola cohorte
+      # y sigue funcionando como fallback.
+      - SHEETS_COHORTS=${SHEETS_COHORTS:-}
       - SHEETS_COHORT_TAB=${SHEETS_COHORT_TAB:-}
       - SHEETS_COHORT_LABEL=${SHEETS_COHORT_LABEL:-}
       - SHEETS_REPORT_CRON=${SHEETS_REPORT_CRON:-0 20 * * *}
       - SHEETS_SRC_AHEAD_HOURS=${SHEETS_SRC_AHEAD_HOURS:-3}
       # Pagos reales para el reporte de EstadoX (restricted key rk_… solo-lectura de
-      # PaymentIntents). Sin key → fallback al tag manual del Sheet.
+      # PaymentIntents). Sin key → fallback al tag manual del Sheet. Con permiso "read"
+      # sobre Charges se suma además el bloque de VENTA NETA del mes (solo por DM).
       - STRIPE_API_KEY=${STRIPE_API_KEY:-}
       # Payment Link del self-checkout (plink_…, NO la URL buy.stripe.com): con él, "pagos
       # self-checkout" se atribuye por link en vez del tag manual del Sheet. La rk_ necesita

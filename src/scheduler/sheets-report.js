@@ -10,8 +10,8 @@
 import { CronJob } from 'cron';
 import { sendMessage, resolveGroupByName } from '../whatsapp/index.js';
 import { hasDmThread } from '../db/index.js';
-import { fetchLeadRows, fetchSetteoRows, fetchCohortRows, COHORT_TAB, COHORT_LABEL } from '../sheets/index.js';
-import { computeWindow, toNaiveMs } from '../sheets/window.js';
+import { fetchLeadRows, fetchSetteoRows, fetchCohortRows, COHORTS } from '../sheets/index.js';
+import { computeWindow, monthToDateWindows, toNaiveMs } from '../sheets/window.js';
 import { summarize, countSelfCheckout, countCohortStudents } from '../sheets/aggregate.js';
 import { buildWeeklySections } from '../sheets/weekly.js';
 import { formatReport } from '../sheets/report.js';
@@ -19,7 +19,9 @@ import {
   STRIPE_API_KEY,
   fetchSucceededPaymentTimestamps,
   fetchSucceededPaymentTimestampsForLink,
+  fetchChargesSince,
 } from '../stripe/client.js';
+import { buildRevenueMTD } from '../stripe/revenue.js';
 
 const TZ = () => process.env.TZ || 'America/Bogota';
 const CRON = () => process.env.SHEETS_REPORT_CRON || '0 20 * * *';
@@ -63,7 +65,10 @@ async function resolveTarget() {
 // listas recibían mensajes distintos (estándar vs. 5 métricas); ahora ambas reciben el
 // reporte estándar rediseñado. Dedup por si un JID está en las dos listas. Devuelve
 // cuántos envíos salieron.
-async function deliverReport(message) {
+// `messageGroup` es la variante SIN montos. Si no viene, el grupo recibe `message` — pero
+// el caller normal (buildSheetsReport) siempre la manda, así que en la práctica al grupo
+// nunca le sale la facturación.
+async function deliverReport(message, messageGroup = message) {
   let enviados = 0;
 
   if (GROUP_ENABLED() && TARGET()) {
@@ -71,7 +76,7 @@ async function deliverReport(message) {
     if (!target) {
       console.error(`[Sheets] no pude resolver el grupo destino "${TARGET()}" (¿Juanito está en el grupo?)`);
     } else {
-      await sendMessage(target, message);
+      await sendMessage(target, messageGroup);
       console.log(`[Sheets] reporte enviado → grupo ${target}`);
       enviados++;
     }
@@ -125,16 +130,20 @@ export async function buildSheetsReport({ now = new Date() } = {}) {
   // ahora es el bloque semanal en promedio diario.
   const summary = { ...summarize(rows, win, []), selfCheckout: countSelfCheckout(setteoRows, win) };
 
-  // Estudiantes confirmados de la cohorte actual (§18.B). Solo si el tab está configurado;
-  // si la lectura falla, se omite la línea y el reporte sale igual (regla del repo).
-  if (COHORT_TAB()) {
+  // Estudiantes confirmados por cohorte (§18.B). Desde 2026-08-12 son VARIAS: la que está
+  // en curso y la que se está vendiendo conviven durante la transición. El try/catch va
+  // POR PESTAÑA a propósito: si la cohorte nueva todavía no existe en el Sheet, la vieja
+  // igual sale (regla del repo: ningún job se cae por config faltante).
+  const cohorts = [];
+  for (const { tab, label } of COHORTS()) {
     try {
-      const cohortRows = await fetchCohortRows();
-      summary.cohort = { label: COHORT_LABEL(), count: countCohortStudents(cohortRows) };
+      const cohortRows = await fetchCohortRows({ tab });
+      cohorts.push({ label, count: countCohortStudents(cohortRows) });
     } catch (e) {
-      console.warn('[Sheets] cohorte no disponible, se omite del reporte:', e.message);
+      console.warn(`[Sheets] cohorte "${label}" no disponible, se omite del reporte:`, e.message);
     }
   }
+  if (cohorts.length) summary.cohorts = cohorts;
 
   // Pagos reales (PaymentIntents succeeded) si hay key; si Stripe falla, el reporte
   // sale igual con el tag manual del Sheet — nunca tumba el job.
@@ -173,7 +182,37 @@ export async function buildSheetsReport({ now = new Date() } = {}) {
     selfCheckoutNaiveMs: selfCheckoutNaive,
   });
 
-  return { message: formatReport(summary, win), summary, win };
+  // Venta neta del mes a la fecha vs. el mismo tramo del mes anterior (2026-08-12).
+  // Llamada aparte a /v1/charges: los montos y los reembolsos no están en los timestamps
+  // que ya trajimos. Si la rk_ no tiene permiso sobre Charges (403) el bloque se omite y
+  // el reporte sale igual.
+  if (STRIPE_API_KEY()) {
+    try {
+      const mtd = monthToDateWindows(now);
+      // El lookback tiene que llegar al día 1 del MES ANTERIOR, que a fin de mes son ~60
+      // días — el STRIPE_LOOKBACK_DAYS de arriba (42, dimensionado para 5 semanas) no
+      // alcanza. Se calcula desde la ventana y se le suman 2 días de margen.
+      const daysBack = Math.ceil((toNaiveMs(now) - mtd.prev.startMs) / (24 * 3600 * 1000)) + 2;
+      const createdGteSec = Math.floor(now.getTime() / 1000) - daysBack * 24 * 3600;
+      const charges = await fetchChargesSince({ createdGteSec });
+      // Stripe entrega epoch REAL; el resto del reporte compara en naive de Bogotá.
+      const entries = charges.map((c) => ({ ...c, naiveMs: toNaiveMs(new Date(c.created * 1000)) }));
+      summary.revenue = buildRevenueMTD(entries, mtd);
+    } catch (e) {
+      console.warn('[Sheets] venta neta no disponible, se omite del reporte:', e.message);
+    }
+  }
+
+  // Dos variantes del MISMO reporte: `message` lleva los montos y va por DM; `messageGroup`
+  // no los lleva y es la que iría al grupo "Ventas EstadoX" si alguien reactiva
+  // SHEETS_REPORT_GROUP_ENABLED. El nombre `message` no cambia a propósito: /reporte
+  // (src/bot/commands.js) lo consume y también es un DM, así que ahí sí se ve la plata.
+  return {
+    message: formatReport(summary, win),
+    messageGroup: formatReport(summary, win, { revenue: false }),
+    summary,
+    win,
+  };
 }
 
 export function startSheetsReportJob() {
@@ -198,8 +237,8 @@ export function startSheetsReportJob() {
     CRON(),
     async () => {
       try {
-        const { message, summary } = await buildSheetsReport();
-        const n = await deliverReport(message);
+        const { message, messageGroup, summary } = await buildSheetsReport();
+        const n = await deliverReport(message, messageGroup);
         console.log(`[Sheets] reporte diario: ${n} envío(s) (${summary.total} entradas)`);
       } catch (e) {
         console.error('[Sheets] error en el reporte diario:', e.message);
