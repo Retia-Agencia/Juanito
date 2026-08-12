@@ -68,7 +68,49 @@ test('sumNet: un cargo reembolsado por completo suma 0, no descuenta de los dem�
   assert.equal(usd.charges, 2);
 });
 
-test('sumNet agrupa por moneda en vez de sumar peras con manzanas', () => {
+// La cuenta cobra en usd y cop pero LIQUIDA en usd: el cargo en pesos entra al total con
+// el monto que Stripe ya convirtió, no con los pesos.
+test('sumNet unifica en la moneda de liquidación usando el monto convertido por Stripe', () => {
+  const entries = [
+    charge(3, 100000),
+    charge(4, 373215000, {
+      currency: 'cop',
+      settledAmount: 115594,
+      settledCurrency: 'usd',
+      exchangeRate: 0.000309726,
+    }),
+  ];
+  const totals = sumNet(entries, WIN);
+  assert.equal(totals.length, 1);
+  assert.equal(totals[0].currency, 'usd');
+  assert.equal(totals[0].net, 100000 + 115594);
+  assert.equal(totals[0].converted, true); // dispara la nota al pie
+});
+
+test('sumNet: el reembolso de un cargo en otra moneda se convierte con la tasa del cargo', () => {
+  const entries = [
+    charge(4, 373215000, {
+      currency: 'cop',
+      amountRefunded: 373215000, // reembolso total en pesos
+      settledAmount: 115594,
+      settledCurrency: 'usd',
+      exchangeRate: 0.000309726,
+    }),
+  ];
+  const [usd] = sumNet(entries, WIN);
+  assert.equal(usd.net, 0); // 115594 − round(373215000 × 0.000309726) = 0
+});
+
+test('sumNet sin conversión no marca converted (no hay nota al pie que poner)', () => {
+  const entries = [charge(3, 100000, { settledAmount: 100000, settledCurrency: 'usd', exchangeRate: null })];
+  const [usd] = sumNet(entries, WIN);
+  assert.equal(usd.net, 100000);
+  assert.equal(usd.converted, false);
+});
+
+// Sin la expansión de balance_transaction no hay con qué convertir: preferimos un total
+// partido en dos monedas antes que uno unificado con una tasa inventada.
+test('sumNet sin balance_transaction cae a la moneda original del cargo', () => {
   const entries = [charge(3, 100000), charge(4, 500000, { currency: 'cop' })];
   const totals = sumNet(entries, WIN);
   assert.equal(totals.length, 2);
@@ -121,6 +163,15 @@ test('formatRevenueSection sin ventas en ningún mes muestra 0, no se calla', ()
   const txt = formatRevenueSection(revenue(null, null));
   assert.match(txt, /1–11 ago: US\$ 0/);
   assert.match(txt, /1–11 jul: US\$ 0/);
+});
+
+test('formatRevenueSection avisa al pie SOLO si hubo cobros convertidos', () => {
+  const sin = formatRevenueSection(revenue(1234000, 987000));
+  assert.doesNotMatch(sin, /convertidos/);
+
+  const con = revenue(1234000, 987000);
+  con.prev.totals[0].converted = true;
+  assert.match(formatRevenueSection(con), /convertidos a la tasa que aplicó Stripe/);
 });
 
 test('formatRevenueSection pinta cada moneda por separado', () => {
@@ -184,8 +235,24 @@ test('fetchChargesSince pagina y normaliza amount_refunded', async () => {
         ok: true,
         json: async () => ({
           data: [
-            { id: 'ch_1', status: 'succeeded', created: 1000, amount: 50000, amount_refunded: 0, currency: 'usd' },
-            { id: 'ch_2', status: 'succeeded', created: 1001, amount: 30000, amount_refunded: 30000, currency: 'usd' },
+            {
+              id: 'ch_1',
+              status: 'succeeded',
+              created: 1000,
+              amount: 373215000,
+              amount_refunded: 0,
+              currency: 'cop',
+              balance_transaction: { amount: 115594, currency: 'usd', exchange_rate: 0.000309726 },
+            },
+            {
+              id: 'ch_2',
+              status: 'succeeded',
+              created: 1001,
+              amount: 30000,
+              amount_refunded: 30000,
+              currency: 'usd',
+              balance_transaction: 'txn_sin_expandir', // string → no sirve para convertir
+            },
           ],
           has_more: true,
         }),
@@ -202,15 +269,24 @@ test('fetchChargesSince pagina y normaliza amount_refunded', async () => {
 
   const out = await fetchChargesSince({ createdGteSec: 500, fetchImpl });
   assert.equal(out.length, 3); // el filtro de status lo hace sumNet, no el lector
+  // Cargo en pesos: se guarda el monto ya convertido por Stripe y su tasa.
+  assert.equal(out[0].settledAmount, 115594);
+  assert.equal(out[0].settledCurrency, 'usd');
+  assert.equal(out[0].exchangeRate, 0.000309726);
+  // balance_transaction sin expandir (string) → settled* en null, el agregador cae solo.
   assert.deepEqual(out[1], {
     created: 1001,
     amount: 30000,
     amountRefunded: 30000,
     currency: 'usd',
     status: 'succeeded',
+    settledAmount: null,
+    settledCurrency: null,
+    exchangeRate: null,
   });
   assert.equal(calls.length, 2);
   assert.match(calls[0].url, /v1\/charges/);
+  assert.match(calls[0].url, /expand%5B%5D=data.balance_transaction/);
   assert.equal(calls[0].opts.headers.Authorization, 'Bearer rk_test_dummy');
   assert.match(calls[1].url, /starting_after=ch_2/);
 });

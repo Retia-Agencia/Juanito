@@ -112,6 +112,15 @@ export async function fetchRecentPayments({ createdGteSec, fetchImpl = fetch } =
 // `amount_refunded` atribuye el reembolso a la fecha del cargo ORIGINAL: un reembolso de
 // agosto sobre una venta de julio baja el número de julio. Es a propósito (venta neta por
 // fecha de cobro) y el mensaje lo dice al pie.
+//
+// Expande `balance_transaction` porque la cuenta NO cobra solo en dólares (verificado en
+// producción 2026-08-12: 67 cargos en usd y 4 en cop en 45 días) pero SÍ liquida en USD.
+// La balance transaction trae el monto ya convertido y la tasa que Stripe aplicó de verdad
+// (`exchange_rate`), así que el reporte unifica todo en dólares sin inventar una tasa de
+// mercado ni sumar una dependencia de FX. `amount` de la bt es BRUTO (antes de comisión);
+// `net` sería después — usamos `amount`, que es la definición de "neta" que se eligió.
+// Si la expansión no viene (permiso faltante, bt todavía pendiente), los campos `settled*`
+// quedan en null y el agregador cae a la moneda original del cargo.
 export async function fetchChargesSince({ createdGteSec, fetchImpl = fetch } = {}) {
   const key = STRIPE_API_KEY();
   if (!key) throw new Error('[stripe] falta STRIPE_API_KEY');
@@ -122,6 +131,7 @@ export async function fetchChargesSince({ createdGteSec, fetchImpl = fetch } = {
     const params = new URLSearchParams({ limit: '100' });
     if (createdGteSec != null) params.set('created[gte]', String(Math.floor(createdGteSec)));
     if (startingAfter) params.set('starting_after', startingAfter);
+    params.append('expand[]', 'data.balance_transaction');
 
     const res = await fetchImpl(`${CHARGES_API}?${params}`, { headers: { Authorization: `Bearer ${key}` } });
     if (!res.ok) {
@@ -132,12 +142,19 @@ export async function fetchChargesSince({ createdGteSec, fetchImpl = fetch } = {
     const data = json?.data || [];
     for (const ch of data) {
       if (ch?.created == null) continue;
+      // Sin expandir, `balance_transaction` es un string (id) y no sirve para convertir.
+      const bt = ch.balance_transaction;
+      const settled = bt && typeof bt === 'object' ? bt : null;
       out.push({
         created: ch.created,
         amount: ch.amount ?? 0,
         amountRefunded: ch.amount_refunded ?? 0,
         currency: ch.currency || null,
         status: ch.status || null,
+        settledAmount: settled?.amount ?? null,
+        settledCurrency: settled?.currency ?? null,
+        // null cuando no hubo conversión (el cargo ya estaba en la moneda de liquidación).
+        exchangeRate: settled?.exchange_rate ?? null,
       });
     }
     if (!json?.has_more || data.length === 0) return out;

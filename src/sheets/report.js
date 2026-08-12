@@ -158,7 +158,7 @@ export function formatRevenueSection(revenue) {
       .map((c) => `${money(c, netOf(side, c))}${withPct ? pct(c) : ''}`)
       .join(' · ')}`;
 
-  return [
+  const lines = [
     '──────────',
     '💵 Venta neta (Stripe) · mes a la fecha',
     '',
@@ -167,7 +167,14 @@ export function formatRevenueSection(revenue) {
     '',
     'Neto = cobros − reembolsos, antes de comisión de Stripe.',
     'Un reembolso baja el mes del cobro original.',
-  ].join('\n');
+  ];
+  // Solo cuando alguna de las dos ventanas trae cobros de otra moneda: un total en dólares
+  // que adentro tiene pesos convertidos no se nota, y sin la nota parece que la cuenta
+  // vendió todo en USD.
+  if ([...cur.totals, ...prev.totals].some((t) => t.converted)) {
+    lines.push('Incluye cobros en otra moneda, convertidos a la tasa que aplicó Stripe.');
+  }
+  return lines.join('\n');
 }
 
 // `revenue: false` arma la variante SIN montos (la que iría al grupo). Ver §18.B.

@@ -1441,9 +1441,26 @@ fue el 31 de julio. Y el `STRIPE_LOOKBACK_DAYS = 42` **no alcanzaba** para llega
 anterior (a fin de mes son ~60 días): la llamada de charges calcula su propio lookback desde la
 ventana, con `MAX_PAGES_CHARGES = 20`.
 
-Lógica pura nueva en `src/stripe/revenue.js` (`sumNet` agrupa **por moneda** — sumar monedas
-distintas sería mentir) y tests en `test/stripe.revenue.test.js` (18) + `COHORTS` en
-`test/sheets.test.js` (4).
+**⚠️ La cuenta NO cobra solo en dólares — y nada en el código lo decía.** Medido en producción el
+2026-08-12: en 45 días, **67 cargos en `usd` y 4 en `cop`**; julio (1–12) tuvo US$ 19.433 **más**
+COP 10.450.020. Todo el módulo de Stripe estaba escrito asumiendo una moneda porque hasta ese día
+solo CONTABA pagos, nunca los sumaba: sumar `amount` sin mirar `currency` habría reportado julio
+como US$ 1.064.435 — un número plausible, y por eso peligroso.
+
+**La conversión la hace Stripe, no nosotros.** La cuenta liquida en USD y cada cargo en pesos ya
+trae su `balance_transaction` con el monto convertido y el `exchange_rate` que Stripe aplicó de
+verdad (≈0.00031, o sea ~3.230 COP/USD). `fetchChargesSince` expande `data.balance_transaction` y
+`sumNet` cuenta con `settledAmount`, así que el reporte muestra **un solo total en dólares** sin
+tasa de mercado inventada ni dependencia de FX nueva. Detalles: se usa `amount` de la bt (BRUTO,
+antes de comisión — `net` sería después) y el reembolso, que viene en la moneda del cargo, se
+convierte con la tasa de ESE cargo (aproximación: Stripe le da al reembolso su propia bt con su
+propia tasa; a cambio se mantiene la atribución por fecha de cobro, y es exacta al centavo para los
+cargos que ya estaban en USD). **Sin la expansión, `sumNet` cae a la moneda original** y el total
+sale partido en dos: mejor eso que unificado con un número inventado. Cuando hay conversión, el
+mensaje lo dice al pie — un total en dólares con pesos adentro no se nota.
+
+Lógica pura nueva en `src/stripe/revenue.js` (`sumNet` agrupa por moneda de **liquidación**) y tests
+en `test/stripe.revenue.test.js` (22) + `COHORTS` en `test/sheets.test.js` (4).
 
 ### 18.C 🔵 Aviso de "nueva call agendada" a los closers (idea Sebas — 2026-06-10)
 
