@@ -5044,14 +5044,171 @@ una columna vacía.
 *lead → cita agendada*. Si está en cero falso, Mariana y Alfredo vienen leyendo un embudo roto por
 el medio y ajustando sobre un dato inventado.
 
-#### 2. 🟡 La suite completa en Linux nunca se corrió
+#### 2. ✅ CERRADO (2026-08-18) — la suite completa en Linux ya se corrió
 
-Docker Desktop estuvo caído toda la sesión del 2026-08-12. Lo verificado son **72/72 verde en los
-cuatro archivos que cubren lo modificado** (`test/sheets.test.js`, `test/sheets-weekly.test.js`,
-`test/stripe.test.js`, `test/stripe.revenue.test.js`) más el hecho de que ningún test rojo de
-Windows importa los módulos tocados. **Eso es un argumento, no una medición.** Correr cuando Docker
-vuelva (receta en CLAUDE.md); baseline esperado ~994 + los 26 nuevos, con los 3 rojos conocidos
-(links de Retia + los dos de agenda superseded).
+Docker Desktop estuvo caído toda la sesión del 2026-08-12. Lo verificado entonces eran **72/72 verde
+en los cuatro archivos que cubren lo modificado** (`test/sheets.test.js`, `test/sheets-weekly.test.js`,
+`test/stripe.test.js`, `test/stripe.revenue.test.js`) — un argumento, no una medición.
+
+**Medido el 2026-08-18** (receta del CLAUDE.md): **1032 tests, 1029 verdes, 3 rojos**, y los 3 son
+exactamente los conocidos — `el mensaje lleva los DOS links de Retia`, `call con TODOS sus pushes
+skipped (cancelada/superseded) sale de la agenda` y `reagenda manual superseded no se cuenta dos
+veces`. La predicción de arriba se cumplió: nada de lo del 2026-08-12 rompió nada.
+
+---
+
+### 18.BJ 🔵 La ventana ciega de la noche: reservar a las 9pm para mañana no avisaba a nadie (2026-08-18) — EN PRODUCCIÓN
+
+**Reporte:** *"Pablo Suarez me informa que Juanito no está enviando los pushes precall"*.
+
+**Los estaba enviando.** Ese mismo día le salieron 9 mensajes: el Push 2 de las 6:30am, cuatro Push 3
+y cuatro Push 4, todos con `status='sent'` en `calendly_pushes` y su línea en la cola anti-ban. Su
+opt-in estaba activo y sin pausa, y su `contact_jid` (`31001912856621@lid`) coincidía con el
+`workLid` del roster — o sea que tampoco era el patrón de §18.AX (rotar el teléfono y entregar al
+viejo).
+
+**Y el reporte era cierto igual.** Las dos cosas describen momentos distintos del día.
+
+#### La causa: entre las 19:00 y la medianoche no existía ningún aviso
+
+- El **Push 1** (digest de mañana) corre por cron a las **19:00** (`PUSH1_CRON`).
+- El **Push 0** arrancaba con `if (!isToday) return 'not-today'`.
+
+⇒ **Una cita reservada entre las 19:00 y la medianoche para el día siguiente no disparaba nada:** el
+digest ya había pasado y el aviso inmediato la descartaba por no ser "hoy". El primer aviso llegaba
+a las **6:30am**, la mañana de las calls.
+
+**Lo medido en Pablo:** sus **cuatro** citas del 2026-08-18 se reservaron entre las 8:15pm y las
+10:30pm de la víspera ⇒ pasó la noche entera sin un solo aviso, con un día completo de llamadas por
+delante. En 21 días le tocó a **8 de 64 citas**. El día 18 fue el 100%, y por eso el reporte llegó
+ese día y no antes.
+
+**Pega distinto según el programa.** `developers` reserva tarde; los demás no. Por eso el hueco vivió
+meses sin que nadie lo viera: para el resto del roster casi nunca se activa. El tell en el log del
+Push 1 de esa noche es que salió a **7 closers y a Pablo no** — no porque fallara, sino porque en
+ese momento él no tenía nada para mañana.
+
+#### El arreglo (`20b5566`)
+
+`decidePush0` acepta `isTomorrow` + `push1HasRun`. El gate quedó **simétrico**: para una call de hoy
+manda el Push 2, para una de mañana manda el Push 1. Si el digest que corresponde todavía no corrió,
+él avisa y el Push 0 se calla — misma regla anti-duplicado de siempre. De pasado mañana en adelante
+no cambia nada: el Push 1 de su víspera siempre llega a tiempo.
+
+El mensaje dice **"Nueva call MAÑANA"**, no "hoy". No es cosmético: mandar al closer a la agenda
+equivocada es peor que no avisarle, y hay un test que lo fija con
+`assert.doesNotMatch(msg, /\bhoy\b/i)`.
+
+Helpers nuevos en `src/calendly/index.js`: `isNextDayInTz()` y `dailyCronHasRunToday()` — este último
+es `push2HasRunToday` renombrado a lo que siempre fue (un "¿ya corrió este cron diario?" genérico);
+el nombre viejo queda como alias porque lo importan el scheduler y sus tests.
+
+🩸 **Un test viejo cazó un bug que yo estaba metiendo.** En `runCalendlyDelivery` el mensaje se
+RECONSTRUYE al entregar, y ahí puse `isSameDayInTz(..., new Date())` con el reloj del sistema: el
+harness comparaba contra la fecha real y **todo Push 0 salía como "mañana"**. Va por `d.now()`, que
+es el reloj inyectable. Regla: en `scheduler/calendly.js` **nunca `Date.now()` directo** — hay 20+
+usos de `d.now()` justamente por esto.
+
+#### Verificación
+
+- **Suite en Linux:** 1032 tests, **1029 verdes**, los 3 rojos conocidos. Contra el árbol limpio con
+  `git stash`: +6 tests, +6 verdes, **0 regresiones**.
+- **En producción, con el código ya desplegado**, corriendo el escenario exacto que falló:
+
+  ```
+  ahora        : 18/8/2026, 7:57 p.m.     ← dentro de la ventana ciega
+  push1 corrio : true
+  es manana    : true
+  => DECISION  : {"notify":true,"reason":"new-booking-tomorrow"}
+  ```
+
+- Baileys reconectó limpio reusando la sesión, sin 405 ni QR. `DEPLOYED_SHA` = `20b5566a2b9f…`.
+
+#### ⚠️ Dos trampas de medición que costaron tiempo
+
+**1. El `created_at` de `calendly_pushes` NO es la hora de reserva.** Es cuándo el poll vio la cita, y
+el poll solo mira **48h adelante** (`maxStartIso = now + 48h`). Toda cita reservada con más de dos
+días de anticipación aparece con `created_at ≈ call_start − 48h` **exactas** — un patrón que parece
+dato y es el borde del horizonte. Solo sirve como proxy de la reserva **dentro** de las 48h, que es
+justo el caso de la ventana ciega, por eso la medición de arriba sí vale.
+
+**2. `status='auto'` en `call_outcomes` NO significa que el closer respondió.** Viene de HubSpot. Casi
+concluyo que Pablo recibía porque una fila suya tenía `answered_at`; la única prueba de respuesta
+real es **`raw_reply is not null`**. Distribución en 14 días: `auto` 131, `no_answer` 87, `answered`
+16 (solo **3** con `raw_reply`). Con 131 auto-resueltos, el silencio de los closers es lo esperado y
+**no sirve para inferir si la entrega funciona**.
+
+#### 🟡 Lo que quedó abierto
+
+- **Nadie confirmó todavía si a Pablo le LLEGAN los mensajes a su aparato.** Desde el VPS solo se ve
+  que salieron a la cola. La prueba pendiente es que él busque en el chat los cinco de ese día:
+  06:30, 09:05, 09:35, 11:35 y 15:05 (hora Bogotá). Si están todos, era solo la ventana ciega; si no
+  está ninguno, hay además un problema de entrega y el diagnóstico arranca de cero.
+- **Último `raw_reply` de CUALQUIER closer: 2026-08-12.** Seis días sin una sola respuesta real de
+  ninguno de los seis. Se explica por los 131 auto-resueltos, pero **no está descartado**.
+- **`link-preview-js` no está instalado.** Es peer dependency **opcional** de Baileys, así que los
+  mensajes con links salen igual, solo sin la tarjeta de preview — pero ensucia el log con un stack
+  trace de `ERR_MODULE_NOT_FOUND` por cada push. Cosmético; agregarlo o silenciarlo.
+- **Baileys reconectó 4 veces ese día** (503 → re-login: 20:31, 20:43, 21:11, 21:19 UTC) contra las
+  2-3 diarias de la semana. No es el loop de 15s del softban y los envíos cayeron en ventanas
+  conectadas, pero si sube, mirarlo (§18.AT).
+
+---
+
+### 18.BK ✅ Los dos brochures llevaban un mes anunciando cohortes ya empezadas (2026-08-18)
+
+Se reemplazaron los PDF de **AI for Developers** y **Operaciones Escalables con IA**. Ninguno se
+tocaba desde mediados de julio, y los dos anunciaban cohortes **que ya habían arrancado**:
+
+| Programa | Estaba sirviendo | Ahora | file ID |
+|---|---|---|---|
+| AI for Developers | Cohorte 4 · arrancaba **ese mismo día**, ventas cerradas el 14 ago · USD 1,500 | Cohorte 5 · 28 sep – 12 nov · USD 1,500 | `1VEUK_yF1UxwrkiCQJP1VHFW-nG9d426I` |
+| Operaciones Escalables | 17 ago – 21 sep · USD 1.500 | 5 oct – 9 nov · **USD 1.800** | `16NbFnJq1gCYSfQA0a2sfLbGuEBxVc8Yp` |
+
+**El de developers es el urgente de los dos:** su link **viaja en el push precall**, así que cada lead
+que recibió un push ese día vio una cohorte que ya no podía comprar. El de Operaciones tiene
+`sendLinks: false` (decisión del jefe, §18.AQ) — lo manda el closer a mano.
+
+Se reemplazó el **contenido conservando el file ID** (§ memoria del brochure): los links ya enviados
+sirven el PDF nuevo. Antes de subir, la revisión anterior quedó fijada con **`keepForever`**, así que
+el rollback está garantizado y no lo purga Drive a los 30 días. Verificado con **SHA256 del servido
+por el link público sin autenticar** contra el archivo local — idéntico en los dos — y `/view`
+(la URL que realmente viaja) respondiendo 200.
+
+Ojo con esto al repetirlo: el MCP de Google **no tiene herramienta para subir una versión nueva**
+(`drive_upload` crea un archivo nuevo, y el `update_file` del otro conector solo cambia título y
+carpeta). Se hizo con `files().update(fileId, media_body=…)` de la API de Drive, reusando el propio
+`accounts.py` del MCP para las credenciales. El token estaba vencido (`invalid_grant`) y se
+re-autorizó con `gws_account_add`.
+
+#### 🩸 La trampa nueva: un PDF "actualizado" puede ser un PARCHE, y el texto miente sobre lo visible
+
+Los dos decks **no se re-exportaron, se parchearon**: el texto y el arte nuevos van PEGADOS ENCIMA de
+los viejos, que siguen en el archivo. Medido:
+
+- En **Operaciones**, la capa de texto dice **USD 1.500** mientras la página muestra **USD 1.800**.
+  El "800" es arte vectorial sobre el "500": `get_text()` devuelve **un solo span**, `'USD 1.500'`.
+  ⇒ **Quien copie/pegue, busque dentro del PDF, o le pida a una IA que lo lea, obtiene el precio
+  viejo** — y en la dirección que le conviene al cliente. Alejandro decidió publicarlo igual sabiendo
+  esto; el precio bueno es **1.800**.
+- En **developers** pasa lo mismo con las FECHAS (queda `COHORTE 4 · 18 de agosto` debajo de la C5),
+  pero ahí el precio coincide en los dos lados.
+
+**Consecuencia para el método:** revisar un brochure **ya no se puede hacer extrayendo el texto** —
+hay que **renderizar** (`page.get_pixmap()`) y mirar la imagen. Si el texto trae dos cohortes o dos
+precios, comparar coordenadas con `get_text('blocks')`: si los bloques se solapan (mismo x, y a
+2-10pt), es un parche y lo que se ve es el de arriba. **No intentar cirugía con PyMuPDF**: el texto
+viejo y el nuevo se solapan casi exacto, así que ninguna redacción geométrica los separa sin romper
+lo visible. El arreglo de raíz es pedir el re-export desde la fuente.
+
+#### 🟡 Pendiente
+
+- **Pedir el re-export limpio de los dos**, sobre todo el de Operaciones por la contradicción de
+  USD 300.
+- **El precio del programa no vive en el repo.** Se buscó: `programs.js` no tiene montos y la key de
+  Stripe es de **solo lectura** (`rk_`, permiso *read*). O sea que **cambiar el precio es cambiar el
+  PDF y nada más avisa** — si hay un payment link de Stripe o material de ventas todavía en 1.500,
+  eso está fuera de este repo.
 
 ---
 

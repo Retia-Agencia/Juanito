@@ -144,9 +144,14 @@ loop rápido de reconexiones desde datacenter → WhatsApp lo detectó.
   ```
   (En Git Bash, prefijar con `MSYS_NO_PATHCONV=1` y usar rutas `C:/…` o el volumen no monta y
   la suite reporta **0 tests** en verde, que es peor que fallar.)
-  Baseline al 2026-08-04: **994 tests, 991 verdes, 3 rojos conocidos** (links de Retia + los dos
+  Baseline al **2026-08-18: 1032 tests, 1029 verdes, 3 rojos conocidos** (links de Retia + los dos
   de agenda superseded; los números de test se corren al agregar archivos, así que se buscan por
-  nombre, no por índice). Por eso la lógica pura vive en módulos propios sin deps nativas: es la
+  nombre, no por índice). En Windows ese mismo commit da **98 rojos** — medir SIEMPRE la línea base
+  con `git stash` antes de tocar nada y comparar contra ella, no contra cero.
+  ⚠️ Dos formas de leer un verde que no existe: la suite sale en **TAP** (`# tests`, no `ℹ tests`),
+  así que un grep por `ℹ` no encuentra nada y parece que no corrió; y `docker build … | tail` se
+  queda con el **exit code de `tail`** → reporta 0 con el daemon caído. Verificar el `$?` del build
+  y que el conteo sea ~1032, no 0. Por eso la lógica pura vive en módulos propios sin deps nativas: es la
   parte que sí se puede iterar en Windows.
 
 ## Cómo retomar una sesión
