@@ -345,16 +345,25 @@ export function buildPush3Message({ name, firstName, phone, startIso, programKey
 // Push 0 (aviso de nueva call HOY): mensaje INFORMATIVO al closer — "te reservaron
 // un espacio". No lleva link wa.me; el push accionable con el link llega ~25 min
 // antes (Push 3). Concíso a propósito: es un heads-up, no el recordatorio precall.
-export function buildPush0Message({ name, firstName, phone, startIso, programKey, tz = TZ() }) {
+// `when`: 'hoy' (default) | 'mañana'. El caso 'mañana' existe por la ventana ciega
+// de la noche (ver push-logic.js): una reserva de las 9pm para el día siguiente no
+// entra en ningún digest, así que este es el ÚNICO aviso que el closer recibe esa
+// noche. Decir "hoy" ahí sería peor que no avisar — lo manda a la agenda equivocada.
+export function buildPush0Message({ name, firstName, phone, startIso, programKey, tz = TZ(), when = 'hoy' }) {
   const who = name || firstName || 'el prospecto';
   const time = formatCallTime(startIso, tz);
   const tel = phone ? `📞 ${phone}` : '📵 sin teléfono en Calendly';
   const label = programLabelOf(programKey);
   const prog = label ? ` — 📦 *${label}*` : '';
+  const esManana = when === 'mañana';
+  const titulo = esManana ? 'Nueva call MAÑANA' : 'Nueva call HOY';
+  const cola = esManana
+    ? 'Mañana te llega el resumen del día y el push con el link ~25 min antes.'
+    : 'Te llegará el push con el link ~25 min antes de la llamada.';
   return (
-    `📅 *Nueva call HOY* — te acaban de reservar un espacio en tu agenda.\n` +
-    `*${who}*${prog} — ${tel} — hoy a las ${time}\n` +
-    `Te llegará el push con el link ~25 min antes de la llamada.`
+    `📅 *${titulo}* — te acaban de reservar un espacio en tu agenda.\n` +
+    `*${who}*${prog} — ${tel} — ${when} a las ${time}\n` +
+    cola
   );
 }
 
@@ -665,6 +674,16 @@ export function isSameDayInTz(iso, tz = TZ(), base = new Date()) {
   return a.y === b.y && a.mo === b.mo && a.d === b.d;
 }
 
+// ¿El instante `iso` cae MAÑANA respecto de `base`, en la zona `tz`? Mismo criterio
+// de día de pared que isSameDayInTz. Lo usa el Push 0 para tapar la ventana ciega
+// de la noche (ver el comentario largo en push-logic.js).
+export function isNextDayInTz(iso, tz = TZ(), base = new Date()) {
+  const { minStartIso, maxStartIso } = dayRangeUtc(tz, 1, base);
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return false;
+  return t >= Date.parse(minStartIso) && t < Date.parse(maxStartIso);
+}
+
 // Extrae {hour, minute} de un cron diario simple ("M H * * *"). Devuelve null si
 // no es un cron diario de hora fija (no intentamos parsear expresiones complejas).
 export function parseDailyCronHM(cron) {
@@ -679,12 +698,17 @@ export function parseDailyCronHM(cron) {
   return { hour, minute };
 }
 
-// ¿Ya pasó la hora del Push 2 de HOY (en tz), según su cron? Si el cron no es un
-// diario simple, devolvemos true (no bloqueamos el Push 0 por un cron exótico).
-export function push2HasRunToday(cron, tz = TZ(), base = new Date()) {
+// ¿Ya pasó HOY (en tz) la hora de un cron diario? Si el cron no es un diario
+// simple, devolvemos true (no bloqueamos el Push 0 por un cron exótico).
+export function dailyCronHasRunToday(cron, tz = TZ(), base = new Date()) {
   const hm = parseDailyCronHM(cron);
   if (!hm) return true;
   const { y, mo, d } = dateParts(tz, base);
-  const push2Utc = wallTimeToUtc(tz, y, mo, d, hm.hour, hm.minute);
-  return base.getTime() >= push2Utc.getTime();
+  const runUtc = wallTimeToUtc(tz, y, mo, d, hm.hour, hm.minute);
+  return base.getTime() >= runUtc.getTime();
 }
+
+// Alias histórico: el Push 0 nació mirando solo el Push 2. Hoy la misma función
+// sirve para el Push 1 (ventana ciega de la noche), de ahí el nombre genérico de
+// arriba. Se conserva porque lo importan el scheduler y sus tests.
+export const push2HasRunToday = dailyCronHasRunToday;

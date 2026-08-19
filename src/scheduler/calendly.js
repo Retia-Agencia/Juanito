@@ -36,7 +36,9 @@ import {
   formatCallTime,
   buildPush0Message,
   isSameDayInTz,
+  isNextDayInTz,
   push2HasRunToday,
+  dailyCronHasRunToday,
   push4DueUtc,
   buildPush4Message,
   buildOutcomeReminder,
@@ -710,10 +712,12 @@ export async function runCalendlyPoll() {
         }
       }
 
-      // ─── Push 0: aviso de "nueva call HOY" (§18.C) ───────────────────────────
-      // Solo para reservas genuinamente nuevas de calls de hoy, una vez ya pasaron
-      // los digests. Reusa la misma fila/dedup que los demás pushes (push_n=0,
-      // due=ahora) → lo entrega `runCalendlyDelivery` con todos los gates anti-ban.
+      // ─── Push 0: aviso de "nueva call HOY / MAÑANA" (§18.C) ──────────────────
+      // Solo para reservas genuinamente nuevas, una vez ya pasó el digest que le
+      // correspondía (Push 2 si la call es hoy, Push 1 si es mañana). El caso
+      // "mañana" tapa la ventana ciega de la noche — ver push-logic.js. Reusa la
+      // misma fila/dedup que los demás pushes (push_n=0, due=ahora) → lo entrega
+      // `runCalendlyDelivery` con todos los gates anti-ban.
       if (PUSH0_ENABLED()) {
         const d0 = decidePush0({
           startMs: new Date(ev.start_time).getTime(),
@@ -721,10 +725,13 @@ export async function runCalendlyPoll() {
           nowMs,
           isToday: isSameDayInTz(ev.start_time, TZ(), now),
           push2HasRun: push2HasRunToday(PUSH2_CRON(), TZ(), now),
+          isTomorrow: isNextDayInTz(ev.start_time, TZ(), now),
+          push1HasRun: dailyCronHasRunToday(PUSH1_CRON(), TZ(), now),
           recentMs: PUSH0_RECENT_MIN() * 60000,
         });
         if (d0.notify) {
-          const msg0 = buildPush0Message({ name, firstName, phone, startIso: ev.start_time, programKey });
+          const when = d0.reason === 'new-booking-tomorrow' ? 'mañana' : 'hoy';
+          const msg0 = buildPush0Message({ name, firstName, phone, startIso: ev.start_time, programKey, when });
           const r0 = d.scheduleCalendlyPush({
             event_uuid: uuid,
             push_n: 0,
@@ -901,6 +908,8 @@ export async function runHubspotAgendaPoll({ preview = false } = {}) {
           nowMs,
           isToday: isSameDayInTz(startIso, TZ(), new Date(nowMs)),
           push2HasRun: push2HasRunToday(PUSH2_CRON(), TZ(), new Date(nowMs)),
+          isTomorrow: isNextDayInTz(startIso, TZ(), new Date(nowMs)),
+          push1HasRun: dailyCronHasRunToday(PUSH1_CRON(), TZ(), new Date(nowMs)),
           recentMs: PUSH0_RECENT_MIN() * 60000,
         });
         if (d0.notify) {
@@ -908,7 +917,14 @@ export async function runHubspotAgendaPoll({ preview = false } = {}) {
             ...base,
             push_n: 0,
             due_at: toSqliteUtc(new Date(nowMs)),
-            message: buildPush0Message({ name, firstName, phone, startIso, programKey: call.program }),
+            message: buildPush0Message({
+              name,
+              firstName,
+              phone,
+              startIso,
+              programKey: call.program,
+              when: d0.reason === 'new-booking-tomorrow' ? 'mañana' : 'hoy',
+            }),
           });
         }
       }
@@ -1320,6 +1336,13 @@ export async function runCalendlyDelivery() {
                   phone,
                   startIso: ev.start_time,
                   programKey: programKeyOf(ev.event_type),
+                  // El `when` se recalcula ACÁ, no se hereda de cuando se agendó la
+                  // fila: este bloque corre al entregar, y un Push 0 de "mañana"
+                  // que se re-arma pasada la medianoche ya es de "hoy".
+                  // El reloj va por `d.now()` (inyectable), NO por Date.now(): con el
+                  // reloj del sistema el harness comparaba contra la fecha real y
+                  // todo Push 0 salía como "mañana".
+                  when: isSameDayInTz(ev.start_time, TZ(), new Date(d.now())) ? 'hoy' : 'mañana',
                 })
               : buildPush3Message({
                   name: fullNameFrom(p.prospect_name),

@@ -14,7 +14,9 @@ import * as scheduler from '../src/scheduler/calendly.js';
 import { __resetHealth } from '../src/calendly/health.js';
 import {
   isSameDayInTz,
+  isNextDayInTz,
   push2HasRunToday,
+  dailyCronHasRunToday,
   parseDailyCronHM,
   buildPush0Message,
 } from '../src/calendly/index.js';
@@ -31,6 +33,9 @@ const NOW_POST = Date.parse('2026-06-15T14:00:00.000Z'); // hoy 09:00 Bogotá
 const NOW_PRE = Date.parse('2026-06-15T10:00:00.000Z'); // hoy 05:00 Bogotá
 const CALL_TODAY = '2026-06-15T16:00:00.000Z'; // hoy 11:00 Bogotá (futuro vs 09:00)
 const CALL_TOMORROW = '2026-06-16T16:00:00.000Z'; // mañana 11:00 Bogotá
+// 21:00 Bogotá del MISMO 15 de junio: el Push 1 (19:00) ya corrió. Es la franja de
+// la ventana ciega — desde acá, CALL_TOMORROW sigue siendo "mañana".
+const NOW_NIGHT = Date.parse('2026-06-16T02:00:00.000Z');
 
 beforeEach(() => {
   process.env.CALENDLY_DRY_RUN = 'false';
@@ -135,11 +140,76 @@ test('reserva vieja que recién entró a la ventana → NO Push 0', async () => 
   assert.equal(push0Rows(store).length, 0, 'una reserva no-reciente no dispara aviso');
 });
 
-test('nueva call para MAÑANA → NO Push 0 (solo mismo día)', async () => {
+test('call para MAÑANA reservada de DÍA → NO Push 0 (el digest de las 7pm la cubre)', async () => {
   const events = [makeEvent({ uuid: 'tom', startIso: CALL_TOMORROW, createdInMin: -2, closerEmail: SALAZAR, nowMs: NOW_POST })];
   const { store } = installHarness(scheduler, { events, optins: [SALAZAR_PHONE], nowMs: NOW_POST });
   await scheduler.runCalendlyPoll();
-  assert.equal(push0Rows(store).length, 0, 'las de días futuros las cubre Push 1/2');
+  assert.equal(push0Rows(store).length, 0, 'a las 9am el Push 1 todavía no corrió → él avisa');
+});
+
+// ─── Ventana ciega de la noche (2026-08-18) ───────────────────────────────────
+// La regresión concreta: Pablo Suarez, 2026-08-18. Sus 4 citas del día se
+// reservaron entre las 8:15pm y las 10:30pm de la víspera → el Push 1 ya había
+// corrido y el Push 0 las descartaba por "not-today" ⇒ ni un aviso en toda la
+// noche. El primero llegaba a las 6:30am del día de las calls.
+
+test('call para MAÑANA reservada de NOCHE → SÍ Push 0 (el digest ya pasó)', async () => {
+  const events = [makeEvent({ uuid: 'noche', startIso: CALL_TOMORROW, createdInMin: -2, closerEmail: SALAZAR, nowMs: NOW_NIGHT })];
+  const { store, wa } = installHarness(scheduler, { events, optins: [SALAZAR_PHONE], nowMs: NOW_NIGHT });
+  await scheduler.runCalendlyPoll();
+  assert.equal(push0Rows(store).length, 1, 'reservada 9pm para mañana: nadie más la avisa esta noche');
+  await scheduler.runCalendlyDelivery();
+  assert.equal(wa.sent.length, 1);
+  assert.match(wa.sent[0].text, /Nueva call MAÑANA/, 'el aviso NO puede decir "hoy"');
+});
+
+test('decidePush0: la rama de mañana se gatea con el Push 1, no con el Push 2', () => {
+  const base = {
+    startMs: Date.parse(CALL_TOMORROW),
+    createdAtMs: NOW_NIGHT - 60000,
+    nowMs: NOW_NIGHT,
+    isToday: false,
+    isTomorrow: true,
+  };
+  assert.equal(decidePush0({ ...base, push1HasRun: true }).reason, 'new-booking-tomorrow');
+  assert.equal(decidePush0({ ...base, push1HasRun: true }).notify, true);
+  assert.equal(decidePush0({ ...base, push1HasRun: false }).reason, 'push1-pending');
+  assert.equal(decidePush0({ ...base, push1HasRun: false }).notify, false);
+  // El Push 2 no manda en esta rama: aunque no haya corrido, el aviso sale igual.
+  assert.equal(decidePush0({ ...base, push1HasRun: true, push2HasRun: false }).notify, true);
+  // Y una call de pasado mañana sigue fuera: la cubre el Push 1 de su víspera.
+  assert.equal(decidePush0({ ...base, isTomorrow: false, push1HasRun: true }).reason, 'not-today');
+});
+
+test('decidePush0: si llegan isToday e isTomorrow, gana hoy', () => {
+  const d = decidePush0({
+    startMs: Date.parse(CALL_TODAY),
+    createdAtMs: NOW_POST - 60000,
+    nowMs: NOW_POST,
+    isToday: true,
+    isTomorrow: true,
+    push2HasRun: true,
+    push1HasRun: false,
+  });
+  assert.equal(d.reason, 'new-booking-today');
+});
+
+test('dailyCronHasRunToday: el Push 1 de las 7pm corrió a las 9pm, no a las 9am', () => {
+  assert.equal(dailyCronHasRunToday('0 19 * * *', TZ, new Date(NOW_NIGHT)), true);
+  assert.equal(dailyCronHasRunToday('0 19 * * *', TZ, new Date(NOW_POST)), false);
+});
+
+test('isNextDayInTz: distingue mañana de hoy y de pasado mañana', () => {
+  assert.equal(isNextDayInTz(CALL_TOMORROW, TZ, new Date(NOW_NIGHT)), true);
+  assert.equal(isNextDayInTz(CALL_TODAY, TZ, new Date(NOW_POST)), false);
+  assert.equal(isNextDayInTz('2026-06-17T16:00:00.000Z', TZ, new Date(NOW_NIGHT)), false);
+});
+
+test('buildPush0Message: la variante de mañana no dice "hoy" en ninguna parte', () => {
+  const msg = buildPush0Message({ name: 'Ana Gómez', phone: '+573001112222', startIso: CALL_TOMORROW, tz: TZ, when: 'mañana' });
+  assert.match(msg, /Nueva call MAÑANA/);
+  assert.match(msg, /mañana a las/);
+  assert.doesNotMatch(msg, /\bhoy\b/i, 'mandarlo a la agenda equivocada es peor que no avisar');
 });
 
 test('dedup: dos polls seguidos → un solo Push 0', async () => {
