@@ -5266,13 +5266,15 @@ Baileys reconectado sin re-pairing (*"Reconnection with existing sync data"* →
 
 #### 🟡 Pendiente
 
-- **El archivo nuevo está en un lugar frágil.** Se llama `Copia de Brochure De Cero a Tactical
-  Investor .pdf` y vive en una carpeta llamada **"Contenido previo"**. Ese link va a todos los leads
-  de Vieira: si alguien limpia esa carpeta creyendo que es material viejo, volvemos al 401. Moverlo a
-  un Drive de Retia con nombre definitivo — y al hacerlo, **conservar el file ID** (ahora sí aplica
-  §18.BK: el archivo es nuestro y los links ya están en la calle).
-- **Nadie es dueño del link del brochure de Retia.** El anterior se cerró sin que nos enteráramos
-  porque el archivo es de ellos. Mientras el material viva en un Drive ajeno, esto se repite.
+- **⚠️ NO mover ni "ordenar" este archivo.** El nombre (`Copia de Brochure De Cero a Tactical
+  Investor .pdf`) y la carpeta (**"Contenido previo"**) parecen provisorios y en la sesión del 21-ago
+  se propuso moverlo a un nombre definitivo. **El jefe lo confirmó como el archivo OFICIAL que mandó
+  Retia** — se queda donde está. Copiarlo o moverlo cambiaría el file ID y dejaría el push apuntando
+  a otra cosa; ese fue exactamente el modo de falla que este §18.BL arregló.
+- **El brochure de Retia vive en un Drive ajeno y ese es el riesgo residual.** El anterior se cerró
+  sin que nos enteráramos porque el archivo es de ellos, y con este puede volver a pasar: no lo
+  controlamos y la falla es silenciosa. Mitigación: correr el `curl` de alcanzabilidad de arriba
+  cuando algo huela raro con Tactical Investor (un lead que llega sin haber visto el material).
 
 ---
 
