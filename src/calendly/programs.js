@@ -185,7 +185,13 @@ export const PROGRAMS = {
     },
     materials: {
       video: 'https://youtu.be/YQwmGRCBlF0',
-      brochure: 'https://drive.google.com/file/d/1ec7QyeXF95r1mhEDbzaqxlZENJT_1mJ2/view?usp=drive_link',
+      // Brochure reemplazado 2026-08-21 (cohorte 29 sep, USD 1.500). Es un ARCHIVO NUEVO, no una
+      // revisión del anterior: el file ID viejo (1ec7QyeXF95…) vive en un Drive al que no tenemos
+      // acceso y respondía 401 sin autenticar el 2026-08-21 (los otros 6 brochures dieron 200 en la
+      // misma medición). Desde cuándo está así no se puede saber desde acá.
+      // Por eso acá no aplica el patrón "conservar el file ID" de §18.BK: no había nada que conservar.
+      // Verificado 200 sin autenticar y permiso anyoneWithLink:reader antes de cablearlo.
+      brochure: 'https://drive.google.com/file/d/1-s2oMCiyqwBzagfS52NGSckELLIstUAi/view',
       order: ['video', 'brochure'],
     },
     active: true,
