@@ -5234,11 +5234,24 @@ puede determinar desde el repo**, y los logs no lo saben: el brochure viaja DENT
 **Por qué NO se conservó el file ID.** §18.BK dejó el patrón de reemplazar el contenido conservando el
 file ID, para que los links ya enviados sirvan el PDF nuevo. Acá **no aplica**: no se puede subir una
 revisión a un archivo que no podemos ni leer. Y su beneficio era retroactivo — no hay leads con el
-link viejo funcionando que preservar, porque nunca les funcionó. Se cableó el archivo nuevo
-(`1-s2oMCiyqwBzagfS52NGSckELLIstUAi`, cohorte 29 sep, USD 1.500), verificado antes de cablearlo:
-**200 sin autenticar**, permiso `anyoneWithLink:reader`, y **las 6 páginas renderizadas** (no
-extracción de texto: §18.BK documenta que estos decks vienen parcheados y la capa de texto miente).
-Sin bloques superpuestos; cohorte y precio coinciden entre texto y arte.
+link viejo funcionando que preservar, porque nunca les funcionó.
+
+**Lo que se cableó es una CARPETA, no un archivo** — `18DJsMV8yLFRyov1iGhAyMo8nmHWUmgJ3`, el link
+oficial que mandó Retia. Es el único programa así, y es a propósito: la carpeta es el **paquete
+completo** (brochure de la cohorte del 29-sep + el video en `.mp4`), y Retia le cambia el contenido
+sin avisarnos. Apuntar a la carpeta es lo que hace que el push siga sirviendo el material vigente
+**sin tocar el repo**. Verificado 200 sin autenticar.
+
+Ojo con el orden de los eventos, porque explica un error de esta sesión: la carpeta se estaba
+ARMANDO mientras se la inspeccionaba (19:09 el PDF · 19:10 un rename intermedio · 19:13 el video ·
+19:14 el nombre final). En el primer intento se cableó el PDF de adentro creyendo que la carpeta era
+un contenedor provisorio llamado "Contenido previo" — que era un nombre de tránsito. **Un Drive que
+alguien está editando ahora mismo no es una fuente estable para leer una sola vez**: si los
+timestamps son de hace minutos, volver a mirar antes de concluir.
+
+Del brochure se verificaron además **las 6 páginas renderizadas** (no extracción de texto: §18.BK
+documenta que estos decks vienen parcheados y la capa de texto miente). Sin bloques superpuestos;
+cohorte (29 sep) y precio (USD 1.500) coinciden entre texto y arte.
 
 #### 🩸 La lección: revisar el CONTENIDO de un brochure no prueba que el lead pueda ABRIRLO
 
@@ -5266,12 +5279,14 @@ Baileys reconectado sin re-pairing (*"Reconnection with existing sync data"* →
 
 #### 🟡 Pendiente
 
-- **⚠️ NO mover ni "ordenar" este archivo.** El nombre (`Copia de Brochure De Cero a Tactical
-  Investor .pdf`) y la carpeta (**"Contenido previo"**) parecen provisorios y en la sesión del 21-ago
-  se propuso moverlo a un nombre definitivo. **El jefe lo confirmó como el archivo OFICIAL que mandó
-  Retia** — se queda donde está. Copiarlo o moverlo cambiaría el file ID y dejaría el push apuntando
-  a otra cosa; ese fue exactamente el modo de falla que este §18.BL arregló.
-- **El brochure de Retia vive en un Drive ajeno y ese es el riesgo residual.** El anterior se cerró
+- **⚠️ NO cambiar la carpeta por el PDF de adentro, ni mover/copiar nada.** Se intentó en esta
+  misma sesión y el jefe lo corrigió dos veces: el link OFICIAL de Retia es **la carpeta**. Apuntar
+  al PDF perdería el video, y copiar o mover cambiaría el ID dejando el push apuntando a otra cosa
+  — el modo de falla que este §18.BL arregló.
+- **🟡 El `video` del push sigue siendo el de YouTube (`youtu.be/YQwmGRCBlF0`), y la carpeta trae
+  un `.mp4` propio.** Sin confirmar si el mp4 lo reemplaza o si conviven. Hoy el lead recibe dos
+  líneas y el video le llega por las dos vías. Preguntarle al jefe.
+- **El material de Retia vive en un Drive ajeno y ese es el riesgo residual.** El anterior se cerró
   sin que nos enteráramos porque el archivo es de ellos, y con este puede volver a pasar: no lo
   controlamos y la falla es silenciosa. Mitigación: correr el `curl` de alcanzabilidad de arriba
   cuando algo huela raro con Tactical Investor (un lead que llega sin haber visto el material).

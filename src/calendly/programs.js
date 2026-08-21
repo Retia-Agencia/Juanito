@@ -185,13 +185,17 @@ export const PROGRAMS = {
     },
     materials: {
       video: 'https://youtu.be/YQwmGRCBlF0',
-      // Brochure reemplazado 2026-08-21 (cohorte 29 sep, USD 1.500). Es un ARCHIVO NUEVO, no una
-      // revisión del anterior: el file ID viejo (1ec7QyeXF95…) vive en un Drive al que no tenemos
-      // acceso y respondía 401 sin autenticar el 2026-08-21 (los otros 6 brochures dieron 200 en la
-      // misma medición). Desde cuándo está así no se puede saber desde acá.
-      // Por eso acá no aplica el patrón "conservar el file ID" de §18.BK: no había nada que conservar.
-      // Verificado 200 sin autenticar y permiso anyoneWithLink:reader antes de cablearlo.
-      brochure: 'https://drive.google.com/file/d/1-s2oMCiyqwBzagfS52NGSckELLIstUAi/view',
+      // ⚠️ ÚNICO programa cuyo `brochure` es una CARPETA de Drive, no un archivo. Es el link
+      // OFICIAL que mandó Retia (confirmado por el jefe 2026-08-21) y contiene el paquete
+      // completo del programa: el brochure de la cohorte del 29-sep + el video en .mp4.
+      // NO reemplazar por el link del PDF de adentro: perdería el video, y Retia actualiza
+      // el contenido de la carpeta sin avisarnos — apuntar a la carpeta es lo que hace que
+      // el push siga sirviendo el material vigente sin tocar el repo.
+      // El file ID viejo (1ec7QyeXF95…) respondía 401 sin autenticar y ni siquiera es legible
+      // con nuestra cuenta (404 por API): vive en un Drive de Retia fuera de nuestro alcance,
+      // así que no aplicó el patrón "conservar el file ID" de §18.BK — no había qué conservar.
+      // Verificado 200 sin autenticar antes de cablearlo.
+      brochure: 'https://drive.google.com/drive/folders/18DJsMV8yLFRyov1iGhAyMo8nmHWUmgJ3?usp=sharing',
       order: ['video', 'brochure'],
     },
     active: true,
