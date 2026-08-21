@@ -184,6 +184,10 @@ export const PROGRAMS = {
       program: 'programa De Cero a Tactical Investor',
     },
     materials: {
+      // ⚠️ NO es un duplicado del video que vive dentro de la carpeta de abajo. DECIDIDO por el
+      // jefe (2026-08-21): los dos conviven en el push a propósito — el de YouTube abre en un clic
+      // y el .mp4 de Drive viaja con el resto del material. Al que le sobre una línea acá: no
+      // sobra, ya se preguntó.
       video: 'https://youtu.be/YQwmGRCBlF0',
       // ⚠️ ÚNICO programa cuyo `brochure` es una CARPETA de Drive, no un archivo. Es el link
       // OFICIAL que mandó Retia (confirmado por el jefe 2026-08-21) y contiene el paquete

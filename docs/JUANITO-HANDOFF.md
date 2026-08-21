@@ -5283,9 +5283,11 @@ Baileys reconectado sin re-pairing (*"Reconnection with existing sync data"* →
   misma sesión y el jefe lo corrigió dos veces: el link OFICIAL de Retia es **la carpeta**. Apuntar
   al PDF perdería el video, y copiar o mover cambiaría el ID dejando el push apuntando a otra cosa
   — el modo de falla que este §18.BL arregló.
-- **🟡 El `video` del push sigue siendo el de YouTube (`youtu.be/YQwmGRCBlF0`), y la carpeta trae
-  un `.mp4` propio.** Sin confirmar si el mp4 lo reemplaza o si conviven. Hoy el lead recibe dos
-  líneas y el video le llega por las dos vías. Preguntarle al jefe.
+- **✅ RESUELTO — el video va por las DOS vías, a propósito.** El `video` del push sigue siendo el
+  de YouTube (`youtu.be/YQwmGRCBlF0`) y la carpeta trae además su propio `.mp4`. Se preguntó y el
+  jefe decidió (2026-08-21) que **no se reemplaza**: conviven. El de YouTube abre en un clic, el
+  `.mp4` viaja con el resto del material. **No es un duplicado a limpiar** — está anotado también
+  en `programs.js`, al lado del campo.
 - **El material de Retia vive en un Drive ajeno y ese es el riesgo residual.** El anterior se cerró
   sin que nos enteráramos porque el archivo es de ellos, y con este puede volver a pasar: no lo
   controlamos y la falla es silenciosa. Mitigación: correr el `curl` de alcanzabilidad de arriba
