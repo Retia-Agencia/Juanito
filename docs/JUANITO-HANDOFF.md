@@ -5212,6 +5212,70 @@ lo visible. El arreglo de raíz es pedir el re-export desde la fuente.
 
 ---
 
+### 18.BL 🔵 El brochure de Tactical Investor no estaba viejo: estaba CERRADO (2026-08-21) — EN PRODUCCIÓN
+
+Se fue a cambiar el brochure de **De Cero a Tactical Investor** por la cohorte nueva y apareció algo
+peor que una fecha vencida: el link que viajaba en el Push 1 responde **401 sin autenticar**. El lead
+que lo tocaba desde su celular llegaba a una pantalla de **sign-in de Google**, no al PDF.
+
+Medido el 21-ago con `curl` sin credenciales sobre la URL `/view` (la que realmente viaja en el copy),
+contra los 7 brochures del registro:
+
+| Programa | HTTP |
+|---|---|
+| second_brain · abogados · linkedin · developers · operaciones · instagram | 200 |
+| **tactical_investor** | **401** |
+
+El file ID viejo (`1ec7QyeXF95…`) tampoco es accesible con nuestra cuenta de Google —`404 File not
+found` por la API—: vive en un Drive de Retia fuera de nuestro alcance. **Desde cuándo está así no se
+puede determinar desde el repo**, y los logs no lo saben: el brochure viaja DENTRO del texto del link
+`wa.me`, así que Juanito nunca sabe si el lead lo abrió. Falla 100% silenciosa.
+
+**Por qué NO se conservó el file ID.** §18.BK dejó el patrón de reemplazar el contenido conservando el
+file ID, para que los links ya enviados sirvan el PDF nuevo. Acá **no aplica**: no se puede subir una
+revisión a un archivo que no podemos ni leer. Y su beneficio era retroactivo — no hay leads con el
+link viejo funcionando que preservar, porque nunca les funcionó. Se cableó el archivo nuevo
+(`1-s2oMCiyqwBzagfS52NGSckELLIstUAi`, cohorte 29 sep, USD 1.500), verificado antes de cablearlo:
+**200 sin autenticar**, permiso `anyoneWithLink:reader`, y **las 6 páginas renderizadas** (no
+extracción de texto: §18.BK documenta que estos decks vienen parcheados y la capa de texto miente).
+Sin bloques superpuestos; cohorte y precio coinciden entre texto y arte.
+
+#### 🩸 La lección: revisar el CONTENIDO de un brochure no prueba que el lead pueda ABRIRLO
+
+§18.BK dejó el método para auditar qué DICE un PDF y funcionó. Lo que no cubría es lo de más arriba en
+la cadena: **que la URL sea alcanzable por un desconocido**. Son dos fallas distintas y la segunda es
+más barata de chequear que la primera. Chequeo de 5 segundos, sirve para cualquier link que salga en
+un push:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" -L "<url del material>"   # 200 = el lead lo abre
+```
+
+Conviene correrlo sobre los 7 cada vez que se toque `programs.js` — el `curl` de arriba en un `for`
+sobre `MATERIAL_LINKS` es el barrido entero. **Un 401/404 acá no se manifiesta en ningún log, en
+ninguna métrica y en ningún test**: el único síntoma es un lead que llega a la call sin haber visto
+el material, indistinguible de uno que no quiso verlo.
+
+#### Deploy
+
+PR #16 → `main` (`806255b`), desplegado con `alcance: todo` el 21-ago 21:12 UTC. Verificado **contra
+el contenedor corriendo**, no contra el verde del workflow: `DEPLOYED_SHA` = `806255b`,
+`buildPrecallText` ejecutado con `docker exec` dentro de `juanito-agent` devolviendo el link nuevo,
+Baileys reconectado sin re-pairing (*"Reconnection with existing sync data"* → `Conectado ✅`), y
+`[Calendly] Jobs activos ✅ … retia[dry-run:false]`. Los dos links dan 200 **desde la red del VPS**.
+
+#### 🟡 Pendiente
+
+- **El archivo nuevo está en un lugar frágil.** Se llama `Copia de Brochure De Cero a Tactical
+  Investor .pdf` y vive en una carpeta llamada **"Contenido previo"**. Ese link va a todos los leads
+  de Vieira: si alguien limpia esa carpeta creyendo que es material viejo, volvemos al 401. Moverlo a
+  un Drive de Retia con nombre definitivo — y al hacerlo, **conservar el file ID** (ahora sí aplica
+  §18.BK: el archivo es nuestro y los links ya están en la calle).
+- **Nadie es dueño del link del brochure de Retia.** El anterior se cerró sin que nos enteráramos
+  porque el archivo es de ellos. Mientras el material viva en un Drive ajeno, esto se repite.
+
+---
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):
