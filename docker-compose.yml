@@ -122,6 +122,13 @@ services:
       - ADMIN_AGENDA_CONNECTION=${ADMIN_AGENDA_CONNECTION:-estadox}
       - CALENDLY_TOKEN_ESTADOX=${CALENDLY_TOKEN_ESTADOX:-}
       - CALENDLY_DRY_RUN_ESTADOX=${CALENDLY_DRY_RUN_ESTADOX:-true}
+      # Conexión ComunicArte (2026-08-25). Sin el token la conexión se autodesactiva.
+      - CALENDLY_TOKEN_COMUNICARTE=${CALENDLY_TOKEN_COMUNICARTE:-}
+      - CALENDLY_DRY_RUN_COMUNICARTE=${CALENDLY_DRY_RUN_COMUNICARTE:-true}
+      # Espejo de dev: copia de los pushes de ciertas conexiones a un JID de dev, para
+      # acompañar un rollout. Sin JID no existe; sin conexiones declaradas no copia nada.
+      - CALENDLY_DEV_MIRROR_JID=${CALENDLY_DEV_MIRROR_JID:-}
+      - CALENDLY_DEV_MIRROR_CONNECTIONS=${CALENDLY_DEV_MIRROR_CONNECTIONS:-}
       # Push 5 (§18.AP): recordatorio de llenar los Sheets, N min después de que TERMINA la
       # call. Solo lo reciben las conexiones que declaran `sheets` en accounts.js (hoy retia),
       # así que este flag es el apagado de emergencia, no el interruptor de alcance.

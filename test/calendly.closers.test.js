@@ -228,7 +228,11 @@ test('todo extraJid queda RECONOCIDO en CLOSER_LIDS', () => {
 // OJO: "Sebastian Salazar" también repite nombre, pero con el MISMO teléfono (30x + retia desde
 // una línea) → NO es ambiguo: resuelve a esa persona única. Por eso NO va acá. Cualquier choque
 // con teléfonos distintos que NO esté declarado acá debe romper CI.
-const HOMONIMOS_OK = new Set(['Sebastian Rodriguez']);
+// "Andrea Machado" entró al club el 2026-08-25: la misma persona atiende el buzón-rol de Retia
+// (registro@ttrading.co) y el de ComunicArte (info@eventoscomunicarte.com), con un teléfono
+// distinto en cada uno. OJO con el homónimo histórico: andrea.machado@30x.com es otra persona,
+// DEPARTIDA y en IGNORED_CLOSERS, así que no entra en este conteo.
+const HOMONIMOS_OK = new Set(['Sebastian Rodriguez', 'Andrea Machado']);
 
 test('resolveCloserByPushName: nombre completo resuelve a la persona correcta (o null si es ambiguo)', () => {
   // resolveCloserByPushName devuelve null ante ambigüedad REAL (mismo nombre, teléfonos distintos)
