@@ -23,6 +23,7 @@
 //   Esteban Aguilar     EstadoX (IA para Abogados)
 //   Andrea Machado      Retia (De Cero a Tactical Investor) · ComunicArte (Método Comunicarte)
 //   Maru Marquez        ComunicArte — Método Comunicarte
+//   Dana Rodriguez      Retia — De Cero a Tactical Investor (alta 2026-08-25)
 //
 // ⚠️ 2026-08-25: al mudarse IA para Abogados al Calendly propio de EstadoX, los hosts de ese
 // programa pasaron a ser los TRES miembros de esa org (comunidad@ es la cuenta de sistema;
@@ -238,6 +239,27 @@ export const PEOPLE = {
       // refuerzo. Sin `workLid` ni opt-in todavía (ver la nota de ComunicArte abajo).
       { connection: 'comunicarte', email: 'info@eventoscomunicarte.com', phone: '+573171297303' },
     ],
+  },
+  // Alta 2026-08-25. Entró a "De Cero a Tactical Investor" (host de una cita FUTURA cuando se
+  // detectó, la del 25-ago 7pm). Estaba SIN MAPEAR: ni en CLOSERS ni en IGNORED_CLOSERS ⇒ alerta
+  // de "closer sin mapear" en cada poll y esa call sin un solo push.
+  //
+  // ⚠️ NO confundir con `dana@30x.com`, que sigue en IGNORED_CLOSERS: ese correo se ignora porque
+  // su volumen real está en "AI for Executives", un programa que no gestionamos. Esta identidad es
+  // otra cosa (otro correo, otra conexión, otro programa) y no toca aquella decisión. Si algún día
+  // se quiere cubrir su lado de 30x, es un alta nueva —una segunda identidad acá—, no un
+  // des-ignorar: lo que se ignoró fue el PROGRAMA, no la persona.
+  //
+  // Ojo con la historia: Dana ya había salido de Retia el 2026-07-22 (la reemplazó Sebastian
+  // Salazar en el buzón-rol equipo@ttrading.co). Esto es un regreso con correo PROPIO, no un
+  // buzón-rol — a diferencia de registro@ y equipo@, acá el correo es de ella.
+  //
+  // Sin `workLid` (no hay entrega probada) y ⚠️ SIN OPT-IN: con CALENDLY_REQUIRE_OPTIN=true no
+  // recibe nada hasta que le escriba a Juanito y quede su fila en `calendly_optins` (source
+  // 'self'). Mapearla acá quita la alerta y la vuelve reconocible; no le entrega nada todavía.
+  dana_rodriguez: {
+    name: 'Dana Rodriguez',
+    identities: [{ connection: 'retia', email: 'hola.danvar@gmail.com', phone: '+573169835624' }],
   },
   // ─── ComunicArte (conexión #4) — programa "Método Comunicarte" ─────────────
   // Hosts verificados 2026-08-25 contra la cuenta real: la org tiene DOS miembros y los dos

@@ -5361,12 +5361,19 @@ el dev quedaría reconocido *como ese closer* al escribirle a Juanito, y el rost
 JID entre identidades (un JID = una identidad) — un solo dev no podría espejar cinco closers. Un
 espejo es un destino, no una identidad. Fijado en `test/calendly.dev-mirror.test.js` (9 tests).
 
-**🔴 Abierto — `hola.danvar@gmail.com` en Retia.** Host NUEVO sin mapear: 1 cita, y es una de las 3
-futuras. No está en `CLOSERS` ni en `IGNORED_CLOSERS` ⇒ alerta "closer sin mapear" en cada poll y esa
-call **no recibe ningún push**. El jefe dice que es Dana Rodriguez ("creo que también es closer en
-30x"). **No se cableó porque falta el celular**, que es la llave del opt-in — inventarlo es peor que
-la alerta. Ojo con el precedente: `dana@30x.com` está en `IGNORED_CLOSERS` y Dana salió de Retia el
-2026-07-22. Si vuelve, es un alta, no un des-ignorar.
+**`hola.danvar@gmail.com` en Retia — CABLEADO.** Apareció como host NUEVO sin mapear, con 1 cita que
+era una de las 3 futuras: ni en `CLOSERS` ni en `IGNORED_CLOSERS` ⇒ alerta "closer sin mapear" en cada
+poll y esa call sin un solo push. Es **Dana Rodriguez** (+57 316 9835624), un regreso a Retia con
+correo PROPIO — no un buzón-rol, a diferencia de `registro@` y `equipo@`. Había salido el 2026-07-22,
+cuando Salazar heredó `equipo@ttrading.co`.
+
+⚠️ No confundir con `dana@30x.com`, que **sigue** en `IGNORED_CLOSERS`: ese correo se ignora porque su
+volumen real está en "AI for Executives", un programa no gestionado. Lo que se ignoró ahí fue el
+PROGRAMA, no la persona, así que esta alta no lo toca. Cubrir su lado de 30x sería una segunda
+identidad, no un des-ignorar.
+
+Mapearla quita la alerta y la vuelve reconocible, pero **todavía no le entrega nada**: le falta el
+opt-in (`CALENDLY_REQUIRE_OPTIN=true` ⇒ tiene que escribirle a Juanito primero).
 
 **Nota de auditoría de Retia (2026-08-25).** Todo lo demás en verde: ET correcto (231 citas, 3
 futuras), los leads **sí** traen teléfono, y los hosts vivos son `registro@` (73), `equipo@` (23) y
