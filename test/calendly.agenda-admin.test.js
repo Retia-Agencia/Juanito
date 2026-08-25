@@ -124,3 +124,27 @@ test('sin closers configurados avisa en vez de salir mudo', () => {
   const msg = buildAgendaMessage({ tally: [], dateLabel: 'x', programLabel: 'y' });
   assert.match(msg, /No hay closers configurados/);
 });
+
+// ─── Regresión del envío real del 2026-08-25 ──────────────────────────────────
+
+test('REGRESIÓN: los closers de OTRA conexión no pueden aparecer como "sin mapear"', () => {
+  // Lo que salió mal en el primer envío real: hubspotDigestItems devuelve las citas de TODOS
+  // los closers del CRM, no solo las de esta conexión. Volcadas sin filtrar en un tally acotado
+  // al roster de EstadoX, las 10 calls de Daniela/Marín/Lozano/Mendoza cayeron en el bucket de
+  // "sin mapear" y Mariana recibió sus correos crudos bajo el título "IA para Abogados".
+  //
+  // El filtro correcto vive en el scheduler (necesita accountOfCloser). Este test fija el
+  // CONTRATO que ese filtro tiene que cumplir antes de llamar a tallyByCloser: lo que llega acá
+  // ya viene acotado a la conexión, y entonces el bucket de "sin mapear" queda vacío.
+  const yaFiltrado = [
+    call('aguilare@estadox.com'),
+    call('aguilare@estadox.com'),
+    call('sebastian.salazar@30x.com'),
+  ];
+  const t = tallyByCloser(yaFiltrado, ROSTER);
+  assert.ok(!t.some((c) => c.unmapped), 'con las calls ya filtradas por conexión no debe haber "sin mapear"');
+  const msg = buildAgendaMessage({ tally: t, dateLabel: 'x', programLabel: 'IA para Abogados' });
+  assert.ok(!/sin mapear/.test(msg), 'el mensaje no debe traer el aviso de host desconocido');
+  assert.ok(!/@30x\.com/.test(msg), 'nunca un correo crudo en el mensaje de la admin');
+  assert.match(msg, /Total: 3/);
+});

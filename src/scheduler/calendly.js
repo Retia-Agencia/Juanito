@@ -1640,7 +1640,17 @@ async function runAdminAgenda() {
     maxStartIso,
     pushN: 2,
   });
-  for (const { closerEmail } of delCrm) calls.push({ closerEmail });
+  // ⚠️ FILTRO POR CONEXIÓN (bug del 2026-08-25, detectado en el primer envío real).
+  // `hubspotDigestItems` NO filtra por conexión: devuelve las citas de TODOS los closers del CRM.
+  // En runDigest eso no molesta porque cada item se enruta a SU closer; acá, en cambio, todo cae
+  // en UN tally acotado al roster de esta conexión, así que las calls de los closers de 30x se
+  // iban al bucket de "sin mapear" y salían en el mensaje de la admin de EstadoX, con el correo
+  // crudo, bajo el título "IA para Abogados". Se mandó así una vez: 10 de las 16 calls del
+  // mensaje eran de Daniela, Marín, Lozano y Mendoza — de otros programas.
+  // El bucket de "sin mapear" queda para lo que de verdad es un host desconocido, que es para lo
+  // que existe.
+  const delCrmPropias = delCrm.filter(({ closerEmail }) => accountOfCloser(closerEmail) === connKey);
+  for (const { closerEmail } of delCrmPropias) calls.push({ closerEmail });
 
   // Roster = los closers de ESTA conexión. Se pasa entero para que uno sin calls salga con 0.
   const roster = Object.entries(CLOSERS)
@@ -1678,7 +1688,8 @@ async function runAdminAgenda() {
   console.log(
     `[Agenda] ${connKey}: ${calls.length} call(s) hoy, ${roster.length} closer(s), ` +
       `enviada a ${enviados}/${recipients.length} destinatario(s)` +
-      `${delCrm.length ? ` (${calendlyCalls.length} de Calendly + ${delCrm.length} solo en HubSpot)` : ''}`
+      `${delCrmPropias.length ? ` (${calendlyCalls.length} de Calendly + ${delCrmPropias.length} solo en HubSpot)` : ''}` +
+      `${delCrm.length - delCrmPropias.length ? ` [${delCrm.length - delCrmPropias.length} del CRM descartadas: son de otra conexión]` : ''}`
   );
   return enviados;
 }
