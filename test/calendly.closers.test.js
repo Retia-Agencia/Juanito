@@ -75,6 +75,41 @@ test('INVARIANTE: un teléfono = una PERSONA (nunca dos personas distintas)', ()
   }
 });
 
+test('INVARIANTE: un email = una IDENTIDAD (nunca dos connections con el mismo correo)', () => {
+  // CLOSERS se deriva con Object.fromEntries keyeado por email: dos identidades con el MISMO
+  // correo no dan error, se pisan — y la que gana decide `accountOfCloser`, que es la regla única
+  // de dry-run / push4 / HubSpot. El caso que tienta a romperlo es real: al mudar IA para Abogados
+  // al Calendly propio de EstadoX (2026-08-25), Sebastian Salazar quedó hosteando con el mismo
+  // sebastian.salazar@30x.com en otra org. Lo correcto fue MOVER su identidad, no duplicarla.
+  const vistos = new Map(); // email → connection que lo declaró
+  for (const person of Object.values(PEOPLE)) {
+    for (const id of person.identities) {
+      const email = id.email.toLowerCase();
+      const prev = vistos.get(email);
+      assert.ok(
+        !prev,
+        `${email} está declarado en dos connections ('${prev}' y '${id.connection}') — la segunda pisa a la primera en CLOSERS`
+      );
+      vistos.set(email, id.connection);
+    }
+  }
+  // Y el derivado tiene que tener tantas entradas como identidades hay (si alguna se pisó, sobra
+  // una identidad y falta una entrada).
+  const totalIdentidades = Object.values(PEOPLE).reduce((n, p) => n + p.identities.length, 0);
+  assert.equal(Object.keys(CLOSERS).length, totalIdentidades);
+});
+
+test('los closers de IA para Abogados viven en la conexión estadox (mudanza 2026-08-25)', () => {
+  // Regresión del mes en blanco: el programa se mudó al Calendly propio de EstadoX y el roster
+  // quedó apuntando a la conexión vieja. Si esto se rompe, sus pushes vuelven a resolverse contra
+  // el dry-run/HubSpot de 30x y las citas de la org de EstadoX caen como host desconocido.
+  assert.equal(accountOfCloser('aguilare@estadox.com'), 'estadox');
+  assert.equal(accountOfCloser('sebastian.salazar@30x.com'), 'estadox');
+  assert.equal(CLOSERS['aguilare@estadox.com'].name, 'Esteban Aguilar');
+  // Salazar conserva su identidad de Retia intacta.
+  assert.equal(accountOfCloser('equipo@ttrading.co'), 'retia');
+});
+
 test('INVARIANTE: la identidad de PRUEBA no existe si nadie prendió el gate', () => {
   // §18.BB — `TEST_CLOSER_ENABLED` mete un closer desechable al roster para poder hacer el smoke
   // del setteo. Esta es la red que impide que se quede: si algún día alguien borra el `if` y deja
@@ -296,13 +331,14 @@ test('resolveIdentitiesByName devuelve TODAS las identidades de una persona mult
 });
 
 test('resolveIdentitiesByName lista las DOS identidades aunque compartan teléfono (Sebastian Salazar)', () => {
-  // Salazar cierra en 30x y retia desde la MISMA línea. El dedup es por (teléfono, cuenta), no por
-  // teléfono, así que aparecen las dos → `/calendly off Sebastian Salazar retia` puede apagar solo
-  // una. (Si el dedup volviera a ser por teléfono, esto devolvería 1 y el comando no podría
-  // desambiguar por cuenta.)
+  // Salazar cierra en estadox y retia desde la MISMA línea (hasta el 2026-08-25 su identidad de
+  // abogados era de la conexión '30x'; se movió con el programa). El dedup es por (teléfono,
+  // cuenta), no por teléfono, así que aparecen las dos → `/calendly off Sebastian Salazar retia`
+  // puede apagar solo una. (Si el dedup volviera a ser por teléfono, esto devolvería 1 y el
+  // comando no podría desambiguar por cuenta.)
   const ids = resolveIdentitiesByName('Sebastian Salazar');
   assert.equal(ids.length, 2, 'Sebastian Salazar debe tener 2 identidades');
-  assert.deepEqual(ids.map((i) => i.account).sort(), ['30x', 'retia']);
+  assert.deepEqual(ids.map((i) => i.account).sort(), ['estadox', 'retia']);
   assert.equal(new Set(ids.map((i) => i.phone)).size, 1, 'ambas identidades comparten teléfono');
   assert.deepEqual(
     ids.map((i) => i.email).sort(),

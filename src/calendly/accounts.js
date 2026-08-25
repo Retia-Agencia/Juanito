@@ -91,6 +91,54 @@ export const ACCOUNTS = {
     hubspot: true,
   },
 
+  // EstadoX — Calendly PROPIO de la marca (2026-08-25). Arranca MUDO
+  // (CALENDLY_DRY_RUN_ESTADOX=true) hasta validar un ciclo de poll completo.
+  //
+  // Por qué existe: EstadoX vendía "IA para Abogados" desde el Calendly de 30X, y el 2026-07-24
+  // abrió el suyo (comunidad@estadox.com). Nadie tocó la config, así que Juanito siguió mirando
+  // el ET viejo de la conexión 30x — que desde ese día no recibe una sola reserva. UN MES sin
+  // pushes precall para ese programa, sin un error en los logs: el poll no distingue "no hubo
+  // citas" de "estoy mirando el Calendly equivocado". Detectado porque la línea "📅 Bookearon
+  // Calendly" del reporte de las 8pm marcaba 0 todos los días.
+  //
+  // ⚠️ Su ET es POOL y NO sale en /event_types (ver el comentario largo en programs.js). Al
+  // agregar otro programa a esta conexión, sacar el UUID de las reservas reales, no del listado.
+  //
+  // El CRM NO cambió: los leads de abogados siguen en el HubSpot que Juanito tiene conectado (el
+  // de 30X) ⇒ hubspot:true, igual que antes de la mudanza.
+  estadox: {
+    key: 'estadox',
+    label: 'EstadoX',
+    // push4 sin `env`, como retia: es un `false` FIJO. No es una decisión de producto nueva sino
+    // preservar lo que ya pasaba — el Push 4 está gateado ADEMÁS por CALENDLY_PUSH4_CLOSERS, y
+    // ninguno de los dos closers de esta conexión está en esa allowlist. Prenderlo acá sin
+    // tocar la allowlist no cambiaría nada, y tocarla es una decisión aparte.
+    env: {
+      token: 'CALENDLY_TOKEN_ESTADOX',
+      orgUri: 'CALENDLY_ORG_URI_ESTADOX',
+      orgUriDefault: 'https://api.calendly.com/organizations/1a31340a-2bd5-46ad-8d04-05eae61bb1d9',
+      dryRun: 'CALENDLY_DRY_RUN_ESTADOX',
+      dryRunDefault: true,
+      push4: null,
+      push4Default: false,
+    },
+    token: () => process.env.CALENDLY_TOKEN_ESTADOX || '',
+    // Org derivada 2026-08-25 (GET /users/me con el PAT de comunidad@estadox.com → HTTP 200).
+    // Hardcodeada como default igual que 30x/retia; el env var es override opcional.
+    orgUri: () =>
+      process.env.CALENDLY_ORG_URI_ESTADOX ||
+      'https://api.calendly.com/organizations/1a31340a-2bd5-46ad-8d04-05eae61bb1d9',
+    // Derivado de programs.js: los ETs de los programas cuya connection es 'estadox'
+    // (hoy solo abogados).
+    eventTypes: eventTypesForConnection('estadox'),
+    // Arranca MUDA: solo loguea hasta confirmar que el poll ve las citas y que el mapeo de
+    // hosts → closers resuelve. Poner CALENDLY_DRY_RUN_ESTADOX=false tras validar un ciclo.
+    dryRun: () => process.env.CALENDLY_DRY_RUN_ESTADOX !== 'false',
+    push4: () => false,
+    // Mismo HubSpot que 30x: la marca cambió de Calendly, no de CRM.
+    hubspot: true,
+  },
+
   // Retia — agencia #2. Configurada y verificada (2026-07-21). Arranca MUDA
   // (CALENDLY_DRY_RUN_RETIA=true) hasta validar un ciclo completo.
   //

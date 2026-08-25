@@ -18,9 +18,18 @@
 //   Sebastian Marin     LinkedIn Sales  · Instagram & TikTok
 //   Lucas Mendoza       LinkedIn Sales  · Operaciones Escalables
 //   Pablo Suarez        AI For Developers
-//   Daniela Camacho     EstadoX (IA para Abogados) · Instagram & TikTok · Operaciones Escalables
+//   Daniela Camacho     Instagram & TikTok · Operaciones Escalables
 //   Sebastian Salazar   EstadoX (IA para Abogados) · De Cero a Tactical Investor (Retia)
+//   Esteban Aguilar     EstadoX (IA para Abogados)
 //   Andrea Machado      Retia — De Cero a Tactical Investor
+//
+// ⚠️ 2026-08-25: al mudarse IA para Abogados al Calendly propio de EstadoX, los hosts de ese
+// programa pasaron a ser los TRES miembros de esa org (comunidad@ es la cuenta de sistema;
+// Aguilar y Salazar son los closers). Daniela Camacho NO es miembro de esa org, así que dejó de
+// tomar citas de abogados — conserva sus otros dos programas en la conexión 30x y no hay nada que
+// cambiar en su entrada. Si alguna vez vuelve a abogados, hay que sumarla ANTES a la org en
+// Calendly: sin membresía no hostea, y sin identidad 'estadox' acá su cita caería como host
+// desconocido.
 //
 // La CONEXIÓN de Calendly se configura en cada identidad con `connection` (ver accounts.js).
 // La identidad cuya connection es la default ('30x') NO emite el campo `account` en el CLOSERS
@@ -117,11 +126,34 @@ export const PEOPLE = {
   // atienden por BUZÓN-ROL (mismo patrón que registro@ → Andrea Machado), no por cuenta personal.
   // Al rotar la persona del buzón hay que cambiar el TELÉFONO acá (este roster es solo la LLAVE del
   // opt-in; el destino real es `calendly_optins.contact_jid` — runbook en docs/JUANITO-HANDOFF.md).
+  // ⚠️ MUDANZA 2026-08-25 — su identidad de abogados pasó de connection:'30x' a 'estadox'. El
+  // email NO cambia (sigue hosteando como sebastian.salazar@30x.com, ahora dentro de la org de
+  // EstadoX), así que su opt-in se reusa tal cual: `calendly_optins` está keyeada por TELÉFONO y
+  // el closer se resuelve por EMAIL — ninguno de los dos se movió.
+  //
+  // Se MOVIÓ la identidad en vez de agregar una segunda con el mismo email a propósito: CLOSERS
+  // se deriva con Object.fromEntries keyeado por email, así que dos identidades con el mismo
+  // correo se pisan en silencio y `accountOfCloser` —la regla ÚNICA que decide dry-run/push4/
+  // HubSpot— devolvería la que ganó el sorteo. El invariante está fijado en un test.
+  // Su único programa en la conexión 30x era IA para Abogados, que es justo lo que se mudó, así
+  // que mover no le quita cobertura de nada.
   sebastian_salazar: {
     name: 'Sebastian Salazar',
     identities: [
-      { connection: '30x', email: 'sebastian.salazar@30x.com', phone: '+573054312905' },
+      { connection: 'estadox', email: 'sebastian.salazar@30x.com', phone: '+573054312905' },
       { connection: 'retia', email: 'equipo@ttrading.co', phone: '+573054312905' },
+    ],
+  },
+  // Alta 2026-08-25 junto con la conexión de EstadoX. Hostea 14 de las 17 citas de abogados de la
+  // ventana en que se detectó la mudanza — es el closer principal del programa, no un refuerzo.
+  // Sin `workLid`: no hay entrega probada todavía (ver la nota de arriba sobre workLid). Se
+  // declara recién cuando haya un mensaje suyo del que sacar el LID.
+  // ⚠️ Le falta el OPT-IN: con CALENDLY_REQUIRE_OPTIN=true no recibe nada hasta que le escriba a
+  // Juanito y quede su fila en `calendly_optins` (source 'self').
+  esteban_aguilar: {
+    name: 'Esteban Aguilar',
+    identities: [
+      { connection: 'estadox', email: 'aguilare@estadox.com', phone: '+573186922796' },
     ],
   },
   pablo_lozano: {

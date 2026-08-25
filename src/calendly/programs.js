@@ -21,7 +21,20 @@
 // reservas reales en /scheduled_events — así se resolvieron Instagram (2026-07-16) y Tactical
 // Investor (2026-07-21). Mismo método si aparece otro. Atajo: scripts/calendly-account-derive.js.
 const SECOND_BRAIN_ET = 'https://api.calendly.com/event_types/56efc028-ee2f-46e8-852c-e50d45b15b83';
-const ABOGADOS_ET = 'https://api.calendly.com/event_types/f8d123ac-364b-47f9-a446-1316fdf37b08';
+// ⚠️ MIGRADO 2026-08-25. EstadoX dejó el Calendly de 30X y abrió el suyo (comunidad@estadox.com,
+// usuario creado el 2026-07-24T18:04Z). El ET viejo de esta línea era
+// f8d123ac-364b-47f9-a446-1316fdf37b08, de la conexión '30x' — desde el 24-jul no recibe una sola
+// reserva, y como el poll no distingue "cero citas" de "estoy mirando el ET equivocado", el
+// programa estuvo un mes sin pushes y sin una sola alerta (mismo silencio que el buzón-rol de
+// Retia, ver closers.js). El síntoma visible fue otro: la línea "📅 Bookearon Calendly" del
+// reporte de las 8pm marcando 0 todos los días.
+//
+// El ET nuevo es POOL (`pooling_type: multi_pool`, `profile: null`) ⇒ NO sale en /event_types.
+// Lo que SÍ sale de esa org es 0a1d4a2c-cc20-4b7b-bf72-8a7e1cc35172, un ET *solo* con el nombre
+// IDÉNTICO ("Postulación Programa IA para Abogados | EstadoX", slug comunidad-estadox/30min).
+// Cablear ese señuelo no da error: devuelve cero reservas para siempre. Este UUID se sacó de las
+// reservas reales (GET /scheduled_events → event_type), que es la única fuente confiable.
+const ABOGADOS_ET = 'https://api.calendly.com/event_types/83bb87b3-0c73-43ea-a618-196a74512eab';
 const LINKEDIN_ET = 'https://api.calendly.com/event_types/96ddf036-9174-459c-be73-b248ad95be13';
 const DEVELOPERS_ET = 'https://api.calendly.com/event_types/dff3e48a-4859-417a-98fb-822048aef5d9';
 const OPERACIONES_ET = 'https://api.calendly.com/event_types/8462e92a-8210-4bb2-8e2b-583aa3c3d877';
@@ -65,8 +78,15 @@ export const PROGRAMS = {
     key: 'abogados',
     label: 'IA para Abogados',
     titleHints: ['abogado'],
-    company: 'estadox', // marca EstadoX, pero hosteado en la conexión 30x (empresa ≠ conexión)
-    connection: '30x',
+    company: 'estadox',
+    // Desde 2026-08-25 la marca y la conexión COINCIDEN. Antes era company:'estadox' sobre
+    // connection:'30x', y ESTE programa era el único ejemplo vivo de empresa ≠ conexión — el caso
+    // que motivó separar los dos conceptos en el ADR 0001.
+    // ⚠️ Que hoy TODOS los programas tengan company === connection NO significa que los campos
+    // sobren: son ejes distintos (de quién es la marca vs. de quién es el Calendly) y basta que
+    // EstadoX vuelva a vender un programa hosteado en el Calendly de 30X para que se separen otra
+    // vez. No colapsarlos en uno solo.
+    connection: 'estadox',
     eventType: ABOGADOS_ET,
     pitch: {
       from: 'de EstadoX',

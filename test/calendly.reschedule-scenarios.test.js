@@ -31,6 +31,10 @@ const CALL_9AM = Date.parse('2026-07-14T14:00:00Z');
 
 beforeEach(() => {
   process.env.CALENDLY_DRY_RUN = 'false';
+  // Salazar, el closer de fixture de este archivo, pasó a la conexión 'estadox' con la mudanza
+  // del Calendly de EstadoX (2026-08-25). Su dry-run es INDEPENDIENTE del de 30x: sin esta línea
+  // todos estos escenarios corren mudos y no se entrega nada.
+  process.env.CALENDLY_DRY_RUN_ESTADOX = 'false';
   process.env.CALENDLY_REQUIRE_OPTIN = 'true';
   process.env.CALENDLY_PUSH3_LEAD_MIN = '25';
   process.env.CALENDLY_PUSH4_ENABLED = 'true';

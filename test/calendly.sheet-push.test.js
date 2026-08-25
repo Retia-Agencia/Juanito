@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 process.env.TZ = 'America/Bogota';
 process.env.CALENDLY_REQUIRE_OPTIN = 'true';
 process.env.CALENDLY_DRY_RUN = 'false'; // 30x en vivo, como en producción
+process.env.CALENDLY_DRY_RUN_ESTADOX = 'false'; // estadox también (Salazar vive ahí desde 2026-08-25)
 process.env.CALENDLY_DRY_RUN_RETIA = 'false'; // retia también (así está en el VPS)
 process.env.ADMIN_LID = '129446371655733@lid';
 

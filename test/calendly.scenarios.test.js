@@ -24,6 +24,10 @@ const SALAZAR_PHONE = '+573054312905';
 // Entorno por defecto de los tests: envío REAL al spy (no dry-run) y opt-in exigido.
 beforeEach(() => {
   process.env.CALENDLY_DRY_RUN = 'false';
+  // Salazar, el closer de fixture de este archivo, pasó a la conexión 'estadox' con la mudanza
+  // del Calendly de EstadoX (2026-08-25). Su dry-run es INDEPENDIENTE del de 30x: sin esta línea
+  // todos estos escenarios corren mudos y no se entrega nada.
+  process.env.CALENDLY_DRY_RUN_ESTADOX = 'false';
   process.env.CALENDLY_REQUIRE_OPTIN = 'true';
   process.env.CALENDLY_PUSH3_LEAD_MIN = '25';
   // Este archivo prueba los pushes PRECALL (0/1/2/3). El Push 4 (outcome post-call,
@@ -377,7 +381,10 @@ test('pausa por-closer: solo se corta al closer pausado, los demás reciben', as
 });
 
 test('dry-run: no envía aunque haya opt-in', async () => {
+  // El dry-run que manda es el de la conexión del CLOSER (accountOfCloser), no el global: Salazar
+  // vive en 'estadox' desde 2026-08-25, así que apagar solo CALENDLY_DRY_RUN no lo silenciaría.
   process.env.CALENDLY_DRY_RUN = 'true';
+  process.env.CALENDLY_DRY_RUN_ESTADOX = 'true';
   const now = Date.now();
   const events = [makeEvent({ uuid: 'dry', startInMin: 20, closerEmail: SALAZAR, nowMs: now })];
   const h = installHarness(scheduler, { events, optins: [SALAZAR_PHONE], nowMs: now });

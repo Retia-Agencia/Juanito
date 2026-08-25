@@ -113,6 +113,11 @@ services:
       # a activeAccounts(). Org URI y event_type van hardcodeados en accounts.js (no por env).
       - CALENDLY_TOKEN_RETIA=${CALENDLY_TOKEN_RETIA:-}
       - CALENDLY_DRY_RUN_RETIA=${CALENDLY_DRY_RUN_RETIA:-true}
+      # Cuenta EstadoX (Calendly propio de la marca, programa "IA para Abogados"). Mismo pase
+      # explícito que retia — sin estas dos líneas el token no llega y la conexión no entra a
+      # activeAccounts(), que es exactamente el silencio que costó un mes de pushes.
+      - CALENDLY_TOKEN_ESTADOX=${CALENDLY_TOKEN_ESTADOX:-}
+      - CALENDLY_DRY_RUN_ESTADOX=${CALENDLY_DRY_RUN_ESTADOX:-true}
       # Push 5 (§18.AP): recordatorio de llenar los Sheets, N min después de que TERMINA la
       # call. Solo lo reciben las conexiones que declaran `sheets` en accounts.js (hoy retia),
       # así que este flag es el apagado de emergencia, no el interruptor de alcance.

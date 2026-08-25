@@ -31,12 +31,15 @@ function withEnv(env, fn) {
   }
 }
 
-// ─── Retro-compat: los 6 programas de 30X siguen resolviendo ──────────────────
+// ─── Retro-compat: los programas de 30X siguen resolviendo ────────────────────
 
-test('los 6 programas de la cuenta 30x siguen mapeando a su programKey', () => {
+// Eran 6 hasta el 2026-08-25, cuando `abogados` se mudó al Calendly propio de EstadoX. Los otros
+// 5 no se tocaron: el punto de este test es que mover UN programa de conexión no arrastre a los
+// demás (los eventTypes de cada conexión se DERIVAN de programs.js, así que un error de tipeo en
+// la `connection` de uno los sacaría a todos del mapa de 30x sin ningún error).
+test('los 5 programas que quedan en la cuenta 30x siguen mapeando a su programKey', () => {
   const esperados = [
     'second_brain',
-    'abogados',
     'linkedin',
     'developers',
     'operaciones',
@@ -54,8 +57,8 @@ test('los 6 programas de la cuenta 30x siguen mapeando a su programKey', () => {
 
 test('PROGRAM_EVENT_TYPES sale del registro y trae los ETs de TODAS las cuentas', () => {
   const ets = PROGRAM_EVENT_TYPES();
-  // Unión de los ETs de cada cuenta (30x: 6; retia: 1). Derivado del registro para que sumar
-  // un programa/cuenta no requiera tocar este número a mano.
+  // Unión de los ETs de cada cuenta (30x: 5; estadox: 1; retia: 1). Derivado del registro para
+  // que sumar un programa/cuenta no requiera tocar este número a mano.
   const all = Object.values(ACCOUNTS).flatMap((a) => Object.keys(a.eventTypes));
   assert.equal(ets.length, all.length);
   assert.deepEqual([...ets].sort(), all.sort());
@@ -77,7 +80,9 @@ test('la cuenta default existe y es 30x', () => {
 // ─── Auto-desactivación por token ─────────────────────────────────────────────
 
 test('activeAccounts filtra por token presente (auto-desactivación)', () => {
-  withEnv({ CALENDLY_TOKEN: 'tok-30x' }, () => {
+  // Se apagan explícitamente los tokens de las OTRAS conexiones: si quedaran colgados del
+  // entorno real, este test pasaría o fallaría según la máquina donde corre.
+  withEnv({ CALENDLY_TOKEN: 'tok-30x', CALENDLY_TOKEN_ESTADOX: undefined, CALENDLY_TOKEN_RETIA: undefined }, () => {
     assert.deepEqual(
       activeAccounts().map((a) => a.key),
       ['30x']
@@ -85,7 +90,7 @@ test('activeAccounts filtra por token presente (auto-desactivación)', () => {
   });
   // Sin token, la cuenta no existe → los jobs no arrancan y Juanito se comporta como si
   // Calendly nunca se hubiera configurado.
-  withEnv({ CALENDLY_TOKEN: undefined }, () => {
+  withEnv({ CALENDLY_TOKEN: undefined, CALENDLY_TOKEN_ESTADOX: undefined, CALENDLY_TOKEN_RETIA: undefined }, () => {
     assert.deepEqual(activeAccounts(), []);
   });
 });
@@ -94,7 +99,8 @@ test('activeAccounts filtra por token presente (auto-desactivación)', () => {
 
 test('accountOfProgram ubica la cuenta dueña de cada programa', () => {
   assert.equal(accountOfProgram('second_brain').key, '30x');
-  assert.equal(accountOfProgram('abogados').key, '30x');
+  // abogados se mudó al Calendly propio de EstadoX el 2026-08-25 (antes era '30x').
+  assert.equal(accountOfProgram('abogados').key, 'estadox');
   assert.equal(accountOfProgram('instagram').key, '30x');
   // Un programa que no es de nadie → null (el caller decide; nunca asume una cuenta).
   assert.equal(accountOfProgram('programa_fantasma'), null);
@@ -141,9 +147,10 @@ test('una cuenta CON token está completamente configurada', () => {
 });
 
 test('las cuentas staged (sin token) están inertes', () => {
-  withEnv({ CALENDLY_TOKEN: 'tok-30x', CALENDLY_TOKEN_RETIA: undefined }, () => {
+  withEnv({ CALENDLY_TOKEN: 'tok-30x', CALENDLY_TOKEN_ESTADOX: undefined, CALENDLY_TOKEN_RETIA: undefined }, () => {
     const activas = activeAccounts().map((a) => a.key);
     assert.ok(!activas.includes('retia'), 'retia no debe estar activa sin su token');
+    assert.ok(!activas.includes('estadox'), 'estadox no debe estar activa sin su token');
     assert.deepEqual(activas, ['30x']);
   });
 });

@@ -21,6 +21,10 @@ const SALAZAR_PHONE = '+573054312905';
 
 beforeEach(() => {
   process.env.CALENDLY_DRY_RUN = 'false';
+  // Salazar, el closer de fixture de este archivo, pasó a la conexión 'estadox' con la mudanza
+  // del Calendly de EstadoX (2026-08-25). Su dry-run es INDEPENDIENTE del de 30x: sin esta línea
+  // todos estos escenarios corren mudos y no se entrega nada.
+  process.env.CALENDLY_DRY_RUN_ESTADOX = 'false';
   process.env.HUBSPOT_AGENDA_HARVEST = 'true';
   delete process.env.HUBSPOT_NUDGE_ENABLED;
   delete process.env.CALENDLY_RESCHEDULE_ENABLED;
