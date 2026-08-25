@@ -83,6 +83,16 @@ export async function handleCommand({ text, sender, role }, deps = {}) {
     return wantsMetrics(cmd) ? handleMetricas(deps) : handleReporte(deps);
   }
 
+  // /agenda — DISPARA AHORA la agenda diaria a la admin de la marca (la del cron de las 7am).
+  // A diferencia de /reportes, que es un preview, este ENVÍA de verdad a ADMIN_AGENDA_DM. Existe
+  // porque un `node -e` dentro del contenedor no puede mandar: el socket de WhatsApp vive en el
+  // proceso principal, y sin un comando la única forma de forzar un envío era mover el cron y
+  // reiniciar (dos reconexiones de Baileys por un mensaje). SOLO admins.
+  if (cmd === '/agenda' || cmd.startsWith('/agenda ')) {
+    if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
+    return handleAgenda(deps);
+  }
+
   // /reportejefe — scorecard consolidado (todos los programas + closers) desde call_outcomes.
   // On-demand, independiente del cron diario (que está apagado). Para el JEFE y admins.
   if (cmd === '/reportejefe' || cmd === '/reporte-jefe' || cmd.startsWith('/reportejefe ')) {
@@ -624,6 +634,7 @@ function buildHelp(role) {
       '• /negocio [pendientes|ok|no|olvida <id>] — contexto del negocio',
       '• /calendly [on|off] [closer] [cuenta|todo] — pushes precall',
       '• /reportes [leads|metricas] — preview (en grupo lo publica; jefe/admin)',
+      '• /agenda — manda YA la agenda diaria a la admin (la del cron de 7am)',
       '• /reportejefe — scorecard consolidado (todos los programas + closers)',
       '• /setteos — conteo de setteos por closer (leads tocados sin cita)',
       '• /missetteos — lo que reportó un closer vs. HubSpot vs. su cuota',
@@ -667,6 +678,25 @@ function buildHelp(role) {
     '👋 Soy Juanito, un asistente. Escríbeme tu consulta y te ayudo.',
     '(/whoami te dice tu ID y rol.)',
   ].join('\n');
+}
+
+async function handleAgenda({ runAdminAgenda } = {}) {
+  if (!runAdminAgenda) {
+    return 'La agenda a la admin no está configurada (falta ADMIN_AGENDA_DM o la conexión de Calendly).';
+  }
+  try {
+    const enviados = await runAdminAgenda();
+    if (!enviados) {
+      return (
+        'No se envió la agenda. Revisá: que ADMIN_AGENDA_DM tenga destinatarios, que el JID tenga ' +
+        'hilo previo con Juanito (anti-ban), y que la conexión de Calendly tenga token. El log ' +
+        'tiene el motivo exacto.'
+      );
+    }
+    return `Agenda enviada ✅ a ${enviados} destinatario(s).`;
+  } catch (e) {
+    return `No pude mandar la agenda ahora: ${e.message}`;
+  }
 }
 
 async function handleReporte({ buildSheetsReport } = {}) {

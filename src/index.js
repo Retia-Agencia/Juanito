@@ -56,6 +56,7 @@ import { resolveCloser, resolveCloserByPushName, resolveIdentitiesByName } from 
 import { getHealth } from './calendly/health.js';
 import { enforceGroup, reevaluateGroup, onSelfRemoved, sweepGroups } from './bot/group-guard.js';
 import { buildSheetsReport } from './scheduler/sheets-report.js';
+import { runAdminAgenda } from './scheduler/calendly.js';
 import { buildMetricsReport } from './scheduler/sheets-metrics.js';
 import { buildBossReport } from './scheduler/boss-report.js';
 import { buildSetteoBlock, isSetteoReportEnabled } from './scheduler/setteo.js';
@@ -172,6 +173,8 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
         buildSheetsReport,
         // /metricas — preview on-demand del reporte de métricas de desempeño
         buildMetricsReport,
+        // /agenda — dispara YA la agenda diaria a la admin de la marca (cron 7am)
+        runAdminAgenda,
         // /reportejefe — scorecard consolidado del jefe (todos los programas + closers)
         buildBossReport,
         // /setteos — conteo de setteos por closer + anexo (gated) al reporte del jefe
