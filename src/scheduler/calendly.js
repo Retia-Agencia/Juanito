@@ -30,6 +30,7 @@ import {
   buildPush3Message,
   buildDigestMessage,
   programKeyOf,
+  programLabelOf,
   eventJoinUrl,
   dayRangeUtc,
   toSqliteUtc,
@@ -53,6 +54,8 @@ import { meetingsToCalls, hubspotMeetingIdOf } from '../hubspot/meetings.js';
 import { pickMeetingsToSchedule, callStartToIso, programLivesInThisHubspot } from '../hubspot/agenda-poll.js';
 import { pickRescheduledAway } from '../hubspot/reschedule-detect.js';
 import { resolveCloser, isIgnoredCloser, accountOfCloser, extraJidsForCloser, HUBSPOT_OWNER_TO_CLOSER } from '../calendly/closers.js';
+import { CLOSERS } from '../calendly/closers.js';
+import { tallyByCloser, buildAgendaMessage } from '../calendly/agenda-admin.js';
 import { accountOf, activeAccounts, DEFAULT_ACCOUNT } from '../calendly/accounts.js';
 import { SKIP_SLUGS, SKIP_ALERTABLES, ETIQUETA_SKIP } from '../calendly/skip-reasons.js';
 import {
@@ -152,6 +155,21 @@ const DELIVER_CRON = () => process.env.CALENDLY_DELIVER_CRON || '* * * * *';
 const PUSH1_CRON = () => process.env.CALENDLY_PUSH1_CRON || '0 19 * * *'; // 7:00pm
 const PUSH2_CRON = () => process.env.CALENDLY_PUSH2_CRON || '30 6 * * *'; // 6:30am
 
+// Agenda diaria a la ADMIN de EstadoX (7am). No es un push a closers: es el conteo de cuántas
+// llamadas tiene HOY cada closer de IA para Abogados, por DM a quien supervisa. Se autodesactiva
+// sin destinatarios, como todos los jobs del scheduler.
+const ADMIN_AGENDA_CRON = () => process.env.ADMIN_AGENDA_CRON || '0 7 * * *';
+// JIDs (CSV). Mismo requisito que SHEETS_REPORT_DM: tiene que ser el JID desde el que la persona
+// LE ESCRIBIÓ a Juanito, o no hay hilo y no se entrega.
+const ADMIN_AGENDA_DM = () =>
+  (process.env.ADMIN_AGENDA_DM || '')
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
+// Conexión cuyos programas se cuentan. Es una var y no un hardcode para que la misma agenda
+// sirva a otra marca sin tocar código.
+const ADMIN_AGENDA_CONNECTION = () => (process.env.ADMIN_AGENDA_CONNECTION || 'estadox').trim();
+
 // Auditoría de skips: cada hora revisa qué pushes se perdieron de verdad y avisa al admin.
 // Existe porque el modo de fallo caro no es el ruidoso sino el MUDO — el caso Daniela se
 // descubrió porque un humano lo reportó dos días después, no porque el sistema avisara.
@@ -247,6 +265,9 @@ async function deps() {
     isCalendlyPaused: db.isCalendlyPaused,
     // Pausa por-closer, por identidad/email (`/calendly off <closer> <cuenta>`).
     isCloserPaused: db.isCloserPaused,
+    // Anti-ban: la agenda a la admin es un DM a un tercero, no a un closer con opt-in.
+    // Sin hilo previo NO se entrega (mismo gate que el reporte de las 8pm).
+    hasDmThread: db.hasDmThread,
     sendMessage: whatsapp.sendMessage,
     // Brochure adjunto del Push 1 (Operaciones): pasa por la MISMA cola anti-ban.
     sendDocument: whatsapp.sendDocument,
@@ -1565,6 +1586,105 @@ async function runDigest(pushN, offsetDays) {
 export const runPush1 = () => runDigest(1, 1); // mañana
 export const runPush2 = () => runDigest(2, 0); // hoy
 
+// ─── Agenda diaria a la admin de la marca (7am) ────────────────────────────────
+// Pedido de Alejandro (2026-08-25) para Mariana: cuántas llamadas tiene HOY cada closer de IA
+// para Abogados. No es un digest de closer —no lleva nombres ni teléfonos de leads, solo el
+// conteo— sino la foto de carga del día para quien supervisa.
+//
+// ⚠️ Usa la MISMA doble fuente que el digest Push 1/2 (Calendly + las citas que solo viven en
+// el CRM) y no solo Calendly. Contar únicamente Calendly repetiría exactamente el hueco de
+// §18.AU: medido el 2026-07-29, el Push 2 listó 27 citas cuando el día tenía 43 vivas. Un
+// conteo incompleto que se lee como completo es peor que no mandar nada — y acá el que lo lee
+// toma decisiones de equipo con ese número.
+//
+// El dry-run de la conexión NO aplica: es un DM a un tercero, no un envío a un closer. Lo que
+// sí aplica es el gate anti-ban de hilo previo.
+async function runAdminAgenda() {
+  const recipients = ADMIN_AGENDA_DM();
+  if (!recipients.length) return 0;
+
+  const connKey = ADMIN_AGENDA_CONNECTION();
+  const account = accountOf(connKey);
+  if (!account || !account.token()) {
+    console.warn(`[Agenda] conexión "${connKey}" sin token → agenda a la admin omitida`);
+    return 0;
+  }
+
+  const d = await deps();
+  const nowMs = d.now();
+  const { minStartIso, maxStartIso } = dayRangeUtc(TZ(), 0, new Date(nowMs));
+
+  // Solo la conexión de esta marca. `listProgramEvents` ya filtra a los programas de ESA
+  // cuenta, así que las calls de 30x/retia no se cuelan aunque compartan closer.
+  let evs = [];
+  try {
+    evs = await d.listProgramEvents({ minStartIso, maxStartIso, account });
+  } catch (e) {
+    // Calendly caído ⇒ no se manda. Igual que el digest: mejor sin mensaje que con un conteo
+    // parcial que Mariana leería como la agenda completa.
+    console.error(`[Agenda] Calendly falló para "${connKey}", no mando la agenda:`, e.message);
+    return 0;
+  }
+
+  const calls = evs.map((ev) => ({ closerEmail: closerEmailOf(ev) }));
+  const calendlyCalls = evs.map((ev) => ({
+    closer_email: closerEmailOf(ev),
+    call_start: toSqliteUtc(new Date(ev.start_time)),
+  }));
+
+  // Segunda fuente. Falla suave por dentro (HubSpot caído devuelve []), así que si se pierde el
+  // complemento el mensaje sale con lo de Calendly — se avisa en el log, no en el mensaje.
+  const delCrm = await hubspotDigestItems(d, {
+    calendlyCalls,
+    minStartIso,
+    maxStartIso,
+    pushN: 2,
+  });
+  for (const { closerEmail } of delCrm) calls.push({ closerEmail });
+
+  // Roster = los closers de ESTA conexión. Se pasa entero para que uno sin calls salga con 0.
+  const roster = Object.entries(CLOSERS)
+    .filter(([email]) => accountOfCloser(email) === connKey)
+    .map(([email, c]) => ({ email, name: c.name }));
+  if (!roster.length) {
+    console.warn(`[Agenda] la conexión "${connKey}" no tiene closers en el roster → omito`);
+    return 0;
+  }
+
+  const dateLabel = new Intl.DateTimeFormat('es-CO', {
+    timeZone: TZ(),
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  }).format(new Date(nowMs));
+
+  const tally = tallyByCloser(calls, roster);
+  const programLabel = [...new Set(Object.values(account.eventTypes).map(programLabelOf))].join(' + ');
+  const msg = buildAgendaMessage({ tally, dateLabel, programLabel });
+
+  let enviados = 0;
+  for (const to of recipients) {
+    if (d.hasDmThread && !d.hasDmThread(to)) {
+      console.warn(`[Agenda] OMITIDO → ${to}: no tiene hilo con Juanito (anti-ban).`);
+      continue;
+    }
+    try {
+      await d.sendMessage(to, msg);
+      enviados++;
+    } catch (e) {
+      console.error(`[Agenda] fallo enviando la agenda a ${to}:`, e.message);
+    }
+  }
+  console.log(
+    `[Agenda] ${connKey}: ${calls.length} call(s) hoy, ${roster.length} closer(s), ` +
+      `enviada a ${enviados}/${recipients.length} destinatario(s)` +
+      `${delCrm.length ? ` (${calendlyCalls.length} de Calendly + ${delCrm.length} solo en HubSpot)` : ''}`
+  );
+  return enviados;
+}
+
+export { runAdminAgenda };
+
 // ─── Insistencia + expiración de outcomes (§18.AB, cumplimiento v1) ────────────
 // Un recordatorio a los outcomes sin responder pasados ~30 min; los que siguen sin
 // respuesta ~30 min DESPUÉS del recordatorio quedan 'no_answer' ("sin registrar").
@@ -1773,10 +1893,15 @@ export function startCalendlyJobs() {
   // Sin condición: la auditoría no depende de ninguna integración opcional y su valor está
   // justamente en correr siempre. Sin ADMIN_LID no se cae — notifyAdmins deja la alerta en el log.
   job(SKIP_AUDIT_CRON(), runSkipAudit, 'skip-audit');
+  // Agenda diaria a la admin de la marca. Solo si hay destinatarios: sin ADMIN_AGENDA_DM el
+  // job ni se registra (mismo patrón de auto-desactivación que el resto del scheduler).
+  const agendaDms = ADMIN_AGENDA_DM();
+  if (agendaDms.length) job(ADMIN_AGENDA_CRON(), runAdminAgenda, 'agenda-admin');
 
   console.log(
     `[Calendly] Jobs activos ✅  (reagendas: ${RESCHEDULE_ENABLED()}, harvest-sweep: ${HARVEST_ENABLED() && HARVEST_SWEEP_ENABLED()}` +
-      `, poll HubSpot: ${HUBSPOT_POLL_ENABLED()}, scan de reagendas: ${HUBSPOT_RESCHEDULE_SCAN()}) — cuentas: ` +
+      `, poll HubSpot: ${HUBSPOT_POLL_ENABLED()}, scan de reagendas: ${HUBSPOT_RESCHEDULE_SCAN()}` +
+      `, agenda admin: ${agendaDms.length ? `${ADMIN_AGENDA_CRON()} → ${agendaDms.length} DM(s) de ${ADMIN_AGENDA_CONNECTION()}` : 'off'}) — cuentas: ` +
       accounts.map((a) => `${a.key}[dry-run:${a.dryRun()}, push4:${a.push4()}]`).join(' · ')
   );
 }
