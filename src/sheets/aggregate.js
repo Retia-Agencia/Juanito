@@ -105,10 +105,30 @@ export function averagePriorDays(rows, setteoRows, now, days = 7) {
   };
 }
 
-// Cuenta estudiantes confirmados de la cohorte: filas con la columna A (nombre
-// completo) no vacía. Salta la fila 0 (encabezado del tab). Las filas plantilla del
-// Sheet (solo "Pendiente" en columnas de estado, sin nombre) NO cuentan. Sin PII:
-// solo devuelve el número.
+// Cuenta estudiantes confirmados de la cohorte: la RACHA de filas con la columna A
+// (nombre completo) no vacía, arrancando en la fila 1 (la 0 es el encabezado del tab).
+// La primera fila vacía CORTA el conteo — no se sigue mirando lo que haya debajo.
+// Sin PII: solo devuelve el número.
+//
+// ⚠️ El corte por racha no es cosmético (2026-08-25). Abajo de la lista de confirmados
+// el equipo escribe secciones a mano en la MISMA columna A — "COMPROMISOS DE PAGO:" en
+// septiembre, "Compromisos verbales:" en agosto — y debajo de ese rótulo van personas que
+// todavía NO pagaron. Contando toda fila con nombre (la regla vieja), septiembre reportaba
+// 27 cuando los confirmados eran 21: 5 compromisos + el rótulo, que es indistinguible de
+// un estudiante porque también es texto en la columna A. La fila en blanco que separa la
+// lista de la sección es lo ÚNICO que el Sheet ofrece como frontera, así que esa es la
+// regla. Si alguien llena esa fila en blanco, el conteo vuelve a inflarse — por eso el
+// reporte de §18.B se compara contra el Sheet cuando el número salta de golpe.
+//
+// NO deduplica: un mismo nombre repetido dentro de la racha cuenta tantas veces como
+// aparezca (agosto tenía uno triplicado). Es a propósito — un duplicado es un error de
+// carga del equipo y esconderlo acá lo vuelve invisible en vez de arreglarlo.
 export function countCohortStudents(rows) {
-  return (rows || []).slice(1).filter((row) => String(row?.[0] ?? '').trim() !== '').length;
+  const body = (rows || []).slice(1);
+  let n = 0;
+  for (const row of body) {
+    if (String(row?.[0] ?? '').trim() === '') break;
+    n += 1;
+  }
+  return n;
 }

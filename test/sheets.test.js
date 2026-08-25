@@ -272,6 +272,42 @@ test('countCohortStudents tolera vacío y filas cortas', () => {
   assert.equal(countCohortStudents([['header']]), 0); // solo encabezado
 });
 
+// La fila en blanco CORTA: lo que va debajo es otra sección del Sheet, no la cohorte.
+// Caso real de la pestaña de septiembre (2026-08-25): 21 confirmados, blanco, rótulo
+// "COMPROMISOS DE PAGO:" y 5 personas que todavía no pagaron. La regla vieja daba 27.
+test('countCohortStudents corta en la primera fila vacía y no cuenta la sección de abajo', () => {
+  const rows = [
+    ['¿Cuál es tu nombre completo?', '¿Cuál es tu telefono?'], // encabezado
+    ['Roberto Velez', '+573117489445'],
+    ['Guillermo Valencia', '+573155326670'],
+    ['Amparo Cortes', ''],
+    [], // fila en blanco → frontera
+    ['COMPROMISOS DE PAGO:'], // rótulo escrito a mano en la columna A
+    ['Juan Alejandro Verutti', '+573113248634'],
+    ['Jorge Lopez', '3124331080'],
+  ];
+  assert.equal(countCohortStudents(rows), 3);
+});
+
+// Un rótulo pegado a la lista SIN fila en blanco de por medio sí se cuela: el Sheet no
+// da otra frontera. Se fija en un test para que el día que pase, el número que aparezca
+// en el reporte tenga una explicación escrita y no parezca un bug nuevo.
+test('countCohortStudents no distingue un rótulo pegado a la racha (limitación conocida)', () => {
+  const rows = [
+    ['nombre'],
+    ['Ana Pérez'],
+    ['COMPROMISOS DE PAGO:'], // sin blanco antes → entra a la racha
+    ['Juan Verutti'],
+  ];
+  assert.equal(countCohortStudents(rows), 3);
+});
+
+// Los duplicados NO se deduplican a propósito (caso real de agosto: un nombre 3 veces).
+test('countCohortStudents cuenta duplicados dentro de la racha', () => {
+  const rows = [['nombre'], ['Jose Jimenez'], ['Jose Jimenez'], ['Jose Jimenez']];
+  assert.equal(countCohortStudents(rows), 3);
+});
+
 // ─── COHORTS (config de cohortes múltiples, 2026-08-12) ───────────────────────
 
 const COHORT_ENV = ['SHEETS_COHORTS', 'SHEETS_COHORT_TAB', 'SHEETS_COHORT_LABEL'];
