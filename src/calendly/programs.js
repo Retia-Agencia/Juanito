@@ -267,15 +267,19 @@ export const PROGRAMS = {
       from: 'de ComunicArte',
       program: 'programa Método Comunicarte',
     },
-    // Los dos archivos de la carpeta oficial que mandó ComunicArte, enlazados POR SEPARADO
-    // (patrón de los 6 programas de 30X), no como carpeta: la carpeta tiene exactamente estos
-    // dos archivos, así que apuntar a cada uno no pierde nada y le da al lead el 🎥 y el 📄 en
-    // vez de un directorio. Ambos verificados 200 sin autenticar y con permiso
-    // `anyoneWithLink: reader` antes de cablearlos.
-    // Carpeta de origen: https://drive.google.com/drive/folders/1OPBf5UufbzREVSwVmNIVXYH_cfeuPVQq
+    // ⚠️ SEGUNDO programa cuyo `brochure` es una CARPETA de Drive, no un archivo (el otro es
+    // tactical_investor). Decisión del jefe (2026-08-25): un solo link a la carpeta oficial, que
+    // contiene el paquete completo — "Brochure Comunicarte.pdf" (8 MB) y "Video comunicarte.mp4"
+    // (3,2 GB). Se evaluó enlazar los dos archivos por separado, como los 6 programas de 30X, y
+    // se descartó: apuntar a la carpeta es lo que hace que el push siga sirviendo el material
+    // VIGENTE cuando ComunicArte lo actualice, sin tocar el repo.
+    //
+    // Por eso NO declara `video`: el .mp4 vive DENTRO de la carpeta, no es una línea aparte.
+    // Si algún día ComunicArte publica el VSL en YouTube o en una landing, ahí sí conviene
+    // sumarlo como `video` (un .mp4 de 3,2 GB en Drive es pesado de abrir desde un celular).
+    // Carpeta verificada HTTP 200 sin autenticar, y sus archivos con `anyoneWithLink: reader`.
     materials: {
-      brochure: 'https://drive.google.com/file/d/1Wy46CusuklF_eNfZuuTtX_NVTKNZ3cVs/view',
-      video: 'https://drive.google.com/file/d/1BCDo_zovnrCZDQqvbuxdcKGtzgWjKtSi/view',
+      brochure: 'https://drive.google.com/drive/folders/1OPBf5UufbzREVSwVmNIVXYH_cfeuPVQq?usp=sharing',
     },
     active: true,
   },

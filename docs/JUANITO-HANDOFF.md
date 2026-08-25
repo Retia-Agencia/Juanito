@@ -5338,6 +5338,13 @@ a nombre de "Milena Morales", que **no** es quien contesta. Consecuencia técnic
 tener DOS teléfonos ⇒ `resolveCloserByPushName` devuelve null (ambiguo = seguro) y hubo que sumarla a
 `HOMONIMOS_OK` en el test, igual que Sebastian Rodriguez. Entra por teléfono, que es la vía principal.
 
+**Materiales: la CARPETA, no los archivos.** Decisión del jefe (2026-08-25). Es el segundo programa
+así, después de tactical_investor. La carpeta tiene exactamente dos archivos —brochure (8 MB) y video
+(3,2 GB)— y se evaluó enlazarlos por separado como los 6 de 30X; se descartó porque apuntar a la
+carpeta sirve el material VIGENTE cuando ComunicArte lo actualice, sin tocar el repo. Por eso el
+programa no declara `video`. Si algún día publican el VSL en YouTube o en una landing, ahí sí conviene
+sumarlo aparte: un .mp4 de 3,2 GB en Drive es pesado de abrir desde un celular.
+
 **Lo que falta para encenderlo** (en orden, ninguno es código):
 1. Resolver el teléfono del lead en Calendly (arriba). **Sin esto, lo demás no sirve.**
 2. `CALENDLY_TOKEN_COMUNICARTE` en el `.env` del VPS + deploy con `alcance: todo` (el compose pasa
