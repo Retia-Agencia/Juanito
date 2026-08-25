@@ -21,7 +21,8 @@
 //   Daniela Camacho     Instagram & TikTok · Operaciones Escalables
 //   Sebastian Salazar   EstadoX (IA para Abogados) · De Cero a Tactical Investor (Retia)
 //   Esteban Aguilar     EstadoX (IA para Abogados)
-//   Andrea Machado      Retia — De Cero a Tactical Investor
+//   Andrea Machado      Retia (De Cero a Tactical Investor) · ComunicArte (Método Comunicarte)
+//   Maru Marquez        ComunicArte — Método Comunicarte
 //
 // ⚠️ 2026-08-25: al mudarse IA para Abogados al Calendly propio de EstadoX, los hosts de ese
 // programa pasaron a ser los TRES miembros de esa org (comunidad@ es la cuenta de sistema;
@@ -215,9 +216,46 @@ export const PEOPLE = {
   // Dana salió (2026-07-22): la reemplazó Sebastian Salazar, que SÍ heredó el buzón-rol
   // equipo@ttrading.co (ver PEOPLE.sebastian_salazar y la corrección del 2026-07-29). Retia opera
   // con DOS buzones-rol —registro@ y equipo@—, ninguno con cuenta personal detrás.
+  //
+  // ⚠️ DOS identidades desde 2026-08-25: cierra "De Cero a Tactical Investor" en Retia y
+  // "Método Comunicarte" en ComunicArte, con host y TELÉFONO distinto en cada Calendly — mismo
+  // patrón que Sebastian Rodriguez (30x + retia), no el de Salazar (una línea para las dos).
+  // Las dos son buzones-rol de su empresa: `registro@ttrading.co` e `info@eventoscomunicarte.com`.
+  // En el Calendly de ComunicArte la cuenta figura a nombre de "Milena Morales" — ese NO es quien
+  // contesta; el roster lleva el nombre de la persona real, igual que registro@ lleva "Andrea
+  // Machado" y no "Registro JP Tactical Trading".
+  //
+  // CONSECUENCIA: "Andrea Machado" pasa a ser un nombre con DOS teléfonos ⇒ resolveCloserByPushName
+  // devuelve null (ambiguo = SEGURO) y hay que declararlo en HOMONIMOS_OK del test, igual que
+  // Sebastian Rodriguez. NO la bloquea: el opt-in resuelve por TELÉFONO antes que por pushName, así
+  // que cada identidad entra por lo suyo. `/calendly on|off Andrea Machado <cuenta>` sigue
+  // funcionando porque resolveIdentitiesByName devuelve la lista completa para desambiguar.
   andrea_machado: {
     name: 'Andrea Machado',
-    identities: [{ connection: 'retia', email: 'registro@ttrading.co', phone: '+573132484664' }],
+    identities: [
+      { connection: 'retia', email: 'registro@ttrading.co', phone: '+573132484664' },
+      // Hostea 150 de las 219 citas de ComunicArte de la ventana: es la closer principal, no un
+      // refuerzo. Sin `workLid` ni opt-in todavía (ver la nota de ComunicArte abajo).
+      { connection: 'comunicarte', email: 'info@eventoscomunicarte.com', phone: '+573171297303' },
+    ],
+  },
+  // ─── ComunicArte (conexión #4) — programa "Método Comunicarte" ─────────────
+  // Hosts verificados 2026-08-25 contra la cuenta real: la org tiene DOS miembros y los dos
+  // hostean citas. La otra es Andrea Machado (info@eventoscomunicarte.com), que NO vive acá sino
+  // como segunda identidad de su entrada de Retia — es la misma persona (ver arriba).
+  // No hay ningún tercero que ignorar entre los hosts VIVOS.
+  //
+  // ⚠️ Ninguna de las dos tiene OPT-IN todavía: con CALENDLY_REQUIRE_OPTIN=true (que es como
+  // corre producción) no reciben NADA hasta que le escriban a Juanito y quede su fila en
+  // `calendly_optins` con source 'self'. Es el primer paso del arranque, antes que el dry-run.
+  //
+  // Sin `workLid` en ninguna: no hay entrega probada (ver la nota larga de arriba). Declarar un
+  // LID sin prueba CEMENTA el destino equivocado, así que se deja para cuando escriban.
+  maru_marquez: {
+    name: 'Maru Marquez',
+    // Gmail personal, pero ES su host real en el Calendly de ComunicArte (2 citas verificadas,
+    // la primera del 2026-08-24 → entró hace días). Mismo patrón que sebasrr321@ en Retia.
+    identities: [{ connection: 'comunicarte', email: 'soymarumarquez@gmail.com', phone: '+573108600134' }],
   },
 };
 
@@ -360,6 +398,11 @@ export const IGNORED_CLOSERS = new Set([
   'jvieira@ttrading.co',      // Juan Pablo Vieira VENDE el programa (cara), no es closer. Tomó citas
                               // en el pasado (12 en la ventana) pero YA NO → skip silencioso.
   'alejocarpa1108@gmail.com', // salió de Tactical Investor 2026-07-21; lo reemplazó Sebastian Rodriguez.
+  // ComunicArte (2026-08-25): usuario BORRADO de Calendly. Hosteó 67 citas (56 de "Método" + 11
+  // de "Evento") y NINGUNA futura — su última es del pasado. Calendly ya no expone su correo:
+  // devuelve este placeholder. Se ignora para que, si alguna vez una de sus citas cayera en la
+  // ventana del poll, no dispare una alerta de "closer sin mapear" por alguien que ya no existe.
+  '0df1f193-cdc3-44dc-89d2-82f47077e9d8@deleted.calendly.com',
   // NO agregar 'equipo@ttrading.co': es el buzón-rol que hoy atiende Sebastian Salazar y vive en
   // CLOSERS (ver PEOPLE.sebastian_salazar). Estuvo acá del 22 al 29 de julio por asumir que Salazar
   // tendría cuenta propia, y ese skip silencioso le costó una semana de pushes.

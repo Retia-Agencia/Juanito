@@ -100,6 +100,32 @@ const PUSH4_GRACE_MIN = () => Number(process.env.CALENDLY_PUSH4_GRACE_MIN || 5);
 // accounts.js (hoy solo retia). Este flag es el interruptor global de emergencia, para poder
 // apagarlo sin redeploy y sin cortarle a un closer el resto de sus pushes (que es lo que hace
 // `/calendly off <closer> <cuenta>`).
+// ─── Espejo de dev (§18.BM) ───────────────────────────────────────────────────
+// Copia hacia un JID de DEV de todo lo que `deliver()` resuelve para los closers de las
+// conexiones listadas — se haya enviado o no. Existe para acompañar el arranque de una conexión
+// nueva: el modo de falla caro de este sistema no es el push mal escrito, es el push que NO SALE
+// (falta el opt-in, la cuenta está en dry-run, el closer está pausado), y eso es justo lo que el
+// closer no puede reportar porque no lo ve. EstadoX estuvo un mes así y Salazar una semana.
+//
+// Por eso el espejo NO se corta con el dry-run ni con los skips: lleva el RESULTADO en el
+// encabezado. La única excepción es la pausa GLOBAL — el botón de pánico significa silencio
+// total, espejo incluido.
+//
+// Apagado por default: sin CALENDLY_DEV_MIRROR_JID no existe. Es deliberadamente un env y no un
+// `extraJids` del roster, porque un extraJid es "el segundo aparato de ESE closer": entra a
+// CLOSER_LIDS, así que el dev quedaría RECONOCIDO como ese closer al escribirle a Juanito, y el
+// roster prohíbe repetir un mismo JID en varias identidades (un JID = una identidad). Un espejo
+// es lo contrario: un destino, muchos closers, y cero identidad.
+const DEV_MIRROR_JID = () => (process.env.CALENDLY_DEV_MIRROR_JID || '').trim();
+// Conexiones espejadas (CSV de keys de accounts.js). VACÍO = ninguna: un espejo sin alcance
+// declarado no copia nada, en vez de copiarlo TODO. Poner el JID sin querer no puede terminar
+// en el dev recibiendo los pushes de las cuatro conexiones.
+const DEV_MIRROR_CONNECTIONS = () =>
+  (process.env.CALENDLY_DEV_MIRROR_CONNECTIONS || '')
+    .split(',')
+    .map((x) => x.trim().toLowerCase())
+    .filter(Boolean);
+
 const SHEET_PUSH_ENABLED = () => process.env.CALENDLY_SHEET_PUSH !== 'false'; // default true
 const SHEET_PUSH_DELAY_MIN = () => Number(process.env.CALENDLY_SHEET_DELAY_MIN || 10);
 
@@ -468,6 +494,36 @@ function dryRunForCloser(closerEmail) {
 
 // ─── Envío (respeta DRY-RUN) ──────────────────────────────────────────────────
 
+// Punto ÚNICO de salida hacia un closer. Envuelve `deliverToCloser` (que tiene toda la lógica y
+// los gates) para colgarle el espejo de dev sin ensuciar ninguno de sus siete puntos de retorno.
+// Todos los callers siguen llamando `deliver` y recibiendo el mismo resultado que antes.
+async function deliver(d, to, text, tag, closerEmail) {
+  const outcome = await deliverToCloser(d, to, text, tag, closerEmail);
+  await mirrorToDev(d, { text, tag, closerEmail, outcome });
+  return outcome;
+}
+
+// Copia al dev de UN mensaje ya resuelto. Best-effort y SIEMPRE después del envío real: si el
+// espejo falla (JID muerto, sesión caída) el push ya se entregó donde importa y el resultado no
+// cambia — un espejo roto nunca puede marcar como fallido un push que sí salió.
+async function mirrorToDev(d, { text, tag, closerEmail, outcome }) {
+  const jid = DEV_MIRROR_JID();
+  if (!jid) return;
+  // El botón de pánico manda sobre todo lo demás: 'paused' es la pausa GLOBAL.
+  if (outcome === 'paused') return;
+  const conexion = accountOfCloser(closerEmail);
+  if (!DEV_MIRROR_CONNECTIONS().includes(conexion)) return;
+  const closer = resolveCloser(closerEmail);
+  const cabecera =
+    `🪞 *espejo dev* — ${tag} · ${accountOf(conexion)?.label || conexion} · ` +
+    `${closer?.name || closerEmail} · resultado: *${outcome}*`;
+  try {
+    await d.sendMessage(jid, `${cabecera}\n\n${text}`);
+  } catch (e) {
+    console.error(`[Calendly] espejo dev falló (el push real no se ve afectado): ${e.message}`);
+  }
+}
+
 // Devuelve 'sent' | 'dry-run' | 'skipped-optin' | 'skipped-no-thread'
 //          | 'paused' | 'paused-closer'.
 // Anti-baneo: nunca enviamos a un closer que no haya escrito antes a Juanito.
@@ -488,7 +544,7 @@ function dryRunForCloser(closerEmail) {
 // puede estar en vivo mientras la otra solo loguea. REGLA para quien agregue un canal
 // nuevo hacia closers: el dry-run se resuelve SIEMPRE por `accountOfCloser(closerEmail)`,
 // nunca leyendo DRY_RUN() directo — si no, ese canal se le escapa a la cuenta muda.
-async function deliver(d, to, text, tag, closerEmail) {
+async function deliverToCloser(d, to, text, tag, closerEmail) {
   // 0) La llave del opt-in se resuelve SIEMPRE contra el roster vivo, nunca con el número
   //    que venga en `to`. Las filas de `calendly_pushes` congelan `closer_phone` al AGENDAR
   //    (hasta 48h antes) y `outcomes` hace lo mismo: rotarle el número a un closer dejaba

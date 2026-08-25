@@ -5293,6 +5293,90 @@ Baileys reconectado sin re-pairing (*"Reconnection with existing sync data"* →
   controlamos y la falla es silenciosa. Mitigación: correr el `curl` de alcanzabilidad de arriba
   cuando algo huela raro con Tactical Investor (un lead que llega sin haber visto el material).
 
+### 18.BM 🟡 ComunicArte: la cuarta conexión de Calendly, y el teléfono que no llega (2026-08-25)
+
+**Qué se agregó.** ComunicArte entra como **conexión #4** (`comunicarte`), con su propio Calendly
+(`info@eventoscomunicarte.com`, org `d84e158d-…`), su empresa homónima en `COMPANIES` y un programa,
+**Método Comunicarte**. Arranca **muda** (`CALENDLY_DRY_RUN_COMUNICARTE=true`), sin Push 4 y sin
+HubSpot, igual que arrancaron retia y estadox.
+
+**El señuelo, otra vez.** Su event_type real es **POOL** y no sale en `/event_types`; el que SÍ sale
+es un ET *solo* homónimo y muerto. Es el patrón exacto que costó un mes de pushes en EstadoX
+(§ mudanza del 2026-08-25), y acá se detectó ANTES de cablear nada porque el UUID se sacó de reservas
+reales, no del listado:
+
+| event_type | nombre | reservas 90d | futuras | última |
+|---|---|---|---|---|
+| **`098ad9d0-…`** (pool) | Postulación Método/Evento Comunicarte | **183** | **4** | 2026-09-01 |
+| `44920fd3-…` (solo, sale en `/event_types`) | Postulación Comunicarte | 36 | **0** | 2026-07-29 |
+
+Cablear el segundo no habría dado un solo error: devuelve cero citas para siempre, y el poll no
+distingue "cero citas" de "estoy mirando el ET equivocado".
+
+**🔴 EL BLOQUEANTE: los leads llegan SIN TELÉFONO.** Sin número no hay link `wa.me`, y sin link no
+hay push — `buildPush3Message` y `buildDigestMessage` degradan a `(mándalo manual)`, que es
+exactamente el trabajo que el push existe para evitar. Medido el 25-ago sobre **30 reservas** (las 4
+futuras + las 26 más recientes): `text_reminder_number` **null en 30 de 30**, y
+`questions_and_answers` **vacío en 29 de 30** (la única respuesta es a la pregunta de texto del ET
+viejo). Cubre reservas hechas por el lead y por la closer, e incluye las creadas después de que el ET
+se actualizó (2026-07-27).
+
+Lo raro es que **el ET SÍ declara la pregunta**: `custom_questions` trae
+`{ name: "Ingrese su número telefónico", type: "phone_number", required: true, enabled: true }`. O sea
+que la configuración dice una cosa y las reservas reales dicen otra. **No se resolvió desde el repo**
+— es config del lado de Calendly. Hipótesis a descartar, en orden: (1) los leads entran por otro link
+o routing form que no pasa por esa pregunta, (2) la pregunta se agregó a una copia del ET, (3) las
+respuestas `phone_number` de ese ET no se exponen por API. **Prueba decisiva:** agendar una cita de
+prueba en `https://calendly.com/d/d3xv-66m-ynn/postulacion-metodo-comunicarte` y releer el invitee
+por API. Hasta que eso se cierre, ComunicArte **no debe salir de dry-run**: en vivo solo generaría
+mensajes que le dicen al closer que haga el trabajo a mano.
+
+**Andrea Machado quedó con dos identidades.** Es la MISMA persona atendiendo el buzón-rol de Retia
+(`registro@ttrading.co`, +57 313 2484664) y el de ComunicArte (`info@eventoscomunicarte.com`,
++57 317 1297303) — tercer y cuarto buzón-rol del sistema. En Calendly la cuenta de ComunicArte figura
+a nombre de "Milena Morales", que **no** es quien contesta. Consecuencia técnica: su nombre pasa a
+tener DOS teléfonos ⇒ `resolveCloserByPushName` devuelve null (ambiguo = seguro) y hubo que sumarla a
+`HOMONIMOS_OK` en el test, igual que Sebastian Rodriguez. Entra por teléfono, que es la vía principal.
+
+**Lo que falta para encenderlo** (en orden, ninguno es código):
+1. Resolver el teléfono del lead en Calendly (arriba). **Sin esto, lo demás no sirve.**
+2. `CALENDLY_TOKEN_COMUNICARTE` en el `.env` del VPS + deploy con `alcance: todo` (el compose pasa
+   env explícitamente; sin la línea el token no llega al contenedor — nos pasó con retia).
+3. Que **Maru Marquez** y **Andrea Machado** le escriban a Juanito: sin opt-in ganado no reciben nada.
+4. Confirmar el copy con el jefe. El pitch actual (`"programa Método Comunicarte"`) está **derivado
+   del nombre del event_type**, no dictado.
+5. Recién ahí, `CALENDLY_DRY_RUN_COMUNICARTE=false`.
+
+**Espejo de dev (nuevo, apagado por default).** `CALENDLY_DEV_MIRROR_JID` +
+`CALENDLY_DEV_MIRROR_CONNECTIONS` copian a un JID de dev todo lo que `deliver()` resuelve para los
+closers de las conexiones listadas, **con el resultado en el encabezado** (`sent`, `dry-run`,
+`skipped-optin`, `skipped-no-thread`, `paused-closer`). Existe porque el modo de falla caro de este
+subsistema no es el push mal escrito sino el que **no sale**, y el único que podría reportarlo es el
+closer que no lo recibe — que es literalmente cómo se perdieron un mes en EstadoX y una semana con
+`equipo@ttrading.co`. Por eso el espejo NO se corta con el dry-run ni con los skips. Sí se corta con
+la pausa GLOBAL: el botón de pánico es silencio total.
+
+Es un env y **no** un `extraJids` del roster a propósito: un extraJid entra a `CLOSER_LIDS`, así que
+el dev quedaría reconocido *como ese closer* al escribirle a Juanito, y el roster prohíbe repetir un
+JID entre identidades (un JID = una identidad) — un solo dev no podría espejar cinco closers. Un
+espejo es un destino, no una identidad. Fijado en `test/calendly.dev-mirror.test.js` (9 tests).
+
+**🔴 Abierto — `hola.danvar@gmail.com` en Retia.** Host NUEVO sin mapear: 1 cita, y es una de las 3
+futuras. No está en `CLOSERS` ni en `IGNORED_CLOSERS` ⇒ alerta "closer sin mapear" en cada poll y esa
+call **no recibe ningún push**. El jefe dice que es Dana Rodriguez ("creo que también es closer en
+30x"). **No se cableó porque falta el celular**, que es la llave del opt-in — inventarlo es peor que
+la alerta. Ojo con el precedente: `dana@30x.com` está en `IGNORED_CLOSERS` y Dana salió de Retia el
+2026-07-22. Si vuelve, es un alta, no un des-ignorar.
+
+**Nota de auditoría de Retia (2026-08-25).** Todo lo demás en verde: ET correcto (231 citas, 3
+futuras), los leads **sí** traen teléfono, y los hosts vivos son `registro@` (73), `equipo@` (23) y
+`sebasrr321@` (10) en la ventana de ±30 días. Dos observaciones sin acción: `sebasrr321@gmail.com`
+(Sebastian Rodriguez) **ya no es miembro de la org** y no hostea desde el 11-ago; y el
+`custom_questions` del ET de Retia sí entrega el número, que es la diferencia con ComunicArte.
+
+---
+
+
 ---
 
 ### 🟢 Baja prioridad / Nice-to-have

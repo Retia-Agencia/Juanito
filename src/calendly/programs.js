@@ -42,6 +42,19 @@ const INSTAGRAM_ET = 'https://api.calendly.com/event_types/d33075cb-d349-43ef-be
 // Retia — único ET de venta de ese Calendly (los otros tipos: Revisión de Portafolio, Asesoría,
 // etc., NO son postulaciones → no se pushean).
 const TACTICAL_INVESTOR_ET = 'https://api.calendly.com/event_types/0049872a-7a3f-4e9c-a7d2-d9f88bfc1927';
+// ComunicArte — derivado 2026-08-25 contra la cuenta real (219 citas en 90d atrás/45d adelante).
+// ⚠️ ES POOL (`pooling_type: round_robin`, `profile: null`, sin slug) ⇒ NO sale en /event_types.
+// Se sacó del campo `event_type` de las reservas reales, igual que EstadoX y Tactical Investor.
+//
+// ⚠️ Y ACÁ HAY UN SEÑUELO, el mismo patrón que costó un mes de pushes en EstadoX: la org SÍ expone
+// por /event_types un ET *solo* llamado "Postulación Comunicarte"
+// (44920fd3-a7ce-4f07-b293-d1bf434842be, slug eventoscomunicarte-info/postulacion-comunicarte).
+// Cablear ESE no da error: tiene 36 reservas históricas, CERO desde el 2026-07-29 y CERO futuras
+// — o sea, silencio permanente que el poll no puede distinguir de "no hubo citas".
+// El bueno es este: 183 reservas y las 4 futuras, con los dos nombres que la marca fue usando
+// ("Postulación Método Comunicarte" y "Postulación Evento Comunicarte" — mismo ET, el nombre del
+// evento no clasifica nada, el event_type sí).
+const COMUNICARTE_ET = 'https://api.calendly.com/event_types/098ad9d0-5268-4156-afc1-b371a42f6945';
 
 // ─── Empresas (marca de cara al lead) ─────────────────────────────────────────
 // Company es HOY solo un label (ver ADR 0001): ninguna lógica se bifurca por empresa. Sirve
@@ -51,6 +64,11 @@ export const COMPANIES = {
   '30x': '30X',
   estadox: 'EstadoX',
   retia: 'Retia',
+  // ComunicArte (2026-08-25). Marca propia con su PROPIO Calendly. La opera Retia —su material
+  // vive en el Drive de administrativa@retiagrowth.com y sus closers llenan un Sheet que hoy
+  // cuelga de la conexión `retia`—, pero de cara al lead la marca es ComunicArte, y ese es el
+  // eje que `company` rotula (ver ADR 0001). Mismo caso que EstadoX bajo 30X.
+  comunicarte: 'ComunicArte',
 };
 
 // ▼▼▼ EDITA AQUÍ para sumar/mover/activar un programa ▼▼▼
@@ -221,6 +239,43 @@ export const PROGRAMS = {
       // Verificado 200 sin autenticar antes de cablearlo.
       brochure: 'https://drive.google.com/drive/folders/18DJsMV8yLFRyov1iGhAyMo8nmHWUmgJ3?usp=sharing',
       order: ['video', 'brochure'],
+    },
+    active: true,
+  },
+  // ComunicArte — "Método Comunicarte" (2026-08-25). Conexión PROPIA (Calendly de
+  // info@eventoscomunicarte.com). Arranca en dry-run: ver accounts.js.
+  //
+  // ⚠️ PENDIENTE BLOQUEANTE AL 2026-08-25 — los leads de este ET llegan SIN TELÉFONO. El ET
+  // declara una pregunta `phone_number` requerida ("Ingrese su número telefónico"), pero en las
+  // 30 reservas muestreadas —incluidas las 4 futuras y las creadas después de que la pregunta se
+  // agregó (ET actualizado el 2026-07-27)— `text_reminder_number` viene null y
+  // `questions_and_answers` viene vacío. Sin teléfono no hay link wa.me: `buildPush3Message` y
+  // `buildDigestMessage` degradan a "(mándalo manual)" y el push pierde todo su valor.
+  // ComunicArte NO está en el HubSpot que Juanito tiene conectado (hubspot:false), así que
+  // tampoco hay fallback de teléfono por CRM. Se resuelve del lado de Calendly, no acá.
+  comunicarte: {
+    key: 'comunicarte',
+    label: 'Método Comunicarte',
+    titleHints: ['comunicarte'],
+    company: 'comunicarte',
+    connection: 'comunicarte',
+    eventType: COMUNICARTE_ET,
+    // Copy DERIVADO del nombre del event_type ("Postulación Método Comunicarte"), no dictado por
+    // el jefe todavía. La conexión arranca muda justamente para que nada de esto le llegue a un
+    // lead antes de que él lo confirme.
+    pitch: {
+      from: 'de ComunicArte',
+      program: 'programa Método Comunicarte',
+    },
+    // Los dos archivos de la carpeta oficial que mandó ComunicArte, enlazados POR SEPARADO
+    // (patrón de los 6 programas de 30X), no como carpeta: la carpeta tiene exactamente estos
+    // dos archivos, así que apuntar a cada uno no pierde nada y le da al lead el 🎥 y el 📄 en
+    // vez de un directorio. Ambos verificados 200 sin autenticar y con permiso
+    // `anyoneWithLink: reader` antes de cablearlos.
+    // Carpeta de origen: https://drive.google.com/drive/folders/1OPBf5UufbzREVSwVmNIVXYH_cfeuPVQq
+    materials: {
+      brochure: 'https://drive.google.com/file/d/1Wy46CusuklF_eNfZuuTtX_NVTKNZ3cVs/view',
+      video: 'https://drive.google.com/file/d/1BCDo_zovnrCZDQqvbuxdcKGtzgWjKtSi/view',
     },
     active: true,
   },

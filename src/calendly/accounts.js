@@ -197,6 +197,45 @@ export const ACCOUNTS = {
     // Su CRM no es el HubSpot que Juanito tiene conectado (ese es de 30X).
     hubspot: false,
   },
+
+  // ComunicArte — conexión #4 (2026-08-25). Calendly PROPIO de la marca
+  // (info@eventoscomunicarte.com, org derivada con GET /users/me → HTTP 200). Arranca MUDA
+  // (CALENDLY_DRY_RUN_COMUNICARTE=true) hasta validar un ciclo de poll completo, igual que
+  // arrancaron retia y estadox.
+  //
+  // ⚠️ Su ET es POOL y NO sale en /event_types, y además hay un ET *solo* homónimo que sí sale y
+  // está muerto: ver el comentario largo en programs.js antes de tocar el UUID.
+  //
+  // ⚠️ BLOQUEANTE conocido al darla de alta: las reservas de este Calendly llegan SIN TELÉFONO del
+  // lead (30 de 30 muestreadas), así que hoy todos sus pushes degradan a "(mándalo manual)" — sin
+  // link wa.me no hay push que valga. Es config del lado de Calendly. Detalle en programs.js.
+  comunicarte: {
+    key: 'comunicarte',
+    label: 'ComunicArte',
+    // push4 sin `env`, como retia y estadox: `false` FIJO. v1 de una conexión nueva = solo
+    // pushes precall 0-3. Prenderlo es una decisión aparte, no un default.
+    env: {
+      token: 'CALENDLY_TOKEN_COMUNICARTE',
+      orgUri: 'CALENDLY_ORG_URI_COMUNICARTE',
+      orgUriDefault: 'https://api.calendly.com/organizations/d84e158d-a001-40c8-9eab-f9cb8eef312e',
+      dryRun: 'CALENDLY_DRY_RUN_COMUNICARTE',
+      dryRunDefault: true,
+      push4: null,
+      push4Default: false,
+    },
+    token: () => process.env.CALENDLY_TOKEN_COMUNICARTE || '',
+    orgUri: () =>
+      process.env.CALENDLY_ORG_URI_COMUNICARTE ||
+      'https://api.calendly.com/organizations/d84e158d-a001-40c8-9eab-f9cb8eef312e',
+    eventTypes: eventTypesForConnection('comunicarte'),
+    dryRun: () => process.env.CALENDLY_DRY_RUN_COMUNICARTE !== 'false',
+    push4: () => false,
+    // NO declara `sheets`: el Push 5 del Sheet de Comunicarte hoy cuelga de la conexión `retia`
+    // (son los closers de Retia los que lo llenan). Mover o duplicar ese recordatorio acá es una
+    // decisión de operación, no un detalle de esta alta.
+    // Su CRM no es el HubSpot que Juanito tiene conectado.
+    hubspot: false,
+  },
 };
 
 // Cuentas utilizables = las que tienen token. Sin token, la cuenta no existe (mismo patrón
