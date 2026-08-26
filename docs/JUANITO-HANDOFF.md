@@ -5760,6 +5760,10 @@ Baileys) y esta es la decisión más cara del sistema. 16 tests en
 podría necesitar re-hidratar el auth state, o tirar un 515 después del reopen. Eso no lo prueba
 ningún test — se averigua prendiendo el flag y mirando.
 
+**🟢 PRENDIDO el 2026-08-26 20:10 UTC.** Respaldo del `.env` previo:
+`.env.bak-20260826-prehotreopen`. Rollback = `WA_HOT_REOPEN=false` + `docker compose up -d agent`
+(sin `--build`, una reconexión, segundos).
+
 **Rollout.** `WA_HOT_REOPEN=true` en el `.env` + `docker compose up -d` (sin `--build`, una
 reconexión). Éxito a 48h: dejan de aparecer líneas `[entrypoint] Intento N` y aparecen
 `reapertura 1/3`. **Abortar sin discutir ante cualquier `405` o `403` en el log** — eso es
