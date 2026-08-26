@@ -7,8 +7,8 @@ un cambio relevante.
 
 Última actualización: **2026-08-26** (§18.BN — el teléfono del lead se lee también del formulario;
 rescate de pushes huérfanos; alertas del watchdog por WhatsApp; el Push 5 de Comunicarte se mudó a
-su conexión. **Abierto y sin arreglar: el bot reinicia por cada caída de socket 428 y el contador
-de `entrypoint.sh` nunca se resetea** — leer §18.BN antes de tocar reconexión)
+su conexión; el contador de `entrypoint.sh` se resetea tras un arranque sano. **Sigue abierto: el
+bot sale con `exit(1)` ante un 428 rutinario** — leer §18.BN antes de tocar reconexión)
 
 ---
 
@@ -5645,7 +5645,7 @@ reintenta cada minuto **para siempre**; y `mirrorToDev` solo excluye `'paused'` 
 `'paused-closer'` ⇒ una copia cada 6h, eterna, por fila. Hoy no hay ningún closer pausado
 (`settings` verificado), así que es un cañón cargado, no un incendio. **No arreglado.**
 
-#### 🔴 ABIERTO — el bot reinicia por cada caída de socket, y el contador no se resetea
+#### 🟡 PARCIAL — el bot reinicia por cada caída de socket (el contador ya se resetea)
 
 Encontrado de paso y **sin arreglar**. Entre las 02:44 y las 16:00 UTC del 2026-08-26 el bot arrancó
 **5 veces**, cada una con su reconexión de Baileys:
@@ -5671,6 +5671,38 @@ un día lo sacan del régimen que lo protege, sin que nunca haya habido un crash
 solo para el primero, con tope; y/o (b) resetear `ATTEMPT` tras N minutos de uptime sano. Lo segundo
 es de una línea y no toca el camino de reconexión; lo primero es el arreglo de fondo y es donde está
 el riesgo. **No hacerlo con el bot ya inestable.**
+
+##### ✅ (b) HECHO — el contador se resetea tras un arranque sano (2026-08-26)
+
+`entrypoint.sh` mide cuánto vivió el proceso y, si pasó de `ENTRYPOINT_HEALTHY_SEC` (default **10
+min**), pone `ATTEMPT=0`: esta caída no es continuación de la anterior, la racha se corta. El reset
+va **antes** del corte por `MAX_FAILS`, que es todo el punto — un arranque sano tiene que poder
+devolverle al bot sus 8 intentos.
+
+⚠️ **No afloja el backoff, y esa es la propiedad que hay que conservar si alguien lo vuelve a
+tocar.** Un crash loop de verdad —el del softban: el proceso muere en segundos— nunca alcanza el
+umbral, así que sigue escalando 30→60→120→240→300 y sigue rindiéndose a los 8, idéntico a antes. Lo
+único que cambia es el caso que NO es un loop.
+
+🩸 **La trampa que casi entra con el arreglo:** con `ATTEMPT=0`, el `IDX` del delay daba 0,
+`sed -n "0p"` no devuelve NADA y `sleep ""` revienta ⇒ **el bot se reiniciaría sin ninguna espera**,
+que es exactamente el loop rápido que este script existe para evitar. El arreglo del contador se
+habría convertido en el bug original. Por eso hay un piso explícito `IDX >= 1` y por eso el test
+verifica que el caso B **imprima su `sleep 30`**, no solo que el contador se reinicie.
+
+10 minutos porque es más que cualquier arranque fallido plausible (migración + vinculación tardan
+segundos) y mucho menos que el tiempo entre caídas 428 reales, que fueron de 45 min a 4 h.
+
+**Verificable sin desplegar:** `scripts/test-entrypoint.sh` stubea `node` y `sleep` y ejercita las
+dos propiedades en segundos. Correrlo bajo **busybox**, que es el shell real de producción, no bajo
+el `sh` del Mac:
+
+```
+docker run --rm -v "$PWD:/ep" -w /ep --entrypoint sh juanito-agent /ep/scripts/test-entrypoint.sh /ep
+```
+
+**Sigue abierto (a):** el `exit(1)` ante un 428. El reset hace que ya no acumule hacia el borde,
+pero el bot sigue pagando un proceso nuevo y una reconexión de Baileys por cada cierre transitorio.
 
 #### Estado de los dos programas de Retia al cierre
 
