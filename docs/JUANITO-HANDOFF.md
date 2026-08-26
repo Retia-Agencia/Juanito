@@ -5409,6 +5409,51 @@ el dev quedaría reconocido *como ese closer* al escribirle a Juanito, y el rost
 JID entre identidades (un JID = una identidad) — un solo dev no podría espejar cinco closers. Un
 espejo es un destino, no una identidad. Fijado en `test/calendly.dev-mirror.test.js` (9 tests).
 
+**🩸 Las tres closers escribieron y Juanito las trató como desconocidas (2026-08-26).** Maru, Dana y
+Andrea le mandaron "hola" al DM. Ninguna quedó registrada: el bot les contestó con el saludo genérico
+del agente y siguió de largo. Las tres vías de `handleCloserOptin` fallaron a la vez:
+
+1. **por teléfono** — en WhatsApp multi-device el `from` llega como `<lid>@lid` opaco, que no matchea
+   ningún número del roster;
+2. **por LID** — ninguna tenía `workLid` declarado (se dan de alta sin él a propósito, porque
+   declarar un LID sin entrega probada CEMENTA el destino equivocado);
+3. **por pushName** — para Maru y Dana dependía de que su nombre de WhatsApp trajera nombre Y
+   apellido exactos. Y en el caso de Andrea **es estructuralmente imposible**: al ganar su segunda
+   identidad, su nombre pasó a tener DOS teléfonos ⇒ `resolveCloserByPushName` devuelve null por
+   diseño (ambiguo = seguro).
+
+**La lección que hay que llevarse: darle a una persona ya existente una segunda identidad le QUITA la
+vía del pushName.** El null es correcto —un extraño llamado "Andrea Restrepo" no puede secuestrarle
+los pushes— pero significa que **una segunda identidad tiene que nacer con su `workLid`, o su dueña no
+puede auto-registrarse nunca.** Ya hay dos personas multi-identidad en el roster, así que no es un
+caso raro: es el patrón.
+
+**Cómo se resolvió la identificación, que es reusable.** Los logs no guardan el pushName y la tabla
+`contacts` no indexa LIDs, así que el LID entrante era opaco. La respuesta estaba en la sesión de
+Baileys: `data/wa-session/lid-mapping-<lid>_reverse.json` contiene el **número al que WhatsApp asocia
+ese LID**. Es la fuente autoritativa —WhatsApp diciéndolo, no una inferencia por nombre— y resolvió
+las tres en un comando:
+
+| LID | → número | quién |
+|---|---|---|
+| `162173754060966` | 573108600134 | Maru Marquez (comunicarte) |
+| `264471603867732` | 573169835624 | Dana Rodriguez (retia) |
+| `122836635136119` | **573171297303** | Andrea Machado — línea de **ComunicArte** |
+
+⚠️ Y ahí saltó otra: `122836635136119@lid` ya era el `contact_jid` del opt-in de
+**`registro@ttrading.co`** (su identidad de **Retia**, teléfono 573132484664). O sea que **los pushes
+de Retia de Andrea se venían entregando a su WhatsApp de ComunicArte**. No está roto —es la misma
+persona y los recibe— pero el roster y la DB dicen cosas distintas, que es justo la clase de deriva de
+§18.AJ. Se deja como está a propósito (funciona, y repinearlo es tocar una entrega viva); queda
+anotado para que nadie lo lea como un bug nuevo dentro de tres meses.
+
+**Lo que se hizo:** declarar los tres `workLid` en el roster. Eso arregla las dos mitades — el
+reconocimiento (`resolveCloserByLid`) y el destino (`workLidForCloser` PINNEA la entrega a ese hilo).
+**No se sembraron las filas de opt-in a mano**: `deliver()` se conforma con que la fila exista, pero
+el repo define `source:'self'` como la única condición que habilita envío, y escribir esa tabla a mano
+vacía de sentido el gate anti-ban. Con el `workLid` puesto, el siguiente mensaje de cada una las
+registra sola y Juanito les confirma — que además es la verificación.
+
 **🔴 El espejo se convirtió en spam a las dos horas de estar en vivo (y el arreglo).** Un Push 3 que
 no se puede entregar **NO se quema**: se queda en `scheduled` y `runCalendlyDelivery` lo reintenta
 **cada minuto** hasta que la call pasa. `deliver()` ya sabía esto —su log de "sin opt-in" tiene un

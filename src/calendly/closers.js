@@ -236,8 +236,21 @@ export const PEOPLE = {
     identities: [
       { connection: 'retia', email: 'registro@ttrading.co', phone: '+573132484664' },
       // Hostea 150 de las 219 citas de ComunicArte de la ventana: es la closer principal, no un
-      // refuerzo. Sin `workLid` ni opt-in todavía (ver la nota de ComunicArte abajo).
-      { connection: 'comunicarte', email: 'info@eventoscomunicarte.com', phone: '+573171297303' },
+      // refuerzo.
+      //
+      // ⚠️ workLid capturado 2026-08-26 del mapeo `lid-mapping-<lid>_reverse.json` de la sesión de
+      // Baileys, que es WhatsApp diciendo a qué número pertenece el LID — no una inferencia por
+      // pushName. Le escribió a Juanito y NO fue reconocida: sus tres vías fallaron a la vez
+      // (`from` es un @lid opaco ⇒ no matchea por teléfono; sin workLid declarado ⇒ no matchea por
+      // LID; y su nombre pasó a ser AMBIGUO al ganar la segunda identidad ⇒ resolveCloserByPushName
+      // devuelve null por diseño). Juanito le contestó como a una desconocida.
+      //
+      // 🩸 LA LECCIÓN: darle a una persona ya existente una segunda identidad le QUITA la vía del
+      // pushName, porque su nombre pasa a tener dos teléfonos. Es correcto que devuelva null —un
+      // extraño llamado "Andrea Restrepo" no puede secuestrarle los pushes— pero significa que
+      // **una segunda identidad tiene que nacer con su workLid, o su dueña no puede registrarse
+      // sola nunca**. No es un caso raro: es el patrón, y ya hay dos personas multi-identidad.
+      { connection: 'comunicarte', email: 'info@eventoscomunicarte.com', phone: '+573171297303', workLid: '122836635136119' },
     ],
   },
   // Alta 2026-08-25. Entró a "De Cero a Tactical Investor" (host de una cita FUTURA cuando se
@@ -259,7 +272,9 @@ export const PEOPLE = {
   // 'self'). Mapearla acá quita la alerta y la vuelve reconocible; no le entrega nada todavía.
   dana_rodriguez: {
     name: 'Dana Rodriguez',
-    identities: [{ connection: 'retia', email: 'hola.danvar@gmail.com', phone: '+573169835624' }],
+    // workLid capturado 2026-08-26 del mapeo lid↔número de la sesión de Baileys. Mismo caso que
+    // Maru: escribió y no fue reconocida.
+    identities: [{ connection: 'retia', email: 'hola.danvar@gmail.com', phone: '+573169835624', workLid: '264471603867732' }],
   },
   // ─── ComunicArte (conexión #4) — programa "Método Comunicarte" ─────────────
   // Hosts verificados 2026-08-25 contra la cuenta real: la org tiene DOS miembros y los dos
@@ -277,7 +292,10 @@ export const PEOPLE = {
     name: 'Maru Marquez',
     // Gmail personal, pero ES su host real en el Calendly de ComunicArte (2 citas verificadas,
     // la primera del 2026-08-24 → entró hace días). Mismo patrón que sebasrr321@ en Retia.
-    identities: [{ connection: 'comunicarte', email: 'soymarumarquez@gmail.com', phone: '+573108600134' }],
+    // workLid capturado 2026-08-26 del mapeo lid↔número de la sesión de Baileys (ver Andrea
+    // Machado arriba). Escribió a Juanito el 26-ago 00:40 y no fue reconocida: sin LID declarado
+    // y con `from` viniendo como @lid opaco, la única vía que quedaba era el pushName.
+    identities: [{ connection: 'comunicarte', email: 'soymarumarquez@gmail.com', phone: '+573108600134', workLid: '162173754060966' }],
   },
 };
 
