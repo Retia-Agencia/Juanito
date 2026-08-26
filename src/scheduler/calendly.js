@@ -98,7 +98,7 @@ const PUSH4_GRACE_MIN = () => Number(process.env.CALENDLY_PUSH4_GRACE_MIN || 5);
 
 // Push 5 (§18.AP): recordatorio de llenar los Google Sheets, N minutos después de que la call
 // TERMINA. Quién lo recibe NO se decide acá: lo decide la conexión, declarando `sheets` en
-// accounts.js (hoy solo retia). Este flag es el interruptor global de emergencia, para poder
+// accounts.js (hoy retia y comunicarte). Este flag es el interruptor global de emergencia, para
 // apagarlo sin redeploy y sin cortarle a un closer el resto de sus pushes (que es lo que hace
 // `/calendly off <closer> <cuenta>`).
 // ─── Espejo de dev (§18.BM) ───────────────────────────────────────────────────
@@ -780,7 +780,7 @@ export async function runCalendlyPoll() {
       }
 
       // ─── Push 5: recordatorio de llenar los Sheets (§18.AP) ──────────────────
-      // Solo las conexiones que declaran `sheets` (hoy retia). Vence al FIN REAL de la call
+      // Solo las conexiones que declaran `sheets` (hoy retia y comunicarte). Vence al FIN REAL de la call
       // (ev.end_time) + delay, no a start+duración: una call de 45 min no debe recibirlo
       // mientras sigue en curso. Mismo dedup UNIQUE(event_uuid, push_n) que los demás; el
       // mensaje real se reconstruye al entregar.

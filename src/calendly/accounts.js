@@ -179,19 +179,25 @@ export const ACCOUNTS = {
     dryRun: () => process.env.CALENDLY_DRY_RUN_RETIA !== 'false',
     // v1: solo pushes precall (0-3). El registro de outcomes se prende acá, no por env.
     push4: () => false,
-    // Los dos Sheets que los closers de Retia llenan después de CADA call (Push 5, §18.AP).
+    // El Sheet que los closers de Retia llenan después de CADA call (Push 5, §18.AP).
     // La lista ES el interruptor: una conexión sin `sheets` no recibe el recordatorio, que es
     // como queda 30x (no declara el campo). Ojo con la numeración: Retia NO tiene Push 4 —ver
     // la línea de arriba—, así que este es su ÚNICO push post-call. El 5 no es un typo, el 4
     // está ocupado por el registro de outcomes de 30x.
+    //
+    // ⚠️ 2026-08-26: acá vivía TAMBIÉN el sheet de Comunicarte, porque cuando se cableó el
+    // Push 5 los closers de Retia eran los que llenaban los dos y ComunicArte todavía no era
+    // una conexión. Se mudó a la conexión `comunicarte`, que ya existe y ya tiene sus closers.
+    // El arreglo no es de orden: mientras estuvo acá, a Andrea se le pedía el sheet de
+    // Comunicarte después de una call de Tactical Investor, o sea un link que no le tocaba en
+    // ese momento. Un recordatorio que pide de más enseña a ignorar el recordatorio.
+    //
+    // La REGLA que queda: cada conexión declara los sheets de SUS calls. Si algún día una
+    // conexión vende dos programas con un sheet cada uno, ahí sí van los dos en esta lista.
     sheets: [
       {
         label: 'De Cero a Tactical Investor',
         url: 'https://docs.google.com/spreadsheets/d/1DBKL4zwWWeJppe-6mzpJ4jT1G6MdEmT1Dd_uMiNBNwc/edit?gid=0#gid=0',
-      },
-      {
-        label: 'Comunicarte',
-        url: 'https://docs.google.com/spreadsheets/d/1NN6rlZXJJcgvWXYsbP99vLt9aj7FXVPd6ep4ULAcK54/edit?gid=1633631553#gid=1633631553',
       },
     ],
     // Su CRM no es el HubSpot que Juanito tiene conectado (ese es de 30X).
@@ -235,9 +241,23 @@ export const ACCOUNTS = {
     eventTypes: eventTypesForConnection('comunicarte'),
     dryRun: () => process.env.CALENDLY_DRY_RUN_COMUNICARTE !== 'false',
     push4: () => false,
-    // NO declara `sheets`: el Push 5 del Sheet de Comunicarte hoy cuelga de la conexión `retia`
-    // (son los closers de Retia los que lo llenan). Mover o duplicar ese recordatorio acá es una
-    // decisión de operación, no un detalle de esta alta.
+    // El Sheet de Comunicarte (Push 5, §18.AP). Vivía en la lista de la conexión `retia` —era
+    // la única que existía cuando se cableó el Push 5— y se mudó acá el 2026-08-26, decidido
+    // por el jefe. Lo que arregla son DOS huecos que la conexión nueva destapó:
+    //
+    //  · Maru Marquez cierra SOLO ComunicArte, así que una conexión sin `sheets` la dejaba sin
+    //    ningún push post-call: cero recordatorios de registrar sus calls.
+    //  · Andrea, que cierra en las dos, recibía el link de Comunicarte pegado a sus calls de
+    //    Tactical Investor, que es cuando NO le sirve.
+    //
+    // Ahora cada call apunta a su propio sheet, que es lo que el modelo ya decía: el Push 5 lo
+    // decide la CONEXIÓN de la call (accountOfCloser), no la persona.
+    sheets: [
+      {
+        label: 'Comunicarte',
+        url: 'https://docs.google.com/spreadsheets/d/1NN6rlZXJJcgvWXYsbP99vLt9aj7FXVPd6ep4ULAcK54/edit?gid=1633631553#gid=1633631553',
+      },
+    ],
     // Su CRM no es el HubSpot que Juanito tiene conectado.
     hubspot: false,
   },
