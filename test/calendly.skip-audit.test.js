@@ -145,3 +145,93 @@ test('no spamea: dos corridas seguidas mandan una sola alerta (dedupe 6h)', asyn
 
   scheduler.__resetDeps();
 });
+
+// ─── Lo que se rompió en producción el 2026-08-26 ─────────────────────────────
+
+test('🩸 el dedup SOBREVIVE al reinicio del proceso', async () => {
+  // El bug real: `shouldAlert` vive en memoria, así que cada arranque del bot re-armaba la
+  // alerta. Ese día el bot arrancó ~9 veces (4 caídas por 428 + los despliegues) y mandó ~9
+  // avisos por las MISMAS dos filas muertas. El ruido escalaba justo cuando el sistema estaba
+  // peor, que es cuando menos sirve.
+  const h = armar();
+  sembrar(h, [
+    { closer: 'daniela.camacho@30x.com', slug: SKIP_SLUGS.OBSOLETO },
+    { closer: 'daniela.camacho@30x.com', slug: SKIP_SLUGS.OBSOLETO },
+  ]);
+
+  await scheduler.runSkipAudit();
+  assert.equal(h.wa.sent.length, 1);
+
+  __resetHealth(); // ← esto es lo que hace un reinicio: borra el dedup EN MEMORIA
+  await scheduler.runSkipAudit();
+
+  assert.equal(h.wa.sent.length, 1, 'tras el reinicio NO se repite: el dedup vive en la DB');
+
+  scheduler.__resetDeps();
+});
+
+test('🩸 una causa YA CURADA deja de contar: el closer que después sí escribió', async () => {
+  // El caso de Dana. Perdió dos pushes de madrugada sin opt-in y escribió a Juanito a las
+  // 14:28. La alerta siguió diciendo "el closer no ha escrito a Juanito" durante horas, porque
+  // `skip_reason` es la etiqueta congelada del momento del skip.
+  __resetHealth();
+  const h = installHarness(scheduler, {
+    nowMs: NOW,
+    events: [],
+    // Ya tiene opt-in AHORA, aunque los skips son de antes.
+    optins: [{ phone: '+573018094666', source: 'self', contactJid: '777@lid' }],
+  });
+  sembrar(h, [
+    { closer: 'daniela.camacho@30x.com', slug: SKIP_SLUGS.SIN_OPTIN },
+    { closer: 'daniela.camacho@30x.com', slug: SKIP_SLUGS.SIN_OPTIN },
+  ]);
+
+  assert.equal(await scheduler.runSkipAudit(), 0, 'la causa ya no existe: nada que diagnosticar');
+  assert.equal(h.wa.sent.length, 0);
+
+  scheduler.__resetDeps();
+});
+
+test('curar NO borra los pushes realmente perdidos: obsoleto sigue contando', async () => {
+  // El límite del arreglo anterior, y es a propósito. `obsoleto` puede venir de la falta de
+  // opt-in, pero también de WhatsApp caído o del bot reiniciándose. Borrarlo en silencio por
+  // una corazonada es justo lo que esta auditoría existe para impedir.
+  __resetHealth();
+  const h = installHarness(scheduler, {
+    nowMs: NOW,
+    events: [],
+    optins: [{ phone: '+573018094666', source: 'self', contactJid: '777@lid' }],
+  });
+  sembrar(h, [
+    { closer: 'daniela.camacho@30x.com', slug: SKIP_SLUGS.SIN_OPTIN }, // curado → no cuenta
+    { closer: 'daniela.camacho@30x.com', slug: SKIP_SLUGS.OBSOLETO },
+    { closer: 'daniela.camacho@30x.com', slug: SKIP_SLUGS.OBSOLETO },
+  ]);
+
+  assert.equal(await scheduler.runSkipAudit(), 1);
+  assert.match(h.wa.sent[0].text, /2 push/, 'cuenta 2, no 3: el sin-optin curado se cayó');
+
+  scheduler.__resetDeps();
+});
+
+test('la recomendación de revisar closers.js solo aparece si el problema ES de registro', async () => {
+  // Colgarla de TODA alerta mandaba a revisar el teléfono de un closer cuyo teléfono nunca fue
+  // el problema. Eso quema la credibilidad del aviso entero.
+  __resetHealth();
+  const h = armar();
+  sembrar(h, [
+    { closer: 'pablo.lozano@30x.com', slug: SKIP_SLUGS.OBSOLETO },
+    { closer: 'pablo.lozano@30x.com', slug: SKIP_SLUGS.OBSOLETO },
+  ]);
+
+  await scheduler.runSkipAudit();
+
+  assert.equal(h.wa.sent.length, 1);
+  assert.match(h.wa.sent[0].text, /2 push/);
+  assert.ok(
+    !h.wa.sent[0].text.includes('closers.js'),
+    'sin causa de registro, no manda a revisar el roster'
+  );
+
+  scheduler.__resetDeps();
+});

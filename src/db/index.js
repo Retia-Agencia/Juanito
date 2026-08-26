@@ -434,23 +434,49 @@ export function markCalendlyPushSkipped(id, reason = '', slug = null) {
 // Filtra por la columna `skip_reason`, no por el texto de `message`. Consecuencia: las filas
 // anteriores a este cambio tienen la columna en NULL y quedan fuera. Es a propósito — la
 // auditoría mira hacia adelante y una ventana de 24h las deja atrás sola.
+// Agrupa por closer Y POR MOTIVO, no solo por closer. El desglose hace falta porque la
+// auditoría descarta los motivos que ya se curaron (un `sin-optin` de esta madrugada cuando el
+// closer escribió a media mañana) y con un COUNT(*) agregado no hay forma de restar solo esa
+// parte: o se descartaba al closer entero o no se descartaba nada. Quien lo consume vuelve a
+// sumar (ver runSkipAudit).
 export function getSkipsAlertablesPorCloser(slugs, hours = 24) {
   const lista = [...slugs];
   if (!lista.length) return [];
   return db
     .prepare(`
       SELECT closer_email,
-             COUNT(*)                       AS n,
-             GROUP_CONCAT(DISTINCT skip_reason) AS motivos,
-             MAX(prospect_name)             AS ejemplo
+             skip_reason,
+             COUNT(*)           AS n,
+             MAX(prospect_name) AS ejemplo
         FROM calendly_pushes
        WHERE status = 'skipped'
          AND skip_reason IN (${lista.map(() => '?').join(',')})
          AND call_start >= datetime('now', ?)
-       GROUP BY closer_email
+       GROUP BY closer_email, skip_reason
        ORDER BY n DESC
     `)
     .all(...lista, `-${Number(hours) || 24} hours`);
+}
+
+// ─── Dedup de alertas que SOBREVIVE al reinicio ───────────────────────────────
+// `shouldAlert` de health.js vive en memoria a propósito, y su comentario lo defiende: tras un
+// reinicio, re-alertar "confirma que un fallo persistente sigue vivo". Eso es cierto para un
+// fallo VIVO (un token muerto sigue muerto) y falso para un hecho HISTÓRICO.
+//
+// 🩸 El 2026-08-26 la auditoría de skips avisó ~9 veces por las MISMAS dos filas de Dana. Nada
+// que nadie hiciera podía cambiarlas: la llamada ya había pasado. Lo que repetía el aviso era
+// que el bot arrancó nueve veces ese día (cuatro caídas por 428 + los despliegues), y cada
+// arranque borraba el dedup. O sea: el ruido escalaba justo cuando el sistema estaba peor, que
+// es exactamente cuando menos se necesita.
+//
+// El dashboard ya resolvía esto bien tres archivos más allá (`yaAvisamos` contra `dash_alerts`).
+// Esto es lo mismo sobre `settings`, que ya existe y no necesita migración.
+export function shouldAlertPersistent(key, ttlHours = 6, nowMs = Date.now()) {
+  const k = `alerta:${key}`;
+  const previo = Number(getSetting(k, 0));
+  if (previo && nowMs - previo < ttlHours * 3600 * 1000) return false;
+  setSetting(k, String(nowMs));
+  return true;
 }
 
 // ─── Calendly: outcomes post-call (§18.AB) ────────────────────────────────────

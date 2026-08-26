@@ -5784,6 +5784,63 @@ opt-in), pero queda anotado que el procedimiento de alta se saltó su propio pas
 
 ---
 
+### 18.BO 🔵 La alerta que no sabía callarse (2026-08-26) — EN PRODUCCIÓN
+
+El jefe reportó que le llegaba una y otra vez el mismo aviso:
+
+> ⚠️ Dana Rodriguez: 2 push(es) NO entregados en 24h — venció sin entregarse · **el closer no ha
+> escrito a Juanito (sin opt-in)**. Ej: Michael Castellanos. Primero revisa que su teléfono en
+> `src/calendly/closers.js` sea el mismo del hilo en `calendly_optins`.
+
+Todo lo marcado estaba mal, y por tres razones distintas.
+
+**1. Decía "sin opt-in" de alguien que SÍ tenía opt-in.** `skip_reason` es la etiqueta
+**congelada en el instante del skip**. Los pushes de Dana murieron a las 00:40 UTC; ella le
+escribió a Juanito a las 14:28 y quedó registrada con `source:'self'` y `contact_jid`. La
+auditoría leía esa etiqueta histórica y la enunciaba **en presente**. No mentía sobre el pasado:
+mentía sobre el ahora. Y encima mandaba a revisar el teléfono en el roster, que es justamente
+el diagnóstico que ya se había descartado.
+
+**2. Se repetía en cada reinicio.** El dedup existía (6h, `shouldAlert`) pero vive en el
+`alertedAt` **en memoria** de `health.js`, así que **cada arranque del proceso lo borraba**. Ese
+día el bot arrancó ~9 veces: cuatro caídas por 428 (§18.BN) más los despliegues. Nueve arranques
+= nueve avisos por las mismas dos filas muertas.
+
+🩸 **La lección:** el ruido escalaba **justo cuando el sistema estaba peor**, que es exactamente
+cuando menos sirve. Un dedup que se resetea con el proceso convierte una racha de reinicios en
+una racha de alertas, o sea castiga al operador por el problema que ya lo está castigando.
+
+Y la solución ya estaba escrita **tres archivos más allá**: el watchdog del dashboard deduplica
+con `yaAvisamos()` contra la tabla `dash_alerts`, que sobrevive a los reinicios. Ahora hay
+`shouldAlertPersistent` en `db/index.js`, sobre `settings` (sin migración).
+
+⚠️ **Se aplica por alerta, no globalmente, y la distinción importa:** un token muerto sigue
+muerto, así que re-avisarlo tras un reinicio CONFIRMA que el problema sigue vivo — ahí el dedup
+en memoria es lo correcto y se queda como está. Un push que ya se perdió es historia. La regla:
+**persistente para lo histórico, en memoria para lo vivo.**
+
+**3. Contaba causas que ya no existían.** Ahora `curado()` descarta el motivo cuyo problema ya se
+resolvió: un `sin-optin` de un closer que hoy tiene opt-in, un `sin-hilo` de quien ya tiene
+`contact_jid`. Para poder restar solo esa parte, `getSkipsAlertablesPorCloser` pasó a agrupar
+por closer **Y por motivo** (con un `COUNT(*)` agregado había que descartar al closer entero o
+nada) y `runSkipAudit` vuelve a sumar.
+
+⚠️ **`obsoleto` e `inesperado` NO se curan, a propósito.** `obsoleto` suele venir de la falta de
+opt-in, pero también de WhatsApp caído o del bot reiniciándose. Borrar en silencio "a este lead
+se le perdió su precall" por una corazonada es justo lo que esta auditoría existe para impedir.
+**Ante la duda se avisa.** Dana igual deja de alertar porque baja del umbral (1 push, mínimo 2).
+
+Y la recomendación de revisar `closers.js` ahora solo se cuelga cuando el problema **es** de
+registro. Pegarla a toda alerta mandaba a revisar el teléfono de un closer cuyo teléfono nunca
+fue el problema, y eso quema la credibilidad del aviso entero.
+
+**Fijado con 4 tests nuevos** en `test/calendly.skip-audit.test.js`: que el dedup sobrevive a un
+`__resetHealth()` (que es lo que hace un reinicio), que una causa curada deja de contar, que
+`obsoleto` **sigue** contando aunque el closer se haya registrado después, y que la
+recomendación del roster no aparece si no viene al caso.
+
+---
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):
