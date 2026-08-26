@@ -5,9 +5,10 @@
 // Hallazgos de la validación contra la cuenta real:
 //  - El WAF de Calendly rechaza el User-Agent por defecto de algunos clientes →
 //    enviamos un User-Agent explícito.
-//  - El teléfono del prospecto vive en invitee.text_reminder_number (NO en
-//    questions_and_answers, que viene vacío). Puede ser null en reservas
-//    instant_book / reagendadas.
+//  - El teléfono del prospecto vive en invitee.text_reminder_number. Puede ser null en
+//    reservas instant_book / reagendadas. ⚠️ CORREGIDO 2026-08-26: acá decía que
+//    questions_and_answers "viene vacío", y era cierto cuando se midió, pero dejó de serlo
+//    en cuanto una empresa agrega una pregunta de teléfono al formulario. Ver prospectPhoneOf.
 //  - invitee.first_name viene null → parseamos el primer nombre de invitee.name.
 
 const API = 'https://api.calendly.com';
@@ -192,9 +193,61 @@ export function closerEmailOf(ev) {
   return ev?.event_memberships?.[0]?.user_email?.toLowerCase() || null;
 }
 
+// ─── Teléfono del prospecto ───────────────────────────────────────────────────
+// DOS fuentes, en orden. `text_reminder_number` es la nativa de Calendly (la casilla de
+// recordatorios por SMS) y sigue siendo la primera. La segunda es una PREGUNTA del formulario,
+// y no es un caso de borde: Retia (25-ago) y ComunicArte (26-ago) agregaron una pregunta
+// obligatoria de teléfono y NO prendieron la casilla nativa ⇒ desde ese corte el número llega
+// solo por ahí. Medido el 2026-08-26: 4 de 4 reservas nuevas de ComunicArte y las 3 nuevas de
+// Retia. Sin esto, esas dos conexiones —las únicas con `hubspot:false`, o sea SIN el rescate
+// por CRM que tapa el hueco en 30X— degradan todos sus pushes a "(mándalo manual)".
+//
+// Se exige que coincidan LAS DOS cosas: que la pregunta hable de un teléfono y que la
+// respuesta tenga forma de teléfono.
+//
+//  · Por la PREGUNTA y no solo por la forma, porque una respuesta numérica cualquiera
+//    ("¿cuánto facturas al mes?" → "8000000") pasaría el filtro de forma y terminaría en un
+//    link wa.me hacia un número que no existe, o peor, hacia un desconocido. Un falso negativo
+//    nos deja como hoy; un falso positivo manda un mensaje mal dirigido.
+//  · Por la FORMA y no solo por la pregunta, porque el campo es texto libre: "no tengo" o
+//    "el mismo del correo" son respuestas reales a una pregunta de teléfono.
+//
+// El match de la pregunta va normalizado (sin acentos, sin mayúsculas, sin puntuación) porque
+// las dos empresas ya la escribieron distinto: "Ingrese su número telefonico:" en Retia e
+// "Ingrese su número telefónico" en ComunicArte. Cablear el texto exacto sería cablear el typo.
+const sinAcentos = (s) =>
+  String(s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '');
+
+// Palabras que delatan una pregunta de teléfono, en los dos idiomas en los que Calendly arma
+// estos formularios. Agregar una es sumar un término acá, nada más.
+//
+// Van como RAÍZ, no como palabra completa: la pregunta real de Retia dice "telefonico", y
+// 'telefono' no es substring de 'telefonico' (la 8ª letra es i, no o). Ese detalle tonto costó
+// el primer intento de este arreglo — de ahí el test con los dos textos de producción.
+const PREGUNTA_TELEFONO = ['telefon', 'tel.', 'celular', 'movil', 'whatsapp', 'wpp', 'phone', 'mobile'];
+
+// ¿Esto tiene forma de número marcable? 7 a 15 dígitos (el rango de E.164, que cubre desde un
+// fijo local hasta el internacional más largo) y ningún carácter fuera de dígitos, '+' y los
+// separadores de siempre. Las letras lo descartan: eso es una frase, no un número.
+function pareceTelefono(valor) {
+  const t = String(valor || '').trim();
+  if (!t || !/^\+?[\d\s().-]+$/.test(t)) return false;
+  const digitos = t.replace(/\D/g, '');
+  return digitos.length >= 7 && digitos.length <= 15;
+}
+
 export function prospectPhoneOf(invitee) {
   const p = invitee?.text_reminder_number;
-  return p && String(p).trim() ? String(p).trim() : null;
+  if (p && String(p).trim()) return String(p).trim();
+  for (const qa of invitee?.questions_and_answers || []) {
+    const pregunta = sinAcentos(qa?.question);
+    if (!PREGUNTA_TELEFONO.some((k) => pregunta.includes(k))) continue;
+    if (pareceTelefono(qa?.answer)) return String(qa.answer).trim();
+  }
+  return null;
 }
 
 export function formatCallTime(startIso, tz = TZ()) {
