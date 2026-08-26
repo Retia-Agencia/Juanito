@@ -5321,22 +5321,45 @@ futuras + las 26 más recientes): `text_reminder_number` **null en 30 de 30**, y
 viejo). Cubre reservas hechas por el lead y por la closer, e incluye las creadas después de que el ET
 se actualizó (2026-07-27).
 
-Lo raro es que **el ET SÍ declara la pregunta**: `custom_questions` trae
-`{ name: "Ingrese su número telefónico", type: "phone_number", required: true, enabled: true }`. O sea
-que la configuración dice una cosa y las reservas reales dicen otra. **No se resolvió desde el repo**
-— es config del lado de Calendly. Hipótesis a descartar, en orden: (1) los leads entran por otro link
-o routing form que no pasa por esa pregunta, (2) la pregunta se agregó a una copia del ET, (3) las
-respuestas `phone_number` de ese ET no se exponen por API. **Prueba decisiva:** agendar una cita de
-prueba en `https://calendly.com/d/d3xv-66m-ynn/postulacion-metodo-comunicarte` y releer el invitee
-por API. Hasta que eso se cierre, ComunicArte **no debe salir de dry-run**: en vivo solo generaría
-mensajes que le dicen al closer que haga el trabajo a mano.
+**Y no es que falte configurar la pregunta: está puesta, y hace un mes.** El ET declara
+`{ name: "Ingrese su número telefónico", type: "phone_number", required: true, enabled: true }` y su
+`updated_at` es del **2026-07-27**, sin cambios desde entonces. O sea que la config dice una cosa y
+las reservas dicen otra.
 
-**Andrea Machado quedó con dos identidades.** Es la MISMA persona atendiendo el buzón-rol de Retia
-(`registro@ttrading.co`, +57 313 2484664) y el de ComunicArte (`info@eventoscomunicarte.com`,
-+57 317 1297303) — tercer y cuarto buzón-rol del sistema. En Calendly la cuenta de ComunicArte figura
-a nombre de "Milena Morales", que **no** es quien contesta. Consecuencia técnica: su nombre pasa a
-tener DOS teléfonos ⇒ `resolveCloserByPushName` devuelve null (ambiguo = seguro) y hubo que sumarla a
-`HOMONIMOS_OK` en el test, igual que Sebastian Rodriguez. Entra por teléfono, que es la vía principal.
+**La comparación con Retia es la que manda**, porque descarta casi todo. Los dos ET son idénticos en
+todo lo que la API deja ver — misma pregunta, mismo tipo de link `/d/…` (share link), `profile: null`,
+`slug: null` — y sin embargo:
+
+| | ComunicArte | Tactical Investor |
+|---|---|---|
+| Reservas hechas por el LEAD (formulario público) | **0 de 19** con número | **20 de 23** con número |
+| Reservas hechas por el CLOSER (`instant_book`) | 0 de 6 | 0 de 2 |
+| `pooling_type` | `round_robin` | `multi_pool` |
+| ET `updated_at` | 2026-07-27 | 2026-08-12 |
+
+Eso mata dos hipótesis de un tiro:
+
+· **No es que los closers agenden a mano.** El `instant_book` (el closer reserva a nombre del lead
+  desde adentro de Calendly) SALTEA el formulario y por eso nunca trae número — pero eso pasa en las
+  DOS cuentas por igual, y explica los 2 huecos de Retia, no los 19 de ComunicArte.
+· **No es que falte la pregunta.** Está declarada igual en los dos.
+
+Lo que queda en pie, y **no se puede probar desde la API**: que el link que ComunicArte *publica* en
+sus anuncios no sea el `/d/d3xv-66m-ynn/…` que la API reporta. Los links `/d/` de Calendly son *share
+links* y guardan una FOTO de la configuración del momento en que se crearon; uno publicado antes del
+27-jul seguiría sirviendo el formulario viejo —sin la pregunta— mientras el panel muestra la config
+nueva. Encaja con TODO lo observado, incluido que el jefe mire su Calendly y vea que "literal pide el
+cel".
+
+**⚠️ La página de reserva NO se puede auditar con automatización.** Calendly responde con un
+**reCAPTCHA** a un browser controlado, y resolverlo está fuera de lo que hacemos. La verificación es
+manual y toma 30 segundos: abrir el link que ComunicArte tiene en sus anuncios/bio y compararlo con
+`calendly.com/d/d3xv-66m-ynn/postulacion-metodo-comunicarte`. Si el de ellos no pide teléfono y este
+sí, hay que republicar el link nuevo.
+
+**Mientras tanto el programa NO daña nada:** sus pushes salen con `📵 sin teléfono` y `(mándalo
+manual)`, que es un push degradado, no un push equivocado. El copy del lead nunca se arma sin número
+porque `buildLeadLink` devuelve null y el caller degrada.
 
 **Materiales: la CARPETA, no los archivos.** Decisión del jefe (2026-08-25). Es el segundo programa
 así, después de tactical_investor. La carpeta tiene exactamente dos archivos —brochure (8 MB) y video
@@ -5345,14 +5368,32 @@ carpeta sirve el material VIGENTE cuando ComunicArte lo actualice, sin tocar el 
 programa no declara `video`. Si algún día publican el VSL en YouTube o en una landing, ahí sí conviene
 sumarlo aparte: un .mp4 de 3,2 GB en Drive es pesado de abrir desde un celular.
 
-**Lo que falta para encenderlo** (en orden, ninguno es código):
-1. Resolver el teléfono del lead en Calendly (arriba). **Sin esto, lo demás no sirve.**
-2. `CALENDLY_TOKEN_COMUNICARTE` en el `.env` del VPS + deploy con `alcance: todo` (el compose pasa
-   env explícitamente; sin la línea el token no llega al contenedor — nos pasó con retia).
-3. Que **Maru Marquez** y **Andrea Machado** le escriban a Juanito: sin opt-in ganado no reciben nada.
-4. Confirmar el copy con el jefe. El pitch actual (`"programa Método Comunicarte"`) está **derivado
-   del nombre del event_type**, no dictado.
-5. Recién ahí, `CALENDLY_DRY_RUN_COMUNICARTE=false`.
+**ESTADO AL 2026-08-25 23:00 UTC — EN PRODUCCIÓN Y EN VIVO.** Se desplegó con `alcance: todo`; las
+cuatro conexiones arrancan con `dry-run:false`:
+
+```
+[Calendly] Jobs activos ✅ — cuentas:
+  30x[dry-run:false, push4:true] · estadox[dry-run:false, push4:false]
+  · retia[dry-run:false, push4:false] · comunicarte[dry-run:false, push4:false]
+```
+
+Se saltó el paso "arrancar muda un ciclo" que usaron retia y estadox, y fue una decisión, no un
+olvido: **el gate de opt-in ya cumple ese rol**. Ninguna de las dos closers de ComunicArte tiene
+opt-in, así que no puede salir nada aunque la conexión esté en vivo — y dejarla muda habría costado un
+segundo deploy (con su reconexión de Baileys) el día que hicieran opt-in. La validación del ciclo se
+hizo igual, en el primer poll: `Push 3 new → Andrea Machado | Angela | 04:30 p. m.` es una cita REAL
+de ComunicArte, mapeada a la identidad correcta.
+
+**Lo que falta para que un lead reciba algo** (ninguno es código):
+1. Resolver el teléfono del lead en Calendly (arriba). **Sin esto, el push sale degradado.**
+2. Que **Maru Marquez** (+57 310 8600134) y **Andrea Machado** (+57 317 1297303) le escriban a
+   Juanito. ⚠️ Andrea YA tiene opt-in pero por su línea de **Retia** (+57 313 2484664): el opt-in va
+   por TELÉFONO, así que esa fila no le cubre ComunicArte y tiene que escribir desde el otro número.
+   Es el primer caso del roster donde una persona necesita DOS opt-ins.
+3. Confirmar el copy con el jefe. El pitch actual (`"programa Método Comunicarte"`) está **derivado
+   del nombre del event_type**, no dictado. Se propuso quitarle el "personalmente" y abrir con el
+   nombre de la closer; el jefe decidió (2026-08-25) **dejarlo igual que el resto de programas**, o
+   sea con la plantilla compartida intacta.
 
 **Espejo de dev (nuevo, apagado por default).** `CALENDLY_DEV_MIRROR_JID` +
 `CALENDLY_DEV_MIRROR_CONNECTIONS` copian a un JID de dev todo lo que `deliver()` resuelve para los
