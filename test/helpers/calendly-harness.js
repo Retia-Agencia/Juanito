@@ -151,6 +151,10 @@ export function makeApi(events, opts = {}) {
 // { phone, contactJid?, source?, paused? }. Pasar `contactJid: null` explícito modela
 // el caso sembrado/grandfathered SIN hilo (entrega estricta lo omite).
 export function makeStore({ optins = [], nowRef } = {}) {
+  // Dedup de alertas persistente (espejo de la tabla `settings` en producción). Vive en el
+  // store y no en un módulo aparte para que `makeStore()` nuevo = pizarra limpia, igual que
+  // una DB nueva — si viviera en memoria del módulo, un test se contaminaría con el anterior.
+  const alertasPersistentes = new Map();
   const rows = [];
   const outcomes = []; // §18.AB: call_outcomes en memoria (misma semántica que el SQL)
   let nextId = 1;
@@ -244,24 +248,36 @@ export function makeStore({ optins = [], nowRef } = {}) {
         r.message = `${r.message || ''} | skip: ${reason}`;
       }
     },
-    // Espejo de db.getSkipsAlertablesPorCloser: agrupa por closer los skips cuya causa es
-    // accionable, en una ventana relativa a `call_start`.
+    // Espejo de db.getSkipsAlertablesPorCloser: agrupa por closer Y POR MOTIVO los skips cuya
+    // causa es accionable, en una ventana relativa a `call_start`. El desglose por motivo es
+    // lo que le permite a runSkipAudit descartar solo la parte ya curada.
     getSkipsAlertablesPorCloser(slugs, hours = 24) {
       const permitidos = new Set(slugs);
       const desde = now() - hours * 3600000;
-      const porCloser = new Map();
+      const porClave = new Map();
       for (const r of rows) {
         if (r.status !== 'skipped' || !permitidos.has(r.skip_reason)) continue;
         if (sqliteUtcToMs(r.call_start) < desde) continue;
-        const e = porCloser.get(r.closer_email) || { closer_email: r.closer_email, n: 0, motivos: new Set(), ejemplo: null };
+        const clave = `${r.closer_email}|${r.skip_reason}`;
+        const e = porClave.get(clave) || {
+          closer_email: r.closer_email,
+          skip_reason: r.skip_reason,
+          n: 0,
+          ejemplo: null,
+        };
         e.n += 1;
-        e.motivos.add(r.skip_reason);
         e.ejemplo = r.prospect_name;
-        porCloser.set(r.closer_email, e);
+        porClave.set(clave, e);
       }
-      return [...porCloser.values()]
-        .map((e) => ({ ...e, motivos: [...e.motivos].join(',') }))
-        .sort((a, b) => b.n - a.n);
+      return [...porClave.values()].sort((a, b) => b.n - a.n);
+    },
+    // Espejo de db.shouldAlertPersistent: mismo dedup, pero en el store (que en los tests hace
+    // de DB) en vez de en memoria del proceso.
+    shouldAlertPersistent(key, ttlHours = 6) {
+      const previo = alertasPersistentes.get(key) || 0;
+      if (now() - previo < ttlHours * 3600000) return false;
+      alertasPersistentes.set(key, now());
+      return true;
     },
     isOptedIn(phone) {
       const p = normalizePhone(phone);
@@ -556,6 +572,7 @@ export function installHarness(
     markCalendlyPushSent: store.markCalendlyPushSent,
     markCalendlyPushSkipped: store.markCalendlyPushSkipped,
     getSkipsAlertablesPorCloser: store.getSkipsAlertablesPorCloser,
+    shouldAlertPersistent: store.shouldAlertPersistent,
     isOptedIn: store.isOptedIn,
     getOptin: store.getOptin,
     isCalendlyPaused: store.isCalendlyPaused,

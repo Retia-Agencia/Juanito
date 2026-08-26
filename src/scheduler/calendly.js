@@ -272,6 +272,8 @@ async function deps() {
     markCalendlyPushSkipped: db.markCalendlyPushSkipped,
     // Auditoría horaria: pushes perdidos por closer (ver runSkipAudit).
     getSkipsAlertablesPorCloser: db.getSkipsAlertablesPorCloser,
+    // Dedup de alertas que sobrevive al reinicio (solo para lo histórico, ver notifyAdmins).
+    shouldAlertPersistent: db.shouldAlertPersistent,
     // §18.AB: outcomes post-call.
     createPendingOutcome: db.createPendingOutcome,
     recordAutoOutcome: db.recordAutoOutcome,
@@ -437,8 +439,13 @@ async function planNudge(d, p) {
 // DM inmediato a los ADMIN_LID solo para fallos que tiran pushes de un closer real
 // al piso: token muerto y closer sin mapear. Deduplicado por `dedupKey` (6h) para
 // no spamear cada poll. Si no hay ADMIN_LID configurado, queda en el log.
-async function notifyAdmins(d, text, dedupKey) {
-  if (dedupKey && !shouldAlert(dedupKey)) return;
+// `persistent`: usa el dedup que SOBREVIVE al reinicio (tabla `settings`) en vez del de
+// memoria. Va por alerta, no global, porque la diferencia es real: un token muerto sigue
+// muerto y re-avisarlo tras un reinicio confirma que el problema sigue vivo; un push que ya
+// se perdió es historia y re-avisarlo solo hace ruido. Ver shouldAlertPersistent en db/index.js.
+async function notifyAdmins(d, text, dedupKey, { persistent = false } = {}) {
+  const gate = persistent && d.shouldAlertPersistent ? d.shouldAlertPersistent : shouldAlert;
+  if (dedupKey && !gate(dedupKey)) return;
   const admins = ADMIN_LIDS();
   if (!admins.length) {
     console.warn(`[Calendly] alerta sin ADMIN_LID configurado: ${text}`);
@@ -1941,25 +1948,62 @@ export async function runHarvestSweep() {
 // Es la red de seguridad, no la defensa principal: lo que se puede curar solo (falta de opt-in
 // antes de la call) ya se reintenta en el bucle de entrega. Acá cae lo que ya no tiene arreglo
 // automático y necesita que un humano mire.
+// ¿La causa de este skip YA SE CURÓ? Un push perdido no se recupera nunca, pero su CAUSA sí
+// puede haber desaparecido, y avisar de una causa que ya no existe es peor que no avisar: manda
+// a diagnosticar algo que está bien.
+//
+// 🩸 El caso que lo motivó (2026-08-26): a Dana se le perdieron dos pushes de madrugada por no
+// tener opt-in; escribió a Juanito a las 14:28 y quedó registrada. La alerta siguió diciendo
+// "el closer no ha escrito a Juanito" durante horas, porque `skip_reason` es la etiqueta
+// CONGELADA en el momento del skip y la auditoría la leía como si fuera el estado de ahora.
+//
+// Solo se curan las causas que se pueden VERIFICAR contra el estado vivo: las de registro.
+// `obsoleto` e `inesperado` NO se curan aunque el closer se registre después — puede que la
+// causa fuera esa, pero puede que fuera WhatsApp caído o el bot reiniciándose, y borrar en
+// silencio "a este lead se le perdió su precall" por una corazonada es justo lo que esta
+// auditoría existe para impedir. Ante la duda, se avisa.
+function curado(d, closerEmail, slug) {
+  if (slug !== SKIP_SLUGS.SIN_OPTIN && slug !== SKIP_SLUGS.SIN_HILO) return false;
+  const phone = resolveCloser(closerEmail)?.phone;
+  if (!phone) return false; // fuera del roster: no hay con qué verificar nada
+  if (slug === SKIP_SLUGS.SIN_OPTIN) return !!d.isOptedIn?.(phone);
+  return !!d.getOptin?.(phone)?.contact_jid;
+}
+
 export async function runSkipAudit() {
   const d = await deps();
   if (!d.getSkipsAlertablesPorCloser) return 0; // job inerte si la DB no expone la consulta
   const minimo = SKIP_ALERT_MIN();
   const filas = d.getSkipsAlertablesPorCloser([...SKIP_ALERTABLES], 24);
-  let avisados = 0;
+
+  // Se agrupa acá y no en SQL porque antes hay que descartar los motivos YA CURADOS.
+  const porCloser = new Map();
   for (const f of filas) {
+    if (curado(d, f.closer_email, f.skip_reason)) continue;
+    const e = porCloser.get(f.closer_email) || { closer_email: f.closer_email, n: 0, motivos: [], ejemplo: null };
+    e.n += f.n;
+    e.motivos.push(f.skip_reason);
+    e.ejemplo = e.ejemplo || f.ejemplo;
+    porCloser.set(f.closer_email, e);
+  }
+
+  let avisados = 0;
+  for (const f of [...porCloser.values()].sort((a, b) => b.n - a.n)) {
     if (f.n < minimo) continue;
     const nombre = resolveCloser(f.closer_email)?.name || f.closer_email;
-    const motivos = String(f.motivos || '')
-      .split(',')
-      .map((s) => ETIQUETA_SKIP[s.trim()] || s.trim())
-      .join(' · ');
+    const motivos = f.motivos.map((s) => ETIQUETA_SKIP[s] || s).join(' · ');
+    // La recomendación de revisar el roster solo tiene sentido si el problema ES de registro.
+    // Colgarla de TODA alerta mandaba a revisar el teléfono de un closer cuyo teléfono nunca
+    // fue el problema —pasó con Dana— y eso quema la credibilidad del aviso entero.
+    const esDeRegistro = f.motivos.some((s) => s === SKIP_SLUGS.SIN_OPTIN || s === SKIP_SLUGS.SIN_HILO);
     await notifyAdmins(
       d,
-      `${nombre}: ${f.n} push(es) NO entregados en 24h — ${motivos}. ` +
-        `Ej: ${f.ejemplo || 's/d'}. Primero revisa que su teléfono en src/calendly/closers.js ` +
-        `sea el mismo del hilo en calendly_optins.`,
-      `skips:${f.closer_email}`
+      `${nombre}: ${f.n} push(es) NO entregados en 24h — ${motivos}. Ej: ${f.ejemplo || 's/d'}.` +
+        (esDeRegistro
+          ? ` Primero revisa que su teléfono en src/calendly/closers.js sea el mismo del hilo en calendly_optins.`
+          : ''),
+      `skips:${f.closer_email}`,
+      { persistent: true } // es historia, no un fallo vivo: no re-avisar por cada reinicio
     );
     avisados++;
   }
