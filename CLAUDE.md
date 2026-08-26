@@ -127,7 +127,12 @@ loop rápido de reconexiones desde datacenter → WhatsApp lo detectó.
 
 ## Reglas de trabajo en este repo
 
-- No tocar `entrypoint.sh` sin entender el contexto del softban
+- No tocar `entrypoint.sh` sin entender el contexto del softban. Si igual hay que tocarlo,
+  `scripts/test-entrypoint.sh` lo ejercita en segundos sin arrancar el bot (stubea `node` y
+  `sleep`) y fija las dos propiedades: un crash loop real escala y se rinde a los 8 intentos; una
+  caída aislada reinicia el contador **pero igual espera**. Correrlo bajo **busybox**, que es el
+  shell de producción: `docker run --rm -v "$PWD:/ep" -w /ep --entrypoint sh juanito-agent
+  /ep/scripts/test-entrypoint.sh /ep`
 - **Vincular WhatsApp solo desde IP residencial y copiar la sesión al VPS** — nunca escanear el QR
   desde el VPS. Ver `docs/WHATSAPP-PAIRING.md`
 - Todo envío de WhatsApp pasa por `send-queue.js` y sale del proceso principal (tiene el socket)
