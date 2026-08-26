@@ -46,3 +46,21 @@ live** — el copy de los tres pushes precall de cada programa debe quedar byte-
   derivado del nombre, para no colisionar homónimos reales.
 - `resolveCloserByPushName` con nombre repetido en dos identidades → dos teléfonos → `null`
   (ambiguo = seguro): comportamiento idéntico al de hoy, no reabre el secuestro de pushes.
+
+## Validación en la práctica (2026-08-26)
+
+- **La separación empresa / conexión se ganó el sueldo con ComunicArte.** "Método Comunicarte"
+  es el SEGUNDO programa de **Retia**, con su propio token, su propia org y sus propias closers,
+  porque Retia opera **un Calendly por programa**. Al darlo de alta se lo modeló mal —como una
+  empresa nueva— y la corrección fue cambiar UN campo (`company: 'retia'`), sin tocar nada del
+  camino de entrega. Con un modelo colapsado eso habría sido un refactor.
+  La señal que se leyó mal: traer Calendly, token y closers propios **parece** una empresa. No lo
+  es. La conexión dice de dónde salen las citas; la empresa, de quién es el negocio.
+- Retia pasa a ser el primer caso de **una empresa con N conexiones** (`retia` + `comunicarte`),
+  la mitad del modelo que hasta ahora no tenía ejemplo vivo. 30X sigue siendo el caso inverso
+  (una conexión, N programas), y `comunicarte` es hoy el único programa con empresa ≠ conexión.
+- **`resolveCloserByPushName` → `null` no es gratis** (ver la última consecuencia de arriba).
+  Al ganar Andrea Machado su segunda identidad, su nombre pasó a tener dos teléfonos y dejó de
+  poder AUTO-REGISTRARSE: le escribió a Juanito y no fue reconocida. El null sigue siendo lo
+  correcto, pero implica una regla nueva de autoría: **una segunda identidad tiene que nacer con
+  su `workLid` declarado**, o su dueña queda sin ninguna vía de opt-in.

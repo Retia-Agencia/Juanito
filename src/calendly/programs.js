@@ -63,12 +63,10 @@ const COMUNICARTE_ET = 'https://api.calendly.com/event_types/098ad9d0-5268-4156-
 export const COMPANIES = {
   '30x': '30X',
   estadox: 'EstadoX',
+  // Retia tiene DOS programas: "De Cero a Tactical Investor" y "Método Comunicarte". Cada uno con
+  // su PROPIO Calendly (Retia no tiene cuenta unificada — ver accounts.js), así que la empresa es
+  // una y las Conexiones son dos. ComunicArte NO es una empresa: es un programa de Retia.
   retia: 'Retia',
-  // ComunicArte (2026-08-25). Marca propia con su PROPIO Calendly. La opera Retia —su material
-  // vive en el Drive de administrativa@retiagrowth.com y sus closers llenan un Sheet que hoy
-  // cuelga de la conexión `retia`—, pero de cara al lead la marca es ComunicArte, y ese es el
-  // eje que `company` rotula (ver ADR 0001). Mismo caso que EstadoX bajo 30X.
-  comunicarte: 'ComunicArte',
 };
 
 // ▼▼▼ EDITA AQUÍ para sumar/mover/activar un programa ▼▼▼
@@ -100,10 +98,10 @@ export const PROGRAMS = {
     // Desde 2026-08-25 la marca y la conexión COINCIDEN. Antes era company:'estadox' sobre
     // connection:'30x', y ESTE programa era el único ejemplo vivo de empresa ≠ conexión — el caso
     // que motivó separar los dos conceptos en el ADR 0001.
-    // ⚠️ Que hoy TODOS los programas tengan company === connection NO significa que los campos
-    // sobren: son ejes distintos (de quién es la marca vs. de quién es el Calendly) y basta que
-    // EstadoX vuelva a vender un programa hosteado en el Calendly de 30X para que se separen otra
-    // vez. No colapsarlos en uno solo.
+    // ⚠️ Los campos NO sobran aunque acá coincidan: son ejes distintos (de quién es la marca vs.
+    // de quién es el Calendly). El ejemplo vivo pasó a ser `comunicarte` (empresa Retia, conexión
+    // propia) el 2026-08-26, y basta que EstadoX vuelva a vender un programa hosteado en el
+    // Calendly de 30X para que acá se separen otra vez. No colapsarlos en uno solo.
     connection: 'estadox',
     eventType: ABOGADOS_ET,
     pitch: {
@@ -257,7 +255,12 @@ export const PROGRAMS = {
     key: 'comunicarte',
     label: 'Método Comunicarte',
     titleHints: ['comunicarte'],
-    company: 'comunicarte',
+    // ⚠️ EMPRESA ≠ CONEXIÓN, y este programa es hoy el único ejemplo vivo (lo era `abogados`
+    // hasta que EstadoX abrió su propio Calendly el 2026-08-25). La empresa es **Retia** — el
+    // mismo dueño que "De Cero a Tactical Investor" —, pero el Calendly es OTRO, porque Retia
+    // opera un Calendly POR PROGRAMA. Corregido el 2026-08-26: se había dado de alta como si
+    // ComunicArte fuera una empresa propia, y no lo es.
+    company: 'retia',
     connection: 'comunicarte',
     eventType: COMUNICARTE_ET,
     // Copy DERIVADO del nombre del event_type ("Postulación Método Comunicarte"), no dictado por

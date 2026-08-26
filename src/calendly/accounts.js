@@ -198,8 +198,11 @@ export const ACCOUNTS = {
     hubspot: false,
   },
 
-  // ComunicArte — conexión #4 (2026-08-25). Calendly PROPIO de la marca
-  // (info@eventoscomunicarte.com, org derivada con GET /users/me → HTTP 200). Arranca MUDA
+  // ComunicArte — conexión #4 (2026-08-25). Es el SEGUNDO Calendly de **Retia**, no el de otra
+  // empresa: Retia opera un Calendly POR PROGRAMA (ver la entrada `retia` arriba), así que su
+  // segundo programa —"Método Comunicarte"— trae su propia cuenta
+  // (info@eventoscomunicarte.com, org derivada con GET /users/me → HTTP 200). Por eso este es hoy
+  // el único caso de empresa ≠ conexión del sistema. Arranca MUDA
   // (CALENDLY_DRY_RUN_COMUNICARTE=true) hasta validar un ciclo de poll completo, igual que
   // arrancaron retia y estadox.
   //
@@ -211,7 +214,9 @@ export const ACCOUNTS = {
   // link wa.me no hay push que valga. Es config del lado de Calendly. Detalle en programs.js.
   comunicarte: {
     key: 'comunicarte',
-    label: 'ComunicArte',
+    // El label sale en las alertas al admin: lleva la empresa adelante para que "ComunicArte" no
+    // se lea como un cliente aparte de Retia.
+    label: 'Retia · ComunicArte',
     // push4 sin `env`, como retia y estadox: `false` FIJO. v1 de una conexión nueva = solo
     // pushes precall 0-3. Prenderlo es una decisión aparte, no un default.
     env: {

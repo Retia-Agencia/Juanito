@@ -5295,10 +5295,24 @@ Baileys reconectado sin re-pairing (*"Reconnection with existing sync data"* →
 
 ### 18.BM 🟡 ComunicArte: la cuarta conexión de Calendly, y el teléfono que no llega (2026-08-25)
 
-**Qué se agregó.** ComunicArte entra como **conexión #4** (`comunicarte`), con su propio Calendly
-(`info@eventoscomunicarte.com`, org `d84e158d-…`), su empresa homónima en `COMPANIES` y un programa,
-**Método Comunicarte**. Arranca **muda** (`CALENDLY_DRY_RUN_COMUNICARTE=true`), sin Push 4 y sin
-HubSpot, igual que arrancaron retia y estadox.
+**Qué se agregó.** **Método Comunicarte** es el **SEGUNDO PROGRAMA DE RETIA**, no una empresa nueva.
+Entra como programa con `company:'retia'` sobre una **conexión #4** propia (`comunicarte`), porque
+Retia opera **un Calendly POR PROGRAMA** (`info@eventoscomunicarte.com`, org `d84e158d-…`). Sin Push 4
+y sin HubSpot, igual que el resto de Retia.
+
+⚠️ **Corregido el 2026-08-26.** Se había dado de alta creando una empresa `comunicarte` en `COMPANIES`,
+como si fuera un cliente aparte. No lo es: el dueño es Retia, el mismo de "De Cero a Tactical
+Investor". El error era fácil de cometer porque ComunicArte trae su propio Calendly, su propio token y
+sus propias closers — todo lo que parece una empresa — pero **la conexión es de dónde salen las citas,
+no de quién es el negocio**. Con la corrección, `comunicarte` pasa a ser **el único caso vivo de
+empresa ≠ conexión** del sistema, que es exactamente el caso que motivó separar los dos ejes en el
+ADR 0001 (el ejemplo anterior era `abogados`, hasta que EstadoX abrió su propio Calendly el 25-ago).
+
+| Empresa | Conexiones | Programas |
+|---|---|---|
+| 30X | `30x` | second_brain · linkedin · developers · operaciones · instagram |
+| EstadoX | `estadox` | abogados |
+| **Retia** | **`retia` + `comunicarte`** | **tactical_investor + comunicarte** |
 
 **El señuelo, otra vez.** Su event_type real es **POOL** y no sale en `/event_types`; el que SÍ sale
 es un ET *solo* homónimo y muerto. Es el patrón exacto que costó un mes de pushes en EstadoX
@@ -5360,6 +5374,10 @@ sí, hay que republicar el link nuevo.
 **Mientras tanto el programa NO daña nada:** sus pushes salen con `📵 sin teléfono` y `(mándalo
 manual)`, que es un push degradado, no un push equivocado. El copy del lead nunca se arma sin número
 porque `buildLeadLink` devuelve null y el caller degrada.
+
+**El material vive en el Drive de Retia** (`administrativa@retiagrowth.com`), lo cual es coherente con
+que ComunicArte sea un programa suyo y no un cliente aparte — fue una de las señales que se leyó mal al
+darlo de alta.
 
 **Materiales: la CARPETA, no los archivos.** Decisión del jefe (2026-08-25). Es el segundo programa
 así, después de tactical_investor. La carpeta tiene exactamente dos archivos —brochure (8 MB) y video
