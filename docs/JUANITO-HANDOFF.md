@@ -5368,6 +5368,28 @@ el dev quedaría reconocido *como ese closer* al escribirle a Juanito, y el rost
 JID entre identidades (un JID = una identidad) — un solo dev no podría espejar cinco closers. Un
 espejo es un destino, no una identidad. Fijado en `test/calendly.dev-mirror.test.js` (9 tests).
 
+**🔴 El espejo se convirtió en spam a las dos horas de estar en vivo (y el arreglo).** Un Push 3 que
+no se puede entregar **NO se quema**: se queda en `scheduled` y `runCalendlyDelivery` lo reintenta
+**cada minuto** hasta que la call pasa. `deliver()` ya sabía esto —su log de "sin opt-in" tiene un
+throttle de 1h justamente por eso— pero el espejo se colgó del retorno sin heredarlo: **29 copias del
+mismo push en hora y media**, todas del lead sin teléfono de Dana, que no tenía opt-in.
+
+El arreglo usa `shouldAlert` de `health.js`, el dedup que ya existía. La clave es
+`espejo:<tag>:<closer>:<resultado>:<hash del texto>`, y las dos mitades importan:
+
+· el **hash del texto** y no solo el closer, porque dos leads distintos del mismo closer con el mismo
+  resultado son dos avisos legítimos — colapsar por closer se comería el push de un lead real;
+· el **resultado** dentro de la clave, porque es lo que hace que el dedup no pierda información: si el
+  push pasa de `skipped-optin` a `sent`, la clave cambia y el aviso nuevo sale al toque sin esperar el
+  TTL. Se silencia la repetición, nunca el cambio.
+
+TTL 6h (`CALENDLY_DEV_MIRROR_TTL_MIN`), o sea "avisá de nuevo si mañana sigue roto". Fijado con tres
+tests de regresión: cinco intentos → una copia; cambio de resultado → aviso nuevo; dos leads → dos.
+
+**La lección general:** todo lo que se cuelgue del camino de entrega hereda su cadencia de REINTENTO,
+no la de la cita. Cualquier canal nuevo hacia un humano necesita su propio dedup desde el día uno, o
+se descubre en producción.
+
 **`hola.danvar@gmail.com` en Retia — CABLEADO.** Apareció como host NUEVO sin mapear, con 1 cita que
 era una de las 3 futuras: ni en `CLOSERS` ni en `IGNORED_CLOSERS` ⇒ alerta "closer sin mapear" en cada
 poll y esa call sin un solo push. Es **Dana Rodriguez** (+57 316 9835624), un regreso a Retia con

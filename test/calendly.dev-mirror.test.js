@@ -233,6 +233,73 @@ test('la pausa GLOBAL también calla el espejo', async () => {
   });
 });
 
+// ─── El reintento que convirtió el espejo en spam ─────────────────────────────
+
+test('un push que reintenta NO manda una copia por intento', async () => {
+  // El bug real (2026-08-25, en producción): un Push 3 que no se puede entregar NO se quema —
+  // se queda 'scheduled' y la entrega lo reintenta CADA MINUTO hasta que la call pasa. El espejo
+  // sin dedup mandó 29 copias del mismo push en hora y media. Un aviso que se repite 60 veces por
+  // hora deja de leerse, o sea que se rompe solo.
+  await withAgencia({}, async () => {
+    process.env.CALENDLY_DEV_MIRROR_JID = JID_DEV;
+    process.env.CALENDLY_DEV_MIRROR_CONNECTIONS = ACCT2;
+    const { wa } = escenario({ nowMs: NOW, optins: [] }); // sin opt-in ⇒ se omite y se reintenta
+
+    await scheduler.runCalendlyPoll();
+    for (let i = 0; i < 5; i++) await scheduler.runCalendlyDelivery();
+
+    assert.equal(copias(wa).length, 1, 'cinco intentos, UNA sola copia');
+  });
+});
+
+test('si el resultado CAMBIA, el aviso nuevo sale sin esperar el TTL', async () => {
+  // La otra mitad del dedup: silenciar la repetición no puede silenciar el cambio. Cuando el
+  // closer por fin hace opt-in, el push pasa de 'skipped-optin' a 'sent' y eso es JUSTO lo que el
+  // dev está esperando ver.
+  await withAgencia({}, async () => {
+    process.env.CALENDLY_DEV_MIRROR_JID = JID_DEV;
+    process.env.CALENDLY_DEV_MIRROR_CONNECTIONS = ACCT2;
+    const { wa, store } = escenario({ nowMs: NOW, optins: [] });
+
+    await scheduler.runCalendlyPoll();
+    await scheduler.runCalendlyDelivery();
+    await scheduler.runCalendlyDelivery();
+    assert.equal(copias(wa).length, 1, 'mientras falla, un solo aviso');
+    assert.match(copias(wa)[0].text, /skipped-optin/);
+
+    // El closer escribe: gana el opt-in y su hilo queda abierto.
+    store.optIn(CLOSER_A2.phone, JID_A2);
+    await scheduler.runCalendlyDelivery();
+
+    const c = copias(wa);
+    assert.equal(c.length, 2, 'el cambio de resultado sí genera un aviso nuevo');
+    assert.match(c[1].text, /resultado: \*sent\*/);
+  });
+});
+
+test('dos leads distintos del mismo closer son dos avisos, no uno', async () => {
+  // El dedup va por MENSAJE, no por closer: colapsar por closer se comería el push de un lead real.
+  await withAgencia({}, async () => {
+    process.env.CALENDLY_DEV_MIRROR_JID = JID_DEV;
+    process.env.CALENDLY_DEV_MIRROR_CONNECTIONS = ACCT2;
+    const { wa } = installHarness(scheduler, {
+      nowMs: NOW,
+      accounts: [realAccount(), ACCOUNTS[ACCT2]],
+      optins: [],
+      events: [
+        makeEvent({ uuid: 'lead-a', startInMin: 20, closerEmail: CLOSER_A2.email, eventType: ET2, nowMs: NOW, account: ACCT2, prospectName: 'Ana Uno', prospectPhone: '+573001111111' }),
+        makeEvent({ uuid: 'lead-b', startInMin: 22, closerEmail: CLOSER_A2.email, eventType: ET2, nowMs: NOW, account: ACCT2, prospectName: 'Beto Dos', prospectPhone: '+573002222222' }),
+      ],
+    });
+
+    await scheduler.runCalendlyPoll();
+    await scheduler.runCalendlyDelivery();
+    await scheduler.runCalendlyDelivery();
+
+    assert.equal(copias(wa).length, 2, 'un aviso por lead, aunque compartan closer y resultado');
+  });
+});
+
 // ─── Por qué es un env y no un extraJid del roster ────────────────────────────
 
 test('el JID del espejo NO queda reconocido como closer', async () => {

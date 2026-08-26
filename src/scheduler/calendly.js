@@ -22,6 +22,7 @@
 //  directo porque no tocan red/DB.
 
 import { CronJob } from 'cron';
+import { createHash } from 'node:crypto';
 import {
   firstNameFrom,
   fullNameFrom,
@@ -125,6 +126,10 @@ const DEV_MIRROR_CONNECTIONS = () =>
     .split(',')
     .map((x) => x.trim().toLowerCase())
     .filter(Boolean);
+// Cada cuánto se puede REPETIR el mismo aviso (mismo mensaje + mismo resultado). No es la
+// frecuencia del espejo: un resultado NUEVO sale siempre, sin esperar esto. 6h = el default de
+// health.js, o sea "avisá de nuevo si mañana sigue roto", no "avisá cada minuto".
+const DEV_MIRROR_TTL_MS = () => Number(process.env.CALENDLY_DEV_MIRROR_TTL_MIN || 360) * 60000;
 
 const SHEET_PUSH_ENABLED = () => process.env.CALENDLY_SHEET_PUSH !== 'false'; // default true
 const SHEET_PUSH_DELAY_MIN = () => Number(process.env.CALENDLY_SHEET_DELAY_MIN || 10);
@@ -506,6 +511,21 @@ async function deliver(d, to, text, tag, closerEmail) {
 // Copia al dev de UN mensaje ya resuelto. Best-effort y SIEMPRE después del envío real: si el
 // espejo falla (JID muerto, sesión caída) el push ya se entregó donde importa y el resultado no
 // cambia — un espejo roto nunca puede marcar como fallido un push que sí salió.
+//
+// ⚠️ DEDUPLICADO, y no es un detalle de cortesía. Un Push 3 que no se puede entregar **NO se
+// quema**: se queda en 'scheduled' y `runCalendlyDelivery` lo reintenta CADA MINUTO hasta que la
+// call pasa (por eso el log de `deliver` tiene su propio throttle de 1h). La primera versión del
+// espejo no lo tenía y mandó 29 copias del mismo push en hora y media — la del lead sin teléfono
+// de Dana, que no tenía opt-in. Un espejo que grita 60 veces por hora es exactamente el ruido que
+// hace que se deje de mirar, o sea que se rompe solo.
+//
+// La clave incluye el HASH DEL TEXTO, no solo el closer: dos leads distintos del mismo closer con
+// el mismo resultado son dos avisos legítimos. Y incluye el RESULTADO, que es lo que hace que esto
+// no pierda información: si el push pasa de 'skipped-optin' a 'sent', la clave cambia y el aviso
+// nuevo sale al toque, sin esperar el TTL. O sea que se silencia la repetición, nunca el cambio.
+const mirrorKey = (tag, closerEmail, outcome, text) =>
+  `espejo:${tag}:${closerEmail}:${outcome}:${createHash('sha1').update(String(text)).digest('hex').slice(0, 12)}`;
+
 async function mirrorToDev(d, { text, tag, closerEmail, outcome }) {
   const jid = DEV_MIRROR_JID();
   if (!jid) return;
@@ -513,6 +533,7 @@ async function mirrorToDev(d, { text, tag, closerEmail, outcome }) {
   if (outcome === 'paused') return;
   const conexion = accountOfCloser(closerEmail);
   if (!DEV_MIRROR_CONNECTIONS().includes(conexion)) return;
+  if (!shouldAlert(mirrorKey(tag, closerEmail, outcome, text), DEV_MIRROR_TTL_MS())) return;
   const closer = resolveCloser(closerEmail);
   const cabecera =
     `🪞 *espejo dev* — ${tag} · ${accountOf(conexion)?.label || conexion} · ` +
