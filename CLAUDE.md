@@ -144,10 +144,17 @@ loop rápido de reconexiones desde datacenter → WhatsApp lo detectó.
   ```
   (En Git Bash, prefijar con `MSYS_NO_PATHCONV=1` y usar rutas `C:/…` o el volumen no monta y
   la suite reporta **0 tests** en verde, que es peor que fallar.)
-  Baseline al **2026-08-18: 1032 tests, 1029 verdes, 3 rojos conocidos** (links de Retia + los dos
-  de agenda superseded; los números de test se corren al agregar archivos, así que se buscan por
-  nombre, no por índice). En Windows ese mismo commit da **98 rojos** — medir SIEMPRE la línea base
-  con `git stash` antes de tocar nada y comparar contra ella, no contra cero.
+  Baseline al **2026-08-26: 1070 tests, 1068 verdes, 2 rojos conocidos** (`call con TODOS sus
+  pushes skipped…` y `reagenda manual superseded…`; los números de test se corren al agregar
+  archivos, así que se buscan por nombre, no por índice). El tercer rojo histórico —links de
+  Retia— murió solo al mudarse el sheet de Comunicarte (§18.BN). En Windows ese mismo commit da
+  ~98 rojos — medir SIEMPRE la línea base con `git stash` antes de tocar nada y comparar contra
+  ella, no contra cero.
+  **Sin daemon de Docker local** (pasa seguido en el Mac) la suite igual se puede correr en Linux
+  sin tocar el bot: `tar czf - src test package.json | ssh <vps> "tar xzf - -C /root/testrun"` y
+  después `docker run --rm -v /root/testrun:/app/run -w /app/run --entrypoint node juanito-agent
+  --test 'test/*.test.js'`. Node resuelve `node_modules` subiendo a `/app`, así que reusa el
+  binario nativo de la imagen; `/app/src` no se toca.
   ⚠️ Dos formas de leer un verde que no existe: la suite sale en **TAP** (`# tests`, no `ℹ tests`),
   así que un grep por `ℹ` no encuentra nada y parece que no corrió; y `docker build … | tail` se
   queda con el **exit code de `tail`** → reporta 0 con el daemon caído. Verificar el `$?` del build

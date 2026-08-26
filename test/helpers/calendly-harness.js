@@ -217,6 +217,17 @@ export function makeStore({ optins = [], nowRef } = {}) {
       const r = rows.find((x) => x.id === id);
       if (r && r.status === 'sending') r.status = 'scheduled';
     },
+    // Espejo de la query real: toda fila en 'sending' vuelve a 'scheduled' (ver por qué no
+    // lleva umbral de antigüedad en src/db/index.js).
+    reclaimStuckCalendlyPushes() {
+      let n = 0;
+      for (const r of rows) {
+        if (r.status !== 'sending') continue;
+        r.status = 'scheduled';
+        n++;
+      }
+      return n;
+    },
     markCalendlyPushSent(id) {
       const r = rows.find((x) => x.id === id);
       if (r) {
@@ -541,6 +552,7 @@ export function installHarness(
     getDueCalendlyPushes: store.getDueCalendlyPushes,
     claimCalendlyPush: store.claimCalendlyPush,
     revertCalendlyPush: store.revertCalendlyPush,
+    reclaimStuckCalendlyPushes: store.reclaimStuckCalendlyPushes,
     markCalendlyPushSent: store.markCalendlyPushSent,
     markCalendlyPushSkipped: store.markCalendlyPushSkipped,
     getSkipsAlertablesPorCloser: store.getSkipsAlertablesPorCloser,

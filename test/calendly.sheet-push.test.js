@@ -2,7 +2,7 @@
 // Push 5 (§18.AP): el recordatorio de llenar los Google Sheets que sale DESPUÉS de la call.
 //
 // Dos ideas se protegen acá, y las dos son de las que rompen en silencio:
-//   1. **Solo lo recibe quien declara `sheets`** (hoy retia). 30X no puede recibirlo nunca,
+//   1. **Solo lo recibe quien declara `sheets`** (hoy retia y comunicarte). 30X no puede recibirlo nunca,
 //      ni siquiera cuando el mismo humano cierra para las dos empresas.
 //   2. **El guard de obsolescencia no lo mata.** Ese guard descarta todo push cuya call ya
 //      empezó; este vence después de que TERMINÓ. Si el bloque de entrega quedara del lado
@@ -10,7 +10,7 @@
 //      nunca nada. Por eso hay un test dedicado.
 //
 // Se usan los registros REALES (accountOf('retia'), CLOSERS) en vez de fixtures inventados:
-// lo que hay que verificar es el cableado que se despliega, incluidos los dos links de verdad.
+// lo que hay que verificar es el cableado que se despliega, incluidos los links de verdad.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,6 +20,7 @@ process.env.CALENDLY_REQUIRE_OPTIN = 'true';
 process.env.CALENDLY_DRY_RUN = 'false'; // 30x en vivo, como en producción
 process.env.CALENDLY_DRY_RUN_ESTADOX = 'false'; // estadox también (Salazar vive ahí desde 2026-08-25)
 process.env.CALENDLY_DRY_RUN_RETIA = 'false'; // retia también (así está en el VPS)
+process.env.CALENDLY_DRY_RUN_COMUNICARTE = 'false'; // y comunicarte (en vivo desde 2026-08-25)
 process.env.ADMIN_LID = '129446371655733@lid';
 
 const scheduler = await import('../src/scheduler/calendly.js');
@@ -32,6 +33,12 @@ const { __resetHealth } = await import('../src/calendly/health.js');
 const MIN = 60000;
 const RETIA = accountOf('retia');
 const ET_RETIA = Object.keys(RETIA.eventTypes)[0];
+const COMUNICARTE = accountOf('comunicarte');
+const ET_COMUNICARTE = Object.keys(COMUNICARTE.eventTypes)[0];
+// Maru Marquez cierra SOLO ComunicArte: es quien se quedaba sin ningún push post-call cuando
+// esa conexión no declaraba `sheets`.
+const MARU = 'soymarumarquez@gmail.com';
+const PHONE_MARU = CLOSERS[MARU].phone;
 
 // Sebastian Salazar es el caso filoso del roster: UNA persona, UNA línea de WhatsApp y DOS
 // identidades (30x + retia). La cuenta se resuelve por EMAIL, así que sus dos calls tienen
@@ -71,7 +78,7 @@ test('push5DueUtc sin end_time cae a la duración asumida (uuid sintético, payl
 
 // ─── El mensaje ───────────────────────────────────────────────────────────────
 
-test('el mensaje lleva los DOS links de Retia, cada uno con su rótulo', () => {
+test('el mensaje lleva los links de Retia, cada uno con su rótulo', () => {
   const msg = buildPush5Message({
     name: 'Juan Pérez',
     firstName: 'Juan',
@@ -83,6 +90,21 @@ test('el mensaje lleva los DOS links de Retia, cada uno con su rótulo', () => {
   for (const s of RETIA.sheets) {
     assert.ok(msg.includes(s.label), `falta el rótulo "${s.label}"`);
     assert.ok(msg.includes(s.url), `falta el link de "${s.label}"`);
+  }
+});
+
+// Cada conexión pide SUS sheets, y esta es la aserción que lo fija. Hasta el 2026-08-26 el
+// sheet de Comunicarte colgaba de la conexión `retia`, así que a Andrea —que cierra en las
+// dos— se le pedía después de una call de Tactical Investor, cuando no le tocaba.
+test('el Push 5 de Retia NO menciona el sheet de otra conexión', () => {
+  const msg = buildPush5Message({
+    name: 'Juan Pérez',
+    firstName: 'Juan',
+    startIso: '2026-07-28T20:00:00Z',
+    sheets: RETIA.sheets,
+  });
+  for (const s of COMUNICARTE.sheets) {
+    assert.ok(!msg.includes(s.url), `el push de Retia no debe traer el sheet de "${s.label}"`);
   }
 });
 
@@ -104,6 +126,43 @@ test('30X no declara `sheets` → jamás se le agenda un Push 5', async () => {
 
   assert.equal(store._rows.filter((p) => p.push_n === 5).length, 0, '30X no puede recibir Push 5');
   assert.equal(store._rows.filter((p) => p.push_n === 3).length, 1, 'pero su Push 3 sigue igual');
+  scheduler.__resetDeps();
+});
+
+// ComunicArte declara sus `sheets` desde el 2026-08-26. Antes, Maru —que cierra solo esa
+// conexión— no recibía NINGÚN push post-call: la conexión no declaraba la lista y el Push 4
+// está apagado en las dos cuentas de Retia. Cero recordatorios de registrar sus calls.
+test('ComunicArte declara `sheets` → su closer recibe el Push 5, con SU sheet', async () => {
+  __resetHealth();
+  const now = Date.parse('2026-07-28T14:00:00Z');
+  const { store, wa, clock } = installHarness(scheduler, {
+    nowMs: now,
+    accounts: [accountOf('comunicarte')],
+    optins: [{ phone: PHONE_MARU, source: 'self', contactJid: '888@lid' }],
+    events: [
+      eventoCon(30, {
+        uuid: 'e-comunicarte',
+        startInMin: 40,
+        closerEmail: MARU,
+        eventType: ET_COMUNICARTE,
+        nowMs: now,
+        account: 'comunicarte',
+      }),
+    ],
+  });
+
+  await scheduler.runCalendlyPoll();
+  const p5 = store._rows.find((p) => p.push_n === 5);
+  assert.ok(p5, 'se agendó el Push 5 de ComunicArte');
+
+  clock.ms = now + 95 * MIN; // start (+40) + 30 de call + 10 de delay, con margen
+  await scheduler.runCalendlyDelivery();
+
+  const enviados = wa.sent.filter((m) => m.text.includes('Registra la call'));
+  assert.equal(enviados.length, 1, 'un solo recordatorio');
+  assert.ok(enviados[0].text.includes(COMUNICARTE.sheets[0].url), 'con el sheet de Comunicarte');
+  for (const s of RETIA.sheets)
+    assert.ok(!enviados[0].text.includes(s.url), `y sin el sheet de "${s.label}", que es de otra conexión`);
   scheduler.__resetDeps();
 });
 
@@ -204,8 +263,11 @@ test('el guard de obsolescencia NO mata el Push 5: se entrega con la call ya ter
   assert.equal(store._rows.find((p) => p.push_n === 5).status, 'sent');
   const enviados = wa.sent.filter((m) => m.text.includes('Registra la call'));
   assert.equal(enviados.length, 1, 'se envía exactamente un recordatorio');
-  assert.ok(enviados[0].text.includes(RETIA.sheets[0].url), 'con el primer sheet');
-  assert.ok(enviados[0].text.includes(RETIA.sheets[1].url), 'y con el segundo');
+  // Recorre la lista en vez de indexar posiciones: cuántos sheets tiene Retia es una decisión
+  // de operación que ya cambió una vez (el de Comunicarte se mudó a su conexión el 2026-08-26)
+  // y este test es sobre el guard de obsolescencia, no sobre el tamaño de la lista.
+  for (const s of RETIA.sheets)
+    assert.ok(enviados[0].text.includes(s.url), `con el sheet de "${s.label}"`);
   scheduler.__resetDeps();
 });
 

@@ -65,6 +65,51 @@ test('prospectPhoneOf usa text_reminder_number (null si vacío)', () => {
   assert.equal(prospectPhoneOf({}), null);
 });
 
+// Segunda fuente (2026-08-26): Retia y ComunicArte pusieron el teléfono como PREGUNTA del
+// formulario y dejaron la casilla nativa apagada. Los dos textos de abajo son los reales de
+// producción, typo incluido — por eso el match va normalizado y no por string exacto.
+test('prospectPhoneOf cae a questions_and_answers cuando no hay text_reminder_number', () => {
+  const retia = {
+    text_reminder_number: null,
+    questions_and_answers: [{ question: 'Ingrese su número telefonico:', answer: '+57 316 3428340' }],
+  };
+  const comunicarte = {
+    text_reminder_number: null,
+    questions_and_answers: [{ question: 'Ingrese su número telefónico', answer: '+57 315 4995203' }],
+  };
+  assert.equal(prospectPhoneOf(retia), '+57 316 3428340');
+  assert.equal(prospectPhoneOf(comunicarte), '+57 315 4995203');
+});
+
+test('prospectPhoneOf prefiere text_reminder_number sobre la pregunta', () => {
+  const inv = {
+    text_reminder_number: '+57 310 4130771',
+    questions_and_answers: [{ question: 'Ingrese su número telefonico:', answer: '+57 999 9999999' }],
+  };
+  assert.equal(prospectPhoneOf(inv), '+57 310 4130771');
+});
+
+test('prospectPhoneOf ignora respuestas numéricas de preguntas que NO son de teléfono', () => {
+  // El caso que hace daño: un link wa.me hacia una cifra de facturación.
+  const inv = {
+    text_reminder_number: null,
+    questions_and_answers: [{ question: '¿Cuánto facturas al mes?', answer: '8000000' }],
+  };
+  assert.equal(prospectPhoneOf(inv), null);
+});
+
+test('prospectPhoneOf ignora respuestas de texto libre a una pregunta de teléfono', () => {
+  const inv = {
+    text_reminder_number: null,
+    questions_and_answers: [
+      { question: 'Please share anything that will help prepare for our meeting.', answer: 'Vendo licores' },
+      { question: 'Tu WhatsApp', answer: 'el mismo del correo' },
+      { question: 'Celular', answer: '123' }, // muy corto para ser marcable
+    ],
+  };
+  assert.equal(prospectPhoneOf(inv), null);
+});
+
 test('resolveCloser mapea closers por email (case-insensitive)', () => {
   assert.equal(resolveCloser('sebastian.salazar@30x.com').phone, '+573054312905');
   assert.equal(resolveCloser('SEBASTIAN.MARIN@30x.com').phone, '+573170623894'); // case-insensitive · rotado 2026-07-30
