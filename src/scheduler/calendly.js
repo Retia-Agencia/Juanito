@@ -267,6 +267,7 @@ async function deps() {
     getDueCalendlyPushes: db.getDueCalendlyPushes,
     claimCalendlyPush: db.claimCalendlyPush,
     revertCalendlyPush: db.revertCalendlyPush,
+    reclaimStuckCalendlyPushes: db.reclaimStuckCalendlyPushes,
     markCalendlyPushSent: db.markCalendlyPushSent,
     markCalendlyPushSkipped: db.markCalendlyPushSkipped,
     // Auditoría horaria: pushes perdidos por closer (ver runSkipAudit).
@@ -1159,6 +1160,18 @@ export async function runCalendlyDelivery() {
   _delivering = true;
   try {
     const d = await deps();
+    // Antes de leer nada: rescatar lo que dejó huérfano un proceso caído (ver
+    // reclaimStuckCalendlyPushes en src/db/index.js). Va ACÁ y no en el arranque porque acá es
+    // donde se sabe que no hay ningún tick en vuelo —`_delivering` lo garantiza—, así que no
+    // puede revivir una fila que alguien esté enviando en este instante. Lo que revive vuelve
+    // a 'scheduled' y entra en el mismo lote, con todos sus gates: si la llamada ya pasó, el
+    // guard de obsolescencia la marca 'skipped'. Enterrarla con su motivo también es ganar;
+    // lo que no se puede es dejarla en un estado que nadie mira.
+    if (d.reclaimStuckCalendlyPushes) {
+      const rescatadas = d.reclaimStuckCalendlyPushes();
+      if (rescatadas)
+        console.warn(`[Calendly] ${rescatadas} push(es) atascado(s) en 'sending' devueltos a 'scheduled' (proceso caído a mitad de entrega)`);
+    }
     const due = d.getDueCalendlyPushes();
     let procesados = 0;
     for (const p of due) {

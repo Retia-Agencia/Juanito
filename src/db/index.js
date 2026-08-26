@@ -376,6 +376,34 @@ export function revertCalendlyPush(id) {
     .run(id);
 }
 
+// Rescata las filas que quedaron RECLAMADAS por un proceso que murió antes de resolverlas.
+// `claimCalendlyPush` las pasa a 'sending' y todos los caminos de `runCalendlyDelivery` las
+// terminan (sent/skipped) o las revierten… salvo uno: que el proceso se caiga en el medio.
+// Ahí la fila queda en 'sending' PARA SIEMPRE, porque `getDueCalendlyPushes` solo mira
+// 'scheduled'. Nadie la reintenta y nadie la entierra: el push simplemente no existe más.
+//
+// 🩸 Medido el 2026-08-26: dos Push 0 muertos así (ids 3455 y 3470), 15 horas en el limbo. El
+// dashboard los venía marcando en rojo desde las 00:16 (check `pushes_atascados`), pero el
+// canal de WhatsApp de esas alertas estaba apagado, así que nadie se enteró. Y la causa de
+// fondo no es rara: el bot se reinicia por cada caída de socket de WhatsApp (razón 428), o
+// sea que ESTO pasa cada vez que un push cae dentro de la ventana de un reinicio.
+//
+// SIN umbral de antigüedad, y es deliberado. El llamador es `runCalendlyDelivery` al ABRIR el
+// tick, y ahí no hay ninguna entrega en vuelo: el guard `_delivering` impide dos ticks
+// solapados, y el único otro proceso que abre esta DB —el dashboard— jamás escribe en
+// `calendly_pushes`. O sea que toda fila en 'sending' en ese instante es huérfana por
+// construcción, no por vieja. No hay doble envío que evitar.
+//
+// Se intentó primero con un umbral de 10 minutos sobre `due_at` (el proxy que usa el check
+// `pushesAtascados` del dashboard) y resultó peor que inútil: un Push 3 en catch-up nace con
+// `due_at = ahora`, así que la fila huérfana se quedaba 10 minutos más en el limbo… justo los
+// minutos que le quedaban antes de que la llamada empezara y el push perdiera sentido.
+export function reclaimStuckCalendlyPushes() {
+  return db
+    .prepare(`UPDATE calendly_pushes SET status = 'scheduled' WHERE status = 'sending'`)
+    .run().changes;
+}
+
 export function markCalendlyPushSent(id) {
   return db
     .prepare(`UPDATE calendly_pushes SET status = 'sent', sent_at = datetime('now') WHERE id = ?`)
