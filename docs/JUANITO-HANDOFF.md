@@ -7,8 +7,9 @@ un cambio relevante.
 
 Última actualización: **2026-08-26** (§18.BN — el teléfono del lead se lee también del formulario;
 rescate de pushes huérfanos; alertas del watchdog por WhatsApp; el Push 5 de Comunicarte se mudó a
-su conexión; el contador de `entrypoint.sh` se resetea tras un arranque sano. **Sigue abierto: el
-bot sale con `exit(1)` ante un 428 rutinario** — leer §18.BN antes de tocar reconexión)
+su conexión; el contador de `entrypoint.sh` se resetea tras un arranque sano. **Construido y
+APAGADO: la reapertura en caliente del socket ante un 428 (`WA_HOT_REOPEN`)** — leer §18.BN antes
+de prenderla)
 
 ---
 
@@ -5645,7 +5646,7 @@ reintenta cada minuto **para siempre**; y `mirrorToDev` solo excluye `'paused'` 
 `'paused-closer'` ⇒ una copia cada 6h, eterna, por fila. Hoy no hay ningún closer pausado
 (`settings` verificado), así que es un cañón cargado, no un incendio. **No arreglado.**
 
-#### 🟡 PARCIAL — el bot reinicia por cada caída de socket (el contador ya se resetea)
+#### 🟡 El bot reinicia por cada caída de socket — arreglado en dos mitades (una live, una apagada)
 
 Encontrado de paso y **sin arreglar**. Entre las 02:44 y las 16:00 UTC del 2026-08-26 el bot arrancó
 **5 veces**, cada una con su reconexión de Baileys:
@@ -5701,8 +5702,68 @@ el `sh` del Mac:
 docker run --rm -v "$PWD:/ep" -w /ep --entrypoint sh juanito-agent /ep/scripts/test-entrypoint.sh /ep
 ```
 
-**Sigue abierto (a):** el `exit(1)` ante un 428. El reset hace que ya no acumule hacia el borde,
-pero el bot sigue pagando un proceso nuevo y una reconexión de Baileys por cada cierre transitorio.
+##### 🟡 (a) CONSTRUIDO Y APAGADO — reapertura en caliente del socket (2026-08-26)
+
+Está en producción pero **inerte**: `WA_HOT_REOPEN=false`. Con el flag apagado el comportamiento
+es byte por byte el de antes, y hay un test que lo fija para **todos** los códigos.
+
+**La distinción.** Hasta ahora, cualquier cierre con la sesión ya conectada era `exit(1)`. Eso
+trata igual dos cosas opuestas: un **rechazo** de WhatsApp (405, 403 — "no me gusta lo que estás
+haciendo", y la respuesta correcta es silencio y backoff largo) y un **cable cortado** (428, 408 —
+el socket se cayó, sin juicio de valor, y la respuesta correcta es volver a conectarlo).
+
+**ALLOWLIST, nunca denylist.** Solo **428** y **408** reabren. Todo lo demás, incluido cualquier
+código que WhatsApp invente mañana, cae al `exit(1)` de siempre. Los que parecen candidatos y no
+lo son, que es donde estaba el pensamiento:
+
+| Código | Por qué NO reabre |
+|---|---|
+| `440` connectionReplaced | otra sesión tomó el lugar ⇒ reabrir es **pelearse por la sesión en loop**, dos clientes turnándose para echar al otro |
+| `503` unavailableService | caída del lado de WhatsApp ⇒ reabrir es martillar; el backoff de 30→300s es mejor herramienta |
+| `500` badSession · `411` | el problema es la sesión y reabrirla la reproduce idéntica; un proceso nuevo al menos re-lee el auth state del disco |
+
+**El presupuesto**, porque un reopen sin límite ES el softban con otro nombre: 3 reaperturas,
+esperas de **5s/15s/45s** (nunca inmediata — reabrir al instante contra un WhatsApp que está
+cortando es el patrón que dispara la detección), y al agotarse se sale para que `entrypoint.sh`
+haga lo suyo. El backoff no se reemplaza: se le agrega un escalón antes. El presupuesto se
+reinicia tras **10 min** de conexión sana, **el mismo número y el mismo concepto** que el reset de
+`ATTEMPT`: dos umbrales distintos para la misma idea es garantía de que algún día se contradigan.
+
+**Las tres cosas que había que resolver para que esto fuera seguro**, y por qué lo es:
+
+1. **El socket viejo no se muere solo.** `createSocket()` registra los listeners sobre el `ev` del
+   socket NUEVO, así que el nuevo nunca hereda basura; el problema es el VIEJO, que se queda con
+   su WebSocket, sus timers y sus listeners. Con el 515 pasaba una vez tras vincular y no
+   molestaba; repetido cada caída, se acumula — y el contenedor `agent` **no tiene `mem_limit`**,
+   así que crecería en silencio. Ahora hay teardown explícito (`ev.removeAllListeners()` +
+   `end()`) antes de crear el nuevo.
+2. **Doble procesamiento durante el solape.** Si el socket viejo entrega un mensaje mientras el
+   nuevo ya está arriba, serían dos respuestas de Juanito al mismo mensaje. La red ya existía y es
+   la que hace viable todo esto: `markIfNew` (`src/index.js:96`) es un `INSERT` con `UNIQUE` **en
+   SQLite**, no un Set en memoria. **Sin ese dedup persistente esta feature no se debería
+   construir.**
+3. **La cola de envío.** `sendMessage` encola un closure que lee la variable de módulo `sock` **al
+   ejecutarse**, no al encolarse ⇒ lo encolado sale por el socket nuevo, gratis. Y acá hay un
+   argumento a favor que apareció leyendo el código: la cola **no reintenta**
+   (`send-queue.js:86` hace `job.reject` y listo), así que hoy cada 428 tira **toda la cola en
+   memoria**. Menos muertes de proceso = menos cola perdida y menos filas huérfanas en `sending`.
+
+**Dónde vive la decisión.** En `src/whatsapp/disconnect-logic.js`, **puro**, mismo patrón que
+`push-logic.js` / `outcome-logic.js`: `whatsapp/index.js` no es testeable (importarlo abre
+Baileys) y esta es la decisión más cara del sistema. 16 tests en
+`test/whatsapp.disconnect-logic.test.js`, y el que más importa es el invariante del softban:
+
+> 🔒 **sin haber conectado y con sesión vinculada, NADA reabre — ni siquiera un 428.** Un 428
+> antes de haber conectado no es "se cayó el cable": es WhatsApp cerrándonos la puerta.
+
+**Lo que NO sabemos todavía y hay que decirlo:** que el reopen efectivamente reconecte. Baileys
+podría necesitar re-hidratar el auth state, o tirar un 515 después del reopen. Eso no lo prueba
+ningún test — se averigua prendiendo el flag y mirando.
+
+**Rollout.** `WA_HOT_REOPEN=true` en el `.env` + `docker compose up -d` (sin `--build`, una
+reconexión). Éxito a 48h: dejan de aparecer líneas `[entrypoint] Intento N` y aparecen
+`reapertura 1/3`. **Abortar sin discutir ante cualquier `405` o `403` en el log** — eso es
+WhatsApp diciendo que no le gusta el patrón. Rollback: el mismo comando con `false`.
 
 #### Estado de los dos programas de Retia al cierre
 
