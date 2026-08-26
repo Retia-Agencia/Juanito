@@ -5,8 +5,10 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-08-04** (§18.AZ–§18.BF desplegados; el setteo del closer quedó VIVO
-para los 6 closers de 30x)
+Última actualización: **2026-08-26** (§18.BN — el teléfono del lead se lee también del formulario;
+rescate de pushes huérfanos; alertas del watchdog por WhatsApp; el Push 5 de Comunicarte se mudó a
+su conexión. **Abierto y sin arreglar: el bot reinicia por cada caída de socket 428 y el contador
+de `entrypoint.sh` nunca se resetea** — leer §18.BN antes de tocar reconexión)
 
 ---
 
@@ -5516,6 +5518,172 @@ futuras), los leads **sí** traen teléfono, y los hosts vivos son `registro@` (
 
 ---
 
+### 18.BN 🔵 El teléfono sí llegaba: lo estábamos leyendo del campo equivocado (2026-08-26) — EN PRODUCCIÓN
+
+Auditoría en vivo de los pushes de los dos programas de Retia. Salieron cuatro cosas, más un
+incidente que sigue abierto. El hilo conductor de todas: **el sistema tenía el dato o la alerta, y
+el camino de salida estaba cortado un paso más adelante.**
+
+#### 1. El bloqueante de ComunicArte se resolvió solo, y no nos enteramos
+
+§18.BM lo dejó como "los leads de ComunicArte llegan SIN TELÉFONO, se resuelve del lado de Calendly".
+Se resolvió del lado de Calendly — **y nosotros seguimos sin verlo.** El corte es exacto y se midió
+contra las reservas reales:
+
+| Conexión | Pregunta agregada | Antes | Después |
+|---|---|---|---|
+| `retia` | 2026-08-25 20:58 UTC | `text_reminder_number` | + `"Ingrese su número telefonico:"` |
+| `comunicarte` | 2026-08-26 01:41 UTC | nada, 90 reservas seguidas | `"Ingrese su número telefónico"` |
+
+Las dos empresas agregaron una pregunta obligatoria de teléfono al formulario y **no prendieron la
+casilla nativa de SMS**. `prospectPhoneOf` solo miraba `text_reminder_number` ⇒ el número llegaba,
+se guardaba en `questions_and_answers`, y el push salía igual con "(mándalo manual)".
+
+**Por qué pegó SOLO en Retia y ComunicArte, que es el dato que importa.** Medido sobre 371 invitees
+reales de las cuatro conexiones: 30X y EstadoX **tampoco** traen el número en Calendly (0 de 214),
+pero tienen `hubspot:true` y el fallback por CRM se los tapa desde siempre. Retia y ComunicArte son
+las únicas con `hubspot:false`. **No tienen red, así que son las únicas donde este bug se ve** — y
+son justo las dos que estrenaron la pregunta. Un hueco viejo que solo se destapa cuando llega alguien
+sin red debajo.
+
+**El arreglo** ([`src/calendly/index.js`](../src/calendly/index.js)) exige **dos** condiciones: que la
+pregunta hable de un teléfono **y** que la respuesta tenga forma de teléfono. Las dos hacen falta:
+
+· solo por **forma**, un "¿cuánto facturas al mes?" → `8000000` pasa el filtro y termina en un link
+  `wa.me` hacia un número inventado. Un falso negativo nos deja como estábamos; un falso positivo
+  manda un mensaje mal dirigido;
+· solo por **pregunta**, "el mismo del correo" o "no tengo" también pasan — el campo es texto libre.
+
+El match de la pregunta va normalizado (sin acentos, minúsculas) porque **las dos empresas ya la
+escribieron distinto**, con y sin tilde, con y sin dos puntos. Cablear el texto exacto sería cablear
+el typo. Y va por **RAÍZ** (`'telefon'`), porque `'telefono'` no es substring de `'telefonico'` — la
+8ª letra es `i`, no `o`. Ese detalle tonto tumbó el primer intento del arreglo, y por eso los tests
+usan los dos textos de producción literales en vez de uno inventado.
+
+**Verificado antes de desplegar** contra los 371 invitees: rescata 5 (4 de ComunicArte, 1 de Retia),
+**cero falsos positivos**. Las otras dos preguntas vivas del formulario ("Please share anything…",
+"Cuéntenos algo…") son texto libre y nunca traen respuesta con forma de número.
+
+⚠️ **El comentario de cabecera de `calendly/index.js` decía lo contrario** ("el teléfono vive en
+`text_reminder_number`, NO en `questions_and_answers`, que viene vacío"). Era cierto cuando se midió
+y dejó de serlo el día que un cliente tocó su formulario. Corregido, porque un comentario que afirma
+una medición vieja como si fuera una ley es peor que no tener comentario.
+
+#### 2. Los pushes que un proceso caído dejaba en 'sending'
+
+`claimCalendlyPush` pasa la fila a `'sending'` y `runCalendlyDelivery` la resuelve o la revierte por
+todos sus caminos… salvo uno: **que el proceso muera en el medio**. Ahí queda en `'sending'` para
+siempre, porque `getDueCalendlyPushes` solo lee `'scheduled'`. Ni se entrega ni se entierra.
+
+Medido: ids **3455** (instagram) y **3470** (abogados), 15 horas muertos. Dos Push 0 perdidos.
+
+`reclaimStuckCalendlyPushes()` corre al **abrir** el tick de entrega. **No lleva umbral de
+antigüedad**, y eso es lo interesante: ahí no hay nada en vuelo (el guard `_delivering` impide ticks
+solapados, y el dashboard —el otro proceso con esta DB abierta— nunca escribe en `calendly_pushes`),
+así que toda fila en `'sending'` en ese instante es huérfana **por construcción, no por vieja**.
+
+🩸 Se intentó primero con los 10 minutos sobre `due_at` que usa el check `pushes_atascados` del
+dashboard, y era **peor que inútil**: un Push 3 en catch-up nace con `due_at = ahora`, así que la
+fila huérfana esperaba 10 minutos más… justo los que le quedaban antes de que empezara la llamada.
+**Lección: un umbral copiado de un check de diagnóstico no sirve como criterio de acción.** El check
+puede permitirse un proxy flojo; el que actúa, no.
+
+Lo rescatado vuelve al mismo lote con todos sus gates. Si la llamada ya pasó, el guard de
+obsolescencia la cierra como `'skipped'` con su motivo — enterrarla también es ganar; lo que no se
+puede es dejarla donde nadie la mira.
+
+#### 3. El watchdog gritaba y nadie lo oía
+
+El dashboard **ya tenía** el check `pushes_atascados` y **ya había detectado** los dos huérfanos: 5
+alertas escritas en `dash_alerts` desde las 00:16, todas con `enviado_wa=0`. `DASH_ALERTS_WHATSAPP`
+nunca se prendió, así que el diagnóstico correcto murió en una tabla que nadie mira.
+
+Prendido el 2026-08-26 (`DASH_ALERTS_WHATSAPP=true`, solo recrea `dash`, no toca al bot). El §18.AV
+pedía **medir el volumen antes** de prenderlo, y esa medición es la que faltaba: **~5 alertas/día**
+con dedup de 6h, a los 4 destinos de `ADMIN_LID`.
+
+**La lección, que es la misma de EstadoX y del buzón-rol:** un detector sin canal de salida no es
+media solución, es cero. El sistema no falló por no darse cuenta — se dio cuenta perfecto.
+
+#### 4. El Push 5 de Comunicarte se mudó a su conexión
+
+El sheet de Comunicarte colgaba de la lista `sheets` de la conexión `retia`, porque cuando se cableó
+el Push 5 (§18.AP) los closers de Retia llenaban los dos y ComunicArte no era una conexión todavía.
+Con la #4 viva eso dejó dos huecos:
+
+· **Maru Marquez cierra SOLO ComunicArte** ⇒ conexión sin `sheets` + Push 4 apagado = **cero pushes
+  post-call**. Ningún recordatorio de registrar sus calls, nunca;
+· **Andrea Machado cierra en las dos** ⇒ recibía el link de Comunicarte pegado a sus calls de
+  Tactical Investor, o sea justo cuando no le servía. Un recordatorio que pide de más enseña a
+  ignorar el recordatorio.
+
+**Regla que queda:** cada conexión declara los sheets de SUS calls. El Push 5 lo decide la
+**conexión de la call** (`accountOfCloser`), no la persona — que es lo que el modelo ya decía y la
+configuración contradecía.
+
+#### 5. El espejo de dev: NO estaba en loop (verificado)
+
+La sospecha era que un push en estado pendiente generaba copias infinitas. **No.** El fix de §18.BM
+(commit `3992fff`) quedó desplegado y hace lo suyo: un Push 3 imposible de entregar se reintenta cada
+minuto pero solo hasta que empieza la llamada (techo de ~25 min por el guard de obsolescencia), y con
+el dedup de 6h eso es **una copia**, no 29. Volumen normal medido: **~25 copias/día** (15 pushes + 10
+digests de 5 closers). Más que eso es señal, no ruido.
+
+El encabezado ya trae lo que hacía falta —conexión · closer · resultado, y debajo el push byte por
+byte igual al del closer—, así que no hubo nada que cambiar:
+
+```
+🪞 *espejo dev* — push3 · Retia · Dana Rodriguez · resultado: *skipped-optin*
+
+<el push tal cual>
+```
+
+⚠️ **Lo que SÍ queda cargado: `paused-closer` es inmortal.** Los push 4 y 5 salen del worker **antes**
+del guard de obsolescencia, así que a ellos no los mata que la llamada haya pasado. Con
+`/calendly off <closer>` el resultado es `paused-closer`, la fila se revierte a `scheduled` y se
+reintenta cada minuto **para siempre**; y `mirrorToDev` solo excluye `'paused'` (la pausa global), no
+`'paused-closer'` ⇒ una copia cada 6h, eterna, por fila. Hoy no hay ningún closer pausado
+(`settings` verificado), así que es un cañón cargado, no un incendio. **No arreglado.**
+
+#### 🔴 ABIERTO — el bot reinicia por cada caída de socket, y el contador no se resetea
+
+Encontrado de paso y **sin arreglar**. Entre las 02:44 y las 16:00 UTC del 2026-08-26 el bot arrancó
+**5 veces**, cada una con su reconexión de Baileys:
+
+```
+Intento 1 de 8 → razón 428 → 30s     Intento 4 de 8 → razón 428 → 240s
+Intento 2 de 8 → razón 428 → 60s     Intento 5 de 8  ← acá (estable 3.4h)
+Intento 3 de 8 → razón 428 → 120s
+```
+
+**428 = `connectionClosed`**, un cierre transitorio y rutinario de WhatsApp. Pero
+[`whatsapp/index.js:198`](../src/whatsapp/index.js) sale con `exit(1)` ante **cualquier** cierre si ya
+había conectado. Esa conservadurismo nació del softban de julio y era correcto para un RECHAZO (405);
+para un 428 rutinario cuesta un proceso nuevo y una reconexión completa cada vez, que es exactamente
+la cadena que el diseño quiere evitar.
+
+Y el agravante está en [`entrypoint.sh:7`](../entrypoint.sh): **`ATTEMPT` nunca se resetea.** El bot
+corre sano 4 horas y el contador sigue subiendo igual. A los 8 se rinde y le pasa la pelota a la
+restart policy de Docker, **que no tiene backoff**. O sea: 8 caídas sueltas repartidas a lo largo de
+un día lo sacan del régimen que lo protege, sin que nunca haya habido un crash loop de verdad.
+
+**Lo que hay que decidir antes de tocar:** (a) distinguir 428 de 405 y reabrir el socket en caliente
+solo para el primero, con tope; y/o (b) resetear `ATTEMPT` tras N minutos de uptime sano. Lo segundo
+es de una línea y no toca el camino de reconexión; lo primero es el arreglo de fondo y es donde está
+el riesgo. **No hacerlo con el bot ya inestable.**
+
+#### Estado de los dos programas de Retia al cierre
+
+| | Tactical Investor (`retia`) | Método Comunicarte (`comunicarte`) |
+|---|---|---|
+| Dry-run | `false` (vivo) | `false` (vivo) ⚠️ ver abajo |
+| Push 3 (14d) | 44 enviados | 1 enviado, 4 agendados |
+| Push 5 | sí, sheet propio | sí desde hoy, sheet propio |
+| Teléfono del lead | 31 nativo + QA | **100% por QA** |
+
+⚠️ **ComunicArte quedó en vivo sin el ciclo mudo que pedía §18.BM.** `CALENDLY_DRY_RUN_COMUNICARTE`
+está en `false` en el VPS desde el 25-ago. No se revirtió (ya hay pushes entregados y closers con
+opt-in), pero queda anotado que el procedimiento de alta se saltó su propio paso.
 
 ---
 
