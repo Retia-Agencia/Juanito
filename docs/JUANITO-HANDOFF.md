@@ -5,7 +5,7 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-08-26** (§18.BN — el teléfono del lead se lee también del formulario;
+Última actualización: **2026-08-26** (§18.BN y §18.BO — el teléfono del lead se lee también del formulario;
 rescate de pushes huérfanos; alertas del watchdog por WhatsApp; el Push 5 de Comunicarte se mudó a
 su conexión; el contador de `entrypoint.sh` se resetea tras un arranque sano. **Construido y
 APAGADO: la reapertura en caliente del socket ante un 428 (`WA_HOT_REOPEN`)** — leer §18.BN antes
@@ -5755,6 +5755,36 @@ Baileys) y esta es la decisión más cara del sistema. 16 tests en
 
 > 🔒 **sin haber conectado y con sesión vinculada, NADA reabre — ni siquiera un 428.** Un 428
 > antes de haber conectado no es "se cayó el cable": es WhatsApp cerrándonos la puerta.
+
+##### 🔬 Evidencia en producción — el 503 del 2026-08-26 20:36 UTC
+
+A los 26 minutos de haber prendido el flag, WhatsApp cortó de verdad. El trace completo, que es
+la mejor prueba que existe de todo lo construido hoy:
+
+```
+[WhatsApp] Conexión cerrada — razón: 503
+[WhatsApp] Salgo (backoff de entrypoint.sh) — cierre 503: no está en la allowlist de reabribles
+[entrypoint] Corrió 1592s (≥ 600s) antes de caerse: caída aislada, reinicio el contador.
+[entrypoint] Intento 1 de 8
+[WhatsApp] Conectado ✅
+```
+
+Cuatro cosas dispararon en cadena, solas:
+
+1. **La allowlist se sostuvo con el flag PRENDIDO.** Un 503 es caída del lado de WhatsApp, no un
+   cable cortado, y el sistema decidió NO reabrir en caliente. La decisión conservadora
+   ejecutándose sobre un evento real, no sobre un test.
+2. **El reset del `ATTEMPT` funcionó.** 1592s de uptime ⇒ caída aislada. Sin el arreglo de esa
+   tarde, la línea siguiente habría sido `Intento 2 de 8`.
+3. **Volvió solo**, y los pushes no se detuvieron (3 entregados en la ventana, 6 polls).
+
+⚠️ **Lo que ese evento NO probó: el reopen en caliente.** No hubo ningún 428 en la ventana de 30
+min, así que la función PRINCIPAL de la feature sigue sin ejercitarse. Lo demostrado son sus
+barandas. **No confundir "se portó bien" con "funciona"** — la primera vez que aparezca un
+`reapertura 1/3` en el log es la primera prueba real.
+
+**Y el 503 explica algo más:** WhatsApp estuvo inestable de su lado ese día. Eso encaja con las
+cuatro caídas 428 de la mañana mejor que cualquier teoría sobre nuestra infraestructura.
 
 **Lo que NO sabemos todavía y hay que decirlo:** que el reopen efectivamente reconecte. Baileys
 podría necesitar re-hidratar el auth state, o tirar un 515 después del reopen. Eso no lo prueba
