@@ -19,6 +19,14 @@ import db from '../db/index.js';
 import { phonesMatch, extractQuotedText, extractSharedContacts, describeSharedContacts } from '../common/utils.js';
 import { createSendQueue } from './send-queue.js';
 import { createTtlCache } from './subject-cache.js';
+import { decideOnClose, SANO_MS } from './disconnect-logic.js';
+
+// Reapertura del socket EN CALIENTE ante un cierre de cable (428/408), en vez de matar el
+// proceso (§18.BN). APAGADO por default y a propósito: prenderlo cambia el camino que provocó
+// un softban real en julio, así que se enciende mirando y con el rollback a un `docker compose
+// up -d` de distancia. Con el flag apagado el comportamiento es EXACTAMENTE el de antes, y hay
+// un test que lo fija para todos los códigos.
+const HOT_REOPEN = () => process.env.WA_HOT_REOPEN === 'true';
 
 const SESSION_PATH = process.env.WA_SESSION_PATH || './data/wa-session';
 const QR_PATH = process.env.WA_QR_PATH || './data/wa-qr.png';
@@ -125,6 +133,10 @@ export async function connect({ onMessage, onGroupJoin, onGroupChange }) {
     let hasConnected = false;
     let pairingRetries = 0;
     const MAX_PAIRING_RETRIES = 5;
+    // Presupuesto de reaperturas en caliente y cuándo abrió la conexión actual (para saber si
+    // duró lo suficiente como para que la caída cuente como aislada — ver disconnect-logic.js).
+    let reopens = 0;
+    let connectedAtMs = 0;
 
     function createSocket() {
       sock = makeWASocket({
@@ -173,6 +185,7 @@ export async function connect({ onMessage, onGroupJoin, onGroupChange }) {
             : null;
           console.log(`[WhatsApp] Conectado ✅ (JID: ${botJid}, LID: ${botLidNum})`);
           hasConnected = true;
+          connectedAtMs = Date.now();
           resolve();
           return;
         }
@@ -181,54 +194,66 @@ export async function connect({ onMessage, onGroupJoin, onGroupChange }) {
           const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
           console.log(`[WhatsApp] Conexión cerrada — razón: ${reason}`);
 
-          if (reason === DisconnectReason.loggedOut) {
-            console.error('[WhatsApp] Sesión cerrada (loggedOut). Borrar ./data/wa-session y re-vincular.');
-            process.exit(2);
+          // La DECISIÓN vive en el módulo puro y está testeada ahí (whatsapp/disconnect-logic.js);
+          // acá solo queda el EFECTO. El invariante del softban (nada reabre en caliente si este
+          // proceso nunca llegó a conectar, ver §18.BN y el caso 4 de decideOnClose) lo garantiza
+          // ese módulo, no este archivo — que es justamente el punto de haberlo separado.
+          //
+          // `creds.me` y NO `creds.registered`: en esta sesión `registered` vale `false` aunque
+          // lleve meses vinculada, porque Baileys solo lo marca en el flujo de pairing-code, no
+          // en el de QR. Usar `registered` mandaba una sesión buena a la rama de pairing
+          // (medido 2026-07-28: 5 reintentos de QR contra un 405).
+          const d = decideOnClose({
+            statusCode: reason,
+            hasConnected,
+            hasCreds: !!state.creds.me?.id,
+            reopens,
+            uptimeMs: connectedAtMs ? Date.now() - connectedAtMs : 0,
+            healthyMs: Number(process.env.WA_HEALTHY_MS) || SANO_MS,
+            hotReopen: HOT_REOPEN(),
+            pairingRetries,
+            maxPairing: MAX_PAIRING_RETRIES,
+          });
+
+          if (d.action === 'exit') {
+            if (d.code === 2)
+              console.error('[WhatsApp] Sesión cerrada (loggedOut). Borrar ./data/wa-session y re-vincular.');
+            else console.error(`[WhatsApp] Salgo (backoff de entrypoint.sh) — ${d.reason}`);
+            process.exit(d.code);
           }
 
-          // Flujo NORMAL de Baileys justo después de vincular: WhatsApp pide reiniciar el
-          // socket. No es un rechazo — se reabre en caliente una sola vez.
-          if (reason === DisconnectReason.restartRequired) {
-            console.log('[WhatsApp] restartRequired (515): reabriendo socket…');
-            setTimeout(createSocket, 1000);
+          if (d.action === 'pair') {
+            pairingRetries += 1;
+            console.log(`[WhatsApp] ${d.reason}, en ${Math.round(d.waitMs / 1000)}s`);
+            setTimeout(createSocket, d.waitMs);
             return;
           }
 
-          if (hasConnected) {
-            process.exit(1);
-          } else if (state.creds.me?.id) {
-            // ⚠️ SOFTBAN (incidente 2026-07-28). `hasConnected` es por PROCESO, así que tras
-            // cualquier restart con sesión ya vinculada un rechazo de WhatsApp caía en la rama
-            // de "pairing" y reintentaba cada 3s PARA SIEMPRE. Como el proceso nunca crashea,
-            // el backoff de entrypoint.sh no llegaba a entrar nunca — el mismo loop rápido de
-            // reconexiones desde datacenter que ya provocó el softban anterior.
-            // Con la sesión vinculada NO hay QR que reintentar: un cierre antes de abrir es un
-            // RECHAZO (405 = rate-limit de WhatsApp). Salimos para que entrypoint.sh aplique
-            // su backoff exponencial (30→60→120→240→300s), que es justo para esto.
+          // action === 'reopen'
+          // El 515 no gasta presupuesto (es parte del handshake de pairing); una caída sí.
+          if (d.resetReopens) reopens = 0;
+          if (reason !== DisconnectReason.restartRequired) reopens += 1;
+          connectedAtMs = 0;
+          console.log(`[WhatsApp] ${d.reason} — reabriendo en ${Math.round(d.waitMs / 1000)}s`);
+          const viejo = sock;
+          setTimeout(() => {
+            // ⚠️ Enterrar el socket viejo ANTES de crear el nuevo. `createSocket` registra todos
+            // los listeners sobre el `ev` del socket NUEVO, así que el nuevo nunca hereda basura;
+            // el problema es el VIEJO, que se queda con su WebSocket, sus timers de keepalive y
+            // sus listeners vivos. Con el 515 eso pasaba una sola vez tras vincular y no molestaba.
+            // Repetido cada vez que se cae el cable, se acumula — y el contenedor `agent` no tiene
+            // mem_limit, así que crecería en silencio.
             //
-            // El indicador de "sesión vinculada" es `creds.me` — NO `creds.registered`, que en
-            // esta sesión vale `false` aunque lleve meses vinculada: Baileys solo lo marca en el
-            // flujo de pairing-code, no en el de QR. Usar `registered` mandaba una sesión buena
-            // a la rama de pairing (medido el 2026-07-28: 5 reintentos de QR contra un 405).
-            console.error(
-              `[WhatsApp] Rechazo de WhatsApp (razón ${reason}) con sesión ya vinculada. ` +
-              `Salgo para que entrypoint.sh espacie el reintento (NO reintentar en caliente).`
-            );
-            process.exit(1);
-          } else {
-            // Pairing genuino (aún sin credenciales): cada QR que expira cierra el socket y
-            // hay que pedir otro. Acotado y con backoff, nunca infinito a 3s.
-            pairingRetries += 1;
-            if (pairingRetries > MAX_PAIRING_RETRIES) {
-              console.error(`[WhatsApp] ${MAX_PAIRING_RETRIES} intentos de vinculación sin éxito. Salgo (backoff de entrypoint.sh).`);
-              process.exit(1);
-            }
-            const waitMs = Math.min(3000 * 2 ** (pairingRetries - 1), 60000);
-            console.log(
-              `[WhatsApp] Reconectando para nuevo QR… (intento ${pairingRetries}/${MAX_PAIRING_RETRIES}, en ${Math.round(waitMs / 1000)}s)`
-            );
-            setTimeout(createSocket, waitMs);
-          }
+            // Un mensaje que el socket viejo alcance a entregar durante el solape NO se procesa
+            // dos veces: `markIfNew` (src/index.js) es un INSERT con UNIQUE en SQLite, no un Set
+            // en memoria. Sin ese dedup persistente, reabrir en caliente no sería seguro.
+            try {
+              viejo?.ev?.removeAllListeners?.();
+            } catch { /* el emitter ya no existe: nada que limpiar */ }
+            Promise.resolve(viejo?.end?.(undefined))
+              .catch(() => { /* ya estaba muerto, que es el caso normal acá */ })
+              .finally(createSocket);
+          }, d.waitMs);
         }
       });
 

@@ -45,6 +45,10 @@ services:
       # ≥ gap (+ jitter) → ~8-10s. No bloquea otros grupos ni DMs.
       - WA_SEND_PER_GROUP_GAP_MS=${WA_SEND_PER_GROUP_GAP_MS:-8000}
       - WA_SEND_PER_GROUP_JITTER_MS=${WA_SEND_PER_GROUP_JITTER_MS:-2000}
+      # Reapertura del socket en caliente ante un cierre de CABLE (428/408) en vez de matar el
+      # proceso (§18.BN). APAGADO por default: toca el camino que provocó el softban de julio.
+      # Apagarlo es `WA_HOT_REOPEN=false` + `docker compose up -d` (sin --build), una reconexión.
+      - WA_HOT_REOPEN=${WA_HOT_REOPEN:-false}
       # Tope de respuestas autónomas del bot por grupo por hora (las aprobadas no cuentan).
       - GROUP_REPLY_HOURLY_CAP=${GROUP_REPLY_HOURLY_CAP:-15}
       # Contexto de grupo POR TIEMPO (§18.O): ventana en minutos + tope MÁXIMO de mensajes.
