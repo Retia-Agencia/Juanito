@@ -176,7 +176,9 @@ export function makeStore({ optins = [], nowRef } = {}) {
   }
   const now = () => (nowRef ? nowRef.ms : Date.now());
 
-  return {
+  // Nombrado (y no un `return {…}` anonimo) porque `marcarPush4Preguntado` compone dos
+  // metodos del propio store, igual que la transaccion real de src/db/index.js.
+  const store = {
     _rows: rows,
     scheduleCalendlyPush(p) {
       const existing = rows.find((r) => r.event_uuid === p.event_uuid && r.push_n === p.push_n);
@@ -312,6 +314,14 @@ export function makeStore({ optins = [], nowRef } = {}) {
 
     // ─── Outcomes post-call (§18.AB) ──────────────────────────────────────────
     _outcomes: outcomes,
+    // Push 4 real: outcome + 'sent' en UNA transaccion. Se replica aca (y no se deja que
+    // el scheduler caiga a su fallback de dos llamadas) para que los escenarios ejerciten
+    // el MISMO camino que produccion: si el outcome explota, el push NO queda 'sent'.
+    marcarPush4Preguntado(pushId, outcome) {
+      const estado = store.createPendingOutcome(outcome);
+      store.markCalendlyPushSent(pushId);
+      return estado;
+    },
     createPendingOutcome(o) {
       if (outcomes.some((x) => x.event_uuid === o.event_uuid)) return 'exists';
       outcomes.push({
@@ -514,6 +524,8 @@ export function makeStore({ optins = [], nowRef } = {}) {
       }
     },
   };
+
+  return store;
 }
 
 // ─── Spy de WhatsApp ──────────────────────────────────────────────────────────
@@ -582,6 +594,7 @@ export function installHarness(
     now: () => clock.ms,
     // §18.AB: outcomes post-call.
     createPendingOutcome: store.createPendingOutcome,
+    marcarPush4Preguntado: (...a) => store.marcarPush4Preguntado(...a),
     recordAutoOutcome: store.recordAutoOutcome,
     getDueOutcomeReminders: store.getDueOutcomeReminders,
     markOutcomeReminded: store.markOutcomeReminded,

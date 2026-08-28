@@ -14,6 +14,8 @@
 // la REST API con la restricted key de solo-lectura (rk_…, permiso "read" sobre
 // PaymentIntents). La cuenta solo cobra EstadoX → no hace falta filtrar por producto.
 
+import { fetchConDeadline } from '../common/http.js';
+
 const API = 'https://api.stripe.com/v1/payment_intents';
 const SESSIONS_API = 'https://api.stripe.com/v1/checkout/sessions';
 const CHARGES_API = 'https://api.stripe.com/v1/charges';
@@ -27,7 +29,7 @@ export const STRIPE_API_KEY = () => (process.env.STRIPE_API_KEY || '').trim();
 // Timestamps `created` (epoch SEGUNDOS, UTC real) de los PaymentIntents `succeeded`
 // desde `createdGteSec`. Pagina con has_more/starting_after; la API no filtra por
 // status, así que se filtra acá. Errores → throw; el caller decide el fallback.
-export async function fetchSucceededPaymentTimestamps({ createdGteSec, fetchImpl = fetch } = {}) {
+export async function fetchSucceededPaymentTimestamps({ createdGteSec, fetchImpl = fetchConDeadline } = {}) {
   const key = STRIPE_API_KEY();
   if (!key) throw new Error('[stripe] falta STRIPE_API_KEY');
 
@@ -62,7 +64,7 @@ export async function fetchSucceededPaymentTimestamps({ createdGteSec, fetchImpl
 // de la moneda (centavos): el formateo es cosa del que arma el mensaje.
 // La ventana del poller es corta (minutos), así que una sola página alcanza de sobra;
 // aun así se pagina por si entran muchos pagos juntos.
-export async function fetchRecentPayments({ createdGteSec, fetchImpl = fetch } = {}) {
+export async function fetchRecentPayments({ createdGteSec, fetchImpl = fetchConDeadline } = {}) {
   const key = STRIPE_API_KEY();
   if (!key) throw new Error('[stripe] falta STRIPE_API_KEY');
 
@@ -121,7 +123,7 @@ export async function fetchRecentPayments({ createdGteSec, fetchImpl = fetch } =
 // `net` sería después — usamos `amount`, que es la definición de "neta" que se eligió.
 // Si la expansión no viene (permiso faltante, bt todavía pendiente), los campos `settled*`
 // quedan en null y el agregador cae a la moneda original del cargo.
-export async function fetchChargesSince({ createdGteSec, fetchImpl = fetch } = {}) {
+export async function fetchChargesSince({ createdGteSec, fetchImpl = fetchConDeadline } = {}) {
   const key = STRIPE_API_KEY();
   if (!key) throw new Error('[stripe] falta STRIPE_API_KEY');
 
@@ -188,7 +190,7 @@ export async function fetchChargesSince({ createdGteSec, fetchImpl = fetch } = {
 export async function fetchSucceededPaymentTimestampsForLink({
   paymentLink,
   createdGteSec,
-  fetchImpl = fetch,
+  fetchImpl = fetchConDeadline,
 } = {}) {
   const key = STRIPE_API_KEY();
   if (!key) throw new Error('[stripe] falta STRIPE_API_KEY');

@@ -6,7 +6,8 @@ import { CronJob } from 'cron';
 import {
   getPendingReminders,
   markReminderSent,
-  markReminderFailed,
+  registrarFalloRecordatorio,
+  MAX_INTENTOS_RECORDATORIO,
 } from '../db/index.js';
 import { sendMessage } from '../whatsapp/index.js';
 import { bossDmTarget } from '../common/roles.js';
@@ -37,10 +38,21 @@ export function startReminderJob() {
           markReminderSent(reminder.id);
           console.log(`[Scheduler] Recordatorio enviado #${reminder.id}: ${reminder.text}`);
         } catch (err) {
-          markReminderFailed(reminder.id);
-          console.error(
-            `[Scheduler] Recordatorio #${reminder.id} marcado FAILED: ${err.message}`
-          );
+          // Un fallo NO mata el recordatorio: se posterga con backoff y se reintenta.
+          // El caso real que motivó esto es un hipo de la cola de WhatsApp o un
+          // `bossDmTarget()` que todavía no resolvió — transitorios los dos, y antes
+          // dejaban el recordatorio en 'failed' sin que nadie lo notara.
+          const { intentos, agotado, esperaMin } = registrarFalloRecordatorio(reminder.id);
+          if (agotado) {
+            console.error(
+              `[Scheduler] Recordatorio #${reminder.id} marcado FAILED tras ${intentos} intentos: ${err.message}`
+            );
+          } else {
+            console.warn(
+              `[Scheduler] Recordatorio #${reminder.id} falló (intento ${intentos}/${MAX_INTENTOS_RECORDATORIO}), ` +
+                `reintento en ${esperaMin} min: ${err.message}`
+            );
+          }
         }
       }
     },

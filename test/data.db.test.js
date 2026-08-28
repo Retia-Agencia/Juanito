@@ -127,6 +127,73 @@ test('recordatorio con destinatario: save -> pending -> sent', () => {
   assert.equal(db.getPendingReminders().length, 0);
 });
 
+// ─── Reintento de recordatorios (auditoría 2026-08-26, hallazgo 08) ──────────
+// Antes, CUALQUIER error de entrega marcaba 'failed' definitivo. La columna `attempts`
+// existía desde el primer día y no la leía nadie. Un hipo de la cola de WhatsApp —o un
+// bossDmTarget() que todavía no resolvió en el arranque— mataba el recordatorio para
+// siempre, y un recordatorio que no llega no se lo reclama nadie.
+
+test('un fallo NO mata el recordatorio: lo posterga y lo reintenta', () => {
+  const def = db.default;
+  db.saveReminder({ text: 'reintentable', dueAt: '2000-01-01 09:00:00', toPhone: '573001119999' });
+  const r = db.getPendingReminders().find((x) => x.text === 'reintentable');
+  assert.ok(r, 'arranca pendiente');
+
+  const p1 = db.registrarFalloRecordatorio(r.id);
+  assert.equal(p1.intentos, 1);
+  assert.equal(p1.agotado, false);
+  assert.ok(p1.esperaMin > 0, 'se posterga');
+
+  const fila = def.prepare('SELECT * FROM reminders WHERE id = ?').get(r.id);
+  assert.equal(fila.status, 'pending', 'sigue pendiente, NO failed');
+  assert.equal(fila.due_at, '2000-01-01 09:00:00', 'due_at NO se pisa: es lo que pidió el jefe');
+  assert.ok(fila.next_attempt_at, 'el freno vive en su propia columna');
+
+  // Y mientras el freno esté en el futuro, el job no lo vuelve a tomar.
+  assert.ok(
+    !db.getPendingReminders().some((x) => x.id === r.id),
+    'no se reintenta en el mismo minuto (si no, es un loop de envíos)'
+  );
+
+  // Vencido el freno, vuelve a la cola.
+  def.prepare("UPDATE reminders SET next_attempt_at = '2000-01-01 09:00:00' WHERE id = ?").run(r.id);
+  assert.ok(db.getPendingReminders().some((x) => x.id === r.id), 'vuelve cuando toca');
+});
+
+test('el reintento tiene techo: al agotarlo sí queda failed', () => {
+  const def = db.default;
+  db.saveReminder({ text: 'destinatario muerto', dueAt: '2000-01-01 09:00:00', toPhone: '573001118888' });
+  const r = db.getPendingReminders().find((x) => x.text === 'destinatario muerto');
+
+  let ultimo;
+  for (let i = 0; i < db.MAX_INTENTOS_RECORDATORIO; i += 1) {
+    ultimo = db.registrarFalloRecordatorio(r.id);
+  }
+  assert.equal(ultimo.agotado, true, 'sin techo, un destinatario inválido se reintenta para siempre');
+  assert.equal(db.MAX_INTENTOS_RECORDATORIO, ultimo.intentos);
+  assert.equal(def.prepare('SELECT status FROM reminders WHERE id = ?').get(r.id).status, 'failed');
+  assert.ok(!db.getPendingReminders().some((x) => x.id === r.id));
+});
+
+test('la espera crece entre intentos (backoff, no reintento cerrado)', () => {
+  db.saveReminder({ text: 'backoff', dueAt: '2000-01-01 09:00:00', toPhone: '573001117777' });
+  const r = db.getPendingReminders().find((x) => x.text === 'backoff');
+  const esperas = [];
+  for (let i = 0; i < 3; i += 1) esperas.push(db.registrarFalloRecordatorio(r.id).esperaMin);
+  assert.deepEqual(
+    esperas,
+    [...esperas].sort((a, b) => a - b),
+    'las esperas no decrecen'
+  );
+  assert.ok(esperas.at(-1) > esperas[0], 'y de verdad crecen');
+});
+
+// Un recordatorio nunca fallado no puede quedar excluido por el filtro nuevo.
+test('next_attempt_at NULL (nunca falló) sigue entrando en la cola', () => {
+  db.saveReminder({ text: 'virgen', dueAt: '2000-01-01 09:00:00', toPhone: '573001116666' });
+  assert.ok(db.getPendingReminders().some((x) => x.text === 'virgen'));
+});
+
 test('getUpcomingReminders solo trae pendientes futuros en ventana', () => {
   const def = db.default;
   def.prepare(

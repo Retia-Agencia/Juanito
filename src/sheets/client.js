@@ -15,6 +15,7 @@
 
 import crypto from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
+import { fetchConDeadline } from '../common/http.js';
 
 const TOKEN_URI = 'https://oauth2.googleapis.com/token';
 const SCOPE = 'https://www.googleapis.com/auth/spreadsheets.readonly';
@@ -102,7 +103,7 @@ async function getAccessToken(creds) {
   const signature = crypto.createSign('RSA-SHA256').update(signingInput).sign(creds.private_key);
   const jwt = `${signingInput}.${b64url(signature)}`;
 
-  const res = await fetch(creds.token_uri || TOKEN_URI, {
+  const res = await fetchConDeadline(creds.token_uri || TOKEN_URI, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -125,7 +126,7 @@ async function fetchTab(tab, id) {
   // Rango = título de la pestaña entre comillas simples (tiene espacios) → todo el tab.
   const range = encodeURIComponent(`'${tab}'`);
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${range}`;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  const res = await fetchConDeadline(url, { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) {
     throw new Error(`[sheets] valores ${res.status}: ${(await res.text()).slice(0, 300)}`);
   }

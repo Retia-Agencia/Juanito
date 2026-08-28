@@ -11,6 +11,8 @@
 //    en cuanto una empresa agrega una pregunta de teléfono al formulario. Ver prospectPhoneOf.
 //  - invitee.first_name viene null → parseamos el primer nombre de invitee.name.
 
+import { fetchConDeadline } from '../common/http.js';
+
 const API = 'https://api.calendly.com';
 
 const TOKEN = () => process.env.CALENDLY_TOKEN || '';
@@ -85,7 +87,7 @@ async function request(pathOrUrl, { retries = 3, token } = {}) {
 
   for (let attempt = 0; ; attempt++) {
     _lastCall = Date.now();
-    const res = await fetch(url, {
+    const res = await fetchConDeadline(url, {
       headers: {
         Authorization: `Bearer ${bearer}`,
         'User-Agent': 'juanito-agent/1.0',

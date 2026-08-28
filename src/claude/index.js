@@ -5,6 +5,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { daysToCsv, normalizeTimeHm, csvToDayLabels, zonedNowParts, zonedStamp } from '../scheduler/recurring-logic.js';
 import { validatePhone, normalizeLeadName } from '../common/utils.js';
+import { encapsular, AVISO_TEXTO_AJENO } from './untrusted.js';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -809,8 +810,14 @@ ESTE contexto y actúa SIEMPRE con la tool manage_drafts:
 - Si lo rechaza o no lo quiere ("no", "no lo mandes", "descártalo", "cancélalo", "bórralo") →
   action=discard.
 Si hay varios borradores y no es obvio a cuál se refiere, pregúntale cuál.
+${AVISO_TEXTO_AJENO}
+
 ${pending
-  .map((d) => `- Borrador #${d.id} → "${d.group_name}" a las ${d.time_hm}:\n${d.draft}`)
+  .map(
+    (d) =>
+      `- Borrador #${d.id} → ${encapsular('grupo', d.group_name)} a las ${d.time_hm}:\n` +
+      `${encapsular('borrador', d.draft)}`
+  )
   .join('\n')}`;
     }
   } catch {
@@ -828,8 +835,16 @@ propongo enviar. MIENTRAS haya respuestas pendientes, actúa SIEMPRE con la tool
 - Si pides un cambio ("cámbiala", "más corto", "dile que…", "así no") → action=revise con tu corrección.
 - Si la rechazas ("no", "no respondas", "descártala") → action=discard.
 Si hay varias y no es obvio a cuál te refieres, pregúntale cuál.
+${AVISO_TEXTO_AJENO}
+
 ${replies
-  .map((r) => `- Respuesta #${r.id} en "${r.group_name}" (${r.trigger_sender} dijo: "${(r.trigger_text || '').slice(0, 80)}"):\n${r.draft}`)
+  .map(
+    (r) =>
+      `- Respuesta #${r.id} en ${encapsular('grupo/DM', r.group_name)}\n` +
+      `  ${encapsular('quién escribió', r.trigger_sender, { tope: 80 })}\n` +
+      `  ${encapsular('lo que escribió', r.trigger_text)}\n` +
+      `  ${encapsular('borrador propuesto', r.draft)}`
+  )
   .join('\n')}`;
     }
   } catch {

@@ -10,6 +10,8 @@
 // botón. El token es un PAT con permiso `actions:write` sobre el repo — es un secreto
 // del CONTENEDOR (va al .env del VPS), no un Repository secret de GitHub.
 
+import { fetchConDeadline } from '../../src/common/http.js';
+
 const REPO = process.env.DASH_GITHUB_REPO || 'Agencia-Dani/Juanito';
 const RAMA = process.env.DASH_GITHUB_REF || 'main';
 const TOKEN = () => (process.env.DASH_GITHUB_TOKEN || '').trim();
@@ -21,7 +23,7 @@ export async function disparar(alcance) {
   // El alcance define si esto reconecta Baileys. No se acepta nada fuera de la lista.
   if (alcance !== 'dash' && alcance !== 'todo') throw new Error("alcance debe ser 'dash' o 'todo'");
 
-  const r = await fetch(
+  const r = await fetchConDeadline(
     `https://api.github.com/repos/${REPO}/actions/workflows/deploy.yml/dispatches`,
     {
       method: 'POST',

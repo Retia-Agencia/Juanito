@@ -17,6 +17,7 @@
 
 import { pipelineForProgram, pickDealForPipeline, classifyDealStage, isWonStage } from './deals.js';
 import { normalizePhone } from '../common/utils.js';
+import { fetchConDeadline } from '../common/http.js';
 // Solo el mapa de alias owner→closer (ownerIdForCloser). closers.js no importa nada de
 // hubspot/, así que no hay ciclo.
 import { HUBSPOT_OWNER_TO_CLOSER } from '../calendly/closers.js';
@@ -40,7 +41,7 @@ async function getAccessToken({ force = false } = {}) {
   if (!force && _token && _token.expiresAt - REFRESH_MARGIN_MS > now) {
     return _token.accessToken;
   }
-  const res = await fetch(`${BASE}/localdevauth/v1/auth/refresh`, {
+  const res = await fetchConDeadline(`${BASE}/localdevauth/v1/auth/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ encodedOAuthRefreshToken: PAK() }),
@@ -76,7 +77,7 @@ async function request(path, { method = 'GET', body, retries = 3, _reauth = true
   for (let attempt = 0; ; attempt++) {
     _lastCall = Date.now();
     const token = await getAccessToken();
-    const res = await fetch(url, {
+    const res = await fetchConDeadline(url, {
       method,
       headers: {
         Authorization: `Bearer ${token}`,

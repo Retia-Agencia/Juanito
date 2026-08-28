@@ -147,3 +147,75 @@ test('un fallo en una fila no rompe el resto del ciclo', async () => {
   assert.equal(world.rows[0].active, 1, 'la fallida NO se cierra (reintenta)');
   assert.equal(world.rows[1].active, 0, 'la sana se cerró');
 });
+
+// ─── Auditoría 2026-08-26, hallazgo 06 ───────────────────────────────────────
+// El estado avanzaba DESPUÉS del FYI al creador. Si el mensaje principal salía pero el
+// aviso fallaba, la fila no avanzaba y al minuto siguiente el cron le VOLVÍA A ESCRIBIR al
+// tercero. Un mensaje repetido a alguien de afuera: nadie del equipo lo ve y quema la
+// reputación del número.
+
+// Falla el segundo sendMessage (el FYI) y solo ese.
+function conFyiRoto({ rows, quien = null }) {
+  const { world, deps } = makeWorld({ rows });
+  const real = deps.sendMessage;
+  deps.sendMessage = async (to, text) => {
+    if (to === (quien ?? BOSS)) throw new Error('el JID del creador está muerto');
+    return real(to, text);
+  };
+  return { world, deps };
+}
+
+test('si el FYI falla, al tercero NO se le escribe dos veces (once)', async () => {
+  const fila = { id: 1, to_phone: '57300', to_name: 'Sebas', intent: 'que confirme', recur_kind: 'once', due_at: '2026-06-11 09:00:00', respect_quiet: 1, active: 1 };
+  const { world, deps } = conFyiRoto({ rows: [fila] });
+  __setDeps(deps);
+
+  await runOutreachCycle(bogota('09:00'));
+  assert.equal(world.sent.filter((m) => m.to === '57300').length, 1, 'salió una vez');
+  assert.equal(world.rows[0].active, 0, 'la fila SÍ avanzó aunque el aviso falló');
+  assert.equal(world.rows[0].status, 'done');
+
+  // El minuto siguiente: el bug era acá.
+  await runOutreachCycle(bogota('09:01'));
+  assert.equal(
+    world.sent.filter((m) => m.to === '57300').length,
+    1,
+    'el tercero NO recibe el mensaje repetido'
+  );
+});
+
+test('si el FYI falla en una fila recurrente, tampoco se repite el envío', async () => {
+  const fila = { id: 2, to_phone: '57301', to_name: 'Ana', intent: 'recordale', recur_kind: 'interval', interval_min: 60, next_due_at: '2026-06-11 09:00:00', respect_quiet: 1, active: 1, sent_count: 0 };
+  const { world, deps } = conFyiRoto({ rows: [fila] });
+  __setDeps(deps);
+
+  await runOutreachCycle(bogota('09:00'));
+  assert.equal(world.sent.filter((m) => m.to === '57301').length, 1);
+  assert.equal(world.rows[0].sent_count, 1, 'contó el envío');
+  assert.ok(world.rows[0].next_due_at > '2026-06-11 09:00:00', 'y corrió la próxima fecha');
+
+  await runOutreachCycle(bogota('09:05'));
+  assert.equal(world.sent.filter((m) => m.to === '57301').length, 1, 'sin repetido a Ana');
+});
+
+// La contrapartida: un fallo ANTES del envío principal sí tiene que reintentar. Sin esto,
+// el arreglo de arriba se podría "lograr" avanzando el estado siempre, que sería peor.
+test('si el envío PRINCIPAL falla, la fila NO avanza y se reintenta', async () => {
+  const fila = { id: 3, to_phone: '57302', to_name: 'Caro', intent: 'saluda', recur_kind: 'once', due_at: '2026-06-11 09:00:00', respect_quiet: 1, active: 1 };
+  const { world, deps } = makeWorld({ rows: [fila] });
+  let caido = true;
+  const real = deps.sendMessage;
+  deps.sendMessage = async (to, text) => {
+    if (to === '57302' && caido) throw new Error('WhatsApp caído');
+    return real(to, text);
+  };
+  __setDeps(deps);
+
+  assert.equal(await runOutreachCycle(bogota('09:00')), 0);
+  assert.equal(world.rows[0].active, 1, 'la fila sigue viva');
+  assert.equal(world.sent.length, 0);
+
+  caido = false;
+  assert.equal(await runOutreachCycle(bogota('09:01')), 1, 'lo reintenta y sale');
+  assert.equal(world.sent[0].to, '57302');
+});
