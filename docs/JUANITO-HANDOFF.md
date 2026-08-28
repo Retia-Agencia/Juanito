@@ -5,7 +5,11 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-08-26** (§18.BN y §18.BO — el teléfono del lead se lee también del formulario;
+Última actualización: **2026-08-27** (§18.BP — los cuatro arreglos de la auditoría de Codex:
+`markIfNew` deja de comerse los errores de la DB, los tres puntos de entrada desde un grupo pasan
+a `isStrictPrivileged`, `startAllJobs` se espera, y el dashboard gana gate + anti-CSRF en TODOS
+sus POST. Quedan 6 hallazgos abiertos sin verificar).
+Antes: **2026-08-26** (§18.BN y §18.BO — el teléfono del lead se lee también del formulario;
 rescate de pushes huérfanos; alertas del watchdog por WhatsApp; el Push 5 de Comunicarte se mudó a
 su conexión; el contador de `entrypoint.sh` se resetea tras un arranque sano. **Construido y
 APAGADO: la reapertura en caliente del socket ante un 428 (`WA_HOT_REOPEN`)** — leer §18.BN antes
@@ -5868,6 +5872,86 @@ fue el problema, y eso quema la credibilidad del aviso entero.
 `__resetHealth()` (que es lo que hace un reinicio), que una causa curada deja de contar, que
 `obsoleto` **sigue** contando aunque el closer se haya registrado después, y que la
 recomendación del roster no aparece si no viene al caso.
+
+---
+
+### 18.BP 🔵 La auditoría de Codex: cuatro fallos que reportan éxito sin comprobarlo (2026-08-27)
+
+Codex barrió el repo en read-only y devolvió **44 hallazgos**. El valor no estuvo en la lista
+sino en que **casi todos los críticos son la misma forma**: *el sistema reporta éxito sin haberlo
+comprobado*. Es el modo de fallo del mes de ceguera de §18.AY, replicado en seis lugares. Esta
+sección cierra los cuatro más baratos; los seis restantes siguen abiertos y sin verificar a mano.
+
+**1. `markIfNew()` se comía cualquier error de la DB como si fuera un duplicado.**
+`src/db/index.js` tenía un `catch { return false }` pelado. `false` significa *"ya lo procesamos,
+descartalo"* para **todos** los callers — el router de DMs, el de grupos, el opt-in, la captura de
+outcomes y la de setteo. O sea que un `SQLITE_BUSY` hacía desaparecer un mensaje del jefe sin
+una sola línea de log. Y no es hipotético: `agent` y `dash` escriben el **mismo** archivo SQLite
+desde dos procesos, así que un lock ocupado es un resultado esperable, no una rareza.
+
+Ahora el `catch` es angosto: solo `SQLITE_CONSTRAINT_PRIMARYKEY`/`_UNIQUE` devuelven `false`;
+todo lo demás se loguea y se **relanza**. El mensaje igual se pierde (`onMessage` está envuelto en
+un `.catch()` que lo registra), pero a gritos. El test renombra la tabla para provocar un error
+que no es de PK y exige que explote.
+
+**2. `/grupo`, `/reportes` y el add al grupo daban privilegio con el helper flojo.**
+Usaban `isPrivileged(roleOf(sender))`. `roleOf()` termina con el fallback retrocompat *"cualquier
+`@lid` es el jefe si `BOSS_LID` no está configurado"* — que es deliberado y está testeado — pero
+**en un grupo todos los participantes llegan como `@lid`**, así que ese fallback convierte al
+grupo entero en jefe. `isStrictPrivileged()` ya existía en el repo justamente para esto.
+
+El informe marcó dos; arreglándolos apareció un tercero que no estaba en la lista: `onGroupJoin`,
+donde el costo era que **un desconocido autorizara su propio grupo con solo agregar al bot**.
+El caso de `/reportes` es el más caro de los tres: publica los leads y, con `metricas`, el
+desempeño de todo el equipo **en el grupo**.
+
+Fijado en `test/index.privilegios-grupo.test.js`. Es un test que lee el **fuente**, no el
+comportamiento: los tres handlers no se exportan y arrastran deps nativas, y lo que hay que
+impedir es una regresión de una palabra. La semántica del helper ya está cubierta en
+`test/roles.test.js`.
+
+**3. `startAllJobs()` sin `await`.** Es `async` y registra varios jobs detrás de awaits. Sin
+esperarla, el `🚀 Juanito corriendo` se imprimía con medio scheduler todavía sin registrar, y una
+falla adentro caía en el handler global de rejections. El arranque se veía sano en los logs con
+jobs que nunca arrancaron.
+
+**4. `/api/deploy` no tenía gate ni anti-CSRF.** Era lo único que expone algo hacia afuera.
+Respondía **antes** que el gate de `DASH_WRITES`, y no había un chequeo de `Origin`/`Referer` en
+todo el archivo. Un POST `text/plain` desde cualquier pestaña de alguien del tailnet disparaba un
+deploy `alcance: todo` → reconstrucción de la imagen → **reconexión de Baileys**, con el riesgo de
+softban de §18.AT. La víctima no veía nada.
+
+Dos arreglos, y el segundo cubre más de lo que el informe pedía:
+
+- **El gate**: disparar un deploy ahora exige `DASH_WRITES` no vacío. Que tuviera su propio
+  interruptor (`DASH_GITHUB_TOKEN`) no lo eximía — con el token puesto y `DASH_WRITES` vacío, el
+  "dashboard de solo lectura" era mentira. En producción `DASH_WRITES=todo`, así que el botón
+  sigue funcionando igual.
+- **El anti-CSRF, para TODOS los POST y no solo el deploy**: las escrituras de `/api/w/…` tenían
+  exactamente la misma exposición. Vive en `dashboard/server/csrf.js`, que es puro y testeable sin
+  abrir un puerto (el `index.js` del dashboard hace `listen()` al importarse).
+
+⚠️ **Por qué el header propio alcanza, y por qué el `Origin` NO puede ser el gate principal.**
+`X-Dash-Origen` no es un secreto y no hay que rotarlo: funciona por cómo está definido CORS. Un
+header no estándar saca al pedido de la categoría *simple*, así que el navegador está **obligado**
+a mandar antes un preflight `OPTIONS`; el servidor responde 405 y no emite un solo
+`Access-Control-Allow-*`, así que el preflight nunca pasa y el POST real jamás se envía. `curl`
+puede mandarlo, un navegador cross-origin no. El `Content-Type: application/json` se exige por lo
+mismo (los tipos simples son form-urlencoded, multipart y text/plain, y `leerCuerpo` parsea JSON
+venga como venga). El `Origin`, en cambio, es defensa en profundidad **deliberadamente indulgente**:
+detrás de `tailscale serve` el `Host` que ve el proceso puede ser el del backend, y un chequeo
+estricto ahí dejaría el dashboard tapiado sin un error que lo explique — peor que el bug original.
+Por eso solo se rechaza un Origin que además de no coincidir con `Host` ni con `X-Forwarded-Host`,
+no esté en `DASH_ALLOWED_ORIGINS` (vacío en producción; existe para el dev server de Vite).
+
+**Suite:** 1090 → **1112 tests** (+22), 1110 verdes, los mismos **2 rojos conocidos**
+(`call con TODOS sus pushes skipped…` y `reagenda manual superseded…`), verificados por nombre.
+Medida en Linux contra la línea base del mismo commit, no contra cero.
+
+**Lo que NO se tocó** (en el artifact, con archivo:línea, ninguno verificado a mano): dry-run
+fabricando outcomes, outreach duplicando el mensaje al tercero, Stripe consumiendo el pago antes
+de entregar, `fetch()` sin deadline, recordatorios sin reintento, e inyección de prompt en el
+prompt del jefe.
 
 ---
 

@@ -198,6 +198,30 @@ test('dedup de webhooks: markIfNew', () => {
   assert.equal(db.markIfNew(null), true);
 });
 
+// Hallazgo de la auditoría 2026-08-26: el `catch` era pelado y devolvía `false` ante CUALQUIER
+// error. `false` significa "ya lo procesamos, descartalo" para todos los callers, así que un
+// problema transitorio de la DB (SQLITE_BUSY — `agent` y `dash` escriben el MISMO archivo desde
+// dos procesos) hacía desaparecer un mensaje del jefe sin una sola línea de log.
+//
+// Lo que se fija acá es la ASIMETRÍA: la violación de la PK sigue siendo `false` (el caso
+// legítimo), y cualquier otro error se relanza. `onMessage` está envuelto en un `.catch()` que
+// lo loguea, así que el mensaje igual se pierde — pero a gritos, no en silencio.
+test('markIfNew: un error que NO es la PK se relanza en vez de comerse el mensaje', () => {
+  const def = db.default;
+  def.exec('ALTER TABLE processed_messages RENAME TO processed_messages_guardada');
+  try {
+    assert.throws(
+      () => db.markIfNew('msg-durante-la-falla'),
+      /no such table/i,
+      'un fallo real de la DB tiene que explotar, no devolver false (= "duplicado, descartar")'
+    );
+  } finally {
+    def.exec('ALTER TABLE processed_messages_guardada RENAME TO processed_messages');
+  }
+  // Y después de restaurar, el mensaje que "se perdió" nunca quedó marcado: se puede reprocesar.
+  assert.equal(db.markIfNew('msg-durante-la-falla'), true);
+});
+
 // ─── §18.D Hardening grupos grandes ────────────────────────────────────────────
 
 test('rate limit: {allowed,count}, 1ª denegación detectable, sigue contando intentos', () => {

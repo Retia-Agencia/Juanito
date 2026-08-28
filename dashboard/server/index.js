@@ -19,6 +19,7 @@ import * as Q from './queries.js';
 import * as watchdog from './watchdog.js';
 import * as A from './actions.js';
 import * as deploy from './deploy.js';
+import { motivoRechazoCsrf } from './csrf.js';
 
 const RAIZ = fileURLToPath(new URL('..', import.meta.url)); // dashboard/
 const DIST = join(RAIZ, 'dist');
@@ -148,7 +149,16 @@ const json = (res, codigo, cuerpo) => {
   res.end(JSON.stringify(cuerpo));
 };
 
+// Anti-CSRF: la lógica (y el porqué) vive en ./csrf.js, que es puro y testeable sin abrir
+// un puerto. Acá solo se aplica, y se aplica a TODOS los POST — no solo al deploy: las
+// escrituras de `/api/w/...` tenían exactamente la misma exposición.
 async function manejarEscritura(req, res, ruta) {
+  const motivo = motivoRechazoCsrf(req.headers);
+  if (motivo) {
+    console.warn(`[Dash] POST ${ruta} rechazado — ${motivo}`);
+    return json(res, 403, { error: `pedido rechazado: ${motivo}` });
+  }
+
   let cuerpo;
   try {
     cuerpo = await leerCuerpo(req);
@@ -157,6 +167,14 @@ async function manejarEscritura(req, res, ruta) {
   }
 
   if (ruta === '/api/deploy') {
+    // El gate que faltaba: `DASH_WRITES` vacío = dashboard de solo lectura (F1), y disparar un
+    // deploy es la escritura MÁS grande que existe acá — reconstruye la imagen y reconecta
+    // Baileys. Que tuviera su propio interruptor (`DASH_GITHUB_TOKEN`) no lo eximía: con el
+    // token puesto y `DASH_WRITES` vacío, el "solo lectura" era mentira.
+    if (A.tabsHabilitados().length === 0) {
+      console.warn('[Dash] deploy rechazado — DASH_WRITES vacío (dashboard en solo lectura)');
+      return json(res, 403, { error: 'el dashboard está en solo lectura (DASH_WRITES vacío)' });
+    }
     try {
       const r = await deploy.disparar(cuerpo.alcance);
       console.log(`[Dash] deploy disparado · alcance=${r.alcance}`);

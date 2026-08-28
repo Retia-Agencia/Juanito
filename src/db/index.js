@@ -293,14 +293,28 @@ export function hasDmThread(jid) {
 
 // ─── Deduplicación de webhooks ────────────────────────────────────────────────
 // Devuelve true si el mensaje es nuevo (y lo marca), false si ya se procesó.
+//
+// ⚠️ El `catch` es DELIBERADAMENTE angosto. `false` acá significa "ya lo procesamos, descartalo":
+// todos los callers cortan el flujo con eso, así que tragarse cualquier error y devolver `false`
+// convierte un problema transitorio de la DB en un mensaje del jefe/closer que se pierde sin una
+// sola línea de log. Y no es hipotético: `agent` y `dash` escriben el MISMO archivo SQLite desde
+// dos procesos, o sea SQLITE_BUSY es un resultado esperable, no una rareza.
+//
+// La única excepción que de verdad prueba "ya existía" es la violación de la PRIMARY KEY. Todo lo
+// demás se loguea y se relanza: `onMessage` está envuelto en un `.catch()` que lo registra
+// (src/whatsapp/index.js), así que el mensaje igual se descarta — pero A GRITOS y no en silencio,
+// que es la diferencia entre un bug de un día y el mes de ceguera de §18.AY.
+const YA_EXISTIA = new Set(['SQLITE_CONSTRAINT_PRIMARYKEY', 'SQLITE_CONSTRAINT_UNIQUE']);
 
 export function markIfNew(messageId) {
   if (!messageId) return true; // sin ID no podemos deduplicar, dejamos pasar
   try {
     db.prepare(`INSERT INTO processed_messages (message_id) VALUES (?)`).run(messageId);
     return true;
-  } catch {
-    return false; // UNIQUE constraint → ya existía
+  } catch (err) {
+    if (YA_EXISTIA.has(err?.code)) return false;
+    console.error(`[DB] markIfNew(${messageId}) falló con ${err?.code || 'error sin código'}: ${err?.message}`);
+    throw err;
   }
 }
 

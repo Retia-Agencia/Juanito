@@ -267,9 +267,13 @@ export const PEOPLE = {
   // Salazar en el buzón-rol equipo@ttrading.co). Esto es un regreso con correo PROPIO, no un
   // buzón-rol — a diferencia de registro@ y equipo@, acá el correo es de ella.
   //
-  // Sin `workLid` (no hay entrega probada) y ⚠️ SIN OPT-IN: con CALENDLY_REQUIRE_OPTIN=true no
-  // recibe nada hasta que le escriba a Juanito y quede su fila en `calendly_optins` (source
-  // 'self'). Mapearla acá quita la alerta y la vuelve reconocible; no le entrega nada todavía.
+  // ✅ OPT-IN HECHO (2026-08-26 14:28, verificado contra la DB de producción): fila en
+  // `calendly_optins` con source 'self', `paused=0` y `contact_jid` = el mismo LID que se declara
+  // abajo. Ya recibe. Ojo al leer su historial: sus DOS únicos pushes están `skipped`
+  // (`sin-optin` y `obsoleto`) porque son ANTERIORES a esa fila — son la call de Michael
+  // Castellanos del 26-ago 00:00, que se perdió. Desde el opt-in no se le creó ningún push
+  // porque no volvió a hostear, así que un push precall completo todavía no se vio llegar.
+  // "Cero pushes" acá es agenda vacía, no cableado roto.
   dana_rodriguez: {
     name: 'Dana Rodriguez',
     // workLid capturado 2026-08-26 del mapeo lid↔número de la sesión de Baileys. Mismo caso que
@@ -282,12 +286,14 @@ export const PEOPLE = {
   // como segunda identidad de su entrada de Retia — es la misma persona (ver arriba).
   // No hay ningún tercero que ignorar entre los hosts VIVOS.
   //
-  // ⚠️ Ninguna de las dos tiene OPT-IN todavía: con CALENDLY_REQUIRE_OPTIN=true (que es como
-  // corre producción) no reciben NADA hasta que le escriban a Juanito y quede su fila en
-  // `calendly_optins` con source 'self'. Es el primer paso del arranque, antes que el dry-run.
+  // ✅ Las dos hicieron OPT-IN el 2026-08-26 (Maru 02:51, Andrea/info@ 03:34) y la conexión ya
+  // salió de dry-run (`CALENDLY_DRY_RUN_COMUNICARTE=false` en producción). Verificado contra la
+  // DB: ambas con source 'self' y `paused=0`, y con pushes en estado `sent` — o sea la cadena
+  // completa (opt-in → poll → cola anti-ban → entrega) está probada de punta a punta acá.
   //
-  // Sin `workLid` en ninguna: no hay entrega probada (ver la nota larga de arriba). Declarar un
-  // LID sin prueba CEMENTA el destino equivocado, así que se deja para cuando escriban.
+  // Las dos tienen `workLid` declarado, capturado cuando escribieron (ver las notas de cada una).
+  // La regla de fondo no cambia: un LID sin entrega probada CEMENTA el destino equivocado, así
+  // que un alta nueva sigue entrando sin `workLid` hasta que la persona escriba.
   maru_marquez: {
     name: 'Maru Marquez',
     // Gmail personal, pero ES su host real en el Calendly de ComunicArte (2 citas verificadas,

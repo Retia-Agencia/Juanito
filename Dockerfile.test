@@ -7,7 +7,12 @@
 #
 # Uso (desde la raíz del repo):
 #   docker build -f Dockerfile.test -t juanito-test .
-#   docker run --rm -v "<repo>/src:/app/src:ro" -v "<repo>/test:/app/test:ro" juanito-test npm test
+#   docker run --rm -v "<repo>/src:/app/src:ro" -v "<repo>/test:/app/test:ro" \
+#              -v "<repo>/dashboard/server:/app/dashboard/server:ro" juanito-test npm test
+#
+# ⚠️ El tercer volumen NO es opcional: `test/dashboard.csrf.test.js` importa
+# `dashboard/server/csrf.js`. Sin montarlo, ese archivo falla con ERR_MODULE_NOT_FOUND y se lee
+# como una regresión que no existe.
 #
 # ⚠️ En Git Bash: prefijar con MSYS_NO_PATHCONV=1 y usar rutas estilo C:/… — si no, el volumen
 # no monta y la suite reporta "0 tests" EN VERDE, que es peor que fallar.

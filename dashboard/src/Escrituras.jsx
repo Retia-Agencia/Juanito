@@ -12,10 +12,15 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+// `X-Dash-Origen` es el anti-CSRF del servidor (ver la nota larga en server/csrf.js). No es un
+// secreto: es un header no estándar, y eso basta para que el navegador exija un preflight que
+// este servidor nunca concede. Todo POST del dashboard pasa por acá, así que este es el único
+// lugar donde hay que ponerlo — si algún día aparece un `fetch` POST fuera de esta función, va a
+// recibir 403, que es exactamente el fallo ruidoso que se busca.
 export const postear = (ruta, cuerpo) =>
   fetch(ruta, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Dash-Origen': 'juanito' },
     body: JSON.stringify(cuerpo),
   }).then(async (r) => {
     const d = await r.json().catch(() => ({}));
