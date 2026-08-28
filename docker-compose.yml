@@ -288,7 +288,12 @@ services:
       - DASH_WRITES=${DASH_WRITES:-}
       # PAT de GitHub con `actions:write` para el botón Deploy. Sin él la ruta no existe
       # y la UI no lo dibuja. El repo y la rama tienen default correcto en deploy.js.
+      # El deploy exige ADEMÁS `DASH_WRITES` no vacío: con el dashboard en solo lectura, la
+      # escritura más grande que existe no puede ser la excepción.
       - DASH_GITHUB_TOKEN=${DASH_GITHUB_TOKEN:-}
+      # Orígenes extra habilitados para POST (anti-CSRF, dashboard/server/csrf.js). Vacío en
+      # producción: el Origin del tailnet ya coincide con Host/X-Forwarded-Host. Es para Vite.
+      - DASH_ALLOWED_ORIGINS=${DASH_ALLOWED_ORIGINS:-}
       # Mismo gate que el bot (§18.BB). Va acá para que el tab de registries muestre el MISMO
       # roster que ejecuta el bot: un dashboard que contradice al proceso que audita es peor
       # que no tenerlo — es la clase de dato falso que este panel existe para eliminar.

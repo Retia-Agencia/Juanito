@@ -12,7 +12,7 @@ import { buildMisSetteos } from './setteo/metricas.js';
 import { parseSetteoWithAi } from './setteo/setteo-ai.js';
 import { isCloserInScope } from './setteo/format.js';
 import { startAllJobs } from './scheduler/index.js';
-import { roleOf, isPrivileged, closerOf } from './common/roles.js';
+import { roleOf, isPrivileged, isStrictPrivileged, closerOf } from './common/roles.js';
 import { maskJid } from './common/utils.js';
 import {
   listOptins,
@@ -66,10 +66,14 @@ import { buildSetteoBlock, isSetteoReportEnabled } from './scheduler/setteo.js';
 // caso delega en enforceGroup (revisa participantes + respeta GROUP_AUTOLEAVE).
 async function onGroupJoin({ groupId, groupName, author, participants }) {
   console.log(`[Main] group-participants add → "${groupName}" (${groupId}) por ${author}`);
-  const adderRole = roleOf(author);
-  if (isPrivileged(adderRole)) {
+  // Estricto: `author` es un participante de grupo, o sea llega como @lid, y el fallback
+  // retrocompat de `roleOf()` lo haría "boss" en cualquier despliegue sin BOSS_LID. Con
+  // `isPrivileged(roleOf(author))` alcanzaba con que un desconocido agregara al bot a su grupo
+  // para que el grupo quedara autorizado solo. Si no califica, cae en `enforceGroup`, que es el
+  // camino default-deny de siempre.
+  if (isStrictPrivileged(author)) {
     authorizeGroup({ groupId, groupName, authorizedBy: author });
-    console.log(`[Main] Grupo autorizado: "${groupName}" (agregado por ${adderRole})`);
+    console.log(`[Main] Grupo autorizado: "${groupName}" (agregado por ${roleOf(author)})`);
     return;
   }
   await enforceGroup(groupId, groupName);
@@ -95,8 +99,11 @@ async function handleGroupCommand({ chatId, groupName, text, sender, messageId }
   if (trimmed !== '/grupo' && !trimmed.startsWith('/grupo ')) return false;
   if (!markIfNew(messageId)) return true;
 
-  const role = roleOf(sender);
-  if (!isPrivileged(role)) {
+  // `isStrictPrivileged` y NO `isPrivileged(roleOf(...))`: esto llega DESDE UN GRUPO, donde todos
+  // los participantes se ven como @lid. `roleOf()` tiene el fallback retrocompat "cualquier @lid
+  // es el jefe si BOSS_LID no está configurado", así que por esa vía cualquier miembro del grupo
+  // podría autorizar o sacar al bot de su propio grupo. Ver la nota de src/common/roles.js.
+  if (!isStrictPrivileged(sender)) {
     await sendMessage(chatId, 'Ese comando es solo para el equipo 🙂').catch(() => {});
     return true;
   }
@@ -125,7 +132,10 @@ async function handleGroupReportCommand({ chatId, text, sender, messageId }) {
   if (!isReportCommand(cmd)) return false;
   if (!markIfNew(messageId)) return true;
 
-  if (!isPrivileged(roleOf(sender))) {
+  // Estricto por la misma razón que `/grupo`: viene de un grupo, donde el fallback de `roleOf()`
+  // volvería jefe a cualquier participante. Acá el costo es peor que autorizar un grupo — publica
+  // el reporte de leads y, con "metricas", el desempeño de todo el equipo EN el grupo.
+  if (!isStrictPrivileged(sender)) {
     await sendMessage(chatId, 'Ese comando es solo para el equipo 🙂').catch(() => {});
     return true;
   }
@@ -326,7 +336,12 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
 async function bootstrap() {
   await connect({ onMessage, onGroupJoin, onGroupChange });
   await sweepGroups(); // anti-secuestro: clasifica/limpia los grupos actuales al arrancar
-  startAllJobs();
+  // `await`: `startAllJobs` es async y registra varios jobs detrás de awaits. Sin esperarla, el
+  // "🚀 corriendo" de abajo se imprimía con medio scheduler todavía sin registrar, y si algo
+  // fallaba adentro la rejection caía en el handler global de más abajo — o sea el arranque se
+  // veía sano en los logs con jobs que nunca arrancaron. Es el mismo modo de fallo que costó el
+  // mes de ceguera: reportar éxito sin haberlo comprobado.
+  await startAllJobs();
   console.log('\n🚀 Juanito corriendo — escuchando WhatsApp\n');
 }
 

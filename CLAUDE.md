@@ -145,25 +145,26 @@ loop rápido de reconexiones desde datacenter → WhatsApp lo detectó.
   *"Could not locate the bindings file"*. El baseline REAL se saca en Linux:
   ```
   docker build -f Dockerfile.test -t juanito-test .    # node:22-alpine + python3/make/g++ + npm ci
-  docker run --rm -v "<repo>/src:/app/src:ro" -v "<repo>/test:/app/test:ro" juanito-test npm test
+  docker run --rm -v "<repo>/src:/app/src:ro" -v "<repo>/test:/app/test:ro" -v "<repo>/dashboard/server:/app/dashboard/server:ro" juanito-test npm test
   ```
+  (El volumen de `dashboard/server` NO es opcional: `test/dashboard.csrf.test.js` importa
+  `dashboard/server/csrf.js`. Sin él, ese archivo da ERR_MODULE_NOT_FOUND y parece una regresión.)
   (En Git Bash, prefijar con `MSYS_NO_PATHCONV=1` y usar rutas `C:/…` o el volumen no monta y
   la suite reporta **0 tests** en verde, que es peor que fallar.)
-  Baseline al **2026-08-26: 1070 tests, 1068 verdes, 2 rojos conocidos** (`call con TODOS sus
+  Baseline al **2026-08-27: 1112 tests, 1110 verdes, 2 rojos conocidos** (`call con TODOS sus
   pushes skipped…` y `reagenda manual superseded…`; los números de test se corren al agregar
   archivos, así que se buscan por nombre, no por índice). El tercer rojo histórico —links de
   Retia— murió solo al mudarse el sheet de Comunicarte (§18.BN). En Windows ese mismo commit da
   ~98 rojos — medir SIEMPRE la línea base con `git stash` antes de tocar nada y comparar contra
   ella, no contra cero.
   **Sin daemon de Docker local** (pasa seguido en el Mac) la suite igual se puede correr en Linux
-  sin tocar el bot: `tar czf - src test package.json | ssh <vps> "tar xzf - -C /root/testrun"` y
-  después `docker run --rm -v /root/testrun:/app/run -w /app/run --entrypoint node juanito-agent
+  sin tocar el bot: `tar czf - src test package.json dashboard/server | ssh <vps> "tar xzf - -C /root/testrun"` y después `docker run --rm -v /root/testrun:/app/run -w /app/run --entrypoint node juanito-agent
   --test 'test/*.test.js'`. Node resuelve `node_modules` subiendo a `/app`, así que reusa el
   binario nativo de la imagen; `/app/src` no se toca.
   ⚠️ Dos formas de leer un verde que no existe: la suite sale en **TAP** (`# tests`, no `ℹ tests`),
   así que un grep por `ℹ` no encuentra nada y parece que no corrió; y `docker build … | tail` se
   queda con el **exit code de `tail`** → reporta 0 con el daemon caído. Verificar el `$?` del build
-  y que el conteo sea ~1032, no 0. Por eso la lógica pura vive en módulos propios sin deps nativas: es la
+  y que el conteo sea ~1112, no 0. Por eso la lógica pura vive en módulos propios sin deps nativas: es la
   parte que sí se puede iterar en Windows.
 
 ## Cómo retomar una sesión
