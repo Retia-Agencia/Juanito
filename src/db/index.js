@@ -107,14 +107,18 @@ function localNow(offsetHours = 0) {
   });
 }
 
+// `next_attempt_at` es el freno del reintento (ver `registrarFalloRecordatorio`): mientras esté
+// en el futuro la fila sigue 'pending' pero este job no la toca. NULL = nunca falló.
 export function getPendingReminders() {
   return db
     .prepare(`
       SELECT * FROM reminders
-      WHERE status = 'pending' AND due_at <= ?
+      WHERE status = 'pending'
+        AND due_at <= ?
+        AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
       ORDER BY due_at ASC
     `)
-    .all(localNow());
+    .all(localNow(), localNow());
 }
 
 export function markReminderSent(id) {
@@ -127,6 +131,8 @@ export function markReminderSent(id) {
     .run(id);
 }
 
+// Mata el recordatorio de una. Se conserva para un fallo que YA se sabe definitivo (no hay
+// destinatario posible); el camino normal del scheduler es `registrarFalloRecordatorio`.
 export function markReminderFailed(id) {
   return db.prepare(`UPDATE reminders SET status = 'failed' WHERE id = ?`).run(id);
 }
@@ -135,6 +141,33 @@ export function markReminderFailed(id) {
 export function incrementReminderAttempt(id) {
   db.prepare(`UPDATE reminders SET attempts = attempts + 1 WHERE id = ?`).run(id);
   return db.prepare(`SELECT attempts FROM reminders WHERE id = ?`).get(id)?.attempts ?? 0;
+}
+
+// ── Fallo de entrega de un recordatorio: reintentar antes de rendirse ─────────
+// La columna `attempts` existía desde el primer día y NADIE la leía: el scheduler marcaba
+// 'failed' ante CUALQUIER error, así que un hipo de la cola de WhatsApp —o un
+// `bossDmTarget()` que todavía no resolvió en el arranque— mataba el recordatorio para
+// siempre, y nadie se entera de un recordatorio que no llegó.
+//
+// Ahora el fallo es transitorio por defecto: la fila sigue 'pending' y se posterga con
+// backoff. Recién al agotar los intentos queda 'failed'. El techo importa: sin él, un
+// destinatario inválido se reintentaría cada minuto para siempre.
+export const MAX_INTENTOS_RECORDATORIO = 5;
+
+// Espera en minutos ANTES del intento n+1 (el último valor se repite si sobran intentos).
+// Total ~23 min de ventana, que cubre de sobra una reconexión de Baileys sin que el
+// recordatorio llegue tan tarde que ya no sirva.
+const ESPERA_REINTENTO_MIN = [1, 2, 5, 15];
+
+export function registrarFalloRecordatorio(id) {
+  const intentos = incrementReminderAttempt(id);
+  if (intentos >= MAX_INTENTOS_RECORDATORIO) {
+    db.prepare(`UPDATE reminders SET status = 'failed' WHERE id = ?`).run(id);
+    return { intentos, agotado: true, esperaMin: 0 };
+  }
+  const esperaMin = ESPERA_REINTENTO_MIN[Math.min(intentos - 1, ESPERA_REINTENTO_MIN.length - 1)];
+  db.prepare(`UPDATE reminders SET next_attempt_at = ? WHERE id = ?`).run(localNow(esperaMin / 60), id);
+  return { intentos, agotado: false, esperaMin };
 }
 
 export function getUpcomingReminders(hours = 24) {
@@ -316,6 +349,14 @@ export function markIfNew(messageId) {
     console.error(`[DB] markIfNew(${messageId}) falló con ${err?.code || 'error sin código'}: ${err?.message}`);
     throw err;
   }
+}
+
+// Consulta SIN consumir: ¿ya se marcó esta clave? `markIfNew` no sirve para preguntar porque
+// preguntar CON él ya gasta la marca. Lo usa el aviso de pagos de Stripe, que ahora deduplica
+// por (pago, destinatario) y necesita mirar también la clave vieja por-pago antes de decidir.
+export function yaProcesado(messageId) {
+  if (!messageId) return false;
+  return !!db.prepare(`SELECT 1 FROM processed_messages WHERE message_id = ?`).get(messageId);
 }
 
 // ─── Calendly: pushes precall (dedup + agenda de Push 3) ──────────────────────
@@ -524,6 +565,26 @@ export function createPendingOutcome(o) {
     .run(row);
   return info.changes === 1 ? 'new' : 'exists';
 }
+
+// ── Push 4: marcar enviado y abrir el pendiente, en UNA transacción ──────────
+// Antes eran dos llamadas sueltas y en ese orden: el push quedaba 'sent' y RECIÉN después se
+// insertaba en `call_outcomes`. Si esa inserción fallaba (SQLITE_BUSY es normal acá: `agent` y
+// `dash` escriben el mismo archivo), al closer ya se le había preguntado y su respuesta no
+// tenía dónde caer — y el push, ya consumido, no se volvía a mandar. Se preguntaba al vacío.
+//
+// Ahora o pasan las dos cosas o no pasa ninguna: si la transacción explota, el push sigue
+// 'scheduled' y el ciclo siguiente lo reintenta. El costo de esa falla es un Push 4 repetido
+// al closer (molesto pero visible); el de la versión anterior era una respuesta perdida en
+// silencio, que es el modo de fallo caro.
+//
+// ⚠️ El `INSERT OR IGNORE` de `createPendingOutcome` sigue siendo el dedup: si la fila ya
+// existía, devuelve 'exists' y la transacción igual marca el push. Eso es correcto — el
+// pendiente está abierto, que es la única condición que importa.
+export const marcarPush4Preguntado = db.transaction((pushId, outcome) => {
+  const estado = createPendingOutcome(outcome);
+  markCalendlyPushSent(pushId);
+  return estado;
+});
 
 // Registra un outcome AUTOMÁTICO (sin preguntar): ej. la cita se canceló en Calendly.
 // Si ya hay una fila pendiente para esa call, la cierra como 'auto'.

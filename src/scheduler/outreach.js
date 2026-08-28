@@ -12,7 +12,9 @@
 // Garantías:
 //  - No escribe dentro de las horas de descanso si la fila respeta quiet hours (pausa, no para).
 //  - Los envíos pasan por la cola anti-ban global de sendMessage.
-//  - Una fila que falla NO avanza su estado → el próximo minuto reintenta.
+//  - Una fila que falla ANTES del envio principal NO avanza su estado -> el proximo minuto
+//    reintenta. Una vez que el mensaje SALIO al tercero el estado avanza si o si (el FYI al
+//    creador es best-effort): nunca se le escribe dos veces a alguien de afuera.
 //
 // Deps inyectables (__setDeps) para testear el ciclo sin DB/WA/Claude reales.
 
@@ -56,14 +58,34 @@ async function deliverOutreach(d, row, { now, nowStamp, nowParts }) {
   const text = await d.generateOutreachMessage({ intent: row.intent, toName: row.to_name, fromName: row.sender_name });
   await d.sendMessage(row.to_phone, text);
 
-  // Aviso al QUIEN dio la orden (FYI, no aprobación): el jefe O el admin que la creó ven cada
-  // salida. created_by es el JID/LID del creador (DM-able); fallback al jefe para filas viejas.
-  const notify = row.created_by || (d.bossTarget ? await d.bossTarget() : bossDmTarget());
-  if (notify) {
-    await d.sendMessage(notify, `✅ Le escribí a ${row.to_name || row.to_phone}:\n«${text}»`);
-  }
+  // ATENCION: EL ESTADO AVANZA ACA, pegado al envio principal y ANTES del FYI. No es orden
+  // estetico: el FYI es un segundo `sendMessage` que puede fallar solo (JID del creador
+  // muerto, sesion caida a la mitad), y si eso tumbaba la funcion el estado nunca avanzaba
+  // -> al minuto siguiente el cron le VOLVIA A ESCRIBIR al tercero. Un mensaje repetido a
+  // alguien de afuera es el peor resultado posible de este job: no lo ve nadie del equipo y
+  // quema la reputacion del numero. Perder el FYI, en cambio, cuesta una linea de log.
+  avanzarEstado(d, row, { now, nowParts });
 
-  // Avanzar estado + evaluar parada según el tipo.
+  // Aviso a QUIEN dio la orden (FYI, no aprobacion): el jefe O el admin que la creo ven cada
+  // salida. created_by es el JID/LID del creador (DM-able); fallback al jefe para filas
+  // viejas. Best-effort y con su propio catch, por lo de arriba.
+  try {
+    const notify = row.created_by || (d.bossTarget ? await d.bossTarget() : bossDmTarget());
+    if (notify) {
+      await d.sendMessage(notify, `✅ Le escribí a ${row.to_name || row.to_phone}:\n«${text}»`);
+    }
+  } catch (err) {
+    console.error(
+      `[Scheduler] Outreach #${row.id}: el mensaje SALIO al destinatario pero el aviso al ` +
+        `creador fallo (${err.message}). No se reintenta: reintentarlo reenviaria el ` +
+        `mensaje al tercero.`
+    );
+  }
+}
+
+// Avanza estado + evalua parada segun el tipo. Sincrono a proposito (solo toca DB): asi no
+// queda un `await` entre el envio real y el registro de que ese envio ocurrio.
+function avanzarEstado(d, row, { now, nowParts }) {
   if (row.recur_kind === 'once') {
     d.finishOutreach(row.id, 'done');
     return;

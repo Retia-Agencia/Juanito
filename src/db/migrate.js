@@ -353,6 +353,11 @@ addColumnIfMissing('reminders', 'created_by', 'TEXT');
 addColumnIfMissing('reminders', 'status', "TEXT NOT NULL DEFAULT 'pending'");
 addColumnIfMissing('reminders', 'sent_at', 'DATETIME');
 addColumnIfMissing('reminders', 'attempts', 'INTEGER NOT NULL DEFAULT 0');
+// Freno del reintento tras un fallo de entrega (§18.BQ). NULL = nunca falló; con fecha, el
+// job de recordatorios ignora la fila hasta esa hora. Va aparte de `due_at` a propósito:
+// `due_at` es LO QUE PIDIÓ el jefe y se muestra en /programados — pisarlo con el backoff
+// haría que un recordatorio de las 9:00 dijera que era para las 9:05.
+addColumnIfMissing('reminders', 'next_attempt_at', 'DATETIME');
 // Recordatorios ÚNICOS dirigidos a un grupo (§18.Q): si to_group_id está, el scheduler
 // publica el recordatorio EN ese grupo (vía la cola anti-ban) en vez de a una persona.
 addColumnIfMissing('reminders', 'to_group_id', 'TEXT');

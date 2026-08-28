@@ -276,6 +276,8 @@ async function deps() {
     shouldAlertPersistent: db.shouldAlertPersistent,
     // §18.AB: outcomes post-call.
     createPendingOutcome: db.createPendingOutcome,
+    // Push 4: 'sent' + pendiente en UNA transaccion (ver db/index.js).
+    marcarPush4Preguntado: db.marcarPush4Preguntado,
     recordAutoOutcome: db.recordAutoOutcome,
     getDueOutcomeReminders: db.getDueOutcomeReminders,
     markOutcomeReminded: db.markOutcomeReminded,
@@ -1317,12 +1319,30 @@ export async function runCalendlyDelivery() {
               startIso: startIso4,
             });
           const r4 = await deliver(d, p.closer_phone, msg4, 'push4', p.closer_email);
-          if (r4 === 'sent' || r4 === 'dry-run') {
+          if (r4 === 'sent') {
+            // El push se marca enviado y el pendiente se abre en UNA transaccion: al closer
+            // YA se le pregunto, asi que su respuesta (incl. una reagenda) tiene que tener
+            // donde caer (getActiveOutcomeForCloser). Si la escritura falla, el push queda
+            // 'scheduled' y el ciclo siguiente lo reintenta; antes quedaba 'sent' con la
+            // pregunta hecha al vacio y la respuesta sin donde aterrizar.
+            if (d.marcarPush4Preguntado) {
+              d.marcarPush4Preguntado(p.id, pendingOutcomeFrom(p, { reminded: remindedFlag }));
+            } else {
+              d.markCalendlyPushSent(p.id);
+              if (d.createPendingOutcome)
+                d.createPendingOutcome(pendingOutcomeFrom(p, { reminded: remindedFlag }));
+            }
+          } else if (r4 === 'dry-run') {
+            // DRY-RUN NO ABRE EL PENDIENTE. El push si se marca: `calendly_pushes` es el
+            // ledger del propio job y sin eso el Push 4 se reintentaria para siempre (sale
+            // antes del guard de obsolescencia). Pero `call_outcomes` es DATO OPERATIVO: una
+            // fila abierta a nadie caduca sola como 'no_answer' a los ~60 min y entra al
+            // reporte como "el closer no registro la call". O sea que una cuenta muda
+            // ensuciaba las metricas de cumplimiento con calls que jamas se preguntaron.
             d.markCalendlyPushSent(p.id);
-            // El pendiente se crea recién ahora: el closer YA recibió el mensaje, así que
-            // su respuesta (incl. una reagenda) podrá matchearse (getActiveOutcomeForCloser).
-            if (d.createPendingOutcome)
-              d.createPendingOutcome(pendingOutcomeFrom(p, { reminded: remindedFlag }));
+            console.log(
+              `[Calendly] Push 4 #${p.id} [DRY-RUN]: no se abre pendiente (nadie fue preguntado)`
+            );
           } else if (r4 === 'paused' || r4 === 'paused-closer') {
             if (d.revertCalendlyPush) d.revertCalendlyPush(p.id); // reintentar al despausar
           } else if (r4 === 'skipped-no-thread') {
@@ -1808,8 +1828,13 @@ export async function runOutcomeReminders() {
       startIso,
     });
     const r = await deliver(d, o.closer_phone, msg, 'outcome-remind', o.closer_email);
-    // Solo marcamos 'reminded' si de verdad salió; si estaba pausado/sin opt-in se
-    // reintenta en el próximo tick (no se quema la única insistencia de v1).
+    // Solo marcamos 'reminded' si de verdad salio; si estaba pausado/sin opt-in se
+    // reintenta en el proximo tick (no se quema la unica insistencia de v1).
+    //
+    // 'dry-run' SI marca, y eso es deliberado: `reminded` es el ledger de ESTE job (sin el,
+    // una cuenta muda repreguntaria cada tick hasta que la fila caduque). Lo que el dry-run
+    // no hace es CREAR filas de call_outcomes — eso se corto en el Push 4, que es de donde
+    // salian. Sin filas nuevas, este camino ya no se alimenta de una cuenta en dry-run.
     if (r === 'sent' || r === 'dry-run') {
       if (d.markOutcomeReminded) d.markOutcomeReminded(o.id);
       sent++;

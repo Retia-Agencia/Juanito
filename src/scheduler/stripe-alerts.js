@@ -10,9 +10,18 @@
 // que no le ha escrito antes. Si la destinataria no tiene hilo, el aviso se salta y se
 // avisa por log (no se encola ni se reintenta a ciegas).
 //
-// Dedup: cada PaymentIntent se marca con `markIfNew('stripe:<id>')`. La tabla vive en el
-// volumen, así que un redeploy no reenvía avisos. La ventana del poll (minutos) es mucho
-// más corta que la purga de esa tabla (7 días) → no hay forma de re-avisar un pago viejo.
+// Dedup POR (pago, destinatario) y DESPUES de entregar: la marca es
+// `stripe:<id>:<jid>` y se pone recien cuando ese destinatario recibio el aviso. Antes la
+// clave era global por pago y se gastaba ANTES del envio, asi que si habia dos
+// destinatarios y el segundo fallaba (o todavia no tenia hilo con Juanito), esa alerta se
+// perdia para siempre mientras el primero si la habia recibido. La tabla vive en el
+// volumen, asi que un redeploy no reenvia avisos. La ventana del poll (minutos) es mucho
+// mas corta que la purga de esa tabla (7 dias) -> no hay forma de re-avisar un pago viejo.
+//
+// Compatibilidad: la clave VIEJA `stripe:<id>` sigue mandando. Si esta marcada, el pago se
+// considera resuelto bajo el esquema anterior y no se re-avisa; sin eso, el primer poll
+// despues del deploy dispararia una rafaga con las ultimas 2 horas de pagos ya avisados.
+// Esa clave vieja es tambien la que usa el arranque en frio.
 
 import { CronJob } from 'cron';
 import { STRIPE_API_KEY, fetchRecentPayments } from '../stripe/client.js';
@@ -26,6 +35,7 @@ async function realDeps() {
     fetchRecentPayments,
     sendMessage: wa.sendMessage,
     markIfNew: db.markIfNew,
+    yaProcesado: db.yaProcesado,
     hasDmThread: db.hasDmThread,
     getSetting: db.getSetting,
     setSetting: db.setSetting,
@@ -73,14 +83,24 @@ export async function runStripeAlerts({ now = new Date(), deps = null } = {}) {
     return 0;
   }
 
-  const nuevos = pagos.filter((p) => d.markIfNew(`stripe:${p.id}`));
+  // Clave por-pago del esquema viejo: si esta marcada, ese pago ya se resolvio antes del
+  // cambio a dedup por destinatario (o lo marco el arranque en frio). No se re-avisa.
+  const claveVieja = (p) => `stripe:${p.id}`;
+  const clavePorDestinatario = (p, to) => `stripe:${p.id}:${to}`;
+
+  const nuevos = pagos.filter((p) => !d.yaProcesado(claveVieja(p)));
   if (!nuevos.length) return 0;
 
   let enviados = 0;
   for (const p of nuevos.sort((a, b) => a.created - b.created)) {
     const msg = buildPaymentAlert(p, { tz: TZ() });
     for (const to of recipients) {
+      // La marca es POR DESTINATARIO, asi que un fallo de uno no le cuesta el aviso al otro.
+      if (d.yaProcesado(clavePorDestinatario(p, to))) continue;
       if (!d.hasDmThread(to)) {
+        // NO se marca: el hilo es transitorio (basta con que la persona escriba un mensaje).
+        // Marcarlo aca era parte del bug: quemaba el aviso justo para quien todavia no podia
+        // recibirlo. Queda pendiente mientras el pago siga dentro de la ventana del poll.
         console.warn(
           `[StripeAlert] OMITIDO → ${to}: no tiene hilo con Juanito. Que le escriba un mensaje primero (anti-ban).`
         );
@@ -88,6 +108,10 @@ export async function runStripeAlerts({ now = new Date(), deps = null } = {}) {
       }
       try {
         await d.sendMessage(to, msg);
+        // Marcar DESPUES de entregar. Si esto falla, el peor caso es un aviso repetido a
+        // esta persona en el proximo poll; el caso contrario (marcar antes) era perder el
+        // aviso sin que nadie se entere, que es el modo de fallo caro.
+        d.markIfNew(clavePorDestinatario(p, to));
         enviados++;
       } catch (e) {
         console.error(`[StripeAlert] fallo enviando a ${to}:`, e.message);

@@ -54,8 +54,9 @@ crash domain, no por recursos. Para alertar por WhatsApp **no tiene socket**: in
 | `src/index.js` | Entry point: wira Baileys → bot |
 | `dashboard/` | Consola de operación (contenedor `dash`). `server/` = API `node:http` (GET de lectura + POST de escritura en `actions.js`, apagados salvo los tabs de `DASH_WRITES`) + watchdog + botón Deploy; `src/` = SPA Vite/React; los dos `server/selftest*.js` ejercitan lectura y escritura contra una copia de la DB. Guía: [docs/DASHBOARD-ROADMAP.md](docs/DASHBOARD-ROADMAP.md) |
 | `src/bot/` | Router (`index.js`), comandos (`commands.js`), guard anti-secuestro de grupos (`group-guard.js`) |
-| `src/claude/index.js` | Claude: prompts, tool-use loop, memoria, reintentos |
+| `src/claude/index.js` | Claude: prompts, tool-use loop, memoria, reintentos. `untrusted.js` = encapsula el texto de terceros que cruza al system prompt del jefe (§18.BQ) |
 | `src/whatsapp/` | Baileys (`index.js`), cola anti-ban (`send-queue.js`), cache de subjects |
+| `src/common/http.js` | `fetchConDeadline`: TODA llamada saliente lleva deadline. El `fetch` de Node no trae timeout y un cuelgue ahí cuelga el job entero sin crashear el proceso (§18.BQ) |
 | `src/common/roles.js` | Resolución de rol por LID (jefe / admin / **closer** / desconocido). `closerOf()` = identidad del closer desde su JID: fuente ÚNICA para todo lo de setteo |
 | `src/setteo/` | Setteo reportado por el closer (§18.AZ). `parse.js`/`cuota.js`/`format.js` son PUROS (testeables en Windows); `capture.js`/`metricas.js` tocan DB + HubSpot. Captura determinista con fallback de IA (`setteo-ai.js`), calcado de `calendly/reschedule-ai.js` |
 | `src/scheduler/` | Cron jobs — `index.js` los arranca y lista todos |
@@ -151,7 +152,7 @@ loop rápido de reconexiones desde datacenter → WhatsApp lo detectó.
   `dashboard/server/csrf.js`. Sin él, ese archivo da ERR_MODULE_NOT_FOUND y parece una regresión.)
   (En Git Bash, prefijar con `MSYS_NO_PATHCONV=1` y usar rutas `C:/…` o el volumen no monta y
   la suite reporta **0 tests** en verde, que es peor que fallar.)
-  Baseline al **2026-08-27: 1112 tests, 1110 verdes, 2 rojos conocidos** (`call con TODOS sus
+  Baseline al **2026-08-28: 1141 tests, 1139 verdes, 2 rojos conocidos** (`call con TODOS sus
   pushes skipped…` y `reagenda manual superseded…`; los números de test se corren al agregar
   archivos, así que se buscan por nombre, no por índice). El tercer rojo histórico —links de
   Retia— murió solo al mudarse el sheet de Comunicarte (§18.BN). En Windows ese mismo commit da
@@ -164,7 +165,7 @@ loop rápido de reconexiones desde datacenter → WhatsApp lo detectó.
   ⚠️ Dos formas de leer un verde que no existe: la suite sale en **TAP** (`# tests`, no `ℹ tests`),
   así que un grep por `ℹ` no encuentra nada y parece que no corrió; y `docker build … | tail` se
   queda con el **exit code de `tail`** → reporta 0 con el daemon caído. Verificar el `$?` del build
-  y que el conteo sea ~1112, no 0. Por eso la lógica pura vive en módulos propios sin deps nativas: es la
+  y que el conteo sea ~1141, no 0. Por eso la lógica pura vive en módulos propios sin deps nativas: es la
   parte que sí se puede iterar en Windows.
 
 ## Cómo retomar una sesión

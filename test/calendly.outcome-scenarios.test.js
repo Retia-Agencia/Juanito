@@ -147,3 +147,58 @@ test('no se pregunta el outcome si el closer no tiene opt-in (anti-ban)', async 
   const p4 = h.store._rows.find((r) => r.push_n === 4);
   assert.equal(p4.status, 'skipped');
 });
+
+// ─── Auditoría 2026-08-26, hallazgo 07 ───────────────────────────────────────
+
+// El dry-run era el modo "no envía nada" de una cuenta muda… salvo que SÍ escribía en
+// `call_outcomes`. Esa fila abierta a nadie caduca sola como 'no_answer' a los ~60 min y
+// entra al reporte como "el closer no registró la call". Una cuenta en dry-run ensuciaba
+// las métricas de cumplimiento con calls que jamás se preguntaron.
+test('DRY-RUN: el Push 4 no abre un pendiente que nadie va a poder responder', async () => {
+  process.env.CALENDLY_DRY_RUN_ESTADOX = 'true';
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'p4dry', startInMin: 20, closerEmail: SALAZAR, nowMs: now })];
+  const h = installHarness(scheduler, { events, optins: [SALAZAR_PHONE], nowMs: now });
+
+  await scheduler.runCalendlyPoll();
+  h.clock.ms = now + 56 * MIN;
+  await scheduler.runCalendlyDelivery();
+
+  const p4 = h.store._rows.find((r) => r.push_n === 4);
+  assert.equal(p4.status, 'sent', 'el push SÍ se marca: es el ledger del job y sale antes del guard de obsolescencia');
+  assert.equal(h.wa.sent.length, 0, 'dry-run no manda nada');
+  assert.equal(h.store._outcomes.length, 0, 'y NO fabrica el outcome: nadie fue preguntado');
+});
+
+// El push quedaba 'sent' y RECIÉN después se insertaba el outcome. Si esa inserción fallaba
+// (SQLITE_BUSY es normal: `agent` y `dash` escriben el mismo archivo), al closer ya se le
+// había preguntado y su respuesta no tenía dónde caer — y el push, ya consumido, no volvía.
+test('si el outcome no se puede guardar, el Push 4 NO queda consumido', async () => {
+  const now = Date.now();
+  const events = [makeEvent({ uuid: 'p4tx', startInMin: 20, closerEmail: SALAZAR, nowMs: now })];
+  const h = installHarness(scheduler, { events, optins: [SALAZAR_PHONE], nowMs: now });
+
+  await scheduler.runCalendlyPoll();
+
+  // La transacción explota: ni outcome ni 'sent'.
+  const real = h.store.marcarPush4Preguntado;
+  let exploto = false;
+  h.deps.marcarPush4Preguntado = () => {
+    exploto = true;
+    throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+  };
+
+  h.clock.ms = now + 56 * MIN;
+  await scheduler.runCalendlyDelivery();
+  assert.ok(exploto, 'el escenario pasó por el camino transaccional');
+
+  const p4 = h.store._rows.find((r) => r.push_n === 4);
+  assert.notEqual(p4.status, 'sent', 'el push no se quema con la pregunta hecha al vacío');
+  assert.equal(h.store._outcomes.length, 0);
+
+  // Restaurada la DB, el ciclo siguiente lo entrega y abre el pendiente.
+  h.deps.marcarPush4Preguntado = (...a) => real.call(h.store, ...a);
+  await scheduler.runCalendlyDelivery();
+  assert.equal(h.store._rows.find((r) => r.push_n === 4).status, 'sent');
+  assert.equal(h.store._outcomes.length, 1, 'la respuesta del closer ya tiene dónde caer');
+});
