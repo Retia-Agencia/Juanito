@@ -5,7 +5,10 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-08-28** (§18.BQ — los seis restantes de la auditoría de
+Última actualización: **2026-09-02** (§18.BR — Maru Marquez entra a "De Cero a Tactical
+Investor" heredando el buzón-rol `equipo@ttrading.co`; Sebastian Salazar queda desvinculado del
+programa. Una cuenta de Calendly pertenece a UNA organización: por eso su gmail de ComunicArte no
+servía). Anterior: **2026-08-28** (§18.BQ — los seis restantes de la auditoría de
 Codex: reintento de recordatorios, outreach sin duplicar al tercero, Stripe deduplicando
 por destinatario, dry-run sin fabricar outcomes, deadline en todo fetch e inyección de
 prompt). Anterior: **2026-08-27** (§18.BP — los cuatro arreglos de la auditoría de Codex:
@@ -3041,7 +3044,11 @@ imprime; reusable para cualquier agencia futura), hardcodeado en `accounts.js`:
   Tactical Investor" (137 citas). Es el ÚNICO ET que se pushea — los otros tipos de ese Calendly
   (Revisión de Portafolio, Asesoría, etc.) no son ventas.
 
-**Closers (verificados contra la agenda real — los emails matchean el host del evento):**
+**Closers (verificados contra la agenda real — los emails matchean el host del evento).**
+⚠️ Esto es una FOTO del 2026-07-21, no el estado vivo: los cuatro renglones ya cambiaron de dueño
+al menos una vez. El buzón `equipo@` pasó de Dana a Salazar (22-jul) y de Salazar a **Maru
+Marquez** (2026-09-02, §18.BR), y la cuenta de Sebastian Rodriguez está borrada de esa org desde el
+11-ago. **La fuente viva es `src/calendly/closers.js`**, no esta tabla.
 
 | Nombre | Email (host Calendly) | WhatsApp | Estado |
 |---|---|---|---|
@@ -6069,6 +6076,80 @@ intento de reproducir el bug no lo reprodujo, porque el `try/catch` nuevo se com
 hubo que restaurar la versión pre-arreglo entera para que los tests se pusieran rojos.
 
 ---
+
+### 18.BR 🔵 Maru entra a Tactical Investor por el buzón-rol, y Salazar sale (2026-09-02) — EN PRODUCCIÓN
+
+**El pedido:** activar a Maru Marquez en "De Cero a Tactical Investor". Ella ya cerraba "Método
+Comunicarte", así que quedaría en los dos programas de Retia.
+
+**Lo que se encontró antes de tocar nada.** Medido contra la API con el token de Vieira (que es el
+**owner** de la org, así que la consulta ve la organización entera), ventana de 90 días atrás y 120
+adelante, 293 citas: Maru **no existía** en ese Calendly. Cero membresías, cero invitaciones de
+cualquier estado. Los únicos hosts que ese programa ha tenido son `registro@ttrading.co` (Andrea),
+`equipo@ttrading.co`, un usuario borrado (18 citas, 20-jul → 11-ago) y `alejocarpa1108@gmail.com`.
+
+**El dato que cambió el plan, y que conviene no volver a aprender:** el correo que Retia había
+dictado era su gmail, `soymarumarquez@gmail.com`, el mismo con el que hostea ComunicArte. **No
+podía funcionar.** En Calendly una cuenta pertenece a UNA organización: el recurso de usuario
+expone `current_organization`, **un campo, no una lista**. El de Maru apunta a la org de
+ComunicArte. Invitar ese gmail al Calendly de Tactical Investor tenía dos finales, los dos malos:
+la invitación se queda `pending` para siempre, o ella acepta y su cuenta **se muda**, perdiendo
+ComunicArte (donde tenía 6 citas futuras). Corroboración desde el propio roster: las cuatro
+personas multi-conexión usan un correo distinto por conexión — Salazar comparte hasta el teléfono
+entre sus dos identidades, pero nunca el correo.
+
+Hay un caso vivo del mismo problema en ese mismo Calendly: **Dana** aceptó el 25-ago, hosteó una
+cita el 26-ago, hoy **no es miembro** y tiene un reenvío `pending` desde el 01-sep. Su identidad en
+el roster está cableada contra alguien que ahora mismo no puede recibir citas ahí.
+
+**Cómo se resolvió (Retia, 2026-09-02):** le asignaron el **buzón-rol** `equipo@ttrading.co`, que
+es como Retia opera sus cupos. O sea que esto **no fue un alta, fue una rotación**: Sebastian
+Salazar queda **desvinculado** del programa (confirmado por el jefe).
+
+**El cambio, entonces, es mover una identidad de una persona a otra:**
+
+- `closers.js`: la identidad `{ connection:'retia', email:'equipo@ttrading.co' }` sale de
+  `PEOPLE.sebastian_salazar` y entra en `PEOPLE.maru_marquez` **con el teléfono de ella**
+  (+573108600134, su misma línea de ComunicArte). Salazar queda con una sola identidad (estadox).
+- **Sin `workLid`** en la identidad nueva. No es un olvido: el invariante *"ningún workLid se
+  declara dos veces"* lo prohíbe, y no hace falta — `workLidForCloser` busca por email y devuelve
+  null, así que el destino lo fija el `contact_jid` del opt-in, que ya es su hilo de trabajo.
+- **No se tocó la DB.** El opt-in está keyeado por TELÉFONO: la fila de Maru (26-ago,
+  `162173754060966@lid`, `paused=0`) sirve a sus dos identidades, así que empieza a recibir estos
+  pushes sin escribir de nuevo. La fila de Salazar tampoco se toca: sigue activo en abogados y
+  borrarla lo dejaría sin los pushes de su propio programa.
+
+**Por qué cambiar el roster ALCANZA, y por qué el momento importó.** El destino se resuelve contra
+el roster **vivo al entregar** (`resolveCloser(closerEmail)?.phone || to`, scheduler/calendly.js:587),
+no con el `closer_phone` congelado en la fila del push — esa línea existe justamente porque rotarle
+el número a alguien dejaba huérfano todo lo ya agendado (Daniela, 29-jul). Aun así se verificó
+contra la DB de producción antes de tocar: `equipo@ttrading.co` tenía **0 pushes `scheduled`** (48
+`sent`) y **0 citas futuras** en Calendly. Nada en vuelo que desviar.
+
+**⚠️ Lo que este cambio NO hace, a propósito: mandar el buzón a `IGNORED_CLOSERS`.** Es exactamente
+el error del 2026-07-29 (§18.AV). Cuando Salazar heredó este mismo buzón el 22-jul, se asumió que
+tendría cuenta personal y **en el mismo movimiento se retiró el correo**: 10 citas reales cayeron
+en el `continue` silencioso de `isIgnoredCloser`, una semana sin pushes y sin una sola alerta. El
+buzón sigue vivo y tomando citas; lo único que cambia es quién está detrás. **Rotar la persona de
+un buzón-rol = cambiar el TELÉFONO, nunca retirar el correo.**
+
+**Un detalle que hace esto invisible desde afuera:** la cuenta en Calendly se sigue llamando
+"Equipo JP Tactical Trading". La API no tiene forma de saber quién la atiende, así que **este
+roster es el único lugar del mundo donde ese dato existe**. Si nadie lo actualiza, los pushes de
+las calls de Maru le siguen llegando al WhatsApp de Salazar, con nombres y teléfonos de leads que
+ya no son suyos, y sin un solo error en el log.
+
+**Tests.** Maru pasa a ser el ejemplo vivo de *"una persona, dos identidades, una sola línea"* que
+antes encarnaba Salazar, así que los tests que fijaban ese caso se mudaron con él. El de
+`sheet-push` se reescribió a algo más fuerte que lo que probaba: sus dos calls generan **un Push 5
+cada una, con SU sheet**, por el **mismo hilo** — que es el bug de Andrea del 26-ago (§18.BO),
+ahora en la persona que ocupa ese lugar. Baseline: **1142 tests, 1140 verdes**, los mismos 2 rojos
+conocidos (`call con TODOS sus pushes skipped…` y `reagenda manual superseded…`).
+
+**Pendiente que salió de paso, NO tocado:** la identidad `retia` de **Sebastian Rodriguez**
+(`sebasrr321@gmail.com`) es cableado muerto — cuenta borrada de esa org, sin hostear desde el
+11-ago. Y la de **Dana** apunta a alguien que hoy no es miembro. Las dos siguen en el roster.
+
 
 ### 🟢 Baja prioridad / Nice-to-have
 

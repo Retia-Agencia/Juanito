@@ -334,33 +334,46 @@ test('resolveIdentitiesByName devuelve TODAS las identidades de una persona mult
   }
 });
 
-test('resolveIdentitiesByName lista las DOS identidades aunque compartan teléfono (Sebastian Salazar)', () => {
-  // Salazar cierra en estadox y retia desde la MISMA línea (hasta el 2026-08-25 su identidad de
-  // abogados era de la conexión '30x'; se movió con el programa). El dedup es por (teléfono,
-  // cuenta), no por teléfono, así que aparecen las dos → `/calendly off Sebastian Salazar retia`
+test('resolveIdentitiesByName lista las DOS identidades aunque compartan teléfono (Maru Marquez)', () => {
+  // Maru cierra en comunicarte y en retia desde la MISMA línea. El dedup es por (teléfono,
+  // cuenta), no por teléfono, así que aparecen las dos → `/calendly off Maru Marquez retia`
   // puede apagar solo una. (Si el dedup volviera a ser por teléfono, esto devolvería 1 y el
   // comando no podría desambiguar por cuenta.)
-  const ids = resolveIdentitiesByName('Sebastian Salazar');
-  assert.equal(ids.length, 2, 'Sebastian Salazar debe tener 2 identidades');
-  assert.deepEqual(ids.map((i) => i.account).sort(), ['estadox', 'retia']);
+  // Este caso lo encarnaba Sebastian Salazar (estadox + retia) hasta el 2026-09-02, cuando Retia
+  // le reasignó el buzón-rol de Tactical Investor a Maru y él quedó con una sola identidad.
+  const ids = resolveIdentitiesByName('Maru Marquez');
+  assert.equal(ids.length, 2, 'Maru Marquez debe tener 2 identidades');
+  assert.deepEqual(ids.map((i) => i.account).sort(), ['comunicarte', 'retia']);
   assert.equal(new Set(ids.map((i) => i.phone)).size, 1, 'ambas identidades comparten teléfono');
   assert.deepEqual(
     ids.map((i) => i.email).sort(),
-    ['equipo@ttrading.co', 'sebastian.salazar@30x.com']
+    ['equipo@ttrading.co', 'soymarumarquez@gmail.com']
   );
 });
 
-test('el buzón-rol equipo@ttrading.co es la identidad retia de Salazar, NO un host ignorado', () => {
+test('Sebastian Salazar quedó con UNA sola identidad al salir de Tactical Investor', () => {
+  // 2026-09-02: Retia le reasignó el buzón-rol `equipo@ttrading.co` a Maru. Su identidad de
+  // abogados (estadox) NO se toca, y su opt-in tampoco — sigue activo en su propio programa.
+  const ids = resolveIdentitiesByName('Sebastian Salazar');
+  assert.deepEqual(ids.map((i) => i.email), ['sebastian.salazar@30x.com']);
+  assert.equal(ids[0].account, 'estadox');
+  assert.ok(!CLOSERS['equipo@ttrading.co'] || CLOSERS['equipo@ttrading.co'].name !== 'Sebastian Salazar',
+    'el buzón ya no puede resolver a Salazar: sus pushes irían al WhatsApp equivocado');
+});
+
+test('el buzón-rol equipo@ttrading.co es la identidad retia de Maru, NO un host ignorado', () => {
   // Regresión del 2026-07-29: del 22 al 29 de julio equipo@ estuvo en IGNORED_CLOSERS porque se
-  // asumió que Salazar tendría cuenta personal en el Calendly de Retia. Nunca se creó, así que sus
-  // citas caían en el skip SILENCIOSO del poll (sin log ni alerta) y estuvo una semana sin pushes.
+  // asumió que su ocupante de entonces (Salazar) tendría cuenta personal en el Calendly de Retia.
+  // Nunca se creó, así que sus citas caían en el skip SILENCIOSO del poll (sin log ni alerta) y
+  // estuvo una semana sin pushes. Rotar la PERSONA del buzón no puede volver a retirar el CORREO:
+  // el buzón sigue vivo y tomando citas, solo cambia quién está detrás.
   assert.ok(!isIgnoredCloser('equipo@ttrading.co'), 'equipo@ NO debe estar en IGNORED_CLOSERS');
   const c = CLOSERS['equipo@ttrading.co'];
   assert.ok(c, 'equipo@ debe estar en CLOSERS');
-  assert.equal(c.name, 'Sebastian Salazar');
+  assert.equal(c.name, 'Maru Marquez');
   assert.equal(c.account, 'retia');
-  // Mismo teléfono que su identidad 30x: una sola línea de WhatsApp, un solo opt-in.
-  assert.equal(c.phone, CLOSERS['sebastian.salazar@30x.com'].phone);
+  // Mismo teléfono que su identidad de ComunicArte: una sola línea de WhatsApp, un solo opt-in.
+  assert.equal(c.phone, CLOSERS['soymarumarquez@gmail.com'].phone);
 });
 
 test('el correo personal que nunca existió en Calendly no quedó en el roster', () => {

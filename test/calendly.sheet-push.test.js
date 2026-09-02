@@ -35,18 +35,19 @@ const RETIA = accountOf('retia');
 const ET_RETIA = Object.keys(RETIA.eventTypes)[0];
 const COMUNICARTE = accountOf('comunicarte');
 const ET_COMUNICARTE = Object.keys(COMUNICARTE.eventTypes)[0];
-// Maru Marquez cierra SOLO ComunicArte: es quien se quedaba sin ningún push post-call cuando
-// esa conexión no declaraba `sheets`.
+// Maru Marquez es el caso filoso del roster desde el 2026-09-02: UNA persona, UNA línea de
+// WhatsApp y DOS identidades (comunicarte + retia), cada una con SU sheet. La cuenta se resuelve
+// por EMAIL, así que sus dos calls tienen que caer en lados distintos aunque compartan teléfono,
+// opt-in e hilo. Su identidad de retia es el BUZÓN-ROL `equipo@ttrading.co`, no un correo personal
+// (lo tuvo Sebastian Salazar hasta esa fecha; corrección original del 2026-07-29).
 const MARU = 'soymarumarquez@gmail.com';
+const MARU_RETIA = 'equipo@ttrading.co';
 const PHONE_MARU = CLOSERS[MARU].phone;
 
-// Sebastian Salazar es el caso filoso del roster: UNA persona, UNA línea de WhatsApp y DOS
-// identidades (30x + retia). La cuenta se resuelve por EMAIL, así que sus dos calls tienen
-// que caer en lados distintos aunque compartan teléfono, opt-in e hilo.
-// Su identidad de retia es el BUZÓN-ROL de Retia, no un correo personal (corrección 2026-07-29).
-const SALAZAR_RETIA = 'equipo@ttrading.co';
+// Salazar quedó con una sola identidad (estadox). Sigue acá porque su conexión NO declara
+// `sheets`: es el lado negativo del test de alcance.
 const SALAZAR_30X = 'sebastian.salazar@30x.com';
-const PHONE_SALAZAR = CLOSERS[SALAZAR_RETIA].phone;
+const PHONE_SALAZAR = CLOSERS[SALAZAR_30X].phone;
 
 // El evento de Calendly trae `end_time`; el fixture del harness no lo emite (ningún push lo
 // necesitaba hasta ahora), así que se lo agregamos acá en vez de tocar el harness compartido.
@@ -55,7 +56,8 @@ function eventoCon(durationMin, opts) {
   return { ...ev, end_time: new Date(new Date(ev.start_time).getTime() + durationMin * MIN).toISOString() };
 }
 
-const optinDeSalazar = () => [{ phone: PHONE_SALAZAR, source: 'self', contactJid: '999@lid' }];
+const optinDeMaru = () => [{ phone: PHONE_MARU, source: 'self', contactJid: '999@lid' }];
+const optinDeSalazar = () => [{ phone: PHONE_SALAZAR, source: 'self', contactJid: '998@lid' }];
 
 // ─── El vencimiento ───────────────────────────────────────────────────────────
 
@@ -166,19 +168,31 @@ test('ComunicArte declara `sheets` → su closer recibe el Push 5, con SU sheet'
   scheduler.__resetDeps();
 });
 
-test('la MISMA persona con dos identidades: su call de retia genera Push 5, la de 30x no', async () => {
+test('la MISMA persona con dos identidades: cada call pide SU sheet, por el mismo hilo', async () => {
+  // Maru cierra ComunicArte y Tactical Investor desde una sola línea (rotación del 2026-09-02:
+  // heredó el buzón-rol de Salazar). Es el caso que el Push 5 tiene que resolver por CONEXIÓN de
+  // la call y no por persona: el bug del 2026-08-26 fue exactamente este, con Andrea recibiendo
+  // el sheet de Comunicarte pegado a una call de Tactical Investor. Un recordatorio que pide el
+  // link equivocado enseña a ignorar el recordatorio.
   __resetHealth();
   const now = Date.parse('2026-07-28T14:00:00Z');
-  const { store } = installHarness(scheduler, {
+  const { store, wa, clock } = installHarness(scheduler, {
     nowMs: now,
-    accounts: [realAccount(), RETIA],
-    optins: optinDeSalazar(), // un solo opt-in: comparten teléfono e hilo
+    accounts: [COMUNICARTE, RETIA],
+    optins: optinDeMaru(), // UN solo opt-in: las dos identidades comparten teléfono e hilo
     events: [
-      eventoCon(30, { uuid: 'e-30x', startInMin: 40, closerEmail: SALAZAR_30X, nowMs: now, account: '30x' }),
+      eventoCon(30, {
+        uuid: 'e-comunicarte',
+        startInMin: 40, // 14:40 → 15:10, Push 5 a las 15:20
+        closerEmail: MARU,
+        eventType: ET_COMUNICARTE,
+        nowMs: now,
+        account: 'comunicarte',
+      }),
       eventoCon(30, {
         uuid: 'e-retia',
-        startInMin: 50,
-        closerEmail: SALAZAR_RETIA,
+        startInMin: 50, // 14:50 → 15:20, Push 5 a las 15:30
+        closerEmail: MARU_RETIA,
         eventType: ET_RETIA,
         nowMs: now,
         account: 'retia',
@@ -189,13 +203,33 @@ test('la MISMA persona con dos identidades: su call de retia genera Push 5, la d
   await scheduler.runCalendlyPoll();
 
   const push5 = store._rows.filter((p) => p.push_n === 5);
-  assert.equal(push5.length, 1, 'exactamente un Push 5');
-  assert.equal(push5[0].event_uuid, 'e-retia', 'y es el de retia, no el de 30x');
-  assert.equal(push5[0].closer_email, SALAZAR_RETIA);
-  // Retia sigue sin Push 4: el 5 no lo reemplaza, es que el 4 nunca existió para esta cuenta.
-  // La call de 30x sí lo tiene (y debe seguir teniéndolo) — de ahí el filtro por evento.
-  assert.equal(store._rows.filter((p) => p.push_n === 4 && p.event_uuid === 'e-retia').length, 0);
-  assert.equal(store._rows.filter((p) => p.push_n === 4 && p.event_uuid === 'e-30x').length, 1);
+  assert.equal(push5.length, 2, 'un Push 5 por call: las dos conexiones declaran sheets');
+  assert.deepEqual(
+    push5.map((p) => p.closer_email).sort(),
+    [MARU_RETIA, MARU].sort(),
+    'cada fila queda con el EMAIL de su identidad, no con el de la persona'
+  );
+  // Ninguna de las dos conexiones de Retia tiene Push 4: el 5 no lo reemplaza, es que el 4 nunca
+  // existió acá. Si alguna vez aparece un push 4 en este test, alguien lo prendió sin querer.
+  assert.equal(store._rows.filter((p) => p.push_n === 4).length, 0);
+
+  clock.ms = Date.parse('2026-07-28T15:31:00Z'); // después de los dos vencimientos
+  await scheduler.runCalendlyDelivery();
+
+  const enviados = wa.sent.filter((m) => m.text.includes('Registra la call'));
+  assert.equal(enviados.length, 2, 'los dos recordatorios salen');
+  assert.equal(new Set(enviados.map((m) => m.to)).size, 1, 'y los dos al MISMO hilo: una sola línea');
+
+  const urlCom = COMUNICARTE.sheets[0].url;
+  const deCom = enviados.find((m) => m.text.includes(urlCom));
+  assert.ok(deCom, 'el de ComunicArte trae su sheet');
+  for (const sh of RETIA.sheets)
+    assert.ok(!deCom.text.includes(sh.url), `y NO el de "${sh.label}", que es de la otra conexión`);
+
+  const deRetia = enviados.find((m) => m !== deCom);
+  for (const sh of RETIA.sheets)
+    assert.ok(deRetia.text.includes(sh.url), `el de Tactical Investor trae el sheet de "${sh.label}"`);
+  assert.ok(!deRetia.text.includes(urlCom), 'y NO el de ComunicArte');
   scheduler.__resetDeps();
 });
 
@@ -207,12 +241,12 @@ test('CALENDLY_SHEET_PUSH=false apaga el Push 5 sin tocar los pushes precall', a
     const { store } = installHarness(scheduler, {
       nowMs: now,
       accounts: [RETIA],
-      optins: optinDeSalazar(),
+      optins: optinDeMaru(),
       events: [
         eventoCon(30, {
           uuid: 'e-retia',
           startInMin: 40,
-          closerEmail: SALAZAR_RETIA,
+          closerEmail: MARU_RETIA,
           eventType: ET_RETIA,
           nowMs: now,
           account: 'retia',
@@ -238,12 +272,12 @@ test('el guard de obsolescencia NO mata el Push 5: se entrega con la call ya ter
   const { store, wa, clock } = installHarness(scheduler, {
     nowMs: now,
     accounts: [RETIA],
-    optins: optinDeSalazar(),
+    optins: optinDeMaru(),
     events: [
       eventoCon(30, {
         uuid: 'e-retia',
         startInMin: 40, // call 14:40 → 15:10, Push 5 a las 15:20
-        closerEmail: SALAZAR_RETIA,
+        closerEmail: MARU_RETIA,
         eventType: ET_RETIA,
         nowMs: now,
         account: 'retia',
@@ -277,12 +311,12 @@ test('cita cancelada antes de la hora → no se le pide registrar una call que n
   const { store, wa, clock, api } = installHarness(scheduler, {
     nowMs: now,
     accounts: [RETIA],
-    optins: optinDeSalazar(),
+    optins: optinDeMaru(),
     events: [
       eventoCon(30, {
         uuid: 'e-retia',
         startInMin: 40,
-        closerEmail: SALAZAR_RETIA,
+        closerEmail: MARU_RETIA,
         eventType: ET_RETIA,
         nowMs: now,
         account: 'retia',
@@ -308,12 +342,12 @@ test('cuenta en dry-run: se consume la fila pero no sale ningún mensaje', async
     const { store, wa, clock } = installHarness(scheduler, {
       nowMs: now,
       accounts: [RETIA],
-      optins: optinDeSalazar(),
+      optins: optinDeMaru(),
       events: [
         eventoCon(30, {
           uuid: 'e-retia',
           startInMin: 40,
-          closerEmail: SALAZAR_RETIA,
+          closerEmail: MARU_RETIA,
           eventType: ET_RETIA,
           nowMs: now,
           account: 'retia',

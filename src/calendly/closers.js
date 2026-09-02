@@ -19,10 +19,10 @@
 //   Lucas Mendoza       LinkedIn Sales  · Operaciones Escalables
 //   Pablo Suarez        AI For Developers
 //   Daniela Camacho     Instagram & TikTok · Operaciones Escalables
-//   Sebastian Salazar   EstadoX (IA para Abogados) · De Cero a Tactical Investor (Retia)
+//   Sebastian Salazar   EstadoX (IA para Abogados)   ← salió de Tactical Investor 2026-09-02
 //   Esteban Aguilar     EstadoX (IA para Abogados)
 //   Andrea Machado      Retia (De Cero a Tactical Investor) · ComunicArte (Método Comunicarte)
-//   Maru Marquez        ComunicArte — Método Comunicarte
+//   Maru Marquez        ComunicArte (Método Comunicarte) · De Cero a Tactical Investor (Retia)
 //   Dana Rodriguez      Retia — De Cero a Tactical Investor (alta 2026-08-25)
 //
 // ⚠️ 2026-08-25: al mudarse IA para Abogados al Calendly propio de EstadoX, los hosts de ese
@@ -39,7 +39,8 @@
 //
 // ⚠️ INVARIANTE (revisada 2026-07-22): un teléfono = una PERSONA, nunca dos personas distintas.
 // Una misma persona SÍ puede tener dos identidades con el MISMO teléfono en Conexiones distintas
-// (Sebastian Salazar: 30x + retia desde una sola línea de WhatsApp). NO necesita la migración a
+// (Maru Marquez: comunicarte + retia desde una sola línea de WhatsApp; lo era Sebastian Salazar
+// hasta que se le reasignó el buzón el 2026-09-02). NO necesita la migración a
 // clave compuesta que antes se temía, porque:
 //   · La CUENTA/dry-run/HubSpot se resuelven por EMAIL (accountOfCloser), distinto por identidad
 //     → cada programa cae a lo suyo sin ambigüedad.
@@ -109,41 +110,39 @@ export const PEOPLE = {
       { connection: 'retia', email: 'sebasrr321@gmail.com', phone: '+573008037326', workLid: '20671711162446' },
     ],
   },
-  // UNA persona, DOS identidades con el MISMO teléfono (excepción al patrón de Sebastian
-  // Rodriguez, que usa dos números). Cierra IA para Abogados en 30x y "De Cero a Tactical
-  // Investor" en Retia desde la misma línea de WhatsApp. Comparten opt-in (una fila por teléfono)
-  // — correcto: es el mismo hilo. La cuenta/dry-run se resuelve por EMAIL, distinto en cada
-  // identidad, así que cada programa cae a lo suyo. El pause es por-identidad (por email, en
-  // `settings`), no por teléfono → se apaga un programa sin el otro (`/calendly off Sebastian
-  // Salazar retia`). Reemplazó a Dana en Retia (2026-07-22). El nombre queda corto ("Sebastian
-  // Salazar", no "Juan Sebastian Salazar") para no romper el match por pushName de su hilo 30x.
+  // Cierra IA para Abogados en la conexión estadox. UNA sola identidad desde el 2026-09-02.
+  // El nombre queda corto ("Sebastian Salazar", no "Juan Sebastian Salazar") para no romper el
+  // match por pushName de su hilo.
   //
-  // ⚠️ CORRECCIÓN 2026-07-29 — su identidad de retia es el BUZÓN-ROL `equipo@ttrading.co`, NO un
-  // correo personal. El 22-jul se asumió que tendría cuenta propia (sebastiansalazar1410@gmail.com)
-  // y en el mismo movimiento se retiró el buzón a IGNORED_CLOSERS. Esa cuenta NUNCA se creó: medido
-  // contra la API de Retia el 29-jul, la org tiene 4 miembros (equipo@, jvieira@, registro@,
-  // sebasrr321@) y no hay invitación pendiente para ese gmail. Resultado: CERO filas de push para
-  // el correo fantasma y 10 citas reales hosteadas por equipo@ cayendo en el `continue` SILENCIOSO
-  // de isIgnoredCloser — una semana sin pushes y sin una sola alerta. En Retia los cupos se
-  // atienden por BUZÓN-ROL (mismo patrón que registro@ → Andrea Machado), no por cuenta personal.
-  // Al rotar la persona del buzón hay que cambiar el TELÉFONO acá (este roster es solo la LLAVE del
-  // opt-in; el destino real es `calendly_optins.contact_jid` — runbook en docs/JUANITO-HANDOFF.md).
+  // ⚠️ DESVINCULADO de "De Cero a Tactical Investor" el 2026-09-02 (decisión de Retia, confirmada
+  // por el jefe). Tenía una segunda identidad en la conexión retia con el BUZÓN-ROL
+  // `equipo@ttrading.co` y la MISMA línea de WhatsApp; Retia le reasignó ese buzón a Maru Marquez,
+  // así que la identidad se MOVIÓ a PEOPLE.maru_marquez (ver allá). Él era, hasta hoy, el único
+  // ejemplo vivo de "una persona, dos identidades, un solo teléfono" — ese lugar lo ocupa Maru.
+  //
+  // Lo que NO se tocó, a propósito: su fila de `calendly_optins` (+573054312905 →
+  // 39415653117990@lid). El opt-in está keyeado por TELÉFONO y él sigue activo en abogados, así
+  // que borrarlo lo dejaría sin pushes de su propio programa. Sus 48 pushes históricos bajo
+  // equipo@ tampoco se tocan: son historia, y no había ninguno pendiente al rotar (verificado
+  // contra la DB de producción — por eso el cambio no desvía nada en vuelo).
+  //
+  // ⚠️ LA CICATRIZ QUE HAY QUE NO REPETIR (2026-07-29): cuando ÉL heredó este mismo buzón el
+  // 22-jul, se asumió que tendría cuenta personal propia (sebastiansalazar1410@gmail.com) y en el
+  // mismo movimiento se retiró `equipo@` a IGNORED_CLOSERS. Esa cuenta nunca se creó: 10 citas
+  // reales hosteadas por el buzón cayeron en el `continue` SILENCIOSO de isIgnoredCloser, una
+  // semana sin pushes y sin una sola alerta. Por eso esta rotación NO manda el buzón a
+  // IGNORED_CLOSERS: el buzón sigue vivo y recibiendo citas, lo único que cambió es QUIÉN está
+  // detrás. En Retia los cupos se atienden por BUZÓN-ROL (igual que registro@ → Andrea Machado),
+  // y rotar la persona es cambiar el TELÉFONO, nunca retirar el correo.
+  //
   // ⚠️ MUDANZA 2026-08-25 — su identidad de abogados pasó de connection:'30x' a 'estadox'. El
   // email NO cambia (sigue hosteando como sebastian.salazar@30x.com, ahora dentro de la org de
   // EstadoX), así que su opt-in se reusa tal cual: `calendly_optins` está keyeada por TELÉFONO y
   // el closer se resuelve por EMAIL — ninguno de los dos se movió.
-  //
-  // Se MOVIÓ la identidad en vez de agregar una segunda con el mismo email a propósito: CLOSERS
-  // se deriva con Object.fromEntries keyeado por email, así que dos identidades con el mismo
-  // correo se pisan en silencio y `accountOfCloser` —la regla ÚNICA que decide dry-run/push4/
-  // HubSpot— devolvería la que ganó el sorteo. El invariante está fijado en un test.
-  // Su único programa en la conexión 30x era IA para Abogados, que es justo lo que se mudó, así
-  // que mover no le quita cobertura de nada.
   sebastian_salazar: {
     name: 'Sebastian Salazar',
     identities: [
       { connection: 'estadox', email: 'sebastian.salazar@30x.com', phone: '+573054312905' },
-      { connection: 'retia', email: 'equipo@ttrading.co', phone: '+573054312905' },
     ],
   },
   // Alta 2026-08-25 junto con la conexión de EstadoX. Hostea 14 de las 17 citas de abogados de la
@@ -215,7 +214,7 @@ export const PEOPLE = {
   // "Andrea Machado" choca de nombre con andrea.machado@30x.com (DEPARTIDA, en IGNORED_CLOSERS):
   // persona DISTINTA, no está en el roster → no confunde a resolveCloserByPushName.
   // Dana salió (2026-07-22): la reemplazó Sebastian Salazar, que SÍ heredó el buzón-rol
-  // equipo@ttrading.co (ver PEOPLE.sebastian_salazar y la corrección del 2026-07-29). Retia opera
+  // equipo@ttrading.co (hoy de Maru Marquez; ver la corrección del 2026-07-29). Retia opera
   // con DOS buzones-rol —registro@ y equipo@—, ninguno con cuenta personal detrás.
   //
   // ⚠️ DOS identidades desde 2026-08-25: cierra "De Cero a Tactical Investor" en Retia y
@@ -264,7 +263,8 @@ export const PEOPLE = {
   // des-ignorar: lo que se ignoró fue el PROGRAMA, no la persona.
   //
   // Ojo con la historia: Dana ya había salido de Retia el 2026-07-22 (la reemplazó Sebastian
-  // Salazar en el buzón-rol equipo@ttrading.co). Esto es un regreso con correo PROPIO, no un
+  // Salazar en el buzón-rol equipo@ttrading.co, que desde el 2026-09-02 atiende Maru Marquez).
+  // Esto es un regreso con correo PROPIO, no un
   // buzón-rol — a diferencia de registro@ y equipo@, acá el correo es de ella.
   //
   // ✅ OPT-IN HECHO (2026-08-26 14:28, verificado contra la DB de producción): fila en
@@ -294,14 +294,51 @@ export const PEOPLE = {
   // Las dos tienen `workLid` declarado, capturado cuando escribieron (ver las notas de cada una).
   // La regla de fondo no cambia: un LID sin entrega probada CEMENTA el destino equivocado, así
   // que un alta nueva sigue entrando sin `workLid` hasta que la persona escriba.
+  // ⚠️ DOS identidades desde 2026-09-02: cierra "Método Comunicarte" en ComunicArte y "De Cero a
+  // Tactical Investor" en la conexión retia, desde la MISMA línea de WhatsApp. Es el patrón de
+  // Sebastian Salazar (a quien reemplaza en el buzón), no el de Andrea Machado ni el de Sebastian
+  // Rodriguez, que usan un número por conexión.
+  //
+  // ⚠️ POR QUÉ SU SEGUNDA IDENTIDAD NO ES SU GMAIL — y por qué eso NO es opcional. En Calendly una
+  // cuenta pertenece a UNA organización: el campo del usuario es `current_organization`, uno solo,
+  // no una lista. Su gmail vive en la org de ComunicArte (d84e158d…), así que NO puede además ser
+  // miembro de la de Tactical Investor (fa27fb07…). Medido contra la API el 2026-09-02: filtrando
+  // por ese correo, esa org devuelve 0 miembros y 0 invitaciones de cualquier estado. Retia lo
+  // resolvió asignándole el BUZÓN-ROL, que es como opera sus cupos.
+  //
+  // Si algún día alguien "arregla" esto poniéndole el gmail a las dos identidades: rompe el
+  // invariante `un email = una IDENTIDAD` (CLOSERS se deriva keyeado por email → la segunda pisa
+  // a la primera en silencio y `accountOfCloser` devuelve la que ganó el sorteo).
   maru_marquez: {
     name: 'Maru Marquez',
-    // Gmail personal, pero ES su host real en el Calendly de ComunicArte (2 citas verificadas,
-    // la primera del 2026-08-24 → entró hace días). Mismo patrón que sebasrr321@ en Retia.
-    // workLid capturado 2026-08-26 del mapeo lid↔número de la sesión de Baileys (ver Andrea
-    // Machado arriba). Escribió a Juanito el 26-ago 00:40 y no fue reconocida: sin LID declarado
-    // y con `from` viniendo como @lid opaco, la única vía que quedaba era el pushName.
-    identities: [{ connection: 'comunicarte', email: 'soymarumarquez@gmail.com', phone: '+573108600134', workLid: '162173754060966' }],
+    identities: [
+      // Gmail personal, pero ES su host real en el Calendly de ComunicArte (2 citas verificadas,
+      // la primera del 2026-08-24 → entró hace días). Mismo patrón que sebasrr321@ en Retia.
+      // workLid capturado 2026-08-26 del mapeo lid↔número de la sesión de Baileys (ver Andrea
+      // Machado arriba). Escribió a Juanito el 26-ago 00:40 y no fue reconocida: sin LID declarado
+      // y con `from` viniendo como @lid opaco, la única vía que quedaba era el pushName.
+      { connection: 'comunicarte', email: 'soymarumarquez@gmail.com', phone: '+573108600134', workLid: '162173754060966' },
+      // BUZÓN-ROL de Retia para "De Cero a Tactical Investor", heredado de Sebastian Salazar el
+      // 2026-09-02 (él queda desvinculado del programa; ver PEOPLE.sebastian_salazar). El correo
+      // NO cambia de dueño en Calendly —la cuenta sigue llamándose "Equipo JP Tactical Trading"—,
+      // así que la API no tiene forma de saber quién está detrás: este roster es el ÚNICO lugar
+      // donde ese dato existe. Rotar el buzón = cambiar este teléfono.
+      //
+      // MISMO teléfono que su identidad de ComunicArte a propósito: es una sola línea. Su opt-in
+      // (fila por TELÉFONO, 2026-08-26, contact_jid 162173754060966@lid, paused=0) sirve a las dos
+      // identidades sin tocar la DB, así que empieza a recibir estos pushes sin escribir de nuevo.
+      // El destino se resuelve contra el roster VIVO al entregar (scheduler/calendly.js:587), no
+      // con el teléfono congelado en la fila del push.
+      //
+      // SIN `workLid`, y no es un olvido: el invariante "ningún workLid se declara dos veces" lo
+      // prohíbe (los pushes de ambas identidades irían al mismo hilo por dos caminos distintos), y
+      // no hace falta — `workLidForCloser` busca por email, devuelve null acá, y el destino lo fija
+      // el `contact_jid` del opt-in, que YA es su hilo de trabajo. Su nombre tampoco se vuelve
+      // ambiguo: resolveCloserByPushName deduplica por teléfono y las dos identidades comparten el
+      // suyo, así que sigue resolviendo (a diferencia de Andrea, que sí quedó ambigua al ganar la
+      // segunda identidad con otro número).
+      { connection: 'retia', email: 'equipo@ttrading.co', phone: '+573108600134' },
+    ],
   },
 };
 
@@ -449,7 +486,8 @@ export const IGNORED_CLOSERS = new Set([
   // devuelve este placeholder. Se ignora para que, si alguna vez una de sus citas cayera en la
   // ventana del poll, no dispare una alerta de "closer sin mapear" por alguien que ya no existe.
   '0df1f193-cdc3-44dc-89d2-82f47077e9d8@deleted.calendly.com',
-  // NO agregar 'equipo@ttrading.co': es el buzón-rol que hoy atiende Sebastian Salazar y vive en
+  // NO agregar 'equipo@ttrading.co': es el buzón-rol que hoy atiende Maru Marquez (antes Sebastian
+  // Salazar, hasta el 2026-09-02; antes Dana, hasta el 22-jul) y vive en
   // CLOSERS (ver PEOPLE.sebastian_salazar). Estuvo acá del 22 al 29 de julio por asumir que Salazar
   // tendría cuenta propia, y ese skip silencioso le costó una semana de pushes.
   // Owner de HubSpot, NO de Calendly. Decisión del jefe 2026-07-27: se ignora para que el poll de

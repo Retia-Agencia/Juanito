@@ -149,8 +149,10 @@ export const ACCOUNTS = {
   // el modelo empresa/programa/conexión de primera clase (ADR 0001).
   //
   // El copy y el ET del programa viven en programs.js (tactical_investor). Vieira VENDE el
-  // programa (la CARA del pitch), NO es closer → está en IGNORED_CLOSERS. Los closers reales
-  // son los de closers.js con connection:'retia' (Dana, Andrea, Sebastian Rodriguez).
+  // programa (la CARA del pitch), NO es closer → está en IGNORED_CLOSERS. Los closers reales son
+  // los de closers.js con connection:'retia'. Al 2026-09-02, y medido contra la API: los hosts
+  // VIVOS de esta conexión son los dos buzones-rol, `registro@ttrading.co` (Andrea Machado) y
+  // `equipo@ttrading.co` (Maru Marquez, que reemplazó a Sebastian Salazar ese día).
   retia: {
     key: 'retia',
     label: 'Retia',

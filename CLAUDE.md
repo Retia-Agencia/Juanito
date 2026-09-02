@@ -152,7 +152,7 @@ loop rápido de reconexiones desde datacenter → WhatsApp lo detectó.
   `dashboard/server/csrf.js`. Sin él, ese archivo da ERR_MODULE_NOT_FOUND y parece una regresión.)
   (En Git Bash, prefijar con `MSYS_NO_PATHCONV=1` y usar rutas `C:/…` o el volumen no monta y
   la suite reporta **0 tests** en verde, que es peor que fallar.)
-  Baseline al **2026-08-28: 1141 tests, 1139 verdes, 2 rojos conocidos** (`call con TODOS sus
+  Baseline al **2026-09-02: 1142 tests, 1140 verdes, 2 rojos conocidos** (`call con TODOS sus
   pushes skipped…` y `reagenda manual superseded…`; los números de test se corren al agregar
   archivos, así que se buscan por nombre, no por índice). El tercer rojo histórico —links de
   Retia— murió solo al mudarse el sheet de Comunicarte (§18.BN). En Windows ese mismo commit da
