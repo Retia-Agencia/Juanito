@@ -6239,15 +6239,12 @@ verificado en la DB: `#5 active=0`, `#8 active=1`, `settings['auto_publish:8']='
    §18.BT.** `/programados` escrito en el grupo caía en la consola LLM, que respondió una lista de
    pendientes con toda la pinta de ser la salida del comando. Medido: `~$0.0241` y una respuesta
    engañosa.
-3. **`/programados` no muestra el `brief`.** En un `kind='generated'` el campo `text` está vacío, así
-   que el listado imprime `""` y dos filas distintas se ven idénticas. Es lo que obligó a bajar a la
-   DB para decidir cuál conservar.
-4. **`off` es de una sola vía desde WhatsApp.** `cancelScheduledMessage` solo hace `active = 0`
-   (no borra: el brief queda), pero no hay comando que reactive. Recuperar una fila apagada por
-   error exige entrar a la DB.
-5. **Dos numeraciones que se parecen y no son la misma.** La consola habla de *"Borrador #25"*
-   (`scheduled_drafts.id`, cambia cada día) y `/programados auto` pide el `scheduled_id` (#8, fijo).
-   Confundirlos es el error natural.
+3. ~~**`/programados` no muestra el `brief`.**~~ **RESUELTO en §18.BU.** El listado imprimía `""`
+   en todo generado y dos filas distintas se veían idénticas.
+4. ~~**`off` es de una sola vía desde WhatsApp.**~~ **RESUELTO en §18.BU.** Ahora hay
+   `/programados on <id>`, con la pared anti-duplicado que `create` no cubría.
+5. ~~**Dos numeraciones que se parecen y no son la misma.**~~ **RESUELTO en §18.BU** (etiquetado):
+   los mensajes que nombran un borrador dicen también de qué programado sale.
 6. **El deploy volvió a borrar los logs** (gotcha ya conocido, ver más abajo): recrear el contenedor
    a las 20:21 dejó `docker logs` sin las líneas de generación de las 19:00 de ese mismo día.
 
@@ -6297,7 +6294,85 @@ vacío no tocan la DB) y +2 en `approval-intent` (reconoce comandos, no se traga
 Baseline en Mac con `git stash`: **1146 → 1153**, los mismos **102 rojos** de entorno.
 
 **Lo que NO se tocó:** los hallazgos 3 a 6 de §18.BS (el listado no muestra el brief, `off` es de
-una sola vía, draft id vs scheduled_id, el deploy borra los logs). Son fricción, no riesgo.
+una sola vía, draft id vs scheduled_id, el deploy borra los logs). Se llamaron "fricción, no
+riesgo"; **§18.BU corrige ese juicio para el 3 y el 4** — con auto-envío prendido son la superficie
+ciega de un camino que publica solo. El 6 sigue en pie y ahí sí la etiqueta se sostiene.
+
+
+### 18.BU 🔵 El listado dice QUÉ va a publicar, y `off` tiene vuelta (2026-09-02)
+
+Los hallazgos 3, 4 y 5 de §18.BS. §18.BT los había clasificado como *"fricción, no riesgo"* y esa
+lectura era de antes del auto-envío: **quitar la compuerta humana convirtió a `/programados` en la
+única superficie donde se ve qué va a publicar Juanito sin que nadie lo revise**, y ahí imprimía
+`""`. Una vista ciega sobre un camino que publica solo no es fricción.
+
+**1. El listado muestra el brief (hallazgo 3).** En un `generated` el `text` está vacío hasta que
+el scheduler redacta el borrador del día: lo que distingue una fila de otra es el `brief`. Se
+imprime truncado a 100, y `(sin brief)` cuando no hay. Los `fixed` siguen mostrando su texto.
+
+**El mismo bug estaba en `action=list` de la tool, y ahí era peor.** Esa lista no la lee un humano:
+la lee **el modelo**, y es sobre ella que decide si un pedido es `update` de una fila existente o un
+`create` nuevo. Con todos los generados como `""` el modelo no podía distinguirlos — o sea que la
+instrucción de §18.BT (*"afinar es update, nunca create"*) le pedía una decisión con los datos
+tapados. Ahora cada fila dice `[generado] brief: "…"`.
+
+**2. `/programados on <id>` (hallazgo 4).** `cancelScheduledMessage` solo hace `active = 0` y no
+había vuelta desde WhatsApp. La nota original decía *"recuperar exige entrar a la DB"*, y eso
+subestima el problema: **la salida obvia sin DB, volver a crear la fila, NO es equivalente.** El
+`auto_publish:<id>` está keyeado al id viejo y, sobre todo, se pierde el historial de
+`scheduled_drafts` que alimenta `listRecentPublishedDrafts` → el bloque *"no repitas los últimos
+3"*. Recrear la fila hace que Juanito **empiece a reciclar el mismo mensaje**, que es exactamente
+el fallo que §18.BS diseñó el flujo para evitar. Recuperar de verdad exigía SSH.
+
+**La pared que faltaba:** el guardia anti-duplicado de §18.BT vive en `create` y filtra `active=1`,
+así que **no cubre la reactivación**. Prender una fila apagada sobre un grupo+días+hora que ya
+tiene otra activa reconstruye el duplicado de 11 semanas, entero. `on` corre
+`findScheduledDuplicate` antes de tocar nada y se frena nombrando la fila que estorba.
+
+Y como un id apagado no aparecía en ningún lado, `on` sin más habría sido inútil: el listado ahora
+cierra con un bloque compacto **💤 Apagados** (id, grupo, días/hora, brief cortado a 60).
+
+**3. Los dos números se nombran juntos (hallazgo 5).** El DM del borrador, el recordatorio de
+pendiente y la copia del auto-envío dicen ahora *"Borrador #25 … del programado #8"*, y la copia
+agrega el comando exacto para frenarlo (`/programados auto 8 off`), que es lo que uno quiere tener
+a mano justo cuando lee que algo salió solo. **Restricción al tocar esos strings:**
+`parseApprovalTarget` resuelve un reply citado con el **primer** `borrador #N` del texto, así que
+el id del borrador tiene que seguir yendo primero — hay un test que lo fija.
+
+*El daño real que evita es chico y conviene decirlo:* `/programados auto <draftId>` ya lo atajaba
+la validación de §18.BS, y `/aprobaciones rechazar <scheduledId>` cae en un borrador viejísimo (los
+draft ids ya van en 25) que casi seguro está `published` → responde *"no se puede descartar"*. Es
+etiquetado, no una pared. Entró porque cuesta tres strings.
+
+**Hallazgo 6 (el deploy borra `docker logs`): NO se tocó, a propósito.** El arreglo barato es
+incorrecto y el correcto es caro:
+
+- `logging: max-size/max-file` en el compose **no sirve acá**: rota por tamaño, no sobrevive al
+  recreate del contenedor. Daría sensación de arreglo sin arreglar nada.
+- Redirigir a archivo desde `entrypoint.sh` toca **el** archivo del softban y **rompe el backoff en
+  silencio**: `run()` devuelve el `$?` de `node`, y meter un pipe a `tee` hace que devuelva el de
+  `tee` (siempre 0) → todo crash se leería como *"salida limpia, sin reintentos automáticos"* y el
+  bot dejaría de reiniciarse. Y es **busybox**: no hay `PIPESTATUS`.
+- La forma correcta es un logger a archivo **a nivel de app** (`src/index.js`, nunca el entrypoint)
+  sobre el volumen `agent-data`, que sí sobrevive al recreate. Pero sin rotación crece sin límite en
+  un droplet chico → llena el disco → falla SQLite → muere el bot. Hacerlo bien es un subsistema con
+  rotación, para un beneficio que es forense retrospectivo.
+
+Queda anotado como el gotcha que ya era: **antes de un deploy, guardar los logs que importen**
+(`docker logs juanito-agent > /root/logs-$(date +%F).txt`).
+
+**Tests:** +5 en `commands` (el brief se ve · `(sin brief)` · `on` reactiva y el apagado es
+descubrible · `on` rechaza id inexistente/ya activa/mal escrito · `on` frenado por choque), +2 en
+`brain.tools` (list describe el generado por su brief; el fijo sigue con su texto) y +1 en
+`group-messages` (el DM nombra los dos ids y el reply citado sigue resolviendo al borrador).
+Baseline medida en Docker/Linux, que es la real: **1156 → 1164, los mismos 2 rojos conocidos**
+(`call con TODOS sus pushes skipped…` y `reagenda manual superseded…`).
+
+**La lección que deja, y es la de §18.BS otra vez:** los seis hallazgos se clasificaron en el mismo
+rato en que se quitó la compuerta, y la etiqueta *"fricción"* se le puso a dos cosas que **acababan
+de cambiar de rol** — eran fricción mientras un humano miraba cada mensaje antes de salir, y pasaron
+a ser el único control cuando dejó de mirarlo. Al automatizar un paso no solo hay que preguntar qué
+más hacía esa persona (§18.BS): también **qué herramientas eran cómodas y ahora son críticas**.
 
 
 ### 🟢 Baja prioridad / Nice-to-have

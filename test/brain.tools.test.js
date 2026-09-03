@@ -613,6 +613,23 @@ const GENERADO = {
   brief: 'Preguntar por materiales',
 };
 
+// §18.BS·3 — esta lista es lo que LEE EL MODELO para decidir sobre qué id hacer update. Con el
+// `text` vacío de un generado, todas las filas generadas salían como "" y era imposible elegir:
+// justo la decisión que evita crear la fila duplicada.
+test('schedule_group_message list: un generado se describe por su brief, no por el texto vacío', async () => {
+  const deps = scheduleDeps({ filas: [GENERADO] });
+  const result = await dispatchTool({ name: 'schedule_group_message', input: { action: 'list' } }, deps, ctx);
+  assert.match(result, /\[generado\] brief: "Preguntar por materiales"/);
+  assert.doesNotMatch(result, /""/, 'no quedan comillas vacías');
+});
+
+test('schedule_group_message list: un fijo sigue mostrando su texto', async () => {
+  const deps = scheduleDeps();
+  const result = await dispatchTool({ name: 'schedule_group_message', input: { action: 'list' } }, deps, ctx);
+  assert.match(result, /"Muchachos, ¡reunión hoy!"/);
+  assert.doesNotMatch(result, /\[generado\]/);
+});
+
 test('schedule_group_message create: si ya hay uno igual (grupo+días+hora) NO crea otro', async () => {
   const deps = scheduleDeps({ duplicado: { id: 8, group_id: 'patah@g.us', days: '4', time_hm: '20:00' } });
   const result = await dispatchTool(

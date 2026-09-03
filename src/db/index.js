@@ -1382,6 +1382,16 @@ export function cancelScheduledMessage(id) {
   return db.prepare(`UPDATE scheduled_messages SET active = 0 WHERE id = ? AND active = 1`).run(id).changes;
 }
 
+// La vuelta de `cancelScheduledMessage`. Existe porque apagar era de una sola vía desde WhatsApp:
+// la fila queda entera (brief incluido) pero no había forma de volver a prenderla sin entrar a la
+// DB del VPS. Y "volver a crearla" NO es equivalente: el `auto_publish:<id>` está keyeado al id
+// viejo y, sobre todo, se pierde el historial de `scheduled_drafts` que alimenta
+// `listRecentPublishedDrafts` → el bloque "no repitas los últimos 3". O sea que recrear la fila
+// hace que Juanito empiece a reciclar el mismo mensaje, justo el fallo que §18.BS evita.
+export function reactivateScheduledMessage(id) {
+  return db.prepare(`UPDATE scheduled_messages SET active = 1 WHERE id = ? AND active = 0`).run(id).changes;
+}
+
 export function markScheduledMessageSent(id, dateStr) {
   db.prepare(`UPDATE scheduled_messages SET last_sent_date = ? WHERE id = ?`).run(dateStr, id);
 }

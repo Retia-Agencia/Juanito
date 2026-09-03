@@ -1549,11 +1549,20 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
         const rows = (await deps.listScheduledMessages?.()) || [];
         if (!rows.length) return 'No hay mensajes programados activos.';
         return rows
-          .map(
-            (r) =>
+          .map((r) => {
+            // Un 'generated' tiene el `text` VACÍO (se redacta recién a la hora): lo que lo
+            // describe es el brief. Mostrar `text` dejaba todas las filas generadas como "" —
+            // el modelo no podía distinguirlas para elegir sobre cuál hacer update, que es
+            // justamente la decisión que evita crear una fila duplicada (§18.BS).
+            const cuerpo =
+              r.kind === 'generated'
+                ? `   [generado] brief: "${r.brief || '(sin brief)'}"`
+                : `   "${r.text}"`;
+            return (
               `#${r.id} → "${r.group_name || r.group_id}" — ${csvToDayLabels(r.days)} a las ${r.time_hm}` +
-              `${r.last_sent_date ? ` (último envío: ${r.last_sent_date})` : ''}\n   "${r.text}"`
-          )
+              `${r.last_sent_date ? ` (último envío: ${r.last_sent_date})` : ''}\n${cuerpo}`
+            );
+          })
           .join('\n');
       }
 

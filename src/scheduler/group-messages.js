@@ -114,7 +114,8 @@ async function processGenerated(d, row, nowParts) {
 
     await d.sendMessage(
       boss,
-      `📝 *Borrador #${draftId}* para *${row.group_name || row.group_id}* (sale hoy a las ${row.time_hm} si lo apruebas):\n\n` +
+      `📝 *Borrador #${draftId}* para *${row.group_name || row.group_id}* (sale hoy a las ${row.time_hm} si lo apruebas):\n` +
+        `_del programado #${row.id} — ese es el id de /programados; el #${draftId} es el del borrador de hoy._\n\n` +
         `${text}\n\n` +
         `Respóndeme *"apruebo"* para publicarlo, o dime qué corregir y te muestro la nueva versión. Sin tu visto bueno NO se publica.\n_Tip: cítame este mensaje (reply) para decidir sobre este borrador exacto._`
     );
@@ -145,7 +146,8 @@ async function processGenerated(d, row, nowParts) {
             await d.sendMessage(
               boss,
               `✅ *Publicado automáticamente* en *${row.group_name || row.group_id}* ` +
-                `(borrador #${draft.id}, sin aprobación):\n\n${draft.draft}`
+                `(borrador #${draft.id}, del programado #${row.id}, sin aprobación):\n\n${draft.draft}\n\n` +
+                `_Para que deje de salir solo: /programados auto ${row.id} off_`
             );
           }
         } catch (err) {
@@ -161,7 +163,7 @@ async function processGenerated(d, row, nowParts) {
       if (boss) {
         await d.sendMessage(
           boss,
-          `⏳ El borrador #${draft.id} para *${row.group_name || row.group_id}* sigue SIN aprobar y ya pasó ` +
+          `⏳ El borrador #${draft.id} (del programado #${row.id}) para *${row.group_name || row.group_id}* sigue SIN aprobar y ya pasó ` +
             `su hora (${row.time_hm}). No se publicó. Si lo apruebas ahora, sale de inmediato.`
         );
       }

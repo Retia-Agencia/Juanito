@@ -569,29 +569,61 @@ async function handlePersona({ text, sender }, deps = {}) {
     : `"${target.name || target.id}" no tiene personalidad configurada (usa /persona <n|nombre> | <texto>).`;
 }
 
-// /programados                    → lista los mensajes recurrentes activos
-// /programados off <id>           → cancela uno
+// /programados                    → lista los recurrentes activos (+ los apagados, compactos)
+// /programados off <id>           → apaga uno (active=0; la fila y su brief quedan)
+// /programados on <id>            → vuelve a prender uno apagado, si no choca con otro activo
 // /programados auto <id> on|off   → auto-envío de un generado: publica SIN aprobación (§18.BS)
 function handleProgramados(text, deps = {}) {
-  const { listScheduledMessages, cancelScheduledMessage, getSetting, setSetting } = deps;
+  const { listScheduledMessages, cancelScheduledMessage, reactivateScheduledMessage, getSetting, setSetting } = deps;
   const parts = (text || '').trim().split(/\s+/); // [ '/programados', action?, id?, valor? ]
   const action = (parts[1] || 'list').toLowerCase();
 
-  const activas = () => {
+  const listar = (opts) => {
     try {
-      return listScheduledMessages ? listScheduledMessages() : [];
+      return listScheduledMessages ? listScheduledMessages(opts) : [];
     } catch {
       return []; // DB puede no estar lista
     }
   };
+  const activas = () => listar();
+  const apagadas = () => listar({ activeOnly: false }).filter((r) => !r.active);
 
   if (action === 'off') {
     const id = Number(parts[2]);
     if (!Number.isInteger(id)) return 'Uso: /programados off <id>';
     const changes = cancelScheduledMessage ? cancelScheduledMessage(id) : 0;
     return changes
-      ? `Mensaje programado #${id} cancelado ✅`
+      ? `Mensaje programado #${id} cancelado ✅ — se puede volver a prender con /programados on ${id}.`
       : `No hay ningún mensaje programado activo con id ${id}.`;
+  }
+
+  // La vuelta de `off`. Sin esto, apagar por error una fila obligaba a entrar a la DB del VPS:
+  // recrearla desde WhatsApp no sirve porque pierde el historial de borradores publicados que
+  // alimenta el "no repitas los últimos 3" (§18.BS).
+  if (action === 'on') {
+    const id = Number(parts[2]);
+    if (!Number.isInteger(id)) return 'Uso: /programados on <id>';
+    const row = apagadas().find((r) => r.id === id);
+    if (!row) return `No hay ningún mensaje programado apagado con id ${id}.`;
+    // Prenderla sobre un grupo+días+hora que YA tiene una fila activa reconstruye el duplicado
+    // de 11 semanas: las dos publicarían el mismo día a la misma hora. Es la misma pared que
+    // el guardia de `create` (§18.BT), que no cubre este camino porque solo mira las activas.
+    const choque = deps.findScheduledDuplicate?.({ groupId: row.group_id, days: row.days, timeHm: row.time_hm });
+    if (choque) {
+      return (
+        `No la prendo: el #${choque.id} ya está activo para el mismo grupo, los mismos días y la misma hora. ` +
+        `Dos filas así publican las DOS. Apaga el #${choque.id} primero, o dale otra hora a una.`
+      );
+    }
+    const changes = reactivateScheduledMessage ? reactivateScheduledMessage(id) : 0;
+    if (!changes) return `No pude reactivar el mensaje programado #${id}.`;
+    return (
+      `Mensaje programado #${id} reactivado ✅ → ${row.group_name || row.group_id} — ` +
+      `${csvToDayLabels(row.days)} a las ${row.time_hm}.` +
+      (row.kind === 'generated' && !isAutoPublish(getSetting, id)
+        ? ' Pide aprobación antes de publicar (/programados auto para cambiarlo).'
+        : '')
+    );
   }
 
   if (action === 'auto') {
@@ -615,20 +647,43 @@ function handleProgramados(text, deps = {}) {
   }
 
   const rows = activas();
-  if (!rows.length) return '📆 No hay mensajes programados activos.';
+  const off = apagadas();
+  // Los apagados se listan (compactos) porque si no, `on <id>` es inútil: el id de una fila
+  // apagada no aparece en ningún lado y había que ir a la DB para averiguarlo.
+  const bloqueApagados = off.length
+    ? ['', `💤 Apagados (${off.length}) — se prenden con /programados on <id>`].concat(
+        off.map(
+          (r) =>
+            `#${r.id} → ${r.group_name || r.group_id} — ${csvToDayLabels(r.days)} a las ${r.time_hm}: ` +
+            `${truncate(r.kind === 'generated' ? r.brief : r.text, 60) || '(vacío)'}`
+        )
+      )
+    : [];
+
+  if (!rows.length) {
+    return ['📆 No hay mensajes programados activos.'].concat(bloqueApagados).join('\n');
+  }
   const lines = [`📆 Mensajes programados (${rows.length})`, ''];
   for (const r of rows) {
     lines.push(`#${r.id} → ${r.group_name || r.group_id} — ${csvToDayLabels(r.days)} a las ${r.time_hm}`);
-    lines.push(`    "${truncate(r.text, 100)}"`);
+    // En un 'generated' el `text` está VACÍO hasta que el scheduler redacta el borrador del día:
+    // lo que distingue una fila de otra es el brief. Imprimir `text` mostraba "" en todas y fue
+    // exactamente lo que hizo indistinguibles a #5 y #8 durante 11 semanas — decidir cuál
+    // conservar obligó a bajar a la DB del VPS (§18.BS). Con auto-envío este listado es la única
+    // superficie donde se ve qué va a publicar Juanito sin que nadie lo revise.
     if (r.kind === 'generated') {
+      lines.push(`    📋 ${truncate(r.brief, 100) || '(sin brief)'}`);
       lines.push(
         isAutoPublish(getSetting, r.id)
           ? '    🤖 generado · auto-envío ON (publica sin aprobación)'
           : '    📝 generado · pide aprobación antes de publicar'
       );
+    } else {
+      lines.push(`    "${truncate(r.text, 100)}"`);
     }
   }
-  lines.push('', 'Cancelar: /programados off <id> · Auto-envío: /programados auto <id> on|off');
+  lines.push(...bloqueApagados);
+  lines.push('', 'Apagar: /programados off <id> · Prender: /programados on <id> · Auto-envío: /programados auto <id> on|off');
   return lines.join('\n');
 }
 
@@ -657,7 +712,7 @@ function buildHelp(role) {
       '• /persona <n|nombre> | <texto> — tono por grupo',
       '',
       'Programados:',
-      '• /programados [off <id>] [auto <id> on|off] — mensajes recurrentes',
+      '• /programados [off <id>] [on <id>] [auto <id> on|off] — mensajes recurrentes',
       '• /aprobaciones [ver|aprobar|rechazar <id>] — borradores generados',
       '',
       'Operación:',

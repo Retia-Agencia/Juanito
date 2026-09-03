@@ -34,6 +34,8 @@ import {
   listGroupPersonas,
   listScheduledMessages,
   cancelScheduledMessage,
+  reactivateScheduledMessage,
+  findScheduledDuplicate,
   getSetting,
   setSetting,
   listDraftsForDate,
@@ -204,6 +206,8 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
         // /programados — mensajes recurrentes a grupos (+ auto-envío por fila, §18.BS)
         listScheduledMessages,
         cancelScheduledMessage,
+        reactivateScheduledMessage,
+        findScheduledDuplicate,
         getSetting,
         setSetting,
         // /aprobaciones — estado/override del flujo de aprobación de generados

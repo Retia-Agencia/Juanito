@@ -4,6 +4,7 @@
 // Corre nativo en Windows: node --test test/group-messages.test.js
 
 import { test, beforeEach, afterEach } from 'node:test';
+import { parseApprovalTarget } from '../src/common/approval-intent.js';
 import assert from 'node:assert/strict';
 
 process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || 'test-key';
@@ -109,6 +110,19 @@ test('generated: a la hora del lead genera el borrador y se lo manda al JEFE (no
   await runScheduledMessagesCycle(bogota('08:01'));
   assert.equal(world.generated, 1);
   assert.equal(world.sent.length, 1);
+});
+
+// §18.BS·5 — dos numeraciones que se parecen: el borrador (cambia cada día) y el programado
+// (fijo, el que piden /programados y /programados auto). Confundirlos ya hizo tropezar una vez.
+test('generated: el DM del borrador nombra TAMBIÉN el id del programado, sin romper el reply', async () => {
+  const { world, deps } = makeWorld({ rows: [{ ...GENERATED }] });
+  __setDeps(deps);
+  await runScheduledMessagesCycle(bogota('08:00'));
+  const texto = world.sent[0].text;
+  assert.match(texto, /Borrador #1/, 'el id del borrador (draft) sigue primero');
+  assert.match(texto, /programado #2/, 'y se dice cuál es el id de /programados');
+  // El reply citado se resuelve leyendo el encabezado: tiene que seguir apuntando al BORRADOR.
+  assert.deepEqual(parseApprovalTarget(texto), { type: 'draft', id: 1 });
 });
 
 test('generated: SIN aprobación no publica a la hora; recuerda al jefe UNA vez', async () => {

@@ -173,8 +173,9 @@ lenguaje natural en el DM del jefe ("manda cada jueves a las 8pm al grupo X…")
 
 | Comando | Qué hace |
 |---|---|
-| `/programados` | Lista los mensajes recurrentes activos (días + hora) y, en los generados, si el auto-envío está ON |
-| `/programados off <id>` | Cancela uno |
+| `/programados` | Lista los recurrentes activos (días + hora; en un generado muestra el **brief**, que es lo que lo distingue) y si el auto-envío está ON. Al final lista los **apagados**, para poder volver a prenderlos |
+| `/programados off <id>` | Apaga uno. No borra: la fila y su brief quedan |
+| `/programados on <id>` | Vuelve a prender uno apagado. Se frena si ya hay otro activo para el mismo grupo, días y hora (publicarían los dos) |
 | `/programados auto <id> on\|off` | Auto-envío: el generado se publica **sin** pedir aprobación |
 
 Los mensajes **generados** (Claude redacta cada día según un brief) pasan por aprobación: ver
@@ -306,7 +307,7 @@ línea `🔁 movidas` del reporte, y el lead cuenta **una sola vez**: el día qu
 /grupos [on|off <n|nombre>]              ← autorizar/listar grupos
 /grupo [on|off]                          ← (dentro del grupo)
 /persona <n|nombre> | <texto>            ← tono por grupo
-/programados [off <id>] [auto <id> on|off]  ← recurrentes
+/programados [off <id>] [on <id>] [auto <id> on|off]  ← recurrentes
 /aprobaciones [ver|aprobar|rechazar <id>]← borradores generados
 /calendly [on|off] [closer] [cuenta|todo]← pushes precall (cuenta = 30x/retia; todo = todas)
 /reportes [leads|metricas]               ← reporte (DM=preview · en grupo lo publica)
