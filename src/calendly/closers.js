@@ -21,9 +21,14 @@
 //   Daniela Camacho     Instagram & TikTok · Operaciones Escalables
 //   Sebastian Salazar   EstadoX (IA para Abogados)   ← salió de Tactical Investor 2026-09-02
 //   Esteban Aguilar     EstadoX (IA para Abogados)
-//   Andrea Machado      Retia (De Cero a Tactical Investor) · ComunicArte (Método Comunicarte)
-//   Maru Marquez        ComunicArte (Método Comunicarte) · De Cero a Tactical Investor (Retia)
-//   Dana Rodriguez      Retia — De Cero a Tactical Investor (alta 2026-08-25)
+//   Andrea Machado      De Cero a Tactical Investor · Método Comunicarte   (los dos, Retia)
+//   Maru Marquez        Método Comunicarte · De Cero a Tactical Investor   (los dos, Retia)
+//   Dana Rodriguez      De Cero a Tactical Investor (Retia · alta 2026-08-25)
+//
+// ⚠️ Los de arriba se listan por PROGRAMA, no por conexión, y no es un detalle de formato:
+// "De Cero a Tactical Investor" y "Método Comunicarte" son los DOS programas de la MISMA
+// empresa (Retia), cada uno con su Calendly. Escribirlos como "Retia · ComunicArte" hace leer
+// ComunicArte como un cliente aparte. Una empresa no tiene Calendly; sus programas sí.
 //
 // ⚠️ 2026-08-25: al mudarse IA para Abogados al Calendly propio de EstadoX, los hosts de ese
 // programa pasaron a ser los TRES miembros de esa org (comunidad@ es la cuenta de sistema;
@@ -207,7 +212,7 @@ export const PEOPLE = {
       { connection: '30x', email: 'pablosuarez@30x.com', phone: '+573189248507', hubspotEmail: 'pablosuarez+hubspot@30x.com', workLid: '31001912856621' },
     ],
   },
-  // ─── Retia (agencia #2) — programa "De Cero a Tactical Investor" ───────────
+  // ─── Programa "De Cero a Tactical Investor" (empresa: Retia) — conexión `retia` ───
   // Vieira VENDE el programa (la CARA del pitch), NO es closer → está en IGNORED_CLOSERS.
   // registro@ es un correo DE LA EMPRESA (rol, no personal): si sacan a la closer, el correo pasa
   // al siguiente → al rotar, actualizar el teléfono acá (patrón "Equipo EstadoX").

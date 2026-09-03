@@ -8,7 +8,7 @@
 // que solo existían en HubSpot y no se contaban.
 //
 // ⚠️ Por qué UNIÓN y no reemplazo: HubSpot no es superconjunto. Es el CRM de UNA empresa (30x),
-// así que `tactical_investor` (Retia, otra empresa con su propio Calendly) no existe ahí: 0
+// así que `tactical_investor` (programa de Retia, con Calendly y CRM propios) no existe ahí: 0
 // meetings con "Tactical" en 30 días. Cambiar Calendly por HubSpot pierde esos programas enteros.
 //
 // ⚠️ Corrección 2026-07-27 — este encabezado decía además que HubSpot no tiene meetings de
@@ -19,7 +19,8 @@
 //     "…Programa IA para Abogados EstadoX").
 //   · Pablo Suarez sí es owner, con OTRO email (pablosuarez+hubspot@). Lo descartaba este mismo
 //     filtro. De ahí `ownerToCloser` (ver abajo).
-// Medido bien: HubSpot tiene las calls de 30x y sus estados. Sigue sin tener las de Retia.
+// Medido bien: HubSpot tiene las calls de 30x y sus estados. Sigue sin tener las de los
+// programas de Retia (tactical_investor, comunicarte).
 //
 // Filtros, en orden:
 //   1. owner del meeting ∈ roster de closers → saca las reuniones del resto de la empresa

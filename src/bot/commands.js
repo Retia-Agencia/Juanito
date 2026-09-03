@@ -8,7 +8,7 @@
 
 import { csvToDayLabels, zonedNowParts, autoPublishKey, isAutoPublish } from '../scheduler/recurring-logic.js';
 import { accountOf, ACCOUNTS, DEFAULT_ACCOUNT } from '../calendly/accounts.js';
-import { PROGRAMS } from '../calendly/programs.js';
+import { PROGRAMS, COMPANIES } from '../calendly/programs.js';
 import { mirrorConnections } from '../calendly/mirror.js';
 // closerOf resuelve la identidad del closer desde su JID. Es un módulo PURO (roster + roles),
 // no arrastra deps nativas → este archivo se sigue pudiendo testear sin better-sqlite3.
@@ -1144,7 +1144,7 @@ function handleEspejo(text, deps = {}) {
       ? `${etiquetaConexion(target.connection)} ya estaba en el espejo.`
       : `🪞 ${etiquetaConexion(target.connection)}: ${action === 'on' ? 'ESPEJADA ✅' : 'fuera del espejo ⛔'}`;
   const via = target.viaPrograma
-    ? `\n(Pediste "${target.viaPrograma}", que vive en la conexión ${target.connection} → se copia la conexión entera: ${programasDe(target.connection)}.)`
+    ? `\n(Pediste "${target.viaPrograma}", un programa de ${empresasDe(target.connection)}. Vive en la conexión ${target.connection} → se copia la conexión entera: ${programasDe(target.connection)}.)`
     : '';
   return `${cabecera}${via}\n\nEspejando ahora: ${resumen(siguientes)}.`;
 }
@@ -1170,11 +1170,33 @@ function resolveMirrorTarget(arg) {
 
 const etiquetaConexion = (key) => `${accountOf(key)?.label || key} (${key})`;
 
+const programasDeConexion = (key) => Object.values(PROGRAMS).filter((p) => p.connection === key);
+
 const programasDe = (key) =>
-  Object.values(PROGRAMS)
-    .filter((p) => p.connection === key)
+  programasDeConexion(key)
     .map((p) => p.label)
     .join(' · ') || 'sin programas declarados';
+
+// Empresa(s) dueñas de una conexión. Una conexión es una CUENTA DE CALENDLY, no una empresa:
+// Retia es UNA agencia con DOS conexiones (una por programa: Tactical Investor y ComunicArte),
+// y la conexión 30x hostea programas de dos marcas. Confundirlos hace leer "ComunicArte" como un
+// cliente aparte de Retia, que es justo lo contrario de lo que pasa.
+const empresasDe = (key) =>
+  [...new Set(programasDeConexion(key).map((p) => COMPANIES[p.company] || p.company))].join(' + ');
+
+// Empresas con MÁS DE UNA conexión, para poder decirlo en el estado sin hardcodear "Retia":
+// el día que otra empresa abra su segundo Calendly, la nota se actualiza sola.
+function empresasConVariasConexiones() {
+  const porEmpresa = new Map();
+  for (const key of Object.keys(ACCOUNTS)) {
+    for (const p of programasDeConexion(key)) {
+      const empresa = COMPANIES[p.company] || p.company;
+      if (!porEmpresa.has(empresa)) porEmpresa.set(empresa, new Set());
+      porEmpresa.get(empresa).add(key);
+    }
+  }
+  return [...porEmpresa.entries()].filter(([, conns]) => conns.size > 1);
+}
 
 const listaConexiones = () =>
   ['Conexiones:', ...Object.keys(ACCOUNTS).map((k) => `• ${k} — ${accountOf(k).label}`)].join('\n');
@@ -1195,9 +1217,21 @@ function buildEspejoStatus(override) {
       : '⚠️ SIN destino: falta CALENDLY_DEV_MIRROR_JID en el .env → el espejo no existe, prenda lo que prenda este comando.'
   );
   lines.push(`Espejando: ${resumen(lista)}`);
-  for (const c of lista) lines.push(`   └ ${programasDe(c)}`);
+  for (const c of lista) lines.push(`   └ empresa ${empresasDe(c)} · programas: ${programasDe(c)}`);
   const apagadas = Object.keys(ACCOUNTS).filter((k) => !lista.includes(k));
   lines.push(`Apagadas: ${resumen(apagadas)}`);
+  // Cada línea de arriba es una CONEXIÓN (una cuenta de Calendly), no una empresa. Se dice acá
+  // porque el error de lectura es caro: hace creer que un programa es de otro cliente.
+  const multi = empresasConVariasConexiones();
+  if (multi.length) {
+    lines.push(
+      '',
+      ...multi.map(
+        ([empresa, conns]) =>
+          `ℹ️ ${empresa} es UNA empresa con ${conns.size} conexiones (un Calendly por programa): ${[...conns].join(', ')}.`
+      )
+    );
+  }
   lines.push(
     '',
     override == null

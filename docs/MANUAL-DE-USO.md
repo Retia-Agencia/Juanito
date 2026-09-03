@@ -207,6 +207,22 @@ hora de publicar.
 
 Botón de pánico de los pushes a closers.
 
+> **Antes de nada, el vocabulario, porque acá se confunde seguido.** Una **empresa** (30X,
+> EstadoX, Retia) **no tiene Calendly**: lo tienen sus **programas**. Cada cuenta de Calendly
+> conectada es una **conexión**, y su key corta es lo que se escribe en los comandos:
+>
+> | key | Qué es de verdad | Empresa |
+> |---|---|---|
+> | `30x` | El Calendly que comparten los 6 programas de 30X (y antes, IA para Abogados) | 30X + EstadoX |
+> | `estadox` | El Calendly de IA para Abogados, desde que EstadoX abrió el suyo | EstadoX |
+> | `retia` | El Calendly de **De Cero a Tactical Investor** *(la key es histórica)* | Retia |
+> | `comunicarte` | El Calendly de **Método Comunicarte** | Retia |
+>
+> O sea que **Retia son las dos últimas filas**: una empresa, dos programas, un Calendly cada
+> uno. `retia` **no** quiere decir "todo lo de Retia" — es un programa suyo. Los mensajes de
+> Juanito usan el formato `empresa · programa` (*"Retia · Tactical Investor"*) justamente para
+> que eso se lea de una.
+
 | Comando | Qué hace |
 |---|---|
 | `/calendly` | Estado global + closers pausados |
@@ -222,10 +238,11 @@ Botón de pánico de los pushes a closers.
 > - `/calendly off <closer>` de un closer con **una** identidad → la apaga directo.
 > - `/calendly off <closer>` de un closer con **varias** → Juanito **lista las cuentas y te pide
 >   cuál** (no adivina). Precisás con `/calendly off <closer> <cuenta>` o `todo` para todas.
-> - `<cuenta>` es la key corta: `30x` o `retia`.
+> - `<cuenta>` es la key corta de la tabla de arriba: `30x`, `estadox`, `retia`, `comunicarte`.
 >
 > La respuesta **siempre nombra la cuenta** que tocó (ej: *"Pushes de Sebastian Rodriguez ·
-> Retia (retia): PAUSADOS ⏸️"*), para que sepas exactamente qué identidad quedó apagada.
+> Retia · Tactical Investor (retia): PAUSADOS ⏸️"*), para que sepas exactamente qué identidad
+> quedó apagada — y de qué programa, no solo de qué empresa.
 
 > ⚠️ **`/calendly off` a secas sigue siendo GLOBAL** y apaga a TODAS las empresas/programas, no
 > solo a una.
@@ -263,24 +280,26 @@ Se prende para verificar una agencia y se apaga cuando ya se verificó.
 
 ---
 
-### Recordatorio de los Sheets (solo Retia)
+### Recordatorio de los Sheets (los dos programas de Retia)
 
-Los closers de **Retia** reciben, **10 minutos después de que termina cada call**, un mensaje
-con los dos links de los Google Sheets que tienen que llenar. No hay que contestarlo: Juanito no
-revisa los sheets y no insiste.
+Los closers de **De Cero a Tactical Investor** y **Método Comunicarte** —los dos programas de
+Retia— reciben, **10 minutos después de que termina cada call**, el link del Google Sheet que
+tienen que llenar. **Cada call apunta al sheet de SU programa**, no a los dos: el recordatorio
+lo decide la cuenta de Calendly de esa call, no la persona (Andrea y Maru cierran en los dos y
+reciben el que corresponde cada vez).
 
 Nadie más lo recibe. El alcance no se controla por comando sino por configuración: solo las
-cuentas que declaran sus sheets en `src/calendly/accounts.js` lo tienen, y hoy es únicamente
-Retia.
+conexiones que declaran sus `sheets` en `src/calendly/accounts.js` lo tienen, y hoy son las dos
+de Retia (`retia` = Tactical Investor y `comunicarte`). Los programas de 30X no.
 
 Para apagarlo:
-- `/calendly off <closer> retia` → le corta **todo** a ese closer en Retia, incluidos los pushes
-  precall. Es el botón de pánico normal.
+- `/calendly off <closer> retia` → le corta **todo** a ese closer en Tactical Investor, incluidos
+  los pushes precall. Es el botón de pánico normal. (`comunicarte` para el otro programa.)
 - `CALENDLY_SHEET_PUSH=false` en el VPS → apaga **solo** este recordatorio, para todos, dejando
   los pushes precall funcionando.
 
-> Ojo con la numeración si andás mirando logs: internamente es el **Push 5**. Retia no tiene
-> Push 4 (el registro de calls de la sección de abajo), así que salta del 3 al 5.
+> Ojo con la numeración si andás mirando logs: internamente es el **Push 5**. Los programas de
+> Retia no tienen Push 4 (el registro de calls de la sección de abajo), así que saltan del 3 al 5.
 
 ---
 

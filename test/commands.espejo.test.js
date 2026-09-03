@@ -27,7 +27,11 @@ function espejoDeps(inicial = null) {
   };
 }
 
-function withEnv(conns, jid, fn) {
+// ⚠️ `async` + `return await`, no `return fn()`: con un `fn` asíncrono, un `finally` sobre una
+// promesa sin esperar corre APENAS `fn` llega a su primer `await` → el entorno se restaura a mitad
+// del test y las llamadas siguientes miden otra cosa. Pasó en este archivo y el síntoma fue un
+// "SIN destino" fantasma en el segundo `/espejo` de un mismo caso.
+async function withEnv(conns, jid, fn) {
   const savedC = process.env.CALENDLY_DEV_MIRROR_CONNECTIONS;
   const savedJ = process.env.CALENDLY_DEV_MIRROR_JID;
   if (conns === undefined) delete process.env.CALENDLY_DEV_MIRROR_CONNECTIONS;
@@ -35,7 +39,7 @@ function withEnv(conns, jid, fn) {
   if (jid === undefined) delete process.env.CALENDLY_DEV_MIRROR_JID;
   else process.env.CALENDLY_DEV_MIRROR_JID = jid;
   try {
-    return fn();
+    return await fn();
   } finally {
     if (savedC === undefined) delete process.env.CALENDLY_DEV_MIRROR_CONNECTIONS;
     else process.env.CALENDLY_DEV_MIRROR_CONNECTIONS = savedC;
@@ -58,7 +62,7 @@ test('/espejo sin nada configurado hereda el alcance del .env y lo dice', async 
   await withEnv('comunicarte,retia', '999@lid', async () => {
     const out = await espejo('/espejo', espejoDeps(null));
     assert.match(out, /Retia · ComunicArte \(comunicarte\)/);
-    assert.match(out, /Retia \(retia\)/);
+    assert.match(out, /Retia · Tactical Investor \(retia\)/);
     assert.match(out, /heredado del \.env/i);
     assert.match(out, /999/); // el destino se muestra…
     assert.match(out, /no se cambia por comando/i); // …pero se declara inmutable desde acá
@@ -71,7 +75,7 @@ test('/espejo off <conexión> saca solo esa y deja el resto (el caso ComunicArte
     const out = await espejo('/espejo off comunicarte', d);
     assert.match(out, /fuera del espejo/);
     assert.equal(d.box.value, 'retia');
-    assert.match(await espejo('/espejo', d), /Espejando: Retia \(retia\)/);
+    assert.match(await espejo('/espejo', d), /Espejando: Retia · Tactical Investor \(retia\)/);
   });
 });
 
@@ -122,6 +126,40 @@ test('/espejo on repetido es idempotente (no duplica la conexión)', async () =>
     const out = await espejo('/espejo on retia', d);
     assert.match(out, /ya estaba/i);
     assert.equal(d.box.value, 'retia');
+  });
+});
+
+// ─── Empresa ≠ conexión ───────────────────────────────────────────────────────
+// Retia es UNA agencia y maneja DOS programas ("De Cero a Tactical Investor" y "Método
+// Comunicarte"), cada uno con su propio Calendly ⇒ dos conexiones. Leer las conexiones como
+// empresas hace creer que ComunicArte es un cliente aparte, y sobre esa lectura se decide a
+// quién se le apaga qué.
+
+test('el estado nombra la empresa de cada conexión y avisa que Retia tiene dos', async () => {
+  await withEnv('comunicarte,retia', '999@lid', async () => {
+    const out = await espejo('/espejo', espejoDeps(null));
+    assert.match(out, /empresa Retia · programas: De Cero a Tactical Investor/);
+    assert.match(out, /empresa Retia · programas: Método Comunicarte/);
+    assert.match(out, /Retia es UNA empresa con 2 conexiones/);
+  });
+});
+
+test('la conexión retia NO se rotula como si fuera la empresa entera', async () => {
+  // `label: 'Retia'` a secas era la fuente del malentendido: nombra el Calendly de UN programa.
+  await withEnv('retia', '999@lid', async () => {
+    const out = await espejo('/espejo', espejoDeps(null));
+    assert.match(out, /Retia · Tactical Investor \(retia\)/);
+    assert.doesNotMatch(out, /Espejando: Retia \(retia\)/);
+  });
+});
+
+test('pedir el programa por su nombre dice de qué empresa es', async () => {
+  // Ojo: "comunicarte" a secas entra por la KEY de la conexión, no por el programa (se llaman
+  // igual). Para ejercitar el camino de programa hay que nombrarlo como programa.
+  await withEnv('', '999@lid', async () => {
+    const out = await espejo('/espejo on método comunicarte', espejoDeps(null));
+    assert.match(out, /un programa de Retia/);
+    assert.match(out, /Método Comunicarte/);
   });
 });
 

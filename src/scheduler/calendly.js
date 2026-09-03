@@ -801,7 +801,7 @@ export async function runCalendlyPoll() {
       // mensaje real se reconstruye al entregar.
       //
       // OJO con la numeración: es 5 y no 4 porque el 4 es el registro de outcome de 30x, que
-      // esta cuenta tiene apagado (account.push4() → false). Retia se salta el 4.
+      // esta cuenta tiene apagado (account.push4() → false). Las conexiones de Retia se saltan el 4.
       if (SHEET_PUSH_ENABLED() && account.sheets?.length) {
         const due5 = push5DueUtc(ev.start_time, ev.end_time, {
           durationMin: CALL_DURATION_MIN(),

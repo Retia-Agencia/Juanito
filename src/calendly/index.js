@@ -198,7 +198,8 @@ export function closerEmailOf(ev) {
 // ─── Teléfono del prospecto ───────────────────────────────────────────────────
 // DOS fuentes, en orden. `text_reminder_number` es la nativa de Calendly (la casilla de
 // recordatorios por SMS) y sigue siendo la primera. La segunda es una PREGUNTA del formulario,
-// y no es un caso de borde: Retia (25-ago) y ComunicArte (26-ago) agregaron una pregunta
+// y no es un caso de borde: Tactical Investor (25-ago) y ComunicArte (26-ago) —los dos
+// programas de Retia— agregaron una pregunta
 // obligatoria de teléfono y NO prendieron la casilla nativa ⇒ desde ese corte el número llega
 // solo por ahí. Medido el 2026-08-26: 4 de 4 reservas nuevas de ComunicArte y las 3 nuevas de
 // Retia. Sin esto, esas dos conexiones —las únicas con `hubspot:false`, o sea SIN el rescate
@@ -215,7 +216,7 @@ export function closerEmailOf(ev) {
 //    "el mismo del correo" son respuestas reales a una pregunta de teléfono.
 //
 // El match de la pregunta va normalizado (sin acentos, sin mayúsculas, sin puntuación) porque
-// las dos empresas ya la escribieron distinto: "Ingrese su número telefonico:" en Retia e
+// los dos programas ya la escribieron distinto: "Ingrese su número telefonico:" en Tactical Investor e
 // "Ingrese su número telefónico" en ComunicArte. Cablear el texto exacto sería cablear el typo.
 const sinAcentos = (s) =>
   String(s || '')
@@ -226,7 +227,7 @@ const sinAcentos = (s) =>
 // Palabras que delatan una pregunta de teléfono, en los dos idiomas en los que Calendly arma
 // estos formularios. Agregar una es sumar un término acá, nada más.
 //
-// Van como RAÍZ, no como palabra completa: la pregunta real de Retia dice "telefonico", y
+// Van como RAÍZ, no como palabra completa: la pregunta real de Tactical Investor dice "telefonico", y
 // 'telefono' no es substring de 'telefonico' (la 8ª letra es i, no o). Ese detalle tonto costó
 // el primer intento de este arreglo — de ahí el test con los dos textos de producción.
 const PREGUNTA_TELEFONO = ['telefon', 'tel.', 'celular', 'movil', 'whatsapp', 'wpp', 'phone', 'mobile'];
