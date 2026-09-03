@@ -451,8 +451,10 @@ test('/persona con grupo inexistente → ayuda', async () => {
 function programadosDeps() {
   const state = {
     rows: [
-      { id: 3, group_id: 'p@g.us', group_name: 'Patah San Juan de Ávila ✝️', days: '0,4', time_hm: '20:00', text: 'Muchachos, ¡los esperamos hoy en la reunión!', active: 1 },
+      { id: 3, group_id: 'p@g.us', group_name: 'Patah San Juan de Ávila ✝️', days: '0,4', time_hm: '20:00', text: 'Muchachos, ¡los esperamos hoy en la reunión!', active: 1, kind: 'fixed' },
+      { id: 4, group_id: 'p@g.us', group_name: 'Patah San Juan de Ávila ✝️', days: '1,2,3,4,5', time_hm: '09:00', text: '', active: 1, kind: 'generated', brief: 'San José' },
     ],
+    settings: {},
   };
   return {
     _state: state,
@@ -462,6 +464,10 @@ function programadosDeps() {
       if (!row) return 0;
       row.active = 0;
       return 1;
+    },
+    getSetting: (k, def) => state.settings[k] ?? def,
+    setSetting: (k, v) => {
+      state.settings[k] = v;
     },
   };
 }
@@ -482,6 +488,27 @@ test('/programados off <id> cancela; id inexistente lo dice', async () => {
   assert.equal(deps._state.rows[0].active, 0);
   assert.match(await handleCommand({ text: '/programados off 3', sender: 'a@lid', role: 'admin' }, deps), /No hay ningún/);
   assert.match(await handleCommand({ text: '/programados off abc', sender: 'a@lid', role: 'admin' }, deps), /Uso:/);
+});
+
+test('/programados auto <id> on prende el auto-envío del generado y se ve en la lista', async () => {
+  const deps = programadosDeps();
+  const out = await handleCommand({ text: '/programados auto 4 on', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /Auto-envío ACTIVADO para #4/);
+  assert.equal(deps._state.settings['auto_publish:4'], '1');
+  assert.match(await handleCommand({ text: '/programados', sender: 'a@lid', role: 'admin' }, deps), /auto-envío ON/);
+
+  await handleCommand({ text: '/programados auto 4 off', sender: 'a@lid', role: 'admin' }, deps);
+  assert.equal(deps._state.settings['auto_publish:4'], '0');
+  assert.match(await handleCommand({ text: '/programados', sender: 'a@lid', role: 'admin' }, deps), /pide aprobación/);
+});
+
+test('/programados auto rechaza id inexistente, fila fija y uso mal escrito', async () => {
+  const deps = programadosDeps();
+  assert.match(await handleCommand({ text: '/programados auto 99 on', sender: 'a@lid', role: 'admin' }, deps), /No hay ningún/);
+  assert.match(await handleCommand({ text: '/programados auto 3 on', sender: 'a@lid', role: 'admin' }, deps), /texto fijo/);
+  assert.match(await handleCommand({ text: '/programados auto 4', sender: 'a@lid', role: 'admin' }, deps), /Uso:/);
+  assert.match(await handleCommand({ text: '/programados auto 4 quizas', sender: 'a@lid', role: 'admin' }, deps), /Uso:/);
+  assert.deepEqual(deps._state.settings, {}, 'nada se guardó');
 });
 
 // ─── /aprobaciones (estado y override del flujo de aprobación, admin-only) ─────

@@ -49,6 +49,14 @@ function makeWorld({ rows = [], authorized = true } = {}) {
     },
     getDraftFor: (scheduledId, publishDate) =>
       world.drafts.find((d) => d.scheduled_id === scheduledId && d.publish_date === publishDate) || null,
+    approveDraft: (id) => {
+      const d = world.drafts.find((x) => x.id === id);
+      if (d && d.status === 'pending') {
+        d.status = 'approved';
+        return 1;
+      }
+      return 0;
+    },
     markDraftPublished: (id) => {
       const d = world.drafts.find((x) => x.id === id);
       if (d && d.status === 'approved') {
@@ -181,4 +189,70 @@ test('un fallo en una fila no rompe el resto del ciclo', async () => {
   __setDeps(deps);
   assert.equal(await runScheduledMessagesCycle(bogota('20:00')), 1, 'la fila sana se envía');
   assert.equal(world.rows.find((r) => r.id === 9).last_sent_date, null, 'la fallida NO se marca (reintenta)');
+});
+
+// ─── Auto-envío por fila (§18.BS): publica SIN aprobación ─────────────────────
+
+test('auto: el borrador se aprueba solo y NO se manda a la consola de aprobaciones', async () => {
+  const { world, deps } = makeWorld({ rows: [{ ...GENERATED }] });
+  world.settings['auto_publish:2'] = '1';
+  __setDeps(deps);
+
+  assert.equal(await runScheduledMessagesCycle(bogota('08:00')), 0, 'a la hora del lead no publica todavía');
+  assert.equal(world.drafts.length, 1);
+  assert.equal(world.drafts[0].status, 'approved', 'queda aprobado sin intervención humana');
+  assert.deepEqual(world.sent, [], 'nadie recibió el borrador para aprobar');
+});
+
+test('auto: publica en el grupo a la hora y manda la copia a la consola DESPUÉS', async () => {
+  const { world, deps } = makeWorld({ rows: [{ ...GENERATED }] });
+  world.settings['auto_publish:2'] = '1';
+  __setDeps(deps);
+  await runScheduledMessagesCycle(bogota('08:00')); // genera + auto-aprueba
+
+  assert.equal(await runScheduledMessagesCycle(bogota('09:00')), 1);
+  assert.equal(world.sent.length, 2);
+  assert.deepEqual(world.sent[0], { to: 'patah@g.us', text: world.drafts[0].draft }, 'el grupo va primero');
+  assert.equal(world.sent[1].to, process.env.BOSS_PHONE, 'la copia va a la consola');
+  assert.match(world.sent[1].text, /Publicado automáticamente/);
+  assert.equal(world.drafts[0].status, 'published', 'published alimenta el anti-repetición');
+  assert.equal(await runScheduledMessagesCycle(bogota('09:01')), 0, 'no repite el mismo día');
+});
+
+test('auto apagado (default): sigue exigiendo aprobación', async () => {
+  const { world, deps } = makeWorld({ rows: [{ ...GENERATED }] });
+  world.settings['auto_publish:2'] = '0';
+  __setDeps(deps);
+  await runScheduledMessagesCycle(bogota('08:00'));
+  assert.equal(world.drafts[0].status, 'pending');
+  assert.equal(await runScheduledMessagesCycle(bogota('09:00')), 0, 'sin aprobar no publica');
+  assert.ok(!world.sent.some((s) => s.to === 'patah@g.us'), 'el grupo nunca recibió nada');
+});
+
+test('auto: sin destino de aprobación igual publica (la copia es opcional)', async () => {
+  const { world, deps } = makeWorld({ rows: [{ ...GENERATED }] });
+  world.settings['auto_publish:2'] = '1';
+  __setDeps({ ...deps, approvalsTarget: async () => null });
+  await runScheduledMessagesCycle(bogota('08:00'));
+
+  assert.equal(await runScheduledMessagesCycle(bogota('09:00')), 1);
+  assert.deepEqual(world.sent, [{ to: 'patah@g.us', text: world.drafts[0].draft }]);
+});
+
+test('auto: si la copia a la consola falla, el envío al grupo NO se reintenta', async () => {
+  const { world, deps } = makeWorld({ rows: [{ ...GENERATED }] });
+  world.settings['auto_publish:2'] = '1';
+  __setDeps({
+    ...deps,
+    sendMessage: async (to, text) => {
+      if (to !== 'patah@g.us') throw new Error('consola caída');
+      world.sent.push({ to, text });
+    },
+  });
+  await runScheduledMessagesCycle(bogota('08:00'));
+
+  assert.equal(await runScheduledMessagesCycle(bogota('09:00')), 1, 'el ciclo lo cuenta como publicado');
+  assert.equal(world.rows[0].last_sent_date, '2026-06-11', 'la fila quedó marcada');
+  assert.equal(await runScheduledMessagesCycle(bogota('09:01')), 0, 'no hay doble publicación');
+  assert.equal(world.sent.filter((s) => s.to === 'patah@g.us').length, 1);
 });

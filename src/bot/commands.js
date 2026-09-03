@@ -6,7 +6,7 @@
 // sin las deps nativas (better-sqlite3). Las deps de /status se inyectan.
 // (recurring-logic es PURO — seguro de importar.)
 
-import { csvToDayLabels, zonedNowParts } from '../scheduler/recurring-logic.js';
+import { csvToDayLabels, zonedNowParts, autoPublishKey, isAutoPublish } from '../scheduler/recurring-logic.js';
 import { accountOf, DEFAULT_ACCOUNT } from '../calendly/accounts.js';
 // closerOf resuelve la identidad del closer desde su JID. Es un módulo PURO (roster + roles),
 // no arrastra deps nativas → este archivo se sigue pudiendo testear sin better-sqlite3.
@@ -569,12 +569,21 @@ async function handlePersona({ text, sender }, deps = {}) {
     : `"${target.name || target.id}" no tiene personalidad configurada (usa /persona <n|nombre> | <texto>).`;
 }
 
-// /programados            → lista los mensajes recurrentes activos
-// /programados off <id>   → cancela uno
+// /programados                    → lista los mensajes recurrentes activos
+// /programados off <id>           → cancela uno
+// /programados auto <id> on|off   → auto-envío de un generado: publica SIN aprobación (§18.BS)
 function handleProgramados(text, deps = {}) {
-  const { listScheduledMessages, cancelScheduledMessage } = deps;
-  const parts = (text || '').trim().split(/\s+/); // [ '/programados', action?, id? ]
+  const { listScheduledMessages, cancelScheduledMessage, getSetting, setSetting } = deps;
+  const parts = (text || '').trim().split(/\s+/); // [ '/programados', action?, id?, valor? ]
   const action = (parts[1] || 'list').toLowerCase();
+
+  const activas = () => {
+    try {
+      return listScheduledMessages ? listScheduledMessages() : [];
+    } catch {
+      return []; // DB puede no estar lista
+    }
+  };
 
   if (action === 'off') {
     const id = Number(parts[2]);
@@ -585,19 +594,41 @@ function handleProgramados(text, deps = {}) {
       : `No hay ningún mensaje programado activo con id ${id}.`;
   }
 
-  let rows = [];
-  try {
-    rows = listScheduledMessages ? listScheduledMessages() : [];
-  } catch {
-    /* DB puede no estar lista */
+  if (action === 'auto') {
+    const id = Number(parts[2]);
+    const val = (parts[3] || '').toLowerCase();
+    if (!Number.isInteger(id) || (val !== 'on' && val !== 'off')) return 'Uso: /programados auto <id> on|off';
+    // Se valida contra la fila real: prender auto en un id inexistente o en un 'fixed'
+    // guardaría un setting que no gobierna nada y parecería que quedó configurado.
+    const row = activas().find((r) => r.id === id);
+    if (!row) return `No hay ningún mensaje programado activo con id ${id}.`;
+    if (row.kind !== 'generated') {
+      return `El #${id} es de texto fijo: ya se publica solo, sin aprobación. El auto-envío solo aplica a los generados.`;
+    }
+    setSetting?.(autoPublishKey(id), val === 'on' ? '1' : '0');
+    const donde = row.group_name || row.group_id;
+    return val === 'on'
+      ? `Auto-envío ACTIVADO para #${id} → ${donde} 🤖\n` +
+          `Juanito publica sin pedir aprobación. El borrador se sigue generando antes de la hora, ` +
+          `así que se puede vetar con /aprobaciones rechazar <id>, y después de publicar llega copia a la consola.`
+      : `Auto-envío desactivado para #${id} → ${donde} — vuelve a pedir aprobación antes de publicar.`;
   }
+
+  const rows = activas();
   if (!rows.length) return '📆 No hay mensajes programados activos.';
   const lines = [`📆 Mensajes programados (${rows.length})`, ''];
   for (const r of rows) {
     lines.push(`#${r.id} → ${r.group_name || r.group_id} — ${csvToDayLabels(r.days)} a las ${r.time_hm}`);
     lines.push(`    "${truncate(r.text, 100)}"`);
+    if (r.kind === 'generated') {
+      lines.push(
+        isAutoPublish(getSetting, r.id)
+          ? '    🤖 generado · auto-envío ON (publica sin aprobación)'
+          : '    📝 generado · pide aprobación antes de publicar'
+      );
+    }
   }
-  lines.push('', 'Cancelar: /programados off <id>');
+  lines.push('', 'Cancelar: /programados off <id> · Auto-envío: /programados auto <id> on|off');
   return lines.join('\n');
 }
 
@@ -626,7 +657,7 @@ function buildHelp(role) {
       '• /persona <n|nombre> | <texto> — tono por grupo',
       '',
       'Programados:',
-      '• /programados [off <id>] — mensajes recurrentes',
+      '• /programados [off <id>] [auto <id> on|off] — mensajes recurrentes',
       '• /aprobaciones [ver|aprobar|rechazar <id>] — borradores generados',
       '',
       'Operación:',
