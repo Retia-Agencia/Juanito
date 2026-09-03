@@ -6375,6 +6375,62 @@ a ser el único control cuando dejó de mirarlo. Al automatizar un paso no solo 
 más hacía esa persona (§18.BS): también **qué herramientas eran cómodas y ahora son críticas**.
 
 
+### 18.BV 🔵 El espejo se mueve desde el DM, y Tactical Investor queda bajo la lupa (2026-09-02)
+
+El espejo de dev (§18.BM) hizo su trabajo en **ComunicArte**: Dani lo verificó y ya no lo necesita
+ahí. El siguiente en la fila es **De Cero a Tactical Investor**, para confirmar que los pushes le
+llegan a **Maru Marquez**, que heredó ese buzón-rol ayer mismo (§18.BR) — o sea que el alcance del
+espejo cambió dos veces en una semana.
+
+**El problema no era el espejo: era cómo se mueve.** El alcance vivía SOLO en
+`CALENDLY_DEV_MIRROR_CONNECTIONS`, así que sacar una agencia y meter otra costaba editar el `.env`
+del VPS y **reiniciar el bot, o sea reconectar Baileys** — la operación más cara y más riesgosa de
+este sistema (§ historia del softban). Pagar una reconexión para decir *"ya no me copies
+ComunicArte"* es exactamente el precio que hace que uno lo deje prendido y termine ignorando el
+espejo. Es el mismo razonamiento por el que el botón de pánico de `/calendly` vive en `settings` y
+no en el entorno.
+
+**`/espejo` (admin).** `on <conexión>` / `off <conexión>` / `off` (todo) / sin args (estado). El
+alcance queda en `settings.calendly_mirror_connections` y **pisa al `.env`**; el estado dice cuál de
+los dos manda hoy, porque una vez usado el comando editar el `.env` no hace nada y eso confunde a
+quien venga después.
+
+- **`null` ≠ `''`, y no es purismo:** `null` = nadie usó el comando → manda el `.env` (el
+  comportamiento previo queda intacto); `''` = **apagado por comando**. Leerlo con `||` en vez de
+  `??` haría que `/espejo off` no apagara nada y el dev siguiera recibiendo copias de la agencia que
+  ya verificó. Hay un test por cada lado.
+- **Acepta el nombre del PROGRAMA** (`/espejo on tactical`), porque el espejo se piensa por programa
+  aunque filtre por conexión — pero **avisa** que va a copiar la conexión entera con todos sus
+  programas. Hoy `retia` solo lleva Tactical Investor, así que coinciden; el día que no coincidan,
+  el mensaje ya lo decía.
+- **El DESTINO sigue siendo env-only, a propósito.** El alcance decide *de quiénes* se copian los
+  mensajes; el JID decide *a quién le llegan*. Un comando de DM que redirige copias de datos de
+  clientes (nombres, teléfonos, links wa.me) a un número arbitrario es otra clase de riesgo:
+  mover eso tiene que costar entrar al servidor.
+- El parseo del CSV quedó en `src/calendly/mirror.js`, puro y de 5 líneas, porque ahora lo leen dos
+  lugares que no se pueden importar entre sí (el scheduler y `commands.js`, que evita deps nativas
+  para ser testeable en Windows). Duplicarlo era sembrar la deriva de siempre.
+
+**Los pushes de Tactical SÍ le están llegando a Maru — verificado contra la DB de producción, no
+contra el código.** El 2026-09-02, con `equipo@ttrading.co`: Sergio Morales (Push 0, 3 y 5) y Josue
+florez (Push 3 y 5), todos `sent`, con sus `sent_at`. Su identidad de ComunicArte
+(`soymarumarquez@gmail.com`) sigue enviando en paralelo. O sea que el traspaso del buzón-rol de
+§18.BR funcionó de punta a punta: **una sola línea de WhatsApp, un solo opt-in, dos conexiones**.
+
+**Tests:** +9 en `commands.espejo` (deflexión a no-admin · hereda el `.env` · saca una y deja el
+resto · `off` a secas apaga todo y el `.env` deja de mandar · programa → conexión con aviso ·
+argumento inválido no escribe nada · `off` de algo que no estaba no borra lo demás · `on` idempotente
+· sin JID avisa que el espejo no existe) y +2 en `calendly.dev-mirror` (el comando pisa al `.env` ·
+`''` apaga aunque el `.env` liste la conexión). Baseline en Docker/Linux: **1164 → 1175, los mismos
+2 rojos conocidos** (`call con TODOS sus pushes skipped…` y `reagenda manual superseded…`).
+
+**Pendiente de operación:** el comando entra con el próximo deploy `alcance: todo` (reconstruye la
+imagen y reconecta Baileys). Hasta entonces el alcance sigue siendo el del `.env`
+(`comunicarte,retia`). Apenas esté arriba: `/espejo off comunicarte` deja solo Tactical Investor,
+sin tocar el VPS. Si se prefiere no esperar, la alternativa es editar el `.env` y reiniciar — misma
+reconexión, así que conviene aprovechar el mismo deploy.
+
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):

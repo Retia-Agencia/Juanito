@@ -58,6 +58,7 @@ import { resolveCloser, isIgnoredCloser, accountOfCloser, extraJidsForCloser, HU
 import { CLOSERS } from '../calendly/closers.js';
 import { tallyByCloser, buildAgendaMessage } from '../calendly/agenda-admin.js';
 import { accountOf, activeAccounts, DEFAULT_ACCOUNT } from '../calendly/accounts.js';
+import { mirrorConnections } from '../calendly/mirror.js';
 import { SKIP_SLUGS, SKIP_ALERTABLES, ETIQUETA_SKIP } from '../calendly/skip-reasons.js';
 import {
   recordPollOk,
@@ -121,11 +122,13 @@ const DEV_MIRROR_JID = () => (process.env.CALENDLY_DEV_MIRROR_JID || '').trim();
 // Conexiones espejadas (CSV de keys de accounts.js). VACÍO = ninguna: un espejo sin alcance
 // declarado no copia nada, en vez de copiarlo TODO. Poner el JID sin querer no puede terminar
 // en el dev recibiendo los pushes de las cuatro conexiones.
-const DEV_MIRROR_CONNECTIONS = () =>
-  (process.env.CALENDLY_DEV_MIRROR_CONNECTIONS || '')
-    .split(',')
-    .map((x) => x.trim().toLowerCase())
-    .filter(Boolean);
+//
+// `override` es lo que dejó `/espejo` en la DB (§18.BV): manda sobre el `.env` cuando existe,
+// para poder mover el espejo de agencia sin redeploy. `null`/`undefined` = nadie usó el comando
+// → el `.env`, como siempre. String vacío = apagado POR COMANDO, y por eso el `??` no puede ser
+// un `||`: '' es una respuesta, no una ausencia.
+const DEV_MIRROR_CONNECTIONS = (override) =>
+  mirrorConnections(override, process.env.CALENDLY_DEV_MIRROR_CONNECTIONS);
 // Cada cuánto se puede REPETIR el mismo aviso (mismo mensaje + mismo resultado). No es la
 // frecuencia del espejo: un resultado NUEVO sale siempre, sin esperar esto. 6h = el default de
 // health.js, o sea "avisá de nuevo si mañana sigue roto", no "avisá cada minuto".
@@ -301,6 +304,9 @@ async function deps() {
     isCalendlyPaused: db.isCalendlyPaused,
     // Pausa por-closer, por identidad/email (`/calendly off <closer> <cuenta>`).
     isCloserPaused: db.isCloserPaused,
+    // Alcance del espejo de dev, movible en caliente con `/espejo` (§18.BV). Sin esto el
+    // espejo solo sabía del `.env` y cambiarlo costaba un redeploy.
+    getMirrorConnections: db.getMirrorConnections,
     // Anti-ban: la agenda a la admin es un DM a un tercero, no a un closer con opt-in.
     // Sin hilo previo NO se entrega (mismo gate que el reporte de las 8pm).
     hasDmThread: db.hasDmThread,
@@ -542,7 +548,7 @@ async function mirrorToDev(d, { text, tag, closerEmail, outcome }) {
   // El botón de pánico manda sobre todo lo demás: 'paused' es la pausa GLOBAL.
   if (outcome === 'paused') return;
   const conexion = accountOfCloser(closerEmail);
-  if (!DEV_MIRROR_CONNECTIONS().includes(conexion)) return;
+  if (!DEV_MIRROR_CONNECTIONS(d.getMirrorConnections?.()).includes(conexion)) return;
   if (!shouldAlert(mirrorKey(tag, closerEmail, outcome, text), DEV_MIRROR_TTL_MS())) return;
   const closer = resolveCloser(closerEmail);
   const cabecera =

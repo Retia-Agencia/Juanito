@@ -88,7 +88,8 @@ Hay tests que lo fijan en `test/roles.test.js`.
 
 ## Comandos (DM admin)
 
-`/confirmaciones [dm|grupo …] on|off` · `/calendly on|off [closer] [cuenta|todo]` · `/grupos` ·
+`/confirmaciones [dm|grupo …] on|off` · `/calendly on|off [closer] [cuenta|todo]` ·
+`/espejo [on|off <conexión>]` · `/grupos` ·
 `/reporte(s)` · `/persona <grupo> | <texto>` · `/programados [off|on <id>] [auto <id> on|off]` · `/aprobaciones` · `/respuestas` ·
 `/status` · `/whoami` · `/id` — manual completo en [docs/MANUAL-DE-USO.md](docs/MANUAL-DE-USO.md).
 

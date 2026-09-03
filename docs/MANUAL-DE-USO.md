@@ -234,6 +234,35 @@ Botón de pánico de los pushes a closers.
 > reconoce acá (es a propósito: un nombre de una palabra es ambiguo y podría apuntar a la persona
 > equivocada).
 
+### Espejo de dev — `/espejo` *(admin)*
+
+Juanito le manda a **una** persona del equipo técnico una **copia de cada push precall**, con el
+resultado pegado arriba: `sent`, `dry-run`, `skipped-optin`, `skipped-no-thread`. Existe para
+acompañar el arranque de una conexión nueva, porque el modo de falla caro no es el push mal
+escrito sino **el que no sale** — y eso el closer no lo puede reportar, justamente porque no lo ve.
+Se prende para verificar una agencia y se apaga cuando ya se verificó.
+
+| Comando | Qué hace |
+|---|---|
+| `/espejo` | Estado: a quién se le copia, qué conexiones y de dónde sale ese dato |
+| `/espejo on <conexión>` | Empieza a copiar esa conexión |
+| `/espejo off <conexión>` | Deja de copiarla |
+| `/espejo off` | Apaga el espejo entero |
+
+> `<conexión>` es la key corta (`30x`, `estadox`, `retia`, `comunicarte`), pero también se acepta
+> el **programa** (`tactical`, `comunicarte`, `abogados`): Juanito lo traduce a su conexión y
+> **avisa que va a copiar la conexión entera**, con todos sus programas. No es lo mismo.
+
+> **A quién le llega NO se cambia por comando.** El destino vive en `CALENDLY_DEV_MIRROR_JID` del
+> `.env` del VPS y no hay comando que lo mueva: el alcance decide *de quiénes* se copian los
+> mensajes, el JID decide *a quién le llegan*, y redirigir datos de clientes a otro chat tiene que
+> costar entrar al servidor.
+
+> `/calendly off` (la pausa global) **también calla el espejo**: el botón de pánico es silencio
+> total. Lo demás no lo calla, a propósito.
+
+---
+
 ### Recordatorio de los Sheets (solo Retia)
 
 Los closers de **Retia** reciben, **10 minutos después de que termina cada call**, un mensaje
@@ -310,6 +339,7 @@ línea `🔁 movidas` del reporte, y el lead cuenta **una sola vez**: el día qu
 /programados [off <id>] [on <id>] [auto <id> on|off]  ← recurrentes
 /aprobaciones [ver|aprobar|rechazar <id>]← borradores generados
 /calendly [on|off] [closer] [cuenta|todo]← pushes precall (cuenta = 30x/retia; todo = todas)
+/espejo [on|off <conexión>]              ← copia de esos pushes al DM del dev
 /reportes [leads|metricas]               ← reporte (DM=preview · en grupo lo publica)
 /status · /whoami · /id                  ← diagnóstico e identidad
 /help · /ayuda · /comandos               ← ayuda según tu rol

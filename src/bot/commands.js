@@ -7,7 +7,9 @@
 // (recurring-logic es PURO — seguro de importar.)
 
 import { csvToDayLabels, zonedNowParts, autoPublishKey, isAutoPublish } from '../scheduler/recurring-logic.js';
-import { accountOf, DEFAULT_ACCOUNT } from '../calendly/accounts.js';
+import { accountOf, ACCOUNTS, DEFAULT_ACCOUNT } from '../calendly/accounts.js';
+import { PROGRAMS } from '../calendly/programs.js';
+import { mirrorConnections } from '../calendly/mirror.js';
 // closerOf resuelve la identidad del closer desde su JID. Es un módulo PURO (roster + roles),
 // no arrastra deps nativas → este archivo se sigue pudiendo testear sin better-sqlite3.
 import { closerOf } from '../common/roles.js';
@@ -66,6 +68,13 @@ export async function handleCommand({ text, sender, role }, deps = {}) {
   if (cmd === '/calendly' || cmd.startsWith('/calendly ')) {
     if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
     return handleCalendly(text, deps);
+  }
+
+  // /espejo [on|off] [conexión] — alcance del espejo de dev (§18.BV). SOLO admins: decide de
+  // qué clientes se copian los pushes al DM del dev.
+  if (cmd === '/espejo' || cmd.startsWith('/espejo ')) {
+    if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
+    return handleEspejo(text, deps);
   }
 
   // /grupos [on|off] [n|nombre] — visibilidad y control remoto de los grupos de
@@ -719,6 +728,7 @@ function buildHelp(role) {
       '• /tareas [ver|hecha|descartar <id>] — órdenes del jefe por hacer',
       '• /negocio [pendientes|ok|no|olvida <id>] — contexto del negocio',
       '• /calendly [on|off] [closer] [cuenta|todo] — pushes precall',
+      '• /espejo [on|off <conexión>] — copia de esos pushes a tu DM',
       '• /reportes [leads|metricas] — preview (en grupo lo publica; jefe/admin)',
       '• /agenda — manda YA la agenda diaria a la admin (la del cron de 7am)',
       '• /reportejefe — scorecard consolidado (todos los programas + closers)',
@@ -1072,6 +1082,132 @@ function handleCalendly(text, deps = {}) {
   const lines = [`${who} — ${done.length}/${targets.length} identidades ${pause ? 'pausadas ⏸️' : 'reactivadas ▶️'}:`];
   for (const t of done) lines.push(`• ${t.account} (${t.accountLabel}) ✓`);
   for (const t of skipped) lines.push(`• ${t.account} (${t.accountLabel}) — sin opt-in, nada que ${nada}`);
+  return lines.join('\n');
+}
+
+// ─── /espejo — alcance del espejo de dev (§18.BV) ─────────────────────────────
+// /espejo                 → estado: destino, qué se copia y de dónde sale ese dato
+// /espejo on <conexión>   → suma una conexión al espejo
+// /espejo off <conexión>  → la saca
+// /espejo off             → apaga TODO (no se copia nada)
+//
+// Por qué es un comando y no solo el `.env`: el espejo se prende para acompañar el arranque de UNA
+// conexión y se apaga cuando esa conexión ya se verificó — o sea que su alcance cambia seguido, y
+// hasta hoy moverlo costaba un redeploy, que reconecta Baileys (el riesgo caro de este sistema).
+// Mismo razonamiento que el botón de pánico de `/calendly`, que por eso vive en `settings`.
+//
+// El DESTINO (CALENDLY_DEV_MIRROR_JID) NO se toca desde acá, a propósito: ver la nota en
+// db/index.js. El alcance dice de QUIÉNES se copian los mensajes; el JID dice a QUIÉN van.
+function handleEspejo(text, deps = {}) {
+  const { getMirrorConnections, setMirrorConnections } = deps;
+  const parts = (text || '').trim().split(/\s+/); // [ '/espejo', action?, ...conexión ]
+  const action = (parts[1] || 'status').toLowerCase();
+  const arg = parts.slice(2).join(' ').trim();
+
+  const leer = () => {
+    try {
+      return getMirrorConnections ? getMirrorConnections() : null;
+    } catch {
+      return null; // la DB puede no estar lista: caemos al .env, que es el estado previo
+    }
+  };
+
+  if (action === 'status') return buildEspejoStatus(leer());
+  if (action !== 'on' && action !== 'off') return 'Uso: /espejo [on|off] [conexión]';
+
+  // `/espejo off` a secas = silencio total. `/espejo on` a secas NO tiene análogo: "prender todo"
+  // sería copiar las cuatro conexiones a un DM, que es justo lo que el default vacío evita.
+  if (!arg) {
+    if (action === 'on') return `Uso: /espejo on <conexión> — decí cuál.\n\n${listaConexiones()}`;
+    setMirrorConnections?.('');
+    return '🪞 Espejo APAGADO — ya no se copia ninguna conexión.';
+  }
+
+  const target = resolveMirrorTarget(arg);
+  if (target.error) return target.error;
+
+  const actuales = mirrorConnections(leer(), process.env.CALENDLY_DEV_MIRROR_CONNECTIONS);
+  const estaba = actuales.includes(target.connection);
+  if (!estaba && action === 'off') {
+    return `${etiquetaConexion(target.connection)} no estaba en el espejo. Sigue igual: ${resumen(actuales)}.`;
+  }
+  const siguientes =
+    action === 'on'
+      ? estaba
+        ? actuales
+        : [...actuales, target.connection]
+      : actuales.filter((c) => c !== target.connection);
+  setMirrorConnections?.(siguientes.join(','));
+
+  const cabecera =
+    estaba && action === 'on'
+      ? `${etiquetaConexion(target.connection)} ya estaba en el espejo.`
+      : `🪞 ${etiquetaConexion(target.connection)}: ${action === 'on' ? 'ESPEJADA ✅' : 'fuera del espejo ⛔'}`;
+  const via = target.viaPrograma
+    ? `\n(Pediste "${target.viaPrograma}", que vive en la conexión ${target.connection} → se copia la conexión entera: ${programasDe(target.connection)}.)`
+    : '';
+  return `${cabecera}${via}\n\nEspejando ahora: ${resumen(siguientes)}.`;
+}
+
+// Lo que el dev escribió → una CONEXIÓN. Acepta la key de la conexión ('retia') y también un
+// PROGRAMA ('tactical_investor', 'tactical', 'comunicarte'), porque el espejo se PIENSA por
+// programa ("quiero ver Tactical Investor") aunque FILTRE por conexión. Cuando entra por programa
+// se avisa: no es lo mismo, la conexión arrastra todos sus programas.
+function resolveMirrorTarget(arg) {
+  const q = String(arg || '').trim().toLowerCase();
+  if (accountOf(q)) return { connection: q };
+  const hits = Object.entries(PROGRAMS).filter(
+    ([k, p]) => k.includes(q) || String(p.label || '').toLowerCase().includes(q)
+  );
+  const conns = [...new Set(hits.map(([, p]) => p.connection))];
+  if (conns.length === 1) return { connection: conns[0], viaPrograma: hits[0][1].label };
+  if (conns.length > 1) {
+    const opciones = conns.map((c) => `• ${c} — ${etiquetaConexion(c)}`).join('\n');
+    return { error: `"${arg}" matchea programas de varias conexiones. Precisá cuál:\n${opciones}` };
+  }
+  return { error: `No reconozco "${arg}".\n\n${listaConexiones()}` };
+}
+
+const etiquetaConexion = (key) => `${accountOf(key)?.label || key} (${key})`;
+
+const programasDe = (key) =>
+  Object.values(PROGRAMS)
+    .filter((p) => p.connection === key)
+    .map((p) => p.label)
+    .join(' · ') || 'sin programas declarados';
+
+const listaConexiones = () =>
+  ['Conexiones:', ...Object.keys(ACCOUNTS).map((k) => `• ${k} — ${accountOf(k).label}`)].join('\n');
+
+const resumen = (lista) => (lista.length ? lista.map(etiquetaConexion).join(' · ') : 'nada');
+
+function buildEspejoStatus(override) {
+  const jid = (process.env.CALENDLY_DEV_MIRROR_JID || '').trim();
+  const lista = mirrorConnections(override, process.env.CALENDLY_DEV_MIRROR_CONNECTIONS);
+  const lines = [
+    '🪞 *Espejo de dev* — copia a un DM de cada push precall, con el RESULTADO en el encabezado',
+    '(sirve justo para ver los que NO salen: sin opt-in, en dry-run, closer pausado).',
+    '',
+  ];
+  lines.push(
+    jid
+      ? `Destino: ${shortId(jid)} — fijo en el .env, no se cambia por comando.`
+      : '⚠️ SIN destino: falta CALENDLY_DEV_MIRROR_JID en el .env → el espejo no existe, prenda lo que prenda este comando.'
+  );
+  lines.push(`Espejando: ${resumen(lista)}`);
+  for (const c of lista) lines.push(`   └ ${programasDe(c)}`);
+  const apagadas = Object.keys(ACCOUNTS).filter((k) => !lista.includes(k));
+  lines.push(`Apagadas: ${resumen(apagadas)}`);
+  lines.push(
+    '',
+    override == null
+      ? 'Alcance heredado del .env (nadie usó este comando todavía).'
+      : 'Alcance fijado con /espejo — desde ahora el .env NO manda acá.'
+  );
+  lines.push(
+    '',
+    'Prender: /espejo on <conexión> · Apagar: /espejo off <conexión> · Apagar todo: /espejo off'
+  );
   return lines.join('\n');
 }
 
