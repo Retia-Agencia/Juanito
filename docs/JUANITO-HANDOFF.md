@@ -129,7 +129,10 @@ de prenderla)
   visto bueno NO sale), con correcciones en lenguaje natural que se acumulan como guía editorial.
   Admins: `/aprobaciones` (estado + override). Falta el setup en vivo cuando Juanito entre al grupo.
   **Desde el 2026-09-02 la aprobación es opcional por fila (§18.BS):** `/programados auto <id> on`
-  hace que ese generado salga solo y mande copia a la consola después de publicar.
+  hace que ese generado salga solo y mande copia a la consola después de publicar. En producción
+  está ON en la fila **#8** (Patah Team Logística, miércoles 20:00); al prenderlo salió a la luz un
+  **duplicado de 11 semanas** que la compuerta humana venía tapando — leer §18.BS antes de
+  automatizar otro paso manual.
 
 Pendientes reales abiertos → ver §18 "Tareas pendientes".
 
@@ -6200,8 +6203,60 @@ duplica el envío) y +2 en `commands` (toggle + estado en la lista; rechaza id i
 fija y uso mal escrito). Baseline en Mac medida con `git stash`: **1139 → 1146 tests**, los mismos
 **102 rojos** de entorno antes y después.
 
-**Pendiente para dejarlo andando (no es código):** correr `/programados` en producción para ver los
-ids reales de las filas `generated` de Patah y prender el auto en cada una.
+**Al prenderlo en producción apareció lo importante: el paso de aprobación estaba tapando un
+duplicado.** `/programados` devolvió DOS filas activas para el mismo grupo, el mismo día y la misma
+hora: **#5 y #8**, *"Patah Team Logística", miércoles 20:00*. Desde WhatsApp eran indistinguibles
+(el listado muestra `text`, que en un generado está vacío; lo que las diferencia es el `brief`, que
+no se muestra). Hubo que ir a la DB.
+
+El origen está en el log de creación: el **19-jun entre 00:05:03 y 00:10:33** se crearon CUATRO
+filas casi idénticas — #5, #6, #7 y #8 — por el mismo LID. Alguien iteraba la redacción del brief y
+**cada intento creó una fila nueva**, porque `schedule_group_message` solo sabe crear: no hay forma
+de EDITAR un programado. Apagaron #6 y #7 y se les quedó una de más.
+
+**Las dos venían generando borrador todos los miércoles, y el aprobador tapaba el duplicado sin
+saberlo:** veía dos borradores casi iguales y aprobaba uno. Pero no siempre. Los números al
+2026-09-02: #5 con **7 publicados** (último ese mismo día) y #8 con **6** (último el 26-ago) =
+**13 publicaciones en 11 miércoles disponibles** desde su creación. Al menos dos veces el grupo ya
+recibió el mensaje **dos veces la misma noche**. Ese mismo 2026-09-02 se vio en vivo: borrador #24
+(fila 5) publicado a las 20:00 y borrador #25 (fila 8) pendiente al lado.
+
+**La lección, que es más grande que este bug:** una compuerta humana no solo aprueba, también
+**absorbe en silencio los defectos de lo que hay detrás**. Al quitarla, lo absorbido sale a la
+superficie de golpe y todas las semanas. Antes de automatizar un paso que una persona venía
+haciendo a mano, hay que mirar qué más estaba haciendo esa persona sin que nadie lo escribiera.
+
+**Resuelto:** `/programados off 5` + `/programados auto 8 on`. Se conservó **#8** por el brief, que
+es la última iteración y la única que restringe el formato (*"Sin título, sin negrillas, sin
+formato tipo email"*) — justo lo que importa cuando ya nadie revisa antes de enviar. Estado
+verificado en la DB: `#5 active=0`, `#8 active=1`, `settings['auto_publish:8']='1'`.
+
+**Hallazgos laterales, ninguno tocado (todos anteriores a este cambio):**
+
+1. **No se puede EDITAR un mensaje programado.** Es la causa raíz del duplicado: iterar un brief
+   crea filas nuevas. Mientras no exista, el patrón se va a repetir cada vez que alguien afine el
+   texto de un generado.
+2. **Un comando dentro del grupo de aprobaciones no falla: contesta cualquier cosa.** Los comandos
+   se interceptan solo en DM (`if (!isGroup)`, `src/index.js:154`), así que `/programados` escrito
+   en el grupo cae en la consola LLM, que respondió una lista de pendientes con toda la pinta de
+   ser la respuesta correcta. Medido: `~$0.0241` y una respuesta engañosa. Debería contestar "ese
+   comando es por DM" antes de llamar al modelo.
+3. **`/programados` no muestra el `brief`.** En un `kind='generated'` el campo `text` está vacío, así
+   que el listado imprime `""` y dos filas distintas se ven idénticas. Es lo que obligó a bajar a la
+   DB para decidir cuál conservar.
+4. **`off` es de una sola vía desde WhatsApp.** `cancelScheduledMessage` solo hace `active = 0`
+   (no borra: el brief queda), pero no hay comando que reactive. Recuperar una fila apagada por
+   error exige entrar a la DB.
+5. **Dos numeraciones que se parecen y no son la misma.** La consola habla de *"Borrador #25"*
+   (`scheduled_drafts.id`, cambia cada día) y `/programados auto` pide el `scheduled_id` (#8, fijo).
+   Confundirlos es el error natural.
+6. **El deploy volvió a borrar los logs** (gotcha ya conocido, ver más abajo): recrear el contenedor
+   a las 20:21 dejó `docker logs` sin las líneas de generación de las 19:00 de ese mismo día.
+
+**Pendiente:** el borrador #25 quedó en `pending` (el `/aprobaciones rechazar 25` no se ejecutó).
+No se publica solo — la publicación exige `approved` y el recordatorio ya salió — pero sigue
+apareciendo como ofrecible en el DM del jefe, y un "sí" lo publicaría de inmediato, duplicando el
+mensaje de ese día. Descartarlo cierra el tema.
 
 
 ### 🟢 Baja prioridad / Nice-to-have
