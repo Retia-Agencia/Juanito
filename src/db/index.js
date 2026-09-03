@@ -1350,6 +1350,34 @@ export function listScheduledMessages({ activeOnly = true } = {}) {
     .all();
 }
 
+// Actualiza SOLO los campos presentes de un mensaje programado ACTIVO. Existe porque sin esto
+// afinar un brief obligaba a crear una fila nueva cada vez, y así nacieron los cuatro duplicados
+// del 19-jun que estuvieron 11 semanas mandando el mensaje por duplicado (§18.BS).
+export function updateScheduledMessage(id, { days, timeHm, text, brief } = {}) {
+  const sets = [];
+  const vals = [];
+  if (days !== undefined) { sets.push('days = ?'); vals.push(days); }
+  if (timeHm !== undefined) { sets.push('time_hm = ?'); vals.push(timeHm); }
+  if (text !== undefined) { sets.push('text = ?'); vals.push(text); }
+  if (brief !== undefined) { sets.push('brief = ?'); vals.push(brief); }
+  if (!sets.length) return 0;
+  vals.push(id);
+  return db
+    .prepare(`UPDATE scheduled_messages SET ${sets.join(', ')} WHERE id = ? AND active = 1`)
+    .run(...vals).changes;
+}
+
+// ¿Ya hay una fila ACTIVA para el mismo grupo, los mismos días y la misma hora? Alimenta el
+// guardia anti-duplicado del tool: dos filas así son indistinguibles desde WhatsApp y publican
+// las dos (§18.BS).
+export function findScheduledDuplicate({ groupId, days, timeHm }) {
+  return (
+    db
+      .prepare(`SELECT * FROM scheduled_messages WHERE active = 1 AND group_id = ? AND days = ? AND time_hm = ?`)
+      .get(groupId, days, timeHm) || null
+  );
+}
+
 export function cancelScheduledMessage(id) {
   return db.prepare(`UPDATE scheduled_messages SET active = 0 WHERE id = ? AND active = 1`).run(id).changes;
 }

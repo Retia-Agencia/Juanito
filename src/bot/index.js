@@ -21,7 +21,7 @@ import {
 import { phonesMatch, isWithinQuietHours, maskJid } from '../common/utils.js';
 import { roleOf, isStrictPrivileged } from '../common/roles.js';
 import { approvalsTarget, approvalsGroupId } from '../common/approval-routing.js';
-import { parseApproval, parseDiscard, parseApprovalTarget } from '../common/approval-intent.js';
+import { parseApproval, parseDiscard, parseApprovalTarget, looksLikeCommand } from '../common/approval-intent.js';
 
 const BOSS_PHONE = () => process.env.BOSS_PHONE;
 const BOT_NAME = () => process.env.BOT_NAME || 'Juanito';
@@ -229,6 +229,19 @@ export async function handleApprovalConsole({ chatId, text, sender, messageId, r
   if (!markIfNew(messageId || `${chatId}:${text}`)) return true;
 
   console.log(`[Bot] Consola de aprobaciones: ${text.slice(0, 60)}`);
+
+  // Un comando escrito ACÁ no se atiende (solo por DM) y sobre todo NO puede llegar al LLM:
+  // contestaría algo plausible y equivocado, que es peor que no contestar (§18.BS).
+  if (looksLikeCommand(text)) {
+    await sendMessage(
+      chatId,
+      'Los comandos funcionan solo por DM conmigo, no acá 🙂\n' +
+        'En este grupo decido sobre lo pendiente: "apruebo", "descártalo", o decime qué corregir.',
+      { quoted: rawMsg }
+    ).catch(() => {});
+    return true;
+  }
+
   try {
     // 0) Fast-path por REPLY: si el jefe CITÓ una notificación concreta ("Respuesta pendiente
     // #N" / "Borrador #N"), el pendiente queda resuelto SIN ambigüedad (resuelve el caso de

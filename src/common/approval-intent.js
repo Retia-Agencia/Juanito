@@ -42,3 +42,13 @@ export function parseApprovalTarget(quotedText) {
   if (draft) return { type: 'draft', id: Number(draft[1]) };
   return null;
 }
+
+// ¿El texto parece un COMANDO (`/algo`)? Los comandos se atienden SOLO por DM
+// (`if (!isGroup)` en src/index.js), así que uno escrito en la consola de aprobaciones caía
+// al LLM, que respondía algo plausible y falso gastando tokens: el 2026-09-02 un
+// `/programados` ahí devolvió una lista de pendientes con toda la pinta de ser la salida del
+// comando (§18.BS). Anclado al inicio y exigiendo letras para no confundir una fecha
+// ("12/09") ni una corrección que traiga una barra en el medio.
+export function looksLikeCommand(text) {
+  return /^\/[a-záéíóúñ]{2,}/i.test((text || '').trim());
+}

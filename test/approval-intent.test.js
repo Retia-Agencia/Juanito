@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { parseApproval, parseDiscard, parseApprovalTarget } = await import('../src/common/approval-intent.js');
+const { parseApproval, parseDiscard, parseApprovalTarget, looksLikeCommand } = await import('../src/common/approval-intent.js');
 
 test('aprobaciones claras → isApprove true', () => {
   for (const t of [
@@ -83,4 +83,18 @@ test('parseApprovalTarget → null si no hay notificación reconocible', () => {
   assert.equal(parseApprovalTarget(''), null);
   assert.equal(parseApprovalTarget(null), null);
   assert.equal(parseApprovalTarget('hola, cómo estás'), null);
+});
+
+// ─── looksLikeCommand: un comando en la consola NO puede llegar al LLM (§18.BS) ─
+
+test('looksLikeCommand reconoce comandos al inicio', () => {
+  for (const t of ['/programados', '/aprobaciones ver 3', '  /status  ', '/MISSETTEOS', '/métricas']) {
+    assert.equal(looksLikeCommand(t), true, t);
+  }
+});
+
+test('looksLikeCommand NO se traga texto normal que contenga barras', () => {
+  for (const t of ['apruebo', 'el 12/09 no', 'cámbialo a "hoy/mañana"', '', null, '/', '/9']) {
+    assert.equal(looksLikeCommand(t), false, String(t));
+  }
 });

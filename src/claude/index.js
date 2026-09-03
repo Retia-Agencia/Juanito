@@ -121,6 +121,8 @@ async function resolveDeps() {
     createScheduledMessage: db.createScheduledMessage,
     listScheduledMessages: db.listScheduledMessages,
     cancelScheduledMessage: db.cancelScheduledMessage,
+    updateScheduledMessage: db.updateScheduledMessage,
+    findScheduledDuplicate: db.findScheduledDuplicate,
     isGroupAuthorized: db.isGroupAuthorized,
     // mensajes/recordatorios a terceros (tool schedule_outreach)
     createOutreach: db.createOutreach,
@@ -304,8 +306,13 @@ const TOOLS = [
       properties: {
         action: {
           type: 'string',
-          enum: ['create', 'list', 'cancel'],
-          description: 'create = programar uno nuevo · list = ver los programados · cancel = cancelar por id',
+          enum: ['create', 'list', 'update', 'cancel'],
+          description:
+            'create = programar uno nuevo · list = ver los programados · update = MODIFICAR uno que ' +
+            'ya existe (días, hora, texto o brief) · cancel = cancelar por id. ' +
+            'Si el jefe quiere afinar algo que ya programó ("cámbiale el tono", "mejor a las 9", ' +
+            '"que también mencione X"), es update sobre el id existente, NUNCA un create nuevo: ' +
+            'dos filas para el mismo grupo, día y hora publican las DOS.',
         },
         group_name: {
           type: 'string',
@@ -317,11 +324,13 @@ const TOOLS = [
             type: 'string',
             enum: ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'],
           },
-          description: 'Días de la semana en que se envía. Requerido para create.',
+          description: 'Días de la semana en que se envía. Requerido para create; en update, solo si cambian.',
         },
         time: {
           type: 'string',
-          description: 'Hora local de envío en formato 24h HH:MM (ej: "20:00" para las 8pm). Requerido para create.',
+          description:
+            'Hora local de envío en formato 24h HH:MM (ej: "20:00" para las 8pm). ' +
+            'Requerido para create; en update, solo si cambia.',
         },
         text: {
           type: 'string',
@@ -344,7 +353,7 @@ const TOOLS = [
         },
         id: {
           type: 'number',
-          description: 'Id del mensaje programado a cancelar. Requerido para cancel.',
+          description: 'Id del mensaje programado. Requerido para cancel y para update.',
         },
       },
       required: ['action'],
@@ -1558,7 +1567,60 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
           : `No encontré ningún mensaje programado activo con id ${input.id}.`;
       }
 
-      if (action !== 'create') return 'Acción no reconocida. Usa create, list o cancel.';
+      // update — modificar uno que ya existe. Es LA alternativa a crear otra fila: sin esto,
+      // afinar un brief significaba un create más, que es como nacieron los duplicados (§18.BS).
+      if (action === 'update') {
+        if (!Number.isInteger(input.id)) {
+          return 'Para modificar necesito el id del mensaje programado (pídelo con action=list).';
+        }
+        const row = ((await deps.listScheduledMessages?.()) || []).find((r) => r.id === input.id);
+        if (!row) return `No encontré ningún mensaje programado activo con id ${input.id}.`;
+
+        const patch = {};
+        if (Array.isArray(input.days) && input.days.length) {
+          const days = daysToCsv(input.days);
+          if (!days) return 'No entendí los días. Dímelos como días de la semana (ej: jueves y domingo).';
+          patch.days = days;
+        }
+        if (input.time) {
+          const t = normalizeTimeHm(input.time);
+          if (!t) return 'No entendí la hora. Necesito la hora en formato 24h, ej: 20:00 para las 8pm.';
+          patch.timeHm = t;
+        }
+        // El brief solo existe en los generados y el texto fijo solo en los 'fixed': cruzarlos
+        // dejaría la fila con un campo que su propio kind nunca lee.
+        if (typeof input.brief === 'string' && input.brief.trim()) {
+          if (row.kind !== 'generated') {
+            return `El #${row.id} es de texto fijo, no tiene brief. Dime el texto nuevo y se lo cambio.`;
+          }
+          patch.brief = input.brief.trim();
+        }
+        if (typeof input.text === 'string' && input.text.trim()) {
+          if (row.kind === 'generated') {
+            return `El #${row.id} es generado: lo que se le cambia es el brief (la instrucción), no un texto fijo.`;
+          }
+          patch.text = input.text.trim();
+        }
+        if (!Object.keys(patch).length) return 'Dime qué le cambio: los días, la hora, o el texto/brief.';
+
+        const changes = (await deps.updateScheduledMessage?.(input.id, patch)) || 0;
+        if (!changes) return `No pude modificar el mensaje programado #${input.id}.`;
+
+        const partes = [];
+        if (patch.days) partes.push(`días → ${csvToDayLabels(patch.days)}`);
+        if (patch.timeHm) partes.push(`hora → ${patch.timeHm}`);
+        if (patch.brief) partes.push('brief actualizado');
+        if (patch.text) partes.push('texto actualizado');
+        return (
+          `Listo ✅ Modifiqué el #${input.id} ("${row.group_name || row.group_id}"): ${partes.join(' · ')}.` +
+          (patch.brief
+            ? ' Aplica desde la próxima vez que lo redacte. Si el borrador de HOY ya está hecho y ' +
+              'también lo quieres distinto, dime qué corregirle y lo regenero.'
+            : '')
+        );
+      }
+
+      if (action !== 'create') return 'Acción no reconocida. Usa create, list, update o cancel.';
 
       // create — validar todo antes de tocar la DB.
       // Si el jefe da la orden DESDE un grupo y no nombra otro ("aquí", "en este grupo"),
@@ -1588,6 +1650,20 @@ export async function dispatchTool({ name, input }, deps, ctx = {}) {
       const timeHm = normalizeTimeHm(input.time);
       if (!timeHm) {
         return 'No entendí la hora. Necesito la hora en formato 24h, ej: 20:00 para las 8pm.';
+      }
+
+      // Guardia anti-duplicado (§18.BS). Dos filas para el mismo grupo, día y hora son
+      // indistinguibles desde WhatsApp (el listado muestra `text`, vacío en un generado) y
+      // publican LAS DOS. Con `update` disponible, un create así es casi siempre un update
+      // mal dirigido, así que se frena y se apunta al id que ya existe.
+      const dup = await deps.findScheduledDuplicate?.({ groupId: group.id, days, timeHm });
+      if (dup) {
+        return (
+          `Ya existe el mensaje programado #${dup.id} para "${group.name || group.id}" ` +
+          `${csvToDayLabels(days)} a las ${timeHm}, así que no creo otro: publicarían los dos. ` +
+          `Si lo que quieres es cambiarlo, dime qué le corrijo y lo modifico. Si de verdad quieres ` +
+          `DOS mensajes distintos ese día, dale otra hora a uno.`
+        );
       }
 
       // Mensaje GENERADO: sin texto fijo; Claude redacta cada día según el brief y

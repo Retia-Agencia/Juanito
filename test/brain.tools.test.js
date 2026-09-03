@@ -574,8 +574,11 @@ test('remember_business: gateo — DM (boss/admin) sí, grupo y publicDm NO', as
 
 // ─── schedule_group_message (mensajes recurrentes a grupos) ───────────────────
 
-function scheduleDeps({ authorized = true } = {}) {
-  const state = { created: [], canceled: [] };
+function scheduleDeps({ authorized = true, duplicado = null, filas = null } = {}) {
+  const state = { created: [], canceled: [], updated: [] };
+  const rows = filas || [
+    { id: 7, group_id: 'patah@g.us', group_name: 'Patah San Juan de Ávila ✝️', days: '0,4', time_hm: '20:00', text: 'Muchachos, ¡reunión hoy!', last_sent_date: null, kind: 'fixed' },
+  ];
   return {
     _state: state,
     resolveGroupByName: async (name) =>
@@ -585,15 +588,96 @@ function scheduleDeps({ authorized = true } = {}) {
       state.created.push(row);
       return 7;
     },
-    listScheduledMessages: () => [
-      { id: 7, group_id: 'patah@g.us', group_name: 'Patah San Juan de Ávila ✝️', days: '0,4', time_hm: '20:00', text: 'Muchachos, ¡reunión hoy!', last_sent_date: null },
-    ],
+    listScheduledMessages: () => rows,
+    findScheduledDuplicate: () => duplicado,
+    updateScheduledMessage: (id, patch) => {
+      state.updated.push({ id, patch });
+      return rows.some((r) => r.id === id) ? 1 : 0;
+    },
     cancelScheduledMessage: (id) => {
       state.canceled.push(id);
       return id === 7 ? 1 : 0;
     },
   };
 }
+
+const GENERADO = {
+  id: 8,
+  group_id: 'patah@g.us',
+  group_name: 'Patah Team Logística',
+  days: '3',
+  time_hm: '20:00',
+  text: '',
+  last_sent_date: null,
+  kind: 'generated',
+  brief: 'Preguntar por materiales',
+};
+
+test('schedule_group_message create: si ya hay uno igual (grupo+días+hora) NO crea otro', async () => {
+  const deps = scheduleDeps({ duplicado: { id: 8, group_id: 'patah@g.us', days: '4', time_hm: '20:00' } });
+  const result = await dispatchTool(
+    { name: 'schedule_group_message', input: { action: 'create', group_name: 'patah', days: ['jueves'], time: '20:00', text: 'otra vez' } },
+    deps,
+    ctx
+  );
+  assert.match(result, /Ya existe el mensaje programado #8/);
+  assert.match(result, /publicarían los dos/);
+  assert.equal(deps._state.created.length, 0, 'no se guardó la fila duplicada');
+});
+
+test('schedule_group_message update: cambia el brief de un generado sin crear fila nueva', async () => {
+  const deps = scheduleDeps({ filas: [GENERADO] });
+  const result = await dispatchTool(
+    { name: 'schedule_group_message', input: { action: 'update', id: 8, brief: 'Igual pero sin negrillas ni título' } },
+    deps,
+    ctx
+  );
+  assert.match(result, /Modifiqué el #8/);
+  assert.match(result, /brief actualizado/);
+  assert.deepEqual(deps._state.updated, [{ id: 8, patch: { brief: 'Igual pero sin negrillas ni título' } }]);
+  assert.equal(deps._state.created.length, 0, 'un update NUNCA crea una fila');
+});
+
+test('schedule_group_message update: cambia días y hora juntos, normalizados', async () => {
+  const deps = scheduleDeps({ filas: [GENERADO] });
+  const result = await dispatchTool(
+    { name: 'schedule_group_message', input: { action: 'update', id: 8, days: ['jueves', 'domingo'], time: '9:05' } },
+    deps,
+    ctx
+  );
+  assert.match(result, /días → domingo y jueves/);
+  assert.match(result, /hora → 09:05/);
+  assert.deepEqual(deps._state.updated[0].patch, { days: '0,4', timeHm: '09:05' });
+});
+
+test('schedule_group_message update: no cruza brief con texto fijo, ni al revés', async () => {
+  const fijo = await dispatchTool(
+    { name: 'schedule_group_message', input: { action: 'update', id: 7, brief: 'algo' } },
+    scheduleDeps(),
+    ctx
+  );
+  assert.match(fijo, /es de texto fijo, no tiene brief/);
+
+  const gen = await dispatchTool(
+    { name: 'schedule_group_message', input: { action: 'update', id: 8, text: 'algo' } },
+    scheduleDeps({ filas: [GENERADO] }),
+    ctx
+  );
+  assert.match(gen, /es generado/);
+});
+
+test('schedule_group_message update: id inexistente o sin nada que cambiar → no toca la DB', async () => {
+  const deps = scheduleDeps({ filas: [GENERADO] });
+  assert.match(
+    await dispatchTool({ name: 'schedule_group_message', input: { action: 'update', id: 99, brief: 'x' } }, deps, ctx),
+    /No encontré/
+  );
+  assert.match(
+    await dispatchTool({ name: 'schedule_group_message', input: { action: 'update', id: 8 } }, deps, ctx),
+    /qué le cambio/
+  );
+  assert.equal(deps._state.updated.length, 0);
+});
 
 test('schedule_group_message create: valida, normaliza y guarda el texto EXACTO', async () => {
   const deps = scheduleDeps();

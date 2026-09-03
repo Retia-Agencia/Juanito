@@ -6233,14 +6233,12 @@ verificado en la DB: `#5 active=0`, `#8 active=1`, `settings['auto_publish:8']='
 
 **Hallazgos laterales, ninguno tocado (todos anteriores a este cambio):**
 
-1. **No se puede EDITAR un mensaje programado.** Es la causa raíz del duplicado: iterar un brief
-   crea filas nuevas. Mientras no exista, el patrón se va a repetir cada vez que alguien afine el
-   texto de un generado.
-2. **Un comando dentro del grupo de aprobaciones no falla: contesta cualquier cosa.** Los comandos
-   se interceptan solo en DM (`if (!isGroup)`, `src/index.js:154`), así que `/programados` escrito
-   en el grupo cae en la consola LLM, que respondió una lista de pendientes con toda la pinta de
-   ser la respuesta correcta. Medido: `~$0.0241` y una respuesta engañosa. Debería contestar "ese
-   comando es por DM" antes de llamar al modelo.
+1. ~~**No se puede EDITAR un mensaje programado.**~~ **RESUELTO en §18.BT.** Era la causa raíz del
+   duplicado: iterar un brief creaba filas nuevas.
+2. ~~**Un comando dentro del grupo de aprobaciones contesta cualquier cosa.**~~ **RESUELTO en
+   §18.BT.** `/programados` escrito en el grupo caía en la consola LLM, que respondió una lista de
+   pendientes con toda la pinta de ser la salida del comando. Medido: `~$0.0241` y una respuesta
+   engañosa.
 3. **`/programados` no muestra el `brief`.** En un `kind='generated'` el campo `text` está vacío, así
    que el listado imprime `""` y dos filas distintas se ven idénticas. Es lo que obligó a bajar a la
    DB para decidir cuál conservar.
@@ -6257,6 +6255,49 @@ verificado en la DB: `#5 active=0`, `#8 active=1`, `settings['auto_publish:8']='
 No se publica solo — la publicación exige `approved` y el recordatorio ya salió — pero sigue
 apareciendo como ofrecible en el DM del jefe, y un "sí" lo publicaría de inmediato, duplicando el
 mensaje de ese día. Descartarlo cierra el tema.
+
+
+### 18.BT 🔵 Se puede EDITAR un programado, y un comando en la consola ya no le habla al modelo (2026-09-02)
+
+Los dos primeros hallazgos de §18.BS, atacados de una. No son features nuevas: son los dos huecos
+por los que se coló el duplicado de 11 semanas.
+
+**1. `schedule_group_message` gana `action='update'`.** Hasta hoy la tool solo sabía `create`,
+`list` y `cancel`. Afinar el brief de un generado no tenía camino, así que cada iteración era una
+fila nueva: así nacieron #5, #6, #7 y #8 en cinco minutos. Ahora se le cambian días, hora, texto o
+brief sobre el id que ya existe. Dos guardas: **el brief solo se toca en un `generated` y el texto
+fijo solo en un `fixed`** (cruzarlos dejaría la fila con un campo que su propio `kind` nunca lee),
+y un update **nunca** crea.
+
+**El límite explícito, que se dice en la respuesta:** un `update` del brief aplica **desde la
+próxima redacción**. Si el borrador de hoy ya se generó, cambiarlo es `manage_drafts
+action=revise`, que además acumula la corrección como guía editorial. La división queda: *revise*
+arregla el mensaje de hoy, *update* cambia la instrucción permanente. Importa más ahora que antes,
+porque con auto-envío nadie va a ver el borrador viejo antes de que salga.
+
+**2. Guardia anti-duplicado en `create`.** Un `create` que caiga sobre el mismo grupo + días + hora
+que una fila activa se **frena** y devuelve el id existente sugiriendo modificarlo. Es la parte que
+no depende del criterio del modelo: la descripción de la tool ahora dice que afinar es `update`,
+pero eso es una instrucción y esto es una pared. Si alguien de verdad quiere dos mensajes distintos
+ese día, la salida es darle otra hora a uno.
+
+**3. Un comando en la consola de aprobaciones se contesta sin LLM.** `looksLikeCommand()` en
+`approval-intent.js` (puro) corta antes del modelo y responde *"los comandos son por DM"*. Anclado
+a `^/[letras]{2,}` para no confundir una fecha (`12/09`) ni una corrección con una barra en el
+medio. Va DESPUÉS del dedup por `messageId` y antes del `try` que llama a Claude.
+
+**Por qué no basta con "que el modelo aprenda":** el fallo del 2026-09-02 no fue que el modelo
+dijera una barbaridad, fue que dijo algo **plausible**. Contestó con los pendientes de verdad, en
+un formato que parecía la salida del comando. Una respuesta creíble y equivocada es peor que
+ninguna, y no se arregla pidiéndole al modelo que se dé cuenta.
+
+**Tests:** +5 en `brain.tools` (create frenado por duplicado · update de brief sin crear fila ·
+días+hora normalizados juntos · no cruza brief con texto fijo ni al revés · id inexistente y update
+vacío no tocan la DB) y +2 en `approval-intent` (reconoce comandos, no se traga texto con barras).
+Baseline en Mac con `git stash`: **1146 → 1153**, los mismos **102 rojos** de entorno.
+
+**Lo que NO se tocó:** los hallazgos 3 a 6 de §18.BS (el listado no muestra el brief, `off` es de
+una sola vía, draft id vs scheduled_id, el deploy borra los logs). Son fricción, no riesgo.
 
 
 ### 🟢 Baja prioridad / Nice-to-have
