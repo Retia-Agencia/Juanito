@@ -207,6 +207,22 @@ hora de publicar.
 
 Botón de pánico de los pushes a closers.
 
+> **Antes de nada, el vocabulario, porque acá se confunde seguido.** Una **empresa** (30X,
+> EstadoX, Retia) **no tiene Calendly**: lo tienen sus **programas**. Cada cuenta de Calendly
+> conectada es una **conexión**, y su key corta es lo que se escribe en los comandos:
+>
+> | key | Qué es de verdad | Empresa |
+> |---|---|---|
+> | `30x` | El Calendly que comparten los 6 programas de 30X (y antes, IA para Abogados) | 30X + EstadoX |
+> | `estadox` | El Calendly de IA para Abogados, desde que EstadoX abrió el suyo | EstadoX |
+> | `retia` | El Calendly de **De Cero a Tactical Investor** *(la key es histórica)* | Retia |
+> | `comunicarte` | El Calendly de **Método Comunicarte** | Retia |
+>
+> O sea que **Retia son las dos últimas filas**: una empresa, dos programas, un Calendly cada
+> uno. `retia` **no** quiere decir "todo lo de Retia" — es un programa suyo. Los mensajes de
+> Juanito usan el formato `empresa · programa` (*"Retia · Tactical Investor"*) justamente para
+> que eso se lea de una.
+
 | Comando | Qué hace |
 |---|---|
 | `/calendly` | Estado global + closers pausados |
@@ -222,10 +238,11 @@ Botón de pánico de los pushes a closers.
 > - `/calendly off <closer>` de un closer con **una** identidad → la apaga directo.
 > - `/calendly off <closer>` de un closer con **varias** → Juanito **lista las cuentas y te pide
 >   cuál** (no adivina). Precisás con `/calendly off <closer> <cuenta>` o `todo` para todas.
-> - `<cuenta>` es la key corta: `30x` o `retia`.
+> - `<cuenta>` es la key corta de la tabla de arriba: `30x`, `estadox`, `retia`, `comunicarte`.
 >
 > La respuesta **siempre nombra la cuenta** que tocó (ej: *"Pushes de Sebastian Rodriguez ·
-> Retia (retia): PAUSADOS ⏸️"*), para que sepas exactamente qué identidad quedó apagada.
+> Retia · Tactical Investor (retia): PAUSADOS ⏸️"*), para que sepas exactamente qué identidad
+> quedó apagada — y de qué programa, no solo de qué empresa.
 
 > ⚠️ **`/calendly off` a secas sigue siendo GLOBAL** y apaga a TODAS las empresas/programas, no
 > solo a una.
@@ -234,24 +251,55 @@ Botón de pánico de los pushes a closers.
 > reconoce acá (es a propósito: un nombre de una palabra es ambiguo y podría apuntar a la persona
 > equivocada).
 
-### Recordatorio de los Sheets (solo Retia)
+### Espejo de dev — `/espejo` *(admin)*
 
-Los closers de **Retia** reciben, **10 minutos después de que termina cada call**, un mensaje
-con los dos links de los Google Sheets que tienen que llenar. No hay que contestarlo: Juanito no
-revisa los sheets y no insiste.
+Juanito le manda a **una** persona del equipo técnico una **copia de cada push precall**, con el
+resultado pegado arriba: `sent`, `dry-run`, `skipped-optin`, `skipped-no-thread`. Existe para
+acompañar el arranque de una conexión nueva, porque el modo de falla caro no es el push mal
+escrito sino **el que no sale** — y eso el closer no lo puede reportar, justamente porque no lo ve.
+Se prende para verificar una agencia y se apaga cuando ya se verificó.
+
+| Comando | Qué hace |
+|---|---|
+| `/espejo` | Estado: a quién se le copia, qué conexiones y de dónde sale ese dato |
+| `/espejo on <conexión>` | Empieza a copiar esa conexión |
+| `/espejo off <conexión>` | Deja de copiarla |
+| `/espejo off` | Apaga el espejo entero |
+
+> `<conexión>` es la key corta (`30x`, `estadox`, `retia`, `comunicarte`), pero también se acepta
+> el **programa** (`tactical`, `comunicarte`, `abogados`): Juanito lo traduce a su conexión y
+> **avisa que va a copiar la conexión entera**, con todos sus programas. No es lo mismo.
+
+> **A quién le llega NO se cambia por comando.** El destino vive en `CALENDLY_DEV_MIRROR_JID` del
+> `.env` del VPS y no hay comando que lo mueva: el alcance decide *de quiénes* se copian los
+> mensajes, el JID decide *a quién le llegan*, y redirigir datos de clientes a otro chat tiene que
+> costar entrar al servidor.
+
+> `/calendly off` (la pausa global) **también calla el espejo**: el botón de pánico es silencio
+> total. Lo demás no lo calla, a propósito.
+
+---
+
+### Recordatorio de los Sheets (los dos programas de Retia)
+
+Los closers de **De Cero a Tactical Investor** y **Método Comunicarte** —los dos programas de
+Retia— reciben, **10 minutos después de que termina cada call**, el link del Google Sheet que
+tienen que llenar. **Cada call apunta al sheet de SU programa**, no a los dos: el recordatorio
+lo decide la cuenta de Calendly de esa call, no la persona (Andrea y Maru cierran en los dos y
+reciben el que corresponde cada vez).
 
 Nadie más lo recibe. El alcance no se controla por comando sino por configuración: solo las
-cuentas que declaran sus sheets en `src/calendly/accounts.js` lo tienen, y hoy es únicamente
-Retia.
+conexiones que declaran sus `sheets` en `src/calendly/accounts.js` lo tienen, y hoy son las dos
+de Retia (`retia` = Tactical Investor y `comunicarte`). Los programas de 30X no.
 
 Para apagarlo:
-- `/calendly off <closer> retia` → le corta **todo** a ese closer en Retia, incluidos los pushes
-  precall. Es el botón de pánico normal.
+- `/calendly off <closer> retia` → le corta **todo** a ese closer en Tactical Investor, incluidos
+  los pushes precall. Es el botón de pánico normal. (`comunicarte` para el otro programa.)
 - `CALENDLY_SHEET_PUSH=false` en el VPS → apaga **solo** este recordatorio, para todos, dejando
   los pushes precall funcionando.
 
-> Ojo con la numeración si andás mirando logs: internamente es el **Push 5**. Retia no tiene
-> Push 4 (el registro de calls de la sección de abajo), así que salta del 3 al 5.
+> Ojo con la numeración si andás mirando logs: internamente es el **Push 5**. Los programas de
+> Retia no tienen Push 4 (el registro de calls de la sección de abajo), así que saltan del 3 al 5.
 
 ---
 
@@ -310,6 +358,7 @@ línea `🔁 movidas` del reporte, y el lead cuenta **una sola vez**: el día qu
 /programados [off <id>] [on <id>] [auto <id> on|off]  ← recurrentes
 /aprobaciones [ver|aprobar|rechazar <id>]← borradores generados
 /calendly [on|off] [closer] [cuenta|todo]← pushes precall (cuenta = 30x/retia; todo = todas)
+/espejo [on|off <conexión>]              ← copia de esos pushes al DM del dev
 /reportes [leads|metricas]               ← reporte (DM=preview · en grupo lo publica)
 /status · /whoami · /id                  ← diagnóstico e identidad
 /help · /ayuda · /comandos               ← ayuda según tu rol

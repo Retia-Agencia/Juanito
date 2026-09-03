@@ -6375,6 +6375,103 @@ a ser el único control cuando dejó de mirarlo. Al automatizar un paso no solo 
 más hacía esa persona (§18.BS): también **qué herramientas eran cómodas y ahora son críticas**.
 
 
+### 18.BV 🔵 El espejo se mueve desde el DM, y Tactical Investor queda bajo la lupa (2026-09-02)
+
+El espejo de dev (§18.BM) hizo su trabajo en **ComunicArte**: Dani lo verificó y ya no lo necesita
+ahí. El siguiente en la fila es **De Cero a Tactical Investor**, para confirmar que los pushes le
+llegan a **Maru Marquez**, que heredó ese buzón-rol ayer mismo (§18.BR) — o sea que el alcance del
+espejo cambió dos veces en una semana.
+
+**El problema no era el espejo: era cómo se mueve.** El alcance vivía SOLO en
+`CALENDLY_DEV_MIRROR_CONNECTIONS`, así que sacar una agencia y meter otra costaba editar el `.env`
+del VPS y **reiniciar el bot, o sea reconectar Baileys** — la operación más cara y más riesgosa de
+este sistema (§ historia del softban). Pagar una reconexión para decir *"ya no me copies
+ComunicArte"* es exactamente el precio que hace que uno lo deje prendido y termine ignorando el
+espejo. Es el mismo razonamiento por el que el botón de pánico de `/calendly` vive en `settings` y
+no en el entorno.
+
+**`/espejo` (admin).** `on <conexión>` / `off <conexión>` / `off` (todo) / sin args (estado). El
+alcance queda en `settings.calendly_mirror_connections` y **pisa al `.env`**; el estado dice cuál de
+los dos manda hoy, porque una vez usado el comando editar el `.env` no hace nada y eso confunde a
+quien venga después.
+
+- **`null` ≠ `''`, y no es purismo:** `null` = nadie usó el comando → manda el `.env` (el
+  comportamiento previo queda intacto); `''` = **apagado por comando**. Leerlo con `||` en vez de
+  `??` haría que `/espejo off` no apagara nada y el dev siguiera recibiendo copias de la agencia que
+  ya verificó. Hay un test por cada lado.
+- **Acepta el nombre del PROGRAMA** (`/espejo on tactical`), porque el espejo se piensa por programa
+  aunque filtre por conexión — pero **avisa** que va a copiar la conexión entera con todos sus
+  programas. Hoy `retia` solo lleva Tactical Investor, así que coinciden; el día que no coincidan,
+  el mensaje ya lo decía.
+- **El DESTINO sigue siendo env-only, a propósito.** El alcance decide *de quiénes* se copian los
+  mensajes; el JID decide *a quién le llegan*. Un comando de DM que redirige copias de datos de
+  clientes (nombres, teléfonos, links wa.me) a un número arbitrario es otra clase de riesgo:
+  mover eso tiene que costar entrar al servidor.
+- El parseo del CSV quedó en `src/calendly/mirror.js`, puro y de 5 líneas, porque ahora lo leen dos
+  lugares que no se pueden importar entre sí (el scheduler y `commands.js`, que evita deps nativas
+  para ser testeable en Windows). Duplicarlo era sembrar la deriva de siempre.
+
+**Los pushes de Tactical SÍ le están llegando a Maru — verificado contra la DB de producción, no
+contra el código.** El 2026-09-02, con `equipo@ttrading.co`: Sergio Morales (Push 0, 3 y 5) y Josue
+florez (Push 3 y 5), todos `sent`, con sus `sent_at`. Su identidad de ComunicArte
+(`soymarumarquez@gmail.com`) sigue enviando en paralelo. O sea que el traspaso del buzón-rol de
+§18.BR funcionó de punta a punta: **una sola línea de WhatsApp, un solo opt-in, dos conexiones**.
+
+**Y de paso se arregló el nombre que hacía leer mal todo esto (corrección del jefe, 2026-09-02).**
+El label de la conexión `retia` decía **`'Retia'`** a secas, o sea el nombre de la EMPRESA, cuando
+lo que nombra es el Calendly de UN programa suyo. Con eso, el estado de `/espejo` listaba
+*"Retia (retia)"* junto a *"Retia · ComunicArte (comunicarte)"* — que se lee como si ComunicArte
+fuera un cliente aparte, cuando **son los dos programas de la misma agencia**.
+
+**La regla, escrita donde se busca: una EMPRESA no tiene Calendly; lo tienen sus PROGRAMAS.**
+Retia maneja "De Cero a Tactical Investor" y "Método Comunicarte", cada uno con su cuenta ⇒ dos
+conexiones. 30X maneja seis programas que sí comparten una. Ninguna key de conexión nombra una
+empresa aunque `retia` y `30x` lo parezcan.
+
+- **Las keys NO se tocaron, a propósito.** `retia` es la clave del roster (`connection:'retia'` en
+  cada identidad), de los opt-ins, de las filas ya guardadas y del NOMBRE de sus env
+  (`CALENDLY_TOKEN_RETIA`, `CALENDLY_DRY_RUN_RETIA`). Renombrarlas es una migración con un modo de
+  falla feo y silencioso: una env que no se renombra en el VPS **auto-desactiva la conexión** y el
+  programa se queda mudo sin un error (es literalmente §18.BM, el mes de EstadoX). El pedido era de
+  convención de nombres, no de refactor.
+- **Los labels sí dicen la verdad**, en formato `empresa · programa`: `Retia · Tactical Investor`
+  (nuevo) y `Retia · ComunicArte` (ya estaba). Es puro display — `/calendly`, `/espejo`, el
+  encabezado del espejo y el dashboard —, cero lógica.
+- Escrito en los cuatro lugares donde alguien lo va a buscar: el glosario
+  (`docs/agents/context.md`, entradas Company y Connection), el ADR 0001, el `CLAUDE.md` del repo
+  y el manual (con una tabla `key → qué es de verdad → empresa`). Más el barrido de comentarios
+  que trataban a "Retia" como si fuera la cuenta (`sheet-push`, `hubspot/meetings`,
+  `hubspot/agenda-poll`, `calendly/index`, `scheduler/calendly`, `daily-reports`, el roster de
+  `closers.js`).
+- De paso salió un error real que el nombre viejo tapaba: el manual decía que el recordatorio de
+  Sheets lo tiene *"únicamente Retia"*. Desde §18.BN son **las dos** conexiones de Retia, cada una
+  con su sheet.
+
+**Tests:** +9 en `commands.espejo` (deflexión a no-admin · hereda el `.env` · saca una y deja el
+resto · `off` a secas apaga todo y el `.env` deja de mandar · programa → conexión con aviso ·
+argumento inválido no escribe nada · `off` de algo que no estaba no borra lo demás · `on` idempotente
+· sin JID avisa que el espejo no existe) y +2 en `calendly.dev-mirror` (el comando pisa al `.env` ·
+`''` apaga aunque el `.env` liste la conexión), +3 en `commands.espejo` por la convención de
+nombres (el estado nombra la empresa de cada conexión y avisa que Retia tiene dos · la conexión
+`retia` no se rotula como la empresa entera · pedir un programa por su nombre dice de qué empresa
+es). Baseline en Docker/Linux: **1164 → 1178, los mismos 2 rojos conocidos** (`call con TODOS sus
+pushes skipped…` y `reagenda manual superseded…`).
+
+**Un bug propio, en el helper de tests, que vale anotar porque se repite:** `withEnv` hacía
+`try { return fn(); } finally { restaurar() }` con un `fn` **async**. El `finally` corre apenas
+`fn` llega a su primer `await`, así que el entorno se restauraba a mitad del test y la segunda
+llamada de un mismo caso medía otra cosa (síntoma: un *"SIN destino"* fantasma). Con `async` +
+`return await fn()` queda bien. Los tests pasaban igual por casualidad: `handleCommand` resuelve
+el camino de `/espejo` sin ningún `await`, así que la primera llamada alcanzaba a leer el entorno
+antes de que lo borraran.
+
+**Pendiente de operación:** el comando entra con el próximo deploy `alcance: todo` (reconstruye la
+imagen y reconecta Baileys). Hasta entonces el alcance sigue siendo el del `.env`
+(`comunicarte,retia`). Apenas esté arriba: `/espejo off comunicarte` deja solo Tactical Investor,
+sin tocar el VPS. Si se prefiere no esperar, la alternativa es editar el `.env` y reiniciar — misma
+reconexión, así que conviene aprovechar el mismo deploy.
+
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):

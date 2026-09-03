@@ -63,7 +63,7 @@ const rowsForToday = (now) => getOutcomesInWindow(...windowForToday(now));
 
 // Calls agendadas para hoy según Calendly. Disponible desde que el poll las reserva → sirve
 // a las 7am. Es también la ÚNICA fuente de los programas que no viven en el HubSpot conectado
-// (abogados, tactical_investor/Retia), así que nunca se reemplaza: se le suma.
+// (abogados, y tactical_investor de Retia), así que nunca se reemplaza: se le suma.
 const callsForToday = (now) => getScheduledCallsInWindow(...windowForToday(now));
 
 // Las citas que el closer agendó a mano DENTRO de HubSpot, que Calendly no ve. Read-only y

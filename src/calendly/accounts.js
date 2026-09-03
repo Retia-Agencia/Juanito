@@ -139,13 +139,14 @@ export const ACCOUNTS = {
     hubspot: true,
   },
 
-  // Retia — agencia #2. Configurada y verificada (2026-07-21). Arranca MUDA
-  // (CALENDLY_DRY_RUN_RETIA=true) hasta validar un ciclo completo.
+  // Calendly del programa "De Cero a Tactical Investor" (empresa: Retia). Configurado y
+  // verificado (2026-07-21). Arrancó MUDO (CALENDLY_DRY_RUN_RETIA=true) hasta validar un ciclo.
   //
-  // ⚠️ MODELO IMPORTANTE: este token/org es de UN Calendly que Retia usa SOLO para el programa
-  // "De Cero a Tactical Investor". Retia NO tiene un Calendly unificado — es UN CALENDLY POR
-  // PROGRAMA. Si Retia suma otro programa con su propio Calendly, será OTRA entrada acá (a
-  // diferencia de 30x, cuyo único Calendly sirve 6 programas). Esa asimetría es lo que motivó
+  // ⚠️ MODELO IMPORTANTE: esto NO es "la cuenta de Retia". **Una empresa no tiene Calendly: lo
+  // tienen sus programas.** Retia maneja DOS —"De Cero a Tactical Investor" y "Método
+  // Comunicarte"— y cada uno trae el suyo, así que la empresa es una y las conexiones son dos
+  // (la otra es `comunicarte`, más abajo). Si Retia suma un tercer programa, será OTRA entrada
+  // acá. La asimetría con `30x` —un Calendly que sirve 6 programas de 2 marcas— es lo que motivó
   // el modelo empresa/programa/conexión de primera clase (ADR 0001).
   //
   // El copy y el ET del programa viven en programs.js (tactical_investor). Vieira VENDE el
@@ -155,7 +156,18 @@ export const ACCOUNTS = {
   // `equipo@ttrading.co` (Maru Marquez, que reemplazó a Sebastian Salazar ese día).
   retia: {
     key: 'retia',
-    label: 'Retia',
+    // ⚠️ LEER ANTES DE TOCAR: el label es `empresa · programa`, igual que en `comunicarte`, y no
+    // es cosmético. **Retia es la EMPRESA (la agencia) y maneja DOS programas: "De Cero a
+    // Tactical Investor" y "Método Comunicarte".** Esta entrada NO es "la conexión de Retia":
+    // es el Calendly de UNO de sus programas. La key `retia` quedó de cuando Tactical Investor
+    // era lo único que Retia tenía acá (2026-07-21) y se mantiene porque es la clave del roster,
+    // de los opt-ins y de las filas ya guardadas — renombrarla es una migración, no un rename.
+    // El label, en cambio, es puro display, así que ahí sí se dice la verdad.
+    //
+    // Con `label: 'Retia'` a secas, todo mensaje al admin ("Pushes de Maru · Retia (retia)",
+    // el encabezado del espejo, el listado de `/espejo`) se leía como si ComunicArte fuera de
+    // otra empresa. Son la misma agencia, con un Calendly por programa.
+    label: 'Retia · Tactical Investor',
     // push4 sin `env`: es un `false` FIJO (v1 de Retia = solo pushes precall 0-3), no una
     // variable que alguien pueda prender por entorno. El seed guarda esa diferencia.
     env: {

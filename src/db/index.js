@@ -1190,6 +1190,31 @@ export function listCloserPauses() {
     .map((r) => r.key.slice('calendly_pause:'.length));
 }
 
+// ─── Espejo de dev: ALCANCE en caliente (§18.BV) ──────────────────────────────
+// Qué CONEXIONES se copian al JID de dev. Antes vivía solo en
+// `CALENDLY_DEV_MIRROR_CONNECTIONS`, o sea que mover el espejo de una agencia a otra costaba
+// un redeploy — y un redeploy reconecta Baileys, que es justo lo que no se hace a la ligera.
+// Con esto `/espejo on|off <conexión>` lo mueve al instante, igual que el botón de pánico.
+//
+// El DESTINO (el JID) NO se toca por comando y sigue siendo env-only, a propósito: el alcance
+// decide de quién se copian los mensajes, pero el JID decide A QUIÉN van a parar. Un comando de
+// DM que redirige copias de todos los pushes a un número arbitrario es un desvío de datos de
+// clientes a un chat; que eso exija tocar el `.env` del VPS es la barrera correcta.
+//
+// Tres estados, y la diferencia importa:
+//   null → nadie usó el comando todavía  → manda el `.env` (comportamiento previo intacto)
+//   ''   → apagado POR COMANDO           → no espeja nada, aunque el `.env` liste conexiones
+//   csv  → esas conexiones               → pisa al `.env`
+const MIRROR_CONNECTIONS_KEY = 'calendly_mirror_connections';
+
+export function getMirrorConnections() {
+  return getSetting(MIRROR_CONNECTIONS_KEY, null);
+}
+
+export function setMirrorConnections(csv) {
+  return setSetting(MIRROR_CONNECTIONS_KEY, csv == null ? '' : String(csv));
+}
+
 // ─── Grupos autorizados (default-deny anti-secuestro) ─────────────────────────
 // Juanito solo responde en grupos listados aquí. Se autorizan automáticamente
 // cuando un boss/admin lo agrega o es participante, o a mano con `/grupo on`.
