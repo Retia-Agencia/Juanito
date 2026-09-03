@@ -172,11 +172,14 @@ lenguaje natural en el DM del jefe ("manda cada jueves a las 8pm al grupo X…")
 
 | Comando | Qué hace |
 |---|---|
-| `/programados` | Lista los mensajes recurrentes activos (días + hora) |
+| `/programados` | Lista los mensajes recurrentes activos (días + hora) y, en los generados, si el auto-envío está ON |
 | `/programados off <id>` | Cancela uno |
+| `/programados auto <id> on\|off` | Auto-envío: el generado se publica **sin** pedir aprobación |
 
 Los mensajes **generados** (Claude redacta cada día según un brief) pasan por aprobación: ver
-`/aprobaciones`.
+`/aprobaciones`. Con `auto ... on` dejan de pedirla: Juanito publica a la hora y manda una **copia**
+a la consola de aprobaciones después de haber publicado. El borrador se sigue generando una hora
+antes, así que todavía se puede vetar con `/aprobaciones rechazar <id>` antes de que salga.
 
 ---
 
@@ -191,6 +194,10 @@ día y el jefe aprueba por DM antes de publicarse).
 | `/aprobaciones ver <id>` | Texto completo del borrador |
 | `/aprobaciones aprobar <id>` | Override: lo aprueba (normalmente lo hace el jefe por DM) |
 | `/aprobaciones rechazar <id>` | Lo descarta: no se publica hoy |
+
+Si el mensaje tiene el **auto-envío** prendido (`/programados auto <id> on`) el borrador llega ya
+aprobado y nadie tiene que hacer nada; `rechazar` sigue funcionando como freno de mano hasta la
+hora de publicar.
 
 ---
 
@@ -298,7 +305,7 @@ línea `🔁 movidas` del reporte, y el lead cuenta **una sola vez**: el día qu
 /grupos [on|off <n|nombre>]              ← autorizar/listar grupos
 /grupo [on|off]                          ← (dentro del grupo)
 /persona <n|nombre> | <texto>            ← tono por grupo
-/programados [off <id>]                  ← recurrentes
+/programados [off <id>] [auto <id> on|off]  ← recurrentes
 /aprobaciones [ver|aprobar|rechazar <id>]← borradores generados
 /calendly [on|off] [closer] [cuenta|todo]← pushes precall (cuenta = 30x/retia; todo = todas)
 /reportes [leads|metricas]               ← reporte (DM=preview · en grupo lo publica)

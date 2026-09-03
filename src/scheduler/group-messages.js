@@ -4,6 +4,10 @@
 //   'generated' → Claude redacta un borrador con anticipación según el `brief`,
 //                 se manda al JEFE por DM para aprobación, y SOLO se publica si
 //                 está aprobado. Aprobación tardía (mismo día) publica al minuto.
+//                 Con AUTO-ENVÍO prendido para esa fila (§18.BS) el borrador se
+//                 aprueba solo al generarse y sale sin visto bueno; la consola de
+//                 aprobaciones recibe una COPIA después de publicar (bitácora, no
+//                 compuerta). Se prende con `/programados auto <id> on`.
 //
 // Garantías:
 //  - anti doble-envío: last_sent_date por fila + UNIQUE(scheduled_id, publish_date)
@@ -13,7 +17,7 @@
 // Deps inyectables (__setDeps) para testear el ciclo sin DB/WA/Claude reales.
 
 import { CronJob } from 'cron';
-import { isRecurringDue, isDraftDue, isGeneratedPublishDue, zonedNowParts } from './recurring-logic.js';
+import { isRecurringDue, isDraftDue, isGeneratedPublishDue, isAutoPublish, zonedNowParts } from './recurring-logic.js';
 import { bossDmTarget } from '../common/roles.js';
 
 const TZ = () => process.env.TZ || 'America/Bogota';
@@ -42,6 +46,7 @@ async function resolveDeps() {
     isGroupAuthorized: db.isGroupAuthorized,
     createDraft: db.createDraft,
     getDraftFor: db.getDraftFor,
+    approveDraft: db.approveDraft,
     markDraftPublished: db.markDraftPublished,
     markDraftReminded: db.markDraftReminded,
     listRecentPublishedDrafts: db.listRecentPublishedDrafts,
@@ -76,8 +81,11 @@ async function processGenerated(d, row, nowParts) {
   // 1) Fase de borrador: aún no existe y ya estamos dentro del lead → generar + DM al jefe.
   if (!draft && isDraftDue({ days: row.days, timeHm: row.time_hm, nowParts, leadMin: DRAFT_LEAD_MIN() })) {
     if (row.last_sent_date === nowParts.date) return false; // ya publicado hoy
+    const auto = isAutoPublish(d.getSetting, row.id);
     const boss = d.approvalsTarget ? await d.approvalsTarget() : bossDmTarget();
-    if (!boss) {
+    // Sin auto-envío, un borrador que nadie puede aprobar nunca se publica: no gastamos tokens.
+    // Con auto-envío el destino de aprobación es opcional (solo lleva la copia posterior).
+    if (!auto && !boss) {
       console.error(`[Scheduler] Borrador #${row.id}: sin BOSS_LID/BOSS_PHONE para aprobar — omitido`);
       return false;
     }
@@ -91,6 +99,19 @@ async function processGenerated(d, row, nowParts) {
     });
     const draftId = d.createDraft({ scheduledId: row.id, publishDate: nowParts.date, draft: text });
     if (draftId === null) return false; // carrera: otro ciclo lo creó
+
+    // Auto-envío: se aprueba solo y sale a la hora por la MISMA ruta que un aprobado a mano
+    // (grupo autorizado + cola anti-ban + markDraftPublished, que alimenta el anti-repetición).
+    // El lead de DRAFT_LEAD_MIN queda como ventana de veto: `/aprobaciones rechazar <id>`.
+    if (auto) {
+      d.approveDraft(draftId);
+      console.log(
+        `[Scheduler] Borrador #${draftId} (programado #${row.id}) generado y AUTO-APROBADO — ` +
+          `sale a las ${row.time_hm} sin aprobación`
+      );
+      return false;
+    }
+
     await d.sendMessage(
       boss,
       `📝 *Borrador #${draftId}* para *${row.group_name || row.group_id}* (sale hoy a las ${row.time_hm} si lo apruebas):\n\n` +
@@ -114,6 +135,23 @@ async function processGenerated(d, row, nowParts) {
       d.markScheduledMessageSent(row.id, nowParts.date);
       d.markDraftPublished(draft.id);
       console.log(`[Scheduler] Borrador #${draft.id} PUBLICADO en "${row.group_name || row.group_id}"`);
+      // Copia a la consola SOLO si salió sin aprobación: quien aprueba a mano ya lo vio.
+      // Va en su propio try: una bitácora que falla no puede parecer un envío que falló
+      // (el mensaje ya salió y la fila ya está marcada — reintentar sería doble publicación).
+      if (isAutoPublish(d.getSetting, row.id)) {
+        try {
+          const boss = d.approvalsTarget ? await d.approvalsTarget() : bossDmTarget();
+          if (boss) {
+            await d.sendMessage(
+              boss,
+              `✅ *Publicado automáticamente* en *${row.group_name || row.group_id}* ` +
+                `(borrador #${draft.id}, sin aprobación):\n\n${draft.draft}`
+            );
+          }
+        } catch (err) {
+          console.error(`[Scheduler] Copia del borrador #${draft.id} a la consola falló: ${err.message}`);
+        }
+      }
       return true;
     }
     // Pendiente a la hora de publicar → recordarle al jefe UNA vez. No se publica.

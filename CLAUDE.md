@@ -89,7 +89,7 @@ Hay tests que lo fijan en `test/roles.test.js`.
 ## Comandos (DM admin)
 
 `/confirmaciones [dm|grupo …] on|off` · `/calendly on|off [closer] [cuenta|todo]` · `/grupos` ·
-`/reporte(s)` · `/persona <grupo> | <texto>` · `/programados` · `/aprobaciones` · `/respuestas` ·
+`/reporte(s)` · `/persona <grupo> | <texto>` · `/programados [auto <id> on|off]` · `/aprobaciones` · `/respuestas` ·
 `/status` · `/whoami` · `/id` — manual completo en [docs/MANUAL-DE-USO.md](docs/MANUAL-DE-USO.md).
 
 **Del closer** (§18.AZ): `/missetteos [días]` · `/nuevosetteo <texto>`. Ojo: `/setteo` ya era

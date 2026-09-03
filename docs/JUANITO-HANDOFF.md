@@ -128,6 +128,8 @@ de prenderla)
   redactados por Claude según un brief, **aprobados por Dani por DM antes de publicarse** (sin
   visto bueno NO sale), con correcciones en lenguaje natural que se acumulan como guía editorial.
   Admins: `/aprobaciones` (estado + override). Falta el setup en vivo cuando Juanito entre al grupo.
+  **Desde el 2026-09-02 la aprobación es opcional por fila (§18.BS):** `/programados auto <id> on`
+  hace que ese generado salga solo y mande copia a la consola después de publicar.
 
 Pendientes reales abiertos → ver §18 "Tareas pendientes".
 
@@ -6149,6 +6151,57 @@ conocidos (`call con TODOS sus pushes skipped…` y `reagenda manual superseded�
 **Pendiente que salió de paso, NO tocado:** la identidad `retia` de **Sebastian Rodriguez**
 (`sebasrr321@gmail.com`) es cableado muerto — cuenta borrada de esa org, sin hostear desde el
 11-ago. Y la de **Dana** apunta a alguien que hoy no es miembro. Las dos siguen en el roster.
+
+
+### 18.BS 🔵 Patah sale sin aprobación: el auto-envío por fila (2026-09-02)
+
+**El pedido:** los borradores generados para Patah llevan tiempo saliendo bien. El equipo ya no
+quiere aprobarlos a mano uno por uno — que Juanito publique directo.
+
+**Lo que la auditoría cambió del plan.** "Publicar directo" suena a saltarse `scheduled_drafts`, y
+eso habría roto algo que no se ve: `listRecentPublishedDrafts` filtra por `status='published'` y es
+lo que alimenta el bloque *"no repitas los últimos 3"* del generador. Sin filas publicadas, Juanito
+empieza a reciclar el mismo mensaje. Así que el borrador **se sigue creando y sigue recorriendo
+`pending → approved → published`**; lo único que se quita es la mano humana en el medio.
+
+Segundo hallazgo: `APPROVALS_GROUP` no es de este flujo. Por ese mismo destino pasan las respuestas
+de grupo (§18.O) y las respuestas a DMs de desconocidos (§18.J). El cambio vive entero en
+`processGenerated`; `approval-routing.js` no se tocó.
+
+**Cómo quedó.** Un setting por fila, `auto_publish:<scheduled_id>`, calcado de
+`editorial_feedback:<id>`:
+
+- **Al generar** (DRAFT_LEAD_MIN antes de la hora): si el auto está ON, `approveDraft()` de
+  inmediato y **no** se manda nada a la consola de aprobaciones.
+- **A la hora:** publica por la ruta de siempre — grupo autorizado, cola anti-ban,
+  `markScheduledMessageSent` + `markDraftPublished`.
+- **Después de publicar:** copia a la consola (*"Publicado automáticamente"*). Bitácora, no
+  compuerta. Va en su propio `try`: una copia que falla no puede parecer un envío fallido, porque
+  el mensaje ya salió y la fila ya está marcada — reintentar sería doble publicación en un grupo de
+  300 personas.
+- **Se prende con `/programados auto <id> on`** (admin). Valida que la fila exista y sea
+  `generated`: prender auto sobre un `fixed` guardaría un setting que no gobierna nada. El listado
+  de `/programados` ahora muestra el estado de cada generado.
+
+**Por qué un setting y no una columna ni una env var.** Env var → cada toggle es un deploy con
+`alcance: todo`, que reconstruye la imagen y **reconecta Baileys** (riesgo de softban): el apagado
+de emergencia quedaba caro justo cuando más se necesita. Columna → migración para un flag que hoy
+gobierna dos filas. El setting da granularidad por fila sin migración y se apaga desde WhatsApp en
+segundos.
+
+**Efecto lateral que conviene saber:** el borrador se sigue generando con `DRAFT_LEAD_MIN` (60 min)
+de anticipación, así que esa hora es ahora una **ventana de veto** — `/aprobaciones rechazar <id>`
+lo mata antes de que salga. Se invirtió el default: antes *nadie aprueba → no sale*; ahora *nadie
+frena → sale*.
+
+**Tests:** +5 en `group-messages` (auto-aprueba sin avisar · publica y manda copia después · con
+auto en `off` sigue exigiendo aprobación · sin destino de aprobación igual publica · copia caída no
+duplica el envío) y +2 en `commands` (toggle + estado en la lista; rechaza id inexistente, fila
+fija y uso mal escrito). Baseline en Mac medida con `git stash`: **1139 → 1146 tests**, los mismos
+**102 rojos** de entorno antes y después.
+
+**Pendiente para dejarlo andando (no es código):** correr `/programados` en producción para ver los
+ids reales de las filas `generated` de Patah y prender el auto en cada una.
 
 
 ### 🟢 Baja prioridad / Nice-to-have
