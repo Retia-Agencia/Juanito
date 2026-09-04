@@ -133,3 +133,40 @@ export function decidePushAction({ existing, incoming, nowMs = Date.now() }) {
 
   return { action: 'unchanged', reason: 'inactive-status' };
 }
+
+// ─── Reagenda de Calendly: de qué cita viene esta ─────────────────────────────
+// Reagendar en Calendly NO mueve la cita: cancela la vieja y acuña una NUEVA, con otro uuid
+// y otro join_url. Por eso `decidePushAction` (arriba) nunca ve una reagenda real: su rama de
+// "mismo uuid, otra hora" solo aplica a la edición in-place y a las filas de HubSpot.
+//
+// La única pista de que son la misma call la trae el invitee del evento nuevo: `old_invitee`
+// apunta al invitee del evento viejo, y de esa URL sale su uuid. Ya la tenemos gratis — el
+// poll pide el invitee de todos modos para el nombre y el teléfono del lead.
+//
+//   old_invitee: 'https://api.calendly.com/scheduled_events/<UUID>/invitees/<INVITEE_UUID>'
+//
+// Devuelve el uuid del evento viejo, o null si no es reagenda (o si la URL no tiene la forma
+// esperada: ante la duda NO inventamos un uuid, que se usa para CANCELAR pushes).
+const OLD_INVITEE_RE = /\/scheduled_events\/([0-9a-fA-F-]{36})\/invitees\//;
+
+export function oldEventUuidFrom(invitee) {
+  const url = invitee?.old_invitee;
+  if (typeof url !== 'string') return null;
+  const m = url.match(OLD_INVITEE_RE);
+  return m ? m[1] : null;
+}
+
+// ─── ¿Qué aviso de reagenda le corresponde al closer? ─────────────────────────
+// Dispara SIEMPRE que se detectó una reagenda; lo que cambia es el texto:
+//
+//  - 'correctivo' → el Push 3 de la cita vieja YA SALIÓ, así que el lead tiene en la mano un
+//    link que ya no sirve. Hay que darle al closer el mensaje listo con el link nuevo.
+//  - 'informativo' → todavía no había salido. No hay nada que corregir: el Push 3 de la cita
+//    nueva llegará a su hora con su link. El closer igual se entera de que la call se movió,
+//    que es justo lo que faltaba (se enteraba por su Google Calendar, no por Juanito).
+//
+// `pushesViejos` = las filas de `calendly_pushes` de la cita vieja (cualquier push_n/estado).
+export function decideRescheduleNotice({ pushesViejos = [] } = {}) {
+  const push3Enviado = pushesViejos.some((p) => Number(p.push_n) === 3 && p.status === 'sent');
+  return { notify: true, forma: push3Enviado ? 'correctivo' : 'informativo' };
+}

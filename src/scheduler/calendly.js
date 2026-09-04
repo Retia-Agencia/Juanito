@@ -37,6 +37,7 @@ import {
   toSqliteUtc,
   formatCallTime,
   buildPush0Message,
+  buildRescheduleMessage,
   isSameDayInTz,
   isNextDayInTz,
   push2HasRunToday,
@@ -46,7 +47,13 @@ import {
   buildOutcomeReminder,
   buildReschedulePromptMessage,
 } from '../calendly/index.js';
-import { computePush3Schedule, decidePush0 } from '../calendly/push-logic.js';
+import {
+  computePush3Schedule,
+  decidePush0,
+  oldEventUuidFrom,
+  decideRescheduleNotice,
+  sqliteUtcToMs,
+} from '../calendly/push-logic.js';
 import { push5DueUtc, buildPush5Message } from '../calendly/sheet-push.js';
 import { pickSupersededPushes, isManualUuid, planRescheduledPushes } from '../calendly/reschedule-logic.js';
 import { isCoveredProgram, decideFromAgenda } from '../hubspot/deals.js';
@@ -77,6 +84,11 @@ const LEAD_MIN = () => Number(process.env.CALENDLY_PUSH3_LEAD_MIN || 25);
 // ser el booking para contar como nuevo (≥ el intervalo del poll, con margen).
 const PUSH0_ENABLED = () => process.env.CALENDLY_PUSH0_ENABLED !== 'false'; // default true
 const PUSH0_RECENT_MIN = () => Number(process.env.CALENDLY_PUSH0_RECENT_MIN || 10);
+// §18.BW — aviso al closer cuando el lead reagenda DENTRO de Calendly. Off por default: es lo
+// único de este cambio que manda un mensaje NUEVO, y el patrón del repo para eso es explícito
+// (§18.AN): desplegar apagado, correr el preview contra datos reales, recién ahí encender.
+// Matar el push de la cita vieja NO depende de este flag: eso es un bug, no una feature.
+const RESCHEDULE_ALERT = () => process.env.CALENDLY_RESCHEDULE_ALERT === 'true';
 
 // Push 4 (§18.AB): registro de outcome post-call. Se entrega DESPUÉS de la call
 // (start + duración + gracia). Insistencia v1: un recordatorio si no responde.
@@ -266,6 +278,9 @@ async function deps() {
     getMeetingsOfContacts: hubspot.getMeetingsOfContacts,
     getMeetingsByIds: hubspot.getMeetingsByIds,
     supersedeRescheduledPushes: db.supersedeRescheduledPushes,
+    // §18.BW: la reagenda hecha dentro de CALENDLY (cancela la vieja, acuña otra con otro uuid).
+    getPushesByEventUuid: db.getPushesByEventUuid,
+    supersedeRescheduledCalendly: db.supersedeRescheduledCalendly,
     scheduleCalendlyPush: db.scheduleCalendlyPush,
     getDueCalendlyPushes: db.getDueCalendlyPushes,
     claimCalendlyPush: db.claimCalendlyPush,
@@ -400,7 +415,10 @@ async function planNudge(d, p) {
     email = contacto?.email || null;
   } else {
     try {
-      const inv = await d.getFirstInvitee(`https://api.calendly.com/scheduled_events/${p.event_uuid}`);
+      const inv = await d.getFirstInvitee(
+        `https://api.calendly.com/scheduled_events/${p.event_uuid}`,
+        { token: tokenForCloser(p.closer_email) }
+      );
       email = inv?.email || null;
     } catch {
       /* sin invitee → sin email → cae a clásico */
@@ -511,6 +529,19 @@ async function listEventsAllAccounts(d, { minStartIso, maxStartIso, tag }) {
 function dryRunForCloser(closerEmail) {
   const acct = accountOf(accountOfCloser(closerEmail));
   return acct ? acct.dryRun() : DRY_RUN();
+}
+
+// ─── Cuenta del closer → TOKEN con el que se revalida su cita ─────────────────
+// Misma regla que el dry-run, por la misma razón: el closer siempre se conoce. Pero acá el
+// costo de equivocarse es peor. `request()` cae al token de 30X cuando no recibe uno
+// (src/calendly/index.js:80-82), y Calendly responde 403 "Permission Denied" a un evento de
+// otra organización → `getEvent` termina en null → la guardia de cancelación/reagenda NO
+// corre y el push sale igual, con el link de una call que ya no existe. Pasó en producción:
+// tres de las cuatro conexiones estuvieron sin guardia (§18.BW).
+//
+// Sin token configurado devuelve undefined, o sea el comportamiento de hoy: cae al de 30X.
+function tokenForCloser(closerEmail) {
+  return accountOf(accountOfCloser(closerEmail))?.token?.() || undefined;
 }
 
 // ─── Envío (respeta DRY-RUN) ──────────────────────────────────────────────────
@@ -735,6 +766,42 @@ export async function runCalendlyPoll() {
         }
       }
 
+      // ─── Reagenda hecha EN Calendly (§18.BW) ─────────────────────────────────
+      // Reagendar NO mueve la cita: Calendly cancela la vieja y acuña ESTA, con otro uuid y
+      // otro join_url. Nadie ataba las dos puntas, así que la fila de la vieja se quedaba
+      // 'scheduled' y seguía viva en los TRES lugares que leen esta tabla: la entrega del
+      // Push 3 la mandaba con su link muerto, y `getScheduledCallsInWindow` la seguía listando
+      // en el Push 1 y en el Push 2. Medido sobre el incidente que originó esto: el closer vio
+      // la call fantasma tres veces, y el lead entró al meet que ya no existía.
+      //
+      // La pista sale del invitee que YA pedimos arriba para el nombre y el teléfono, así que
+      // esto no cuesta ni una llamada más a la API.
+      const uuidViejo = oldEventUuidFrom(invitee);
+      // Es reagenda por el solo hecho de venir de otra cita, tengamos o no sus filas. Importa
+      // para el Push 0: aunque no quede nada que matar (cita vieja ya purgada por el cleanup),
+      // esto sigue sin ser una reserva nueva y no hay que anunciarla como tal.
+      let reagenda = uuidViejo ? { uuidViejo, deUtc: null, forma: 'informativo' } : null;
+      if (uuidViejo && d.getPushesByEventUuid) {
+        const viejos = d.getPushesByEventUuid(uuidViejo);
+        if (viejos.length) {
+          const matados = d.supersedeRescheduledCalendly
+            ? d.supersedeRescheduledCalendly(uuidViejo, uuid)
+            : 0;
+          // `deUtc` sale de las filas viejas: sin ellas no se puede decir "de tal hora a tal
+          // otra", y el aviso de abajo se abstiene en vez de inventar la mitad de la frase.
+          reagenda.deUtc = viejos[0].call_start;
+          reagenda.forma = decideRescheduleNotice({ pushesViejos: viejos }).forma;
+          // Solo cuando hubo algo que matar: el poll re-ve esta cita cada 5 minutos hasta que
+          // ocurra, y a partir del segundo tick ya no queda nada 'scheduled' que cancelar.
+          // Sin este guard, la misma línea se repite cada 5 min durante hasta 48 horas.
+          if (matados) {
+            console.log(
+              `[Calendly] reagenda ${uuidViejo} → ${uuid} (${firstName}): ${matados} push(es) viejos cancelados, aviso ${reagenda.forma}`
+            );
+          }
+        }
+      }
+
       const message = buildPush3Message({
         name,
         firstName,
@@ -764,6 +831,45 @@ export async function runCalendlyPoll() {
         console.log(
           `[Calendly] Push 3 ${result}${tag} → ${closer.name} | ${firstName} | ${formatCallTime(ev.start_time)} (due ${toSqliteUtc(due)} UTC)`
         );
+      }
+
+      // Aviso de reagenda al closer (§18.BW). Va DESPUÉS del Push 3 a propósito: para cuando
+      // el aviso sale, la cita nueva ya tiene su push agendado, así que la promesa del texto
+      // informativo ("tu push con el link nuevo te llega antes de la llamada") es cierta.
+      //
+      // Es una fila más (push_n=6, due=ahora), no un envío directo, y eso compra dos cosas
+      // gratis: sale por `deliver()` con TODOS los gates anti-ban, y el UNIQUE(event_uuid,
+      // push_n) garantiza UN aviso por reagenda aunque el poll vuelva a ver esta cita cada
+      // 5 minutos hasta que ocurra.
+      if (reagenda?.deUtc && RESCHEDULE_ALERT()) {
+        const rAviso = d.scheduleCalendlyPush({
+          event_uuid: uuid,
+          push_n: 6,
+          program: programKey,
+          closer_email: email,
+          closer_phone: closer.phone,
+          prospect_name: invitee?.name || null,
+          prospect_phone: phone,
+          call_start: callStartUtc,
+          due_at: toSqliteUtc(new Date(nowMs)),
+          message: buildRescheduleMessage({
+            name,
+            firstName,
+            phone,
+            programKey,
+            closer: firstNameFrom(closer.name),
+            deIso: new Date(sqliteUtcToMs(reagenda.deUtc)).toISOString(),
+            aIso: ev.start_time,
+            forma: reagenda.forma,
+            linkLlamada: eventJoinUrl(ev),
+            ahora: now,
+          }),
+        });
+        if (rAviso === 'new') {
+          console.log(
+            `[Calendly] Aviso de reagenda (${reagenda.forma}) → ${closer.name} | ${firstName} | ${formatCallTime(ev.start_time)}`
+          );
+        }
       }
 
       // ─── Push 4: registro de outcome post-call (§18.AB) ──────────────────────
@@ -832,7 +938,12 @@ export async function runCalendlyPoll() {
       // "mañana" tapa la ventana ciega de la noche — ver push-logic.js. Reusa la
       // misma fila/dedup que los demás pushes (push_n=0, due=ahora) → lo entrega
       // `runCalendlyDelivery` con todos los gates anti-ban.
-      if (PUSH0_ENABLED()) {
+      // `!reagenda`: una reagenda al mismo día pasaba por acá y avisaba "te acaban de reservar
+      // un espacio en tu agenda" (§18.C lo dejó anotado como nuance conocida) — Calendly acuña
+      // un evento nuevo con `created_at` nuevo y el Push 0 lo leía como reserva nueva. No fue
+      // una reserva, fue una mudanza, y ahora hay un aviso que lo dice bien. Un aviso por
+      // reagenda, nunca dos.
+      if (PUSH0_ENABLED() && !reagenda) {
         const d0 = decidePush0({
           startMs: new Date(ev.start_time).getTime(),
           createdAtMs: ev.created_at ? new Date(ev.created_at).getTime() : NaN,
@@ -1203,7 +1314,7 @@ export async function runCalendlyDelivery() {
           if (!isManualUuid(p.event_uuid)) {
             const uri4 = `https://api.calendly.com/scheduled_events/${p.event_uuid}`;
             try {
-              ev4 = await d.getEvent(uri4);
+              ev4 = await d.getEvent(uri4, { token: tokenForCloser(p.closer_email) });
             } catch {
               /* si la verificación falla, preguntamos igual con lo guardado */
             }
@@ -1372,7 +1483,9 @@ export async function runCalendlyDelivery() {
           let ev5 = null;
           if (!isManualUuid(p.event_uuid)) {
             try {
-              ev5 = await d.getEvent(`https://api.calendly.com/scheduled_events/${p.event_uuid}`);
+              ev5 = await d.getEvent(`https://api.calendly.com/scheduled_events/${p.event_uuid}`, {
+                token: tokenForCloser(p.closer_email),
+              });
             } catch {
               /* si la verificación falla, mandamos igual con lo guardado */
             }
@@ -1427,7 +1540,7 @@ export async function runCalendlyDelivery() {
         const uri = `https://api.calendly.com/scheduled_events/${p.event_uuid}`;
         let ev = null;
         try {
-          ev = await d.getEvent(uri);
+          ev = await d.getEvent(uri, { token: tokenForCloser(p.closer_email) });
         } catch {
           /* si la verificación falla, entregamos igual para no perder el push */
         }
@@ -1453,7 +1566,11 @@ export async function runCalendlyDelivery() {
         // al texto del código viejo. Reconstruir con el `ev` fresco arregla ambos y
         // sana solo las filas viejas. Sin `ev` (getEvent falló) caemos al guardado.
         let message = p.message;
-        if (ev) {
+        // El aviso de reagenda (push_n=6) NO se reconstruye: se agenda con due=ahora y se
+        // entrega en el minuto siguiente, así que su texto no llegó a envejecer. Y sobre todo,
+        // reconstruirlo por esta vía lo convertiría en un Push 3 — el ternario de abajo solo
+        // conoce el 0 y el 3. El aviso sale tal cual lo armó el poll.
+        if (ev && p.push_n !== 6) {
           const closer = resolveCloser(p.closer_email);
           // El teléfono pudo quedar null al agendar (Calendly sin número Y HubSpot aún sin
           // el contacto/teléfono en ESE instante). Los digests Push 1/2 lo re-resuelven en

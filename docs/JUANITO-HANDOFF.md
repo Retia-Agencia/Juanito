@@ -6506,6 +6506,139 @@ reconexión, así que conviene aprovechar el mismo deploy.
   ("0 nudges en 14 días" cuando solo había 208 líneas de log). **Para medir histórico, ir a la DB,
   no a los logs** — y si hace falta el log viejo, sacarlo ANTES de desplegar.
 
+### 18.BW 🔴 Un lead y su closer en dos meets distintos: la guardia de reagenda solo corría en 30X (2026-09-04)
+
+**Lo que reportó Michael.** Andre (Andrea Machado, `registro@ttrading.co`, Tactical Investor)
+tenía una call. El lead la reagendó para más tarde. Juanito mandó el push de la hora ORIGINAL,
+Andre se lo reenvió, y el lead entró a ese meet mientras Andre entraba por el link nuevo de su
+calendario. Dos meets, misma hora.
+
+**Reproducido en la DB de producción**, no es una hipótesis:
+
+| | cita | uuid | estado real en Calendly |
+|---|---|---|---|
+| original | 2026-09-04 10:30 a. m. Bogotá | `5dfbeed1…` | **cancelada** el 09-03 15:41 UTC por el propio lead ("Tengo una cita medica a las 10 am") |
+| reagendada | 2026-09-04 12:00 p. m. Bogotá | `9164800c…` | activa, con **otro** `join_url` |
+
+La fila `#4005` se entregó a las 10:05 a. m. con el link muerto adentro. **La cita llevaba 19
+horas cancelada.**
+
+#### La causa: `getEvent` sin token
+
+La guardia existía y es correcta (`scheduler/calendly.js`, revalidación antes de entregar: si
+`status !== 'active'`, se salta). El problema era cómo pedía el evento:
+
+```js
+ev = await d.getEvent(uri);   // ← sin token
+```
+
+`request()` hace `const bearer = token || TOKEN()`, y `TOKEN()` es `CALENDLY_TOKEN`, **el de
+30X**. Hay CUATRO conexiones (`30x`, `estadox`, `retia`, `comunicarte`), cada una con su token y
+su organización. Pedirle a Calendly un evento de Retia con el token de 30X devuelve, verificado
+en vivo contra el evento del incidente:
+
+```
+HTTP 403 {"title":"Permission Denied","message":"You are not allowed to view this event"}
+```
+
+`request()` tira, el `try` se lo traga, `ev` queda `null`, y el `if (ev)` de abajo **no corre**:
+ni la guardia de cancelación, ni la de reagenda, ni la reconstrucción del mensaje (§11.10). El
+push sale con el texto congelado. **La guardia solo funcionaba para 30X.**
+
+Lo delator, medido a 90 días: 30X acumula 49 skips por `cancelada`/`rescheduled`; Retia,
+ComunicArte y EstadoX tienen **cero, sobre 279 pushes**. Verificado cita por cita contra la API,
+últimos 30 días en esas tres conexiones: **152 Push 3 entregados · 24 de citas hoy canceladas ·
+14 ya canceladas en el momento exacto de entregarse.** Lo de Andre no fue el primero, fue el que
+alguien vio.
+
+#### El segundo hallazgo: la call fantasma se veía TRES veces
+
+Push 1 y Push 2 no se agendan, se **calculan** en cada cron con `getScheduledCallsInWindow`, que
+toma `status IN ('scheduled','sent')`. La fila de la cita muerta se quedaba `scheduled`, así que
+seguía viva en los tres lugares que leen esa tabla. Reconstruido sobre el incidente (Push 1 a
+las 19:00, Push 2 a las 06:30, `TZ=America/Bogota`):
+
+| hora Bogotá | qué pasó |
+|---|---|
+| 09-03 10:41 a. m. | el lead cancela y reagenda |
+| 09-03 **7:00 p. m.** | Push 1 lista la call muerta |
+| 09-04 **6:30 a. m.** | Push 2 lista la call muerta |
+| 09-04 **10:05 a. m.** | Push 3 la manda, con el link muerto |
+
+Y un caso mixto que sobrevivía incluso en 30X: bastaba que **cualquier** otro push de la cita
+quedara `sent` (típicamente el Push 4, a veces el Push 0) para que la call reviviera en esa
+query aunque su Push 3 estuviera `skipped`. Medido: **48 citas muertas en 90 días** seguían
+contándose en los digests y en la agenda del jefe.
+
+#### Qué se hizo
+
+1. **`tokenForCloser(closerEmail)`** — misma regla que `dryRunForCloser`, por la misma razón (el
+   closer siempre se conoce). Se pasa en los tres `getEvent` de la entrega (Push 4, Push 5,
+   Push 3/0) y en el `getFirstInvitee` del nudge de HubSpot. Sin token configurado devuelve
+   `undefined` → cae al de 30X, o sea el comportamiento de hoy: **no hay regresión posible.**
+   Sin flag: un flag sobre un bug fix deja el bug alcanzable.
+2. **Detección por `old_invitee`** — reagendar en Calendly cancela la cita vieja y acuña una
+   nueva con otro uuid, así que la rama "mismo uuid, otra hora" de `decidePushAction` nunca veía
+   una reagenda real. El único hilo entre las dos lo trae el invitee del evento nuevo, y el poll
+   **ya lo pide** para el nombre y el teléfono: `oldEventUuidFrom()` (puro) lo extrae sin una
+   sola llamada extra a la API. Con el uuid viejo, `supersedeRescheduledCalendly()` mata sus
+   filas `scheduled` en el acto, sin esperar a que venza el push.
+3. **`getScheduledCallsInWindow` excluye la call cuyo Push 3 se rindió** (`cancelada` /
+   `reagendada` / `rescheduled`). El Push 3 es la señal canónica de "esta call va". Cierra el
+   caso mixto de las 48.
+4. **Aviso de reagenda al closer** (`push_n=6`, `due=ahora`). Sale SIEMPRE que se detecta una
+   reagenda, en dos formas: **informativa** (el Push 3 viejo no había salido: "se movió, tu push
+   con el link nuevo te llega antes de la llamada, no tienes que hacer nada") y **correctiva**
+   (ya había salido, o sea que el lead tiene un link muerto: va el `wa.me` listo con el nuevo).
+   Es una fila más, no un envío directo, así que hereda TODOS los gates anti-ban y el
+   `UNIQUE(event_uuid, push_n)` garantiza un aviso por reagenda aunque el poll vea la cita cada
+   5 minutos. Sin `join_url` no se inventa nada: le dice al closer que lo mande a mano.
+5. **Se suprime el Push 0 sobre una reagenda.** Era la nuance que §18.C dejó anotada: Calendly
+   acuña un evento nuevo con `created_at` nuevo y el Push 0 lo leía como reserva nueva, avisando
+   "te acaban de reservar un espacio". No fue una reserva, fue una mudanza.
+
+**Lo que NO se tocó, a propósito:** la ruta dictada (`reschedule-logic.js`, el closer contesta
+"3 · Reagendó" en el Push 4) sigue mandando al lead *"nos conectamos por el link que ya te
+compartí"*. Decisión de Mani: si la reagenda fue por fuera de Calendly, el link es tema del
+closer con el lead. Vivo para `sebastian@30x.com`, el único con Push 4 prendido. **Riesgo
+conocido y aceptado.**
+
+**El copy al lead de la reagenda NO pasa por el portón de `PROGRAM_PITCH`**, y esa es una regla
+de diseño, no un detalle: avisar que la call se movió no vende nada, informa un cambio. Una call
+cuyo programa no se pudo identificar (fila con `program` NULL) es justo la que MÁS necesita el
+aviso, no la que menos.
+
+**Archivos:** `scheduler/calendly.js` (token, detección, aviso, supresión del Push 0),
+`calendly/push-logic.js` (`oldEventUuidFrom`, `decideRescheduleNotice` — puros),
+`calendly/index.js` (`buildRescheduleMessage`, `formatLeadWhen`, rama `reagenda` de
+`buildPrecallText`), `db/index.js` (`getPushesByEventUuid`, `supersedeRescheduledCalendly`, el
+`NOT EXISTS` de la ventana), `test/helpers/calendly-harness.js` (el mock ahora exige el token de
+la cuenta dueña, y `makeEvent` acepta `oldEventUuid`).
+
+**Tests: +23.** `calendly.reagenda-calendly.test.js` (18) y `data.reagenda-calendly.test.js` (5).
+Dos se **derivan de los registros** en vez de listas a mano, que es lo que impide que esto
+vuelva: el de la guardia itera las cuentas de `ACCOUNTS` con un closer sacado de `CLOSERS`, y el
+del copy itera `Object.keys(PROGRAMS)`. Una conexión o un programa nuevo mal cableado rompe el
+test el día que se agrega. Verificado que los cuatro de la guardia **fallan** al revertir el
+token, que es lo único que los hace valer. Baseline en Docker/Linux: **1178 → 1201, los mismos
+2 rojos conocidos.**
+
+**Ojo con el mock:** exige el token de la cuenta dueña también para `30x`. En producción 30X
+nunca estuvo roto, porque `request()` cae a `CALENDLY_TOKEN` y ese es justamente el suyo —
+funcionaba de casualidad. El test fija el invariante ("cada cita se revalida con el token de SU
+conexión"), no la casualidad.
+
+**Env:** `CALENDLY_RESCHEDULE_ALERT` (default **false**), registrada en `.env.example` **y** en
+`docker-compose.yml` antes de tocar el VPS (gotcha §12). Solo gatea el aviso (punto 4); matar el
+push muerto no depende de ella.
+
+**Pendiente de operación:** desplegar con `alcance: todo` (toca `src/`, reconstruye imagen y
+**reconecta Baileys** → ojo softban), con el flag apagado. A las 48h volver a medir **conexión
+por conexión**: tienen que aparecer skips `cancelada`/`reagendada` en Retia, ComunicArte y
+EstadoX, no solo en 30X. Si alguna sigue en cero con citas canceladas en su Calendly, esa
+conexión no quedó. Recién ahí `CALENDLY_RESCHEDULE_ALERT=true` y confirmar con Andre o Maru que
+el aviso llegó y se entiende.
+
 ### Secretos (decididos, ver §13)
 
 - `CALENDLY_TOKEN`: **NO rotar** (decidido).

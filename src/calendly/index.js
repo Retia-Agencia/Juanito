@@ -326,8 +326,26 @@ function materialsBlock(programKey) {
 // second_brain, así que agregar un programa sin su copy le mandaba al lead un mensaje
 // que lo invitaba al programa EQUIVOCADO (el texto viaja en el link wa.me que el closer
 // toca para enviar, o sea que sale casi tal cual). Mejor sin push que con el push errado.
-export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora, linkLlamada = '' }) {
+export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora, cuando = '', linkLlamada = '' }) {
   const lead = primerNombre || 'hola';
+
+  // Reagenda hecha EN Calendly (§18.BW). Va ANTES del portón de PROGRAM_PITCH a propósito:
+  // avisar que la call se movió no vende nada, informa un cambio, así que no necesita el pitch
+  // del programa. Y una call cuyo programa no se pudo identificar (fila vieja con `program`
+  // NULL) es justo la que MÁS necesita el aviso, no la que menos.
+  //
+  // Sin link no devolvemos nada: el caller degrada a "mándalo manual". Es deliberado — el
+  // Push 3 sí tiene una frase para ese caso ("el link que ya te compartí"), pero acá esa
+  // frase sería una mentira: si la call se movió en Calendly, el link que ya le compartimos
+  // es exactamente el que dejó de servir.
+  if (pushN === 'reagenda') {
+    if (!linkLlamada) return null;
+    return (
+      `${lead}, cambiamos la hora de nuestra llamada: nos vemos ${cuando}.\n` +
+      `Ojo que el link también cambió, este es el nuevo:\n${linkLlamada}`
+    );
+  }
+
   const pitch = PROGRAM_PITCH[programKey];
   if (!pitch) {
     console.warn(`[Calendly] programa "${programKey}" sin copy en PROGRAM_PITCH → push precall omitido`);
@@ -396,6 +414,61 @@ export function buildPush3Message({ name, firstName, phone, startIso, programKey
   });
   const link = buildLeadLink(phone, text);
   return link ? `${head}\n👉 Enviar push: ${link}` : `${head}\n(sin copy para este programa — mándalo manual)`;
+}
+
+// Aviso de reagenda (§18.BW). Sale SIEMPRE que el poll detecta que una cita se movió dentro
+// de Calendly. Existe porque hasta ahora el closer se enteraba por su Google Calendar y no por
+// Juanito: esa es exactamente la desincronización que mandó a un lead y a su closer a dos
+// meets distintos.
+//
+// Dos formas, según si el lead ya tiene un link muerto en la mano:
+//  - 'informativo': el Push 3 viejo no había salido. No hay nada que corregir, el de la cita
+//    nueva llegará a su hora con su link. Sin wa.me: no le pedimos nada al closer.
+//  - 'correctivo':  el Push 3 viejo YA salió. El lead tiene el link de una call que no existe,
+//    así que acá sí va el wa.me listo con el nuevo.
+export function buildRescheduleMessage({
+  name,
+  firstName,
+  phone,
+  programKey,
+  closer,
+  deIso,
+  aIso,
+  forma = 'informativo',
+  linkLlamada = '',
+  tz = TZ(),
+  // El reloj entra por parámetro, no `Date.now()` adentro: el 'hoy'/'mañana' del texto al lead
+  // depende de él, y con el reloj del sistema el harness compara contra la fecha real y el
+  // mensaje sale con el día equivocado. Misma mordida que ya documenta el Push 0.
+  ahora = new Date(),
+}) {
+  const who = name || firstName || 'el prospecto';
+  const label = programLabelOf(programKey);
+  const prog = label ? ` — 📦 *${label}*` : '';
+  const de = formatCallDateTime(deIso, tz);
+  const a = formatCallDateTime(aIso, tz);
+
+  if (forma !== 'correctivo') {
+    return (
+      `🔁 *REAGENDA* — *${who}*${prog}\n` +
+      `🕐 ${de} → *${a}*\n` +
+      `Tu push con el link nuevo te llega antes de la llamada. No tienes que hacer nada.`
+    );
+  }
+
+  const head = `⚠️ *REAGENDA* — *${who}*${prog}\n🕐 ${de} → *${a}*`;
+  const manual = `${head}\nYa le mandaste el link viejo y ese ya no sirve — mándale el nuevo a mano.`;
+  if (!phone) return manual;
+  const text = buildPrecallText({
+    programKey,
+    pushN: 'reagenda',
+    primerNombre: firstName || firstNameFrom(name),
+    closer,
+    cuando: formatLeadWhen(aIso, tz, ahora),
+    linkLlamada,
+  });
+  const link = buildLeadLink(phone, text);
+  return link ? `${head}\nYa le mandaste el link viejo y ese ya no sirve. Mándale el nuevo:\n👉 ${link}` : manual;
 }
 
 // Push 0 (aviso de nueva call HOY): mensaje INFORMATIVO al closer — "te reservaron
@@ -650,6 +723,26 @@ export function formatCallDateTime(startIso, tz = TZ()) {
     month: 'short',
   }).format(new Date(startIso));
   return `${fecha}, ${formatLeadTime(startIso, tz)}`;
+}
+
+// Cuándo es la call, dicho como se lo dice una persona a otra ("hoy a las 12:00 pm",
+// "mañana a las 9:30 am", "el viernes 5 de septiembre a las 9:30 am"). Distinto de
+// `formatCallDateTime`, que es el formato corto y denso para el CLOSER: este lo lee el LEAD
+// dentro del wa.me, y ahí una fecha con comas ("vie, 5 de sept, 9:30 am") se lee a máquina.
+// Reusa `isSameDayInTz`/`isNextDayInTz`, los mismos que ya deciden el 'hoy'/'mañana' del Push 0.
+export function formatLeadWhen(startIso, tz = TZ(), base = new Date()) {
+  const hora = formatLeadTime(startIso, tz);
+  if (isSameDayInTz(startIso, tz, base)) return `hoy a las ${hora}`;
+  if (isNextDayInTz(startIso, tz, base)) return `mañana a las ${hora}`;
+  const dia = new Intl.DateTimeFormat('es-CO', {
+    timeZone: tz,
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  }).format(new Date(startIso));
+  // es-CO mete una coma tras el día de la semana ("sábado, 12 de septiembre"); en una frase
+  // corrida sobra.
+  return `el ${dia.replace(/^(\S+),/, '$1')} a las ${hora}`;
 }
 
 // Recordatorio (insistencia v1): si no respondió el Push 4 en ~30 min.
