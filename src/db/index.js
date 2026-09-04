@@ -876,9 +876,22 @@ export function getScheduledCallsInWindow(fromUtc, toUtc) {
              MAX(prospect_name)  AS prospect_name,
              MAX(prospect_phone) AS prospect_phone,
              MIN(call_start)     AS call_start
-      FROM calendly_pushes
+      FROM calendly_pushes p
       WHERE call_start >= ? AND call_start < ?
         AND status IN ('scheduled', 'sent')
+        -- La call no ocurrió: su Push 3 murió porque la cita se canceló o se movió. Sin esto
+        -- alcanzaba con que CUALQUIER otro push de la misma cita siguiera 'sent' para que la
+        -- call reviviera acá — y eso alimenta la agenda de las 7am y los digests Push 1/2, o
+        -- sea que el closer veía en su lista una llamada que ya no existe. Medido sobre la DB
+        -- de producción: 48 citas muertas en 90 días seguían contándose, casi todas por su
+        -- Push 4 ya enviado, y las de Push 0 enviado además salían en el digest siguiente.
+        -- El Push 3 es la señal canónica de "esta call va": si él se rindió, la call no va.
+        AND NOT EXISTS (
+          SELECT 1 FROM calendly_pushes m
+           WHERE m.event_uuid = p.event_uuid
+             AND m.push_n = 3
+             AND m.skip_reason IN ('cancelada', 'reagendada', 'rescheduled')
+        )
       GROUP BY event_uuid
       ORDER BY call_start
     `)
@@ -938,6 +951,45 @@ export function supersedeManualPushes(manualUuid, realUuid) {
     realUuid,
     manualUuid
   );
+  return info.changes;
+}
+
+// ─── Reagenda hecha EN Calendly (§18.BW) ──────────────────────────────────────
+// Todas las filas de una cita, en cualquier estado. La necesita el poll para saber si el
+// Push 3 de la cita vieja ya salió: si salió, el lead tiene un link muerto en la mano y el
+// aviso al closer tiene que traerle el nuevo.
+export function getPushesByEventUuid(eventUuid) {
+  return db
+    .prepare(
+      `SELECT id, event_uuid, push_n, status, skip_reason, call_start, sent_at,
+              closer_email, prospect_name, prospect_phone, program, message
+         FROM calendly_pushes
+        WHERE event_uuid = ?
+        ORDER BY push_n`
+    )
+    .all(eventUuid);
+}
+
+// El gemelo de `supersedeManualPushes` para el caso que faltaba: la reagenda hecha DENTRO de
+// Calendly, que cancela la cita vieja y acuña una nueva con otro uuid. Sin esto la fila vieja
+// se queda 'scheduled' y sigue viva en los TRES lugares que leen esta tabla: el Push 3 la
+// entrega, y `getScheduledCallsInWindow` la sigue listando en el Push 1 y en el Push 2. Medido
+// sobre el incidente: el closer vio la call fantasma tres veces.
+//
+// Solo toca 'scheduled', igual que sus hermanos: una fila ya 'sent' se deja como está, porque
+// reescribir su estado no desmanda el mensaje y perdería el rastro de que salió. Justamente
+// por eso el caller mira ANTES si el Push 3 ya se envió: eso ya no se arregla en la DB, se
+// arregla mandando el aviso correctivo.
+export function supersedeRescheduledCalendly(oldUuid, newUuid) {
+  const info = db
+    .prepare(`
+      UPDATE calendly_pushes
+      SET status = 'skipped',
+          skip_reason = 'reagendada',
+          message = COALESCE(message, '') || ' | skip: reagendada en Calendly → ' || ?
+      WHERE event_uuid = ? AND status = 'scheduled'
+    `)
+    .run(newUuid, oldUuid);
   return info.changes;
 }
 

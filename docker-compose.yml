@@ -90,6 +90,7 @@ services:
       - CALENDLY_POLL_CRON=${CALENDLY_POLL_CRON:-*/5 * * * *}
       - CALENDLY_PUSH0_ENABLED=${CALENDLY_PUSH0_ENABLED:-true}
       - CALENDLY_PUSH0_RECENT_MIN=${CALENDLY_PUSH0_RECENT_MIN:-10}
+      - CALENDLY_RESCHEDULE_ALERT=${CALENDLY_RESCHEDULE_ALERT:-false}
       # Registro de outcomes post-call (§18.AB): Push 4 = Juanito pregunta el estado
       # de la call ~5 min después de terminar y lo guarda. CALENDLY_PUSH4_CLOSERS es un
       # allowlist (CSV de emails) para rollout acotado — VACÍO = todos los closers.
