@@ -10,7 +10,7 @@
 // ⚠️ EL RIESGO DE ESTE FEATURE NO ES PERDER UN PUSH, ES MANDAR DOS. Un closer que recibe el
 // mismo aviso dos veces pierde confianza en Juanito, y el doble envío es justo el patrón que
 // enoja a WhatsApp. Por eso el filtro es de tres capas y todas son de exclusión:
-//   1. programa — solo los que viven en el HubSpot conectado (Retia jamás entra acá).
+//   1. programa — solo los que viven en el HubSpot conectado (los de Retia jamás entran acá).
 //   2. duplicados DENTRO de HubSpot — el CRM guarda varios registros de una misma call
 //      (caso real: 3 meetings al mismo minuto), así que `meeting.id` NO equivale a "una call".
 //   3. ya agendado — si esa call ya tiene push (de Calendly o de un ciclo anterior), no se toca.
@@ -27,7 +27,7 @@ export const callKey = (email, callStart) =>
 // ¿Los leads de este programa viven en el HubSpot conectado? Mismo guardrail que
 // `isCoveredProgram` en deals.js, pero SIN exigir pipeline: para mandar un push precall no hace
 // falta que el programa tenga deals cableados, solo que la cita sea de esta empresa. Un programa
-// de otra agencia (Retia) nunca debe recibir pushes derivados de este CRM.
+// de un programa de otra agencia (Retia) nunca debe recibir pushes derivados de este CRM.
 export function programLivesInThisHubspot(programKey) {
   return Boolean(programKey && accountOfProgram(programKey)?.hubspot);
 }

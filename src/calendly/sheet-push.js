@@ -1,6 +1,6 @@
 // src/calendly/sheet-push.js
 // Push 5 (§18.AP): el recordatorio de llenar los Google Sheets que se le manda al closer
-// DESPUÉS de cada llamada. Hoy solo lo usa Retia — la conexión que declara `sheets` en
+// DESPUÉS de cada llamada. Lo reciben las conexiones que declaran `sheets` en
 // accounts.js es la que lo recibe; 30x no declara la lista y por eso no lo tiene.
 //
 // PURO (sin DB, sin red, sin deps nativas), igual que push-logic.js / outcome-logic.js:
@@ -12,7 +12,7 @@
 // puede tocarlo. El módulo ya usa ese patrón de "un archivo por concern".
 //
 // ⚠️ No confundir con el Push 4: ese es el REGISTRO DE OUTCOME de 30X ("¿cómo te fue?"),
-// con pendientes, cosecha de HubSpot y recordatorios. Retia lo tiene apagado
+// con pendientes, cosecha de HubSpot y recordatorios. Las conexiones de Retia lo tienen apagado
 // (ACCOUNTS.retia.push4 → false), así que el Push 5 es su único push post-call. El número
 // 5 no es un typo: el 4 está ocupado por otra cosa.
 

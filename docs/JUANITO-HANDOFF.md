@@ -5,7 +5,10 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-08-28** (§18.BQ — los seis restantes de la auditoría de
+Última actualización: **2026-09-02** (§18.BR — Maru Marquez entra a "De Cero a Tactical
+Investor" heredando el buzón-rol `equipo@ttrading.co`; Sebastian Salazar queda desvinculado del
+programa. Una cuenta de Calendly pertenece a UNA organización: por eso su gmail de ComunicArte no
+servía). Anterior: **2026-08-28** (§18.BQ — los seis restantes de la auditoría de
 Codex: reintento de recordatorios, outreach sin duplicar al tercero, Stripe deduplicando
 por destinatario, dry-run sin fabricar outcomes, deadline en todo fetch e inyección de
 prompt). Anterior: **2026-08-27** (§18.BP — los cuatro arreglos de la auditoría de Codex:
@@ -125,6 +128,11 @@ de prenderla)
   redactados por Claude según un brief, **aprobados por Dani por DM antes de publicarse** (sin
   visto bueno NO sale), con correcciones en lenguaje natural que se acumulan como guía editorial.
   Admins: `/aprobaciones` (estado + override). Falta el setup en vivo cuando Juanito entre al grupo.
+  **Desde el 2026-09-02 la aprobación es opcional por fila (§18.BS):** `/programados auto <id> on`
+  hace que ese generado salga solo y mande copia a la consola después de publicar. En producción
+  está ON en la fila **#8** (Patah Team Logística, miércoles 20:00); al prenderlo salió a la luz un
+  **duplicado de 11 semanas** que la compuerta humana venía tapando — leer §18.BS antes de
+  automatizar otro paso manual.
 
 Pendientes reales abiertos → ver §18 "Tareas pendientes".
 
@@ -3041,7 +3049,11 @@ imprime; reusable para cualquier agencia futura), hardcodeado en `accounts.js`:
   Tactical Investor" (137 citas). Es el ÚNICO ET que se pushea — los otros tipos de ese Calendly
   (Revisión de Portafolio, Asesoría, etc.) no son ventas.
 
-**Closers (verificados contra la agenda real — los emails matchean el host del evento):**
+**Closers (verificados contra la agenda real — los emails matchean el host del evento).**
+⚠️ Esto es una FOTO del 2026-07-21, no el estado vivo: los cuatro renglones ya cambiaron de dueño
+al menos una vez. El buzón `equipo@` pasó de Dana a Salazar (22-jul) y de Salazar a **Maru
+Marquez** (2026-09-02, §18.BR), y la cuenta de Sebastian Rodriguez está borrada de esa org desde el
+11-ago. **La fuente viva es `src/calendly/closers.js`**, no esta tabla.
 
 | Nombre | Email (host Calendly) | WhatsApp | Estado |
 |---|---|---|---|
@@ -6070,6 +6082,396 @@ hubo que restaurar la versión pre-arreglo entera para que los tests se pusieran
 
 ---
 
+### 18.BR 🔵 Maru entra a Tactical Investor por el buzón-rol, y Salazar sale (2026-09-02) — EN PRODUCCIÓN
+
+**El pedido:** activar a Maru Marquez en "De Cero a Tactical Investor". Ella ya cerraba "Método
+Comunicarte", así que quedaría en los dos programas de Retia.
+
+**Lo que se encontró antes de tocar nada.** Medido contra la API con el token de Vieira (que es el
+**owner** de la org, así que la consulta ve la organización entera), ventana de 90 días atrás y 120
+adelante, 293 citas: Maru **no existía** en ese Calendly. Cero membresías, cero invitaciones de
+cualquier estado. Los únicos hosts que ese programa ha tenido son `registro@ttrading.co` (Andrea),
+`equipo@ttrading.co`, un usuario borrado (18 citas, 20-jul → 11-ago) y `alejocarpa1108@gmail.com`.
+
+**El dato que cambió el plan, y que conviene no volver a aprender:** el correo que Retia había
+dictado era su gmail, `soymarumarquez@gmail.com`, el mismo con el que hostea ComunicArte. **No
+podía funcionar.** En Calendly una cuenta pertenece a UNA organización: el recurso de usuario
+expone `current_organization`, **un campo, no una lista**. El de Maru apunta a la org de
+ComunicArte. Invitar ese gmail al Calendly de Tactical Investor tenía dos finales, los dos malos:
+la invitación se queda `pending` para siempre, o ella acepta y su cuenta **se muda**, perdiendo
+ComunicArte (donde tenía 6 citas futuras). Corroboración desde el propio roster: las cuatro
+personas multi-conexión usan un correo distinto por conexión — Salazar comparte hasta el teléfono
+entre sus dos identidades, pero nunca el correo.
+
+Hay un caso vivo del mismo problema en ese mismo Calendly: **Dana** aceptó el 25-ago, hosteó una
+cita el 26-ago, hoy **no es miembro** y tiene un reenvío `pending` desde el 01-sep. Su identidad en
+el roster está cableada contra alguien que ahora mismo no puede recibir citas ahí.
+
+**Cómo se resolvió (Retia, 2026-09-02):** le asignaron el **buzón-rol** `equipo@ttrading.co`, que
+es como Retia opera sus cupos. O sea que esto **no fue un alta, fue una rotación**: Sebastian
+Salazar queda **desvinculado** del programa (confirmado por el jefe).
+
+**El cambio, entonces, es mover una identidad de una persona a otra:**
+
+- `closers.js`: la identidad `{ connection:'retia', email:'equipo@ttrading.co' }` sale de
+  `PEOPLE.sebastian_salazar` y entra en `PEOPLE.maru_marquez` **con el teléfono de ella**
+  (+573108600134, su misma línea de ComunicArte). Salazar queda con una sola identidad (estadox).
+- **Sin `workLid`** en la identidad nueva. No es un olvido: el invariante *"ningún workLid se
+  declara dos veces"* lo prohíbe, y no hace falta — `workLidForCloser` busca por email y devuelve
+  null, así que el destino lo fija el `contact_jid` del opt-in, que ya es su hilo de trabajo.
+- **No se tocó la DB.** El opt-in está keyeado por TELÉFONO: la fila de Maru (26-ago,
+  `162173754060966@lid`, `paused=0`) sirve a sus dos identidades, así que empieza a recibir estos
+  pushes sin escribir de nuevo. La fila de Salazar tampoco se toca: sigue activo en abogados y
+  borrarla lo dejaría sin los pushes de su propio programa.
+
+**Por qué cambiar el roster ALCANZA, y por qué el momento importó.** El destino se resuelve contra
+el roster **vivo al entregar** (`resolveCloser(closerEmail)?.phone || to`, scheduler/calendly.js:587),
+no con el `closer_phone` congelado en la fila del push — esa línea existe justamente porque rotarle
+el número a alguien dejaba huérfano todo lo ya agendado (Daniela, 29-jul). Aun así se verificó
+contra la DB de producción antes de tocar: `equipo@ttrading.co` tenía **0 pushes `scheduled`** (48
+`sent`) y **0 citas futuras** en Calendly. Nada en vuelo que desviar.
+
+**⚠️ Lo que este cambio NO hace, a propósito: mandar el buzón a `IGNORED_CLOSERS`.** Es exactamente
+el error del 2026-07-29 (§18.AV). Cuando Salazar heredó este mismo buzón el 22-jul, se asumió que
+tendría cuenta personal y **en el mismo movimiento se retiró el correo**: 10 citas reales cayeron
+en el `continue` silencioso de `isIgnoredCloser`, una semana sin pushes y sin una sola alerta. El
+buzón sigue vivo y tomando citas; lo único que cambia es quién está detrás. **Rotar la persona de
+un buzón-rol = cambiar el TELÉFONO, nunca retirar el correo.**
+
+**Un detalle que hace esto invisible desde afuera:** la cuenta en Calendly se sigue llamando
+"Equipo JP Tactical Trading". La API no tiene forma de saber quién la atiende, así que **este
+roster es el único lugar del mundo donde ese dato existe**. Si nadie lo actualiza, los pushes de
+las calls de Maru le siguen llegando al WhatsApp de Salazar, con nombres y teléfonos de leads que
+ya no son suyos, y sin un solo error en el log.
+
+**Tests.** Maru pasa a ser el ejemplo vivo de *"una persona, dos identidades, una sola línea"* que
+antes encarnaba Salazar, así que los tests que fijaban ese caso se mudaron con él. El de
+`sheet-push` se reescribió a algo más fuerte que lo que probaba: sus dos calls generan **un Push 5
+cada una, con SU sheet**, por el **mismo hilo** — que es el bug de Andrea del 26-ago (§18.BO),
+ahora en la persona que ocupa ese lugar. Baseline: **1142 tests, 1140 verdes**, los mismos 2 rojos
+conocidos (`call con TODOS sus pushes skipped…` y `reagenda manual superseded…`).
+
+**Pendiente que salió de paso, NO tocado:** la identidad `retia` de **Sebastian Rodriguez**
+(`sebasrr321@gmail.com`) es cableado muerto — cuenta borrada de esa org, sin hostear desde el
+11-ago. Y la de **Dana** apunta a alguien que hoy no es miembro. Las dos siguen en el roster.
+
+
+### 18.BS 🔵 Patah sale sin aprobación: el auto-envío por fila (2026-09-02)
+
+**El pedido:** los borradores generados para Patah llevan tiempo saliendo bien. El equipo ya no
+quiere aprobarlos a mano uno por uno — que Juanito publique directo.
+
+**Lo que la auditoría cambió del plan.** "Publicar directo" suena a saltarse `scheduled_drafts`, y
+eso habría roto algo que no se ve: `listRecentPublishedDrafts` filtra por `status='published'` y es
+lo que alimenta el bloque *"no repitas los últimos 3"* del generador. Sin filas publicadas, Juanito
+empieza a reciclar el mismo mensaje. Así que el borrador **se sigue creando y sigue recorriendo
+`pending → approved → published`**; lo único que se quita es la mano humana en el medio.
+
+Segundo hallazgo: `APPROVALS_GROUP` no es de este flujo. Por ese mismo destino pasan las respuestas
+de grupo (§18.O) y las respuestas a DMs de desconocidos (§18.J). El cambio vive entero en
+`processGenerated`; `approval-routing.js` no se tocó.
+
+**Cómo quedó.** Un setting por fila, `auto_publish:<scheduled_id>`, calcado de
+`editorial_feedback:<id>`:
+
+- **Al generar** (DRAFT_LEAD_MIN antes de la hora): si el auto está ON, `approveDraft()` de
+  inmediato y **no** se manda nada a la consola de aprobaciones.
+- **A la hora:** publica por la ruta de siempre — grupo autorizado, cola anti-ban,
+  `markScheduledMessageSent` + `markDraftPublished`.
+- **Después de publicar:** copia a la consola (*"Publicado automáticamente"*). Bitácora, no
+  compuerta. Va en su propio `try`: una copia que falla no puede parecer un envío fallido, porque
+  el mensaje ya salió y la fila ya está marcada — reintentar sería doble publicación en un grupo de
+  300 personas.
+- **Se prende con `/programados auto <id> on`** (admin). Valida que la fila exista y sea
+  `generated`: prender auto sobre un `fixed` guardaría un setting que no gobierna nada. El listado
+  de `/programados` ahora muestra el estado de cada generado.
+
+**Por qué un setting y no una columna ni una env var.** Env var → cada toggle es un deploy con
+`alcance: todo`, que reconstruye la imagen y **reconecta Baileys** (riesgo de softban): el apagado
+de emergencia quedaba caro justo cuando más se necesita. Columna → migración para un flag que hoy
+gobierna dos filas. El setting da granularidad por fila sin migración y se apaga desde WhatsApp en
+segundos.
+
+**Efecto lateral que conviene saber:** el borrador se sigue generando con `DRAFT_LEAD_MIN` (60 min)
+de anticipación, así que esa hora es ahora una **ventana de veto** — `/aprobaciones rechazar <id>`
+lo mata antes de que salga. Se invirtió el default: antes *nadie aprueba → no sale*; ahora *nadie
+frena → sale*.
+
+**Tests:** +5 en `group-messages` (auto-aprueba sin avisar · publica y manda copia después · con
+auto en `off` sigue exigiendo aprobación · sin destino de aprobación igual publica · copia caída no
+duplica el envío) y +2 en `commands` (toggle + estado en la lista; rechaza id inexistente, fila
+fija y uso mal escrito). Baseline en Mac medida con `git stash`: **1139 → 1146 tests**, los mismos
+**102 rojos** de entorno antes y después.
+
+**Al prenderlo en producción apareció lo importante: el paso de aprobación estaba tapando un
+duplicado.** `/programados` devolvió DOS filas activas para el mismo grupo, el mismo día y la misma
+hora: **#5 y #8**, *"Patah Team Logística", miércoles 20:00*. Desde WhatsApp eran indistinguibles
+(el listado muestra `text`, que en un generado está vacío; lo que las diferencia es el `brief`, que
+no se muestra). Hubo que ir a la DB.
+
+El origen está en el log de creación: el **19-jun entre 00:05:03 y 00:10:33** se crearon CUATRO
+filas casi idénticas — #5, #6, #7 y #8 — por el mismo LID. Alguien iteraba la redacción del brief y
+**cada intento creó una fila nueva**, porque `schedule_group_message` solo sabe crear: no hay forma
+de EDITAR un programado. Apagaron #6 y #7 y se les quedó una de más.
+
+**Las dos venían generando borrador todos los miércoles, y el aprobador tapaba el duplicado sin
+saberlo:** veía dos borradores casi iguales y aprobaba uno. Pero no siempre. Los números al
+2026-09-02: #5 con **7 publicados** (último ese mismo día) y #8 con **6** (último el 26-ago) =
+**13 publicaciones en 11 miércoles disponibles** desde su creación. Al menos dos veces el grupo ya
+recibió el mensaje **dos veces la misma noche**. Ese mismo 2026-09-02 se vio en vivo: borrador #24
+(fila 5) publicado a las 20:00 y borrador #25 (fila 8) pendiente al lado.
+
+**La lección, que es más grande que este bug:** una compuerta humana no solo aprueba, también
+**absorbe en silencio los defectos de lo que hay detrás**. Al quitarla, lo absorbido sale a la
+superficie de golpe y todas las semanas. Antes de automatizar un paso que una persona venía
+haciendo a mano, hay que mirar qué más estaba haciendo esa persona sin que nadie lo escribiera.
+
+**Resuelto:** `/programados off 5` + `/programados auto 8 on`. Se conservó **#8** por el brief, que
+es la última iteración y la única que restringe el formato (*"Sin título, sin negrillas, sin
+formato tipo email"*) — justo lo que importa cuando ya nadie revisa antes de enviar. Estado
+verificado en la DB: `#5 active=0`, `#8 active=1`, `settings['auto_publish:8']='1'`.
+
+**Hallazgos laterales, ninguno tocado (todos anteriores a este cambio):**
+
+1. ~~**No se puede EDITAR un mensaje programado.**~~ **RESUELTO en §18.BT.** Era la causa raíz del
+   duplicado: iterar un brief creaba filas nuevas.
+2. ~~**Un comando dentro del grupo de aprobaciones contesta cualquier cosa.**~~ **RESUELTO en
+   §18.BT.** `/programados` escrito en el grupo caía en la consola LLM, que respondió una lista de
+   pendientes con toda la pinta de ser la salida del comando. Medido: `~$0.0241` y una respuesta
+   engañosa.
+3. ~~**`/programados` no muestra el `brief`.**~~ **RESUELTO en §18.BU.** El listado imprimía `""`
+   en todo generado y dos filas distintas se veían idénticas.
+4. ~~**`off` es de una sola vía desde WhatsApp.**~~ **RESUELTO en §18.BU.** Ahora hay
+   `/programados on <id>`, con la pared anti-duplicado que `create` no cubría.
+5. ~~**Dos numeraciones que se parecen y no son la misma.**~~ **RESUELTO en §18.BU** (etiquetado):
+   los mensajes que nombran un borrador dicen también de qué programado sale.
+6. **El deploy volvió a borrar los logs** (gotcha ya conocido, ver más abajo): recrear el contenedor
+   a las 20:21 dejó `docker logs` sin las líneas de generación de las 19:00 de ese mismo día.
+
+**Pendiente:** el borrador #25 quedó en `pending` (el `/aprobaciones rechazar 25` no se ejecutó).
+No se publica solo — la publicación exige `approved` y el recordatorio ya salió — pero sigue
+apareciendo como ofrecible en el DM del jefe, y un "sí" lo publicaría de inmediato, duplicando el
+mensaje de ese día. Descartarlo cierra el tema.
+
+
+### 18.BT 🔵 Se puede EDITAR un programado, y un comando en la consola ya no le habla al modelo (2026-09-02)
+
+Los dos primeros hallazgos de §18.BS, atacados de una. No son features nuevas: son los dos huecos
+por los que se coló el duplicado de 11 semanas.
+
+**1. `schedule_group_message` gana `action='update'`.** Hasta hoy la tool solo sabía `create`,
+`list` y `cancel`. Afinar el brief de un generado no tenía camino, así que cada iteración era una
+fila nueva: así nacieron #5, #6, #7 y #8 en cinco minutos. Ahora se le cambian días, hora, texto o
+brief sobre el id que ya existe. Dos guardas: **el brief solo se toca en un `generated` y el texto
+fijo solo en un `fixed`** (cruzarlos dejaría la fila con un campo que su propio `kind` nunca lee),
+y un update **nunca** crea.
+
+**El límite explícito, que se dice en la respuesta:** un `update` del brief aplica **desde la
+próxima redacción**. Si el borrador de hoy ya se generó, cambiarlo es `manage_drafts
+action=revise`, que además acumula la corrección como guía editorial. La división queda: *revise*
+arregla el mensaje de hoy, *update* cambia la instrucción permanente. Importa más ahora que antes,
+porque con auto-envío nadie va a ver el borrador viejo antes de que salga.
+
+**2. Guardia anti-duplicado en `create`.** Un `create` que caiga sobre el mismo grupo + días + hora
+que una fila activa se **frena** y devuelve el id existente sugiriendo modificarlo. Es la parte que
+no depende del criterio del modelo: la descripción de la tool ahora dice que afinar es `update`,
+pero eso es una instrucción y esto es una pared. Si alguien de verdad quiere dos mensajes distintos
+ese día, la salida es darle otra hora a uno.
+
+**3. Un comando en la consola de aprobaciones se contesta sin LLM.** `looksLikeCommand()` en
+`approval-intent.js` (puro) corta antes del modelo y responde *"los comandos son por DM"*. Anclado
+a `^/[letras]{2,}` para no confundir una fecha (`12/09`) ni una corrección con una barra en el
+medio. Va DESPUÉS del dedup por `messageId` y antes del `try` que llama a Claude.
+
+**Por qué no basta con "que el modelo aprenda":** el fallo del 2026-09-02 no fue que el modelo
+dijera una barbaridad, fue que dijo algo **plausible**. Contestó con los pendientes de verdad, en
+un formato que parecía la salida del comando. Una respuesta creíble y equivocada es peor que
+ninguna, y no se arregla pidiéndole al modelo que se dé cuenta.
+
+**Tests:** +5 en `brain.tools` (create frenado por duplicado · update de brief sin crear fila ·
+días+hora normalizados juntos · no cruza brief con texto fijo ni al revés · id inexistente y update
+vacío no tocan la DB) y +2 en `approval-intent` (reconoce comandos, no se traga texto con barras).
+Baseline en Mac con `git stash`: **1146 → 1153**, los mismos **102 rojos** de entorno.
+
+**Lo que NO se tocó:** los hallazgos 3 a 6 de §18.BS (el listado no muestra el brief, `off` es de
+una sola vía, draft id vs scheduled_id, el deploy borra los logs). Se llamaron "fricción, no
+riesgo"; **§18.BU corrige ese juicio para el 3 y el 4** — con auto-envío prendido son la superficie
+ciega de un camino que publica solo. El 6 sigue en pie y ahí sí la etiqueta se sostiene.
+
+
+### 18.BU 🔵 El listado dice QUÉ va a publicar, y `off` tiene vuelta (2026-09-02)
+
+Los hallazgos 3, 4 y 5 de §18.BS. §18.BT los había clasificado como *"fricción, no riesgo"* y esa
+lectura era de antes del auto-envío: **quitar la compuerta humana convirtió a `/programados` en la
+única superficie donde se ve qué va a publicar Juanito sin que nadie lo revise**, y ahí imprimía
+`""`. Una vista ciega sobre un camino que publica solo no es fricción.
+
+**1. El listado muestra el brief (hallazgo 3).** En un `generated` el `text` está vacío hasta que
+el scheduler redacta el borrador del día: lo que distingue una fila de otra es el `brief`. Se
+imprime truncado a 100, y `(sin brief)` cuando no hay. Los `fixed` siguen mostrando su texto.
+
+**El mismo bug estaba en `action=list` de la tool, y ahí era peor.** Esa lista no la lee un humano:
+la lee **el modelo**, y es sobre ella que decide si un pedido es `update` de una fila existente o un
+`create` nuevo. Con todos los generados como `""` el modelo no podía distinguirlos — o sea que la
+instrucción de §18.BT (*"afinar es update, nunca create"*) le pedía una decisión con los datos
+tapados. Ahora cada fila dice `[generado] brief: "…"`.
+
+**2. `/programados on <id>` (hallazgo 4).** `cancelScheduledMessage` solo hace `active = 0` y no
+había vuelta desde WhatsApp. La nota original decía *"recuperar exige entrar a la DB"*, y eso
+subestima el problema: **la salida obvia sin DB, volver a crear la fila, NO es equivalente.** El
+`auto_publish:<id>` está keyeado al id viejo y, sobre todo, se pierde el historial de
+`scheduled_drafts` que alimenta `listRecentPublishedDrafts` → el bloque *"no repitas los últimos
+3"*. Recrear la fila hace que Juanito **empiece a reciclar el mismo mensaje**, que es exactamente
+el fallo que §18.BS diseñó el flujo para evitar. Recuperar de verdad exigía SSH.
+
+**La pared que faltaba:** el guardia anti-duplicado de §18.BT vive en `create` y filtra `active=1`,
+así que **no cubre la reactivación**. Prender una fila apagada sobre un grupo+días+hora que ya
+tiene otra activa reconstruye el duplicado de 11 semanas, entero. `on` corre
+`findScheduledDuplicate` antes de tocar nada y se frena nombrando la fila que estorba.
+
+Y como un id apagado no aparecía en ningún lado, `on` sin más habría sido inútil: el listado ahora
+cierra con un bloque compacto **💤 Apagados** (id, grupo, días/hora, brief cortado a 60).
+
+**3. Los dos números se nombran juntos (hallazgo 5).** El DM del borrador, el recordatorio de
+pendiente y la copia del auto-envío dicen ahora *"Borrador #25 … del programado #8"*, y la copia
+agrega el comando exacto para frenarlo (`/programados auto 8 off`), que es lo que uno quiere tener
+a mano justo cuando lee que algo salió solo. **Restricción al tocar esos strings:**
+`parseApprovalTarget` resuelve un reply citado con el **primer** `borrador #N` del texto, así que
+el id del borrador tiene que seguir yendo primero — hay un test que lo fija.
+
+*El daño real que evita es chico y conviene decirlo:* `/programados auto <draftId>` ya lo atajaba
+la validación de §18.BS, y `/aprobaciones rechazar <scheduledId>` cae en un borrador viejísimo (los
+draft ids ya van en 25) que casi seguro está `published` → responde *"no se puede descartar"*. Es
+etiquetado, no una pared. Entró porque cuesta tres strings.
+
+**Hallazgo 6 (el deploy borra `docker logs`): NO se tocó, a propósito.** El arreglo barato es
+incorrecto y el correcto es caro:
+
+- `logging: max-size/max-file` en el compose **no sirve acá**: rota por tamaño, no sobrevive al
+  recreate del contenedor. Daría sensación de arreglo sin arreglar nada.
+- Redirigir a archivo desde `entrypoint.sh` toca **el** archivo del softban y **rompe el backoff en
+  silencio**: `run()` devuelve el `$?` de `node`, y meter un pipe a `tee` hace que devuelva el de
+  `tee` (siempre 0) → todo crash se leería como *"salida limpia, sin reintentos automáticos"* y el
+  bot dejaría de reiniciarse. Y es **busybox**: no hay `PIPESTATUS`.
+- La forma correcta es un logger a archivo **a nivel de app** (`src/index.js`, nunca el entrypoint)
+  sobre el volumen `agent-data`, que sí sobrevive al recreate. Pero sin rotación crece sin límite en
+  un droplet chico → llena el disco → falla SQLite → muere el bot. Hacerlo bien es un subsistema con
+  rotación, para un beneficio que es forense retrospectivo.
+
+Queda anotado como el gotcha que ya era: **antes de un deploy, guardar los logs que importen**
+(`docker logs juanito-agent > /root/logs-$(date +%F).txt`).
+
+**Tests:** +5 en `commands` (el brief se ve · `(sin brief)` · `on` reactiva y el apagado es
+descubrible · `on` rechaza id inexistente/ya activa/mal escrito · `on` frenado por choque), +2 en
+`brain.tools` (list describe el generado por su brief; el fijo sigue con su texto) y +1 en
+`group-messages` (el DM nombra los dos ids y el reply citado sigue resolviendo al borrador).
+Baseline medida en Docker/Linux, que es la real: **1156 → 1164, los mismos 2 rojos conocidos**
+(`call con TODOS sus pushes skipped…` y `reagenda manual superseded…`).
+
+**La lección que deja, y es la de §18.BS otra vez:** los seis hallazgos se clasificaron en el mismo
+rato en que se quitó la compuerta, y la etiqueta *"fricción"* se le puso a dos cosas que **acababan
+de cambiar de rol** — eran fricción mientras un humano miraba cada mensaje antes de salir, y pasaron
+a ser el único control cuando dejó de mirarlo. Al automatizar un paso no solo hay que preguntar qué
+más hacía esa persona (§18.BS): también **qué herramientas eran cómodas y ahora son críticas**.
+
+
+### 18.BV 🔵 El espejo se mueve desde el DM, y Tactical Investor queda bajo la lupa (2026-09-02)
+
+El espejo de dev (§18.BM) hizo su trabajo en **ComunicArte**: Dani lo verificó y ya no lo necesita
+ahí. El siguiente en la fila es **De Cero a Tactical Investor**, para confirmar que los pushes le
+llegan a **Maru Marquez**, que heredó ese buzón-rol ayer mismo (§18.BR) — o sea que el alcance del
+espejo cambió dos veces en una semana.
+
+**El problema no era el espejo: era cómo se mueve.** El alcance vivía SOLO en
+`CALENDLY_DEV_MIRROR_CONNECTIONS`, así que sacar una agencia y meter otra costaba editar el `.env`
+del VPS y **reiniciar el bot, o sea reconectar Baileys** — la operación más cara y más riesgosa de
+este sistema (§ historia del softban). Pagar una reconexión para decir *"ya no me copies
+ComunicArte"* es exactamente el precio que hace que uno lo deje prendido y termine ignorando el
+espejo. Es el mismo razonamiento por el que el botón de pánico de `/calendly` vive en `settings` y
+no en el entorno.
+
+**`/espejo` (admin).** `on <conexión>` / `off <conexión>` / `off` (todo) / sin args (estado). El
+alcance queda en `settings.calendly_mirror_connections` y **pisa al `.env`**; el estado dice cuál de
+los dos manda hoy, porque una vez usado el comando editar el `.env` no hace nada y eso confunde a
+quien venga después.
+
+- **`null` ≠ `''`, y no es purismo:** `null` = nadie usó el comando → manda el `.env` (el
+  comportamiento previo queda intacto); `''` = **apagado por comando**. Leerlo con `||` en vez de
+  `??` haría que `/espejo off` no apagara nada y el dev siguiera recibiendo copias de la agencia que
+  ya verificó. Hay un test por cada lado.
+- **Acepta el nombre del PROGRAMA** (`/espejo on tactical`), porque el espejo se piensa por programa
+  aunque filtre por conexión — pero **avisa** que va a copiar la conexión entera con todos sus
+  programas. Hoy `retia` solo lleva Tactical Investor, así que coinciden; el día que no coincidan,
+  el mensaje ya lo decía.
+- **El DESTINO sigue siendo env-only, a propósito.** El alcance decide *de quiénes* se copian los
+  mensajes; el JID decide *a quién le llegan*. Un comando de DM que redirige copias de datos de
+  clientes (nombres, teléfonos, links wa.me) a un número arbitrario es otra clase de riesgo:
+  mover eso tiene que costar entrar al servidor.
+- El parseo del CSV quedó en `src/calendly/mirror.js`, puro y de 5 líneas, porque ahora lo leen dos
+  lugares que no se pueden importar entre sí (el scheduler y `commands.js`, que evita deps nativas
+  para ser testeable en Windows). Duplicarlo era sembrar la deriva de siempre.
+
+**Los pushes de Tactical SÍ le están llegando a Maru — verificado contra la DB de producción, no
+contra el código.** El 2026-09-02, con `equipo@ttrading.co`: Sergio Morales (Push 0, 3 y 5) y Josue
+florez (Push 3 y 5), todos `sent`, con sus `sent_at`. Su identidad de ComunicArte
+(`soymarumarquez@gmail.com`) sigue enviando en paralelo. O sea que el traspaso del buzón-rol de
+§18.BR funcionó de punta a punta: **una sola línea de WhatsApp, un solo opt-in, dos conexiones**.
+
+**Y de paso se arregló el nombre que hacía leer mal todo esto (corrección del jefe, 2026-09-02).**
+El label de la conexión `retia` decía **`'Retia'`** a secas, o sea el nombre de la EMPRESA, cuando
+lo que nombra es el Calendly de UN programa suyo. Con eso, el estado de `/espejo` listaba
+*"Retia (retia)"* junto a *"Retia · ComunicArte (comunicarte)"* — que se lee como si ComunicArte
+fuera un cliente aparte, cuando **son los dos programas de la misma agencia**.
+
+**La regla, escrita donde se busca: una EMPRESA no tiene Calendly; lo tienen sus PROGRAMAS.**
+Retia maneja "De Cero a Tactical Investor" y "Método Comunicarte", cada uno con su cuenta ⇒ dos
+conexiones. 30X maneja seis programas que sí comparten una. Ninguna key de conexión nombra una
+empresa aunque `retia` y `30x` lo parezcan.
+
+- **Las keys NO se tocaron, a propósito.** `retia` es la clave del roster (`connection:'retia'` en
+  cada identidad), de los opt-ins, de las filas ya guardadas y del NOMBRE de sus env
+  (`CALENDLY_TOKEN_RETIA`, `CALENDLY_DRY_RUN_RETIA`). Renombrarlas es una migración con un modo de
+  falla feo y silencioso: una env que no se renombra en el VPS **auto-desactiva la conexión** y el
+  programa se queda mudo sin un error (es literalmente §18.BM, el mes de EstadoX). El pedido era de
+  convención de nombres, no de refactor.
+- **Los labels sí dicen la verdad**, en formato `empresa · programa`: `Retia · Tactical Investor`
+  (nuevo) y `Retia · ComunicArte` (ya estaba). Es puro display — `/calendly`, `/espejo`, el
+  encabezado del espejo y el dashboard —, cero lógica.
+- Escrito en los cuatro lugares donde alguien lo va a buscar: el glosario
+  (`docs/agents/context.md`, entradas Company y Connection), el ADR 0001, el `CLAUDE.md` del repo
+  y el manual (con una tabla `key → qué es de verdad → empresa`). Más el barrido de comentarios
+  que trataban a "Retia" como si fuera la cuenta (`sheet-push`, `hubspot/meetings`,
+  `hubspot/agenda-poll`, `calendly/index`, `scheduler/calendly`, `daily-reports`, el roster de
+  `closers.js`).
+- De paso salió un error real que el nombre viejo tapaba: el manual decía que el recordatorio de
+  Sheets lo tiene *"únicamente Retia"*. Desde §18.BN son **las dos** conexiones de Retia, cada una
+  con su sheet.
+
+**Tests:** +9 en `commands.espejo` (deflexión a no-admin · hereda el `.env` · saca una y deja el
+resto · `off` a secas apaga todo y el `.env` deja de mandar · programa → conexión con aviso ·
+argumento inválido no escribe nada · `off` de algo que no estaba no borra lo demás · `on` idempotente
+· sin JID avisa que el espejo no existe) y +2 en `calendly.dev-mirror` (el comando pisa al `.env` ·
+`''` apaga aunque el `.env` liste la conexión), +3 en `commands.espejo` por la convención de
+nombres (el estado nombra la empresa de cada conexión y avisa que Retia tiene dos · la conexión
+`retia` no se rotula como la empresa entera · pedir un programa por su nombre dice de qué empresa
+es). Baseline en Docker/Linux: **1164 → 1178, los mismos 2 rojos conocidos** (`call con TODOS sus
+pushes skipped…` y `reagenda manual superseded…`).
+
+**Un bug propio, en el helper de tests, que vale anotar porque se repite:** `withEnv` hacía
+`try { return fn(); } finally { restaurar() }` con un `fn` **async**. El `finally` corre apenas
+`fn` llega a su primer `await`, así que el entorno se restauraba a mitad del test y la segunda
+llamada de un mismo caso medía otra cosa (síntoma: un *"SIN destino"* fantasma). Con `async` +
+`return await fn()` queda bien. Los tests pasaban igual por casualidad: `handleCommand` resuelve
+el camino de `/espejo` sin ningún `await`, así que la primera llamada alcanzaba a leer el entorno
+antes de que lo borraran.
+
+**Pendiente de operación:** el comando entra con el próximo deploy `alcance: todo` (reconstruye la
+imagen y reconecta Baileys). Hasta entonces el alcance sigue siendo el del `.env`
+(`comunicarte,retia`). Apenas esté arriba: `/espejo off comunicarte` deja solo Tactical Investor,
+sin tocar el VPS. Si se prefiere no esperar, la alternativa es editar el `.env` y reiniciar — misma
+reconexión, así que conviene aprovechar el mismo deploy.
+
+
 ### 🟢 Baja prioridad / Nice-to-have
 
 - **Generar documento y mandarlo a un TERCERO** (hoy `generate_document` solo se lo manda al jefe):
@@ -6103,6 +6505,139 @@ hubo que restaurar la versión pre-arreglo entera para que los tests se pusieran
   `docker compose logs` empezando en el arranque nuevo. El 2026-07-28 eso invalidó una medición
   ("0 nudges en 14 días" cuando solo había 208 líneas de log). **Para medir histórico, ir a la DB,
   no a los logs** — y si hace falta el log viejo, sacarlo ANTES de desplegar.
+
+### 18.BW 🔴 Un lead y su closer en dos meets distintos: la guardia de reagenda solo corría en 30X (2026-09-04)
+
+**Lo que reportó Michael.** Andre (Andrea Machado, `registro@ttrading.co`, Tactical Investor)
+tenía una call. El lead la reagendó para más tarde. Juanito mandó el push de la hora ORIGINAL,
+Andre se lo reenvió, y el lead entró a ese meet mientras Andre entraba por el link nuevo de su
+calendario. Dos meets, misma hora.
+
+**Reproducido en la DB de producción**, no es una hipótesis:
+
+| | cita | uuid | estado real en Calendly |
+|---|---|---|---|
+| original | 2026-09-04 10:30 a. m. Bogotá | `5dfbeed1…` | **cancelada** el 09-03 15:41 UTC por el propio lead ("Tengo una cita medica a las 10 am") |
+| reagendada | 2026-09-04 12:00 p. m. Bogotá | `9164800c…` | activa, con **otro** `join_url` |
+
+La fila `#4005` se entregó a las 10:05 a. m. con el link muerto adentro. **La cita llevaba 19
+horas cancelada.**
+
+#### La causa: `getEvent` sin token
+
+La guardia existía y es correcta (`scheduler/calendly.js`, revalidación antes de entregar: si
+`status !== 'active'`, se salta). El problema era cómo pedía el evento:
+
+```js
+ev = await d.getEvent(uri);   // ← sin token
+```
+
+`request()` hace `const bearer = token || TOKEN()`, y `TOKEN()` es `CALENDLY_TOKEN`, **el de
+30X**. Hay CUATRO conexiones (`30x`, `estadox`, `retia`, `comunicarte`), cada una con su token y
+su organización. Pedirle a Calendly un evento de Retia con el token de 30X devuelve, verificado
+en vivo contra el evento del incidente:
+
+```
+HTTP 403 {"title":"Permission Denied","message":"You are not allowed to view this event"}
+```
+
+`request()` tira, el `try` se lo traga, `ev` queda `null`, y el `if (ev)` de abajo **no corre**:
+ni la guardia de cancelación, ni la de reagenda, ni la reconstrucción del mensaje (§11.10). El
+push sale con el texto congelado. **La guardia solo funcionaba para 30X.**
+
+Lo delator, medido a 90 días: 30X acumula 49 skips por `cancelada`/`rescheduled`; Retia,
+ComunicArte y EstadoX tienen **cero, sobre 279 pushes**. Verificado cita por cita contra la API,
+últimos 30 días en esas tres conexiones: **152 Push 3 entregados · 24 de citas hoy canceladas ·
+14 ya canceladas en el momento exacto de entregarse.** Lo de Andre no fue el primero, fue el que
+alguien vio.
+
+#### El segundo hallazgo: la call fantasma se veía TRES veces
+
+Push 1 y Push 2 no se agendan, se **calculan** en cada cron con `getScheduledCallsInWindow`, que
+toma `status IN ('scheduled','sent')`. La fila de la cita muerta se quedaba `scheduled`, así que
+seguía viva en los tres lugares que leen esa tabla. Reconstruido sobre el incidente (Push 1 a
+las 19:00, Push 2 a las 06:30, `TZ=America/Bogota`):
+
+| hora Bogotá | qué pasó |
+|---|---|
+| 09-03 10:41 a. m. | el lead cancela y reagenda |
+| 09-03 **7:00 p. m.** | Push 1 lista la call muerta |
+| 09-04 **6:30 a. m.** | Push 2 lista la call muerta |
+| 09-04 **10:05 a. m.** | Push 3 la manda, con el link muerto |
+
+Y un caso mixto que sobrevivía incluso en 30X: bastaba que **cualquier** otro push de la cita
+quedara `sent` (típicamente el Push 4, a veces el Push 0) para que la call reviviera en esa
+query aunque su Push 3 estuviera `skipped`. Medido: **48 citas muertas en 90 días** seguían
+contándose en los digests y en la agenda del jefe.
+
+#### Qué se hizo
+
+1. **`tokenForCloser(closerEmail)`** — misma regla que `dryRunForCloser`, por la misma razón (el
+   closer siempre se conoce). Se pasa en los tres `getEvent` de la entrega (Push 4, Push 5,
+   Push 3/0) y en el `getFirstInvitee` del nudge de HubSpot. Sin token configurado devuelve
+   `undefined` → cae al de 30X, o sea el comportamiento de hoy: **no hay regresión posible.**
+   Sin flag: un flag sobre un bug fix deja el bug alcanzable.
+2. **Detección por `old_invitee`** — reagendar en Calendly cancela la cita vieja y acuña una
+   nueva con otro uuid, así que la rama "mismo uuid, otra hora" de `decidePushAction` nunca veía
+   una reagenda real. El único hilo entre las dos lo trae el invitee del evento nuevo, y el poll
+   **ya lo pide** para el nombre y el teléfono: `oldEventUuidFrom()` (puro) lo extrae sin una
+   sola llamada extra a la API. Con el uuid viejo, `supersedeRescheduledCalendly()` mata sus
+   filas `scheduled` en el acto, sin esperar a que venza el push.
+3. **`getScheduledCallsInWindow` excluye la call cuyo Push 3 se rindió** (`cancelada` /
+   `reagendada` / `rescheduled`). El Push 3 es la señal canónica de "esta call va". Cierra el
+   caso mixto de las 48.
+4. **Aviso de reagenda al closer** (`push_n=6`, `due=ahora`). Sale SIEMPRE que se detecta una
+   reagenda, en dos formas: **informativa** (el Push 3 viejo no había salido: "se movió, tu push
+   con el link nuevo te llega antes de la llamada, no tienes que hacer nada") y **correctiva**
+   (ya había salido, o sea que el lead tiene un link muerto: va el `wa.me` listo con el nuevo).
+   Es una fila más, no un envío directo, así que hereda TODOS los gates anti-ban y el
+   `UNIQUE(event_uuid, push_n)` garantiza un aviso por reagenda aunque el poll vea la cita cada
+   5 minutos. Sin `join_url` no se inventa nada: le dice al closer que lo mande a mano.
+5. **Se suprime el Push 0 sobre una reagenda.** Era la nuance que §18.C dejó anotada: Calendly
+   acuña un evento nuevo con `created_at` nuevo y el Push 0 lo leía como reserva nueva, avisando
+   "te acaban de reservar un espacio". No fue una reserva, fue una mudanza.
+
+**Lo que NO se tocó, a propósito:** la ruta dictada (`reschedule-logic.js`, el closer contesta
+"3 · Reagendó" en el Push 4) sigue mandando al lead *"nos conectamos por el link que ya te
+compartí"*. Decisión de Mani: si la reagenda fue por fuera de Calendly, el link es tema del
+closer con el lead. Vivo para `sebastian@30x.com`, el único con Push 4 prendido. **Riesgo
+conocido y aceptado.**
+
+**El copy al lead de la reagenda NO pasa por el portón de `PROGRAM_PITCH`**, y esa es una regla
+de diseño, no un detalle: avisar que la call se movió no vende nada, informa un cambio. Una call
+cuyo programa no se pudo identificar (fila con `program` NULL) es justo la que MÁS necesita el
+aviso, no la que menos.
+
+**Archivos:** `scheduler/calendly.js` (token, detección, aviso, supresión del Push 0),
+`calendly/push-logic.js` (`oldEventUuidFrom`, `decideRescheduleNotice` — puros),
+`calendly/index.js` (`buildRescheduleMessage`, `formatLeadWhen`, rama `reagenda` de
+`buildPrecallText`), `db/index.js` (`getPushesByEventUuid`, `supersedeRescheduledCalendly`, el
+`NOT EXISTS` de la ventana), `test/helpers/calendly-harness.js` (el mock ahora exige el token de
+la cuenta dueña, y `makeEvent` acepta `oldEventUuid`).
+
+**Tests: +23.** `calendly.reagenda-calendly.test.js` (18) y `data.reagenda-calendly.test.js` (5).
+Dos se **derivan de los registros** en vez de listas a mano, que es lo que impide que esto
+vuelva: el de la guardia itera las cuentas de `ACCOUNTS` con un closer sacado de `CLOSERS`, y el
+del copy itera `Object.keys(PROGRAMS)`. Una conexión o un programa nuevo mal cableado rompe el
+test el día que se agrega. Verificado que los cuatro de la guardia **fallan** al revertir el
+token, que es lo único que los hace valer. Baseline en Docker/Linux: **1178 → 1201, los mismos
+2 rojos conocidos.**
+
+**Ojo con el mock:** exige el token de la cuenta dueña también para `30x`. En producción 30X
+nunca estuvo roto, porque `request()` cae a `CALENDLY_TOKEN` y ese es justamente el suyo —
+funcionaba de casualidad. El test fija el invariante ("cada cita se revalida con el token de SU
+conexión"), no la casualidad.
+
+**Env:** `CALENDLY_RESCHEDULE_ALERT` (default **false**), registrada en `.env.example` **y** en
+`docker-compose.yml` antes de tocar el VPS (gotcha §12). Solo gatea el aviso (punto 4); matar el
+push muerto no depende de ella.
+
+**Pendiente de operación:** desplegar con `alcance: todo` (toca `src/`, reconstruye imagen y
+**reconecta Baileys** → ojo softban), con el flag apagado. A las 48h volver a medir **conexión
+por conexión**: tienen que aparecer skips `cancelada`/`reagendada` en Retia, ComunicArte y
+EstadoX, no solo en 30X. Si alguna sigue en cero con citas canceladas en su Calendly, esa
+conexión no quedó. Recién ahí `CALENDLY_RESCHEDULE_ALERT=true` y confirmar con Andre o Maru que
+el aviso llegó y se entiende.
 
 ### Secretos (decididos, ver §13)
 

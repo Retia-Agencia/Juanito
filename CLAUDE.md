@@ -42,6 +42,15 @@ Todo lo demás ───────┴─▶ src/whatsapp/send-queue.js (cola F
 
 Regla clave: **todo envío sale del proceso principal y pasa por la cola anti-ban**.
 
+Vocabulario clave (se confunde seguido): **una EMPRESA no tiene Calendly — lo tienen sus
+PROGRAMAS.** Retia es empresa y maneja dos programas ("De Cero a Tactical Investor" y "Método
+Comunicarte"), cada uno con su cuenta ⇒ **dos conexiones**; 30X es empresa y sus seis programas
+comparten una. Las keys de conexión no son nombres de empresa aunque lo parezcan: `retia` es el
+Calendly de Tactical Investor, por historia. Se conservan (son clave del roster, los opt-ins, las
+filas guardadas y los nombres de sus env); los LABELS sí dicen la verdad, en formato
+`empresa · programa`. Detalle en [ADR 0001](docs/adr/0001-modelo-empresa-programa-closer.md) y el
+glosario [docs/agents/context.md](docs/agents/context.md).
+
 **Segundo contenedor: `juanito-dash`** (solo lectura). Lee el MISMO SQLite desde otro proceso e
 importa `src/db/index.js` y `src/calendly/*.js` en vez de reimplementarlos. Va aparte del bot por el
 crash domain, no por recursos. Para alertar por WhatsApp **no tiene socket**: inserta en la tabla
@@ -88,8 +97,9 @@ Hay tests que lo fijan en `test/roles.test.js`.
 
 ## Comandos (DM admin)
 
-`/confirmaciones [dm|grupo …] on|off` · `/calendly on|off [closer] [cuenta|todo]` · `/grupos` ·
-`/reporte(s)` · `/persona <grupo> | <texto>` · `/programados` · `/aprobaciones` · `/respuestas` ·
+`/confirmaciones [dm|grupo …] on|off` · `/calendly on|off [closer] [cuenta|todo]` ·
+`/espejo [on|off <conexión>]` · `/grupos` ·
+`/reporte(s)` · `/persona <grupo> | <texto>` · `/programados [off|on <id>] [auto <id> on|off]` · `/aprobaciones` · `/respuestas` ·
 `/status` · `/whoami` · `/id` — manual completo en [docs/MANUAL-DE-USO.md](docs/MANUAL-DE-USO.md).
 
 **Del closer** (§18.AZ): `/missetteos [días]` · `/nuevosetteo <texto>`. Ojo: `/setteo` ya era
@@ -152,7 +162,7 @@ loop rápido de reconexiones desde datacenter → WhatsApp lo detectó.
   `dashboard/server/csrf.js`. Sin él, ese archivo da ERR_MODULE_NOT_FOUND y parece una regresión.)
   (En Git Bash, prefijar con `MSYS_NO_PATHCONV=1` y usar rutas `C:/…` o el volumen no monta y
   la suite reporta **0 tests** en verde, que es peor que fallar.)
-  Baseline al **2026-08-28: 1141 tests, 1139 verdes, 2 rojos conocidos** (`call con TODOS sus
+  Baseline al **2026-09-04: 1201 tests, 1199 verdes, 2 rojos conocidos** (`call con TODOS sus
   pushes skipped…` y `reagenda manual superseded…`; los números de test se corren al agregar
   archivos, así que se buscan por nombre, no por índice). El tercer rojo histórico —links de
   Retia— murió solo al mudarse el sheet de Comunicarte (§18.BN). En Windows ese mismo commit da

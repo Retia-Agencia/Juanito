@@ -876,9 +876,22 @@ export function getScheduledCallsInWindow(fromUtc, toUtc) {
              MAX(prospect_name)  AS prospect_name,
              MAX(prospect_phone) AS prospect_phone,
              MIN(call_start)     AS call_start
-      FROM calendly_pushes
+      FROM calendly_pushes p
       WHERE call_start >= ? AND call_start < ?
         AND status IN ('scheduled', 'sent')
+        -- La call no ocurrió: su Push 3 murió porque la cita se canceló o se movió. Sin esto
+        -- alcanzaba con que CUALQUIER otro push de la misma cita siguiera 'sent' para que la
+        -- call reviviera acá — y eso alimenta la agenda de las 7am y los digests Push 1/2, o
+        -- sea que el closer veía en su lista una llamada que ya no existe. Medido sobre la DB
+        -- de producción: 48 citas muertas en 90 días seguían contándose, casi todas por su
+        -- Push 4 ya enviado, y las de Push 0 enviado además salían en el digest siguiente.
+        -- El Push 3 es la señal canónica de "esta call va": si él se rindió, la call no va.
+        AND NOT EXISTS (
+          SELECT 1 FROM calendly_pushes m
+           WHERE m.event_uuid = p.event_uuid
+             AND m.push_n = 3
+             AND m.skip_reason IN ('cancelada', 'reagendada', 'rescheduled')
+        )
       GROUP BY event_uuid
       ORDER BY call_start
     `)
@@ -938,6 +951,45 @@ export function supersedeManualPushes(manualUuid, realUuid) {
     realUuid,
     manualUuid
   );
+  return info.changes;
+}
+
+// ─── Reagenda hecha EN Calendly (§18.BW) ──────────────────────────────────────
+// Todas las filas de una cita, en cualquier estado. La necesita el poll para saber si el
+// Push 3 de la cita vieja ya salió: si salió, el lead tiene un link muerto en la mano y el
+// aviso al closer tiene que traerle el nuevo.
+export function getPushesByEventUuid(eventUuid) {
+  return db
+    .prepare(
+      `SELECT id, event_uuid, push_n, status, skip_reason, call_start, sent_at,
+              closer_email, prospect_name, prospect_phone, program, message
+         FROM calendly_pushes
+        WHERE event_uuid = ?
+        ORDER BY push_n`
+    )
+    .all(eventUuid);
+}
+
+// El gemelo de `supersedeManualPushes` para el caso que faltaba: la reagenda hecha DENTRO de
+// Calendly, que cancela la cita vieja y acuña una nueva con otro uuid. Sin esto la fila vieja
+// se queda 'scheduled' y sigue viva en los TRES lugares que leen esta tabla: el Push 3 la
+// entrega, y `getScheduledCallsInWindow` la sigue listando en el Push 1 y en el Push 2. Medido
+// sobre el incidente: el closer vio la call fantasma tres veces.
+//
+// Solo toca 'scheduled', igual que sus hermanos: una fila ya 'sent' se deja como está, porque
+// reescribir su estado no desmanda el mensaje y perdería el rastro de que salió. Justamente
+// por eso el caller mira ANTES si el Push 3 ya se envió: eso ya no se arregla en la DB, se
+// arregla mandando el aviso correctivo.
+export function supersedeRescheduledCalendly(oldUuid, newUuid) {
+  const info = db
+    .prepare(`
+      UPDATE calendly_pushes
+      SET status = 'skipped',
+          skip_reason = 'reagendada',
+          message = COALESCE(message, '') || ' | skip: reagendada en Calendly → ' || ?
+      WHERE event_uuid = ? AND status = 'scheduled'
+    `)
+    .run(newUuid, oldUuid);
   return info.changes;
 }
 
@@ -1190,6 +1242,31 @@ export function listCloserPauses() {
     .map((r) => r.key.slice('calendly_pause:'.length));
 }
 
+// ─── Espejo de dev: ALCANCE en caliente (§18.BV) ──────────────────────────────
+// Qué CONEXIONES se copian al JID de dev. Antes vivía solo en
+// `CALENDLY_DEV_MIRROR_CONNECTIONS`, o sea que mover el espejo de una agencia a otra costaba
+// un redeploy — y un redeploy reconecta Baileys, que es justo lo que no se hace a la ligera.
+// Con esto `/espejo on|off <conexión>` lo mueve al instante, igual que el botón de pánico.
+//
+// El DESTINO (el JID) NO se toca por comando y sigue siendo env-only, a propósito: el alcance
+// decide de quién se copian los mensajes, pero el JID decide A QUIÉN van a parar. Un comando de
+// DM que redirige copias de todos los pushes a un número arbitrario es un desvío de datos de
+// clientes a un chat; que eso exija tocar el `.env` del VPS es la barrera correcta.
+//
+// Tres estados, y la diferencia importa:
+//   null → nadie usó el comando todavía  → manda el `.env` (comportamiento previo intacto)
+//   ''   → apagado POR COMANDO           → no espeja nada, aunque el `.env` liste conexiones
+//   csv  → esas conexiones               → pisa al `.env`
+const MIRROR_CONNECTIONS_KEY = 'calendly_mirror_connections';
+
+export function getMirrorConnections() {
+  return getSetting(MIRROR_CONNECTIONS_KEY, null);
+}
+
+export function setMirrorConnections(csv) {
+  return setSetting(MIRROR_CONNECTIONS_KEY, csv == null ? '' : String(csv));
+}
+
 // ─── Grupos autorizados (default-deny anti-secuestro) ─────────────────────────
 // Juanito solo responde en grupos listados aquí. Se autorizan automáticamente
 // cuando un boss/admin lo agrega o es participante, o a mano con `/grupo on`.
@@ -1350,8 +1427,46 @@ export function listScheduledMessages({ activeOnly = true } = {}) {
     .all();
 }
 
+// Actualiza SOLO los campos presentes de un mensaje programado ACTIVO. Existe porque sin esto
+// afinar un brief obligaba a crear una fila nueva cada vez, y así nacieron los cuatro duplicados
+// del 19-jun que estuvieron 11 semanas mandando el mensaje por duplicado (§18.BS).
+export function updateScheduledMessage(id, { days, timeHm, text, brief } = {}) {
+  const sets = [];
+  const vals = [];
+  if (days !== undefined) { sets.push('days = ?'); vals.push(days); }
+  if (timeHm !== undefined) { sets.push('time_hm = ?'); vals.push(timeHm); }
+  if (text !== undefined) { sets.push('text = ?'); vals.push(text); }
+  if (brief !== undefined) { sets.push('brief = ?'); vals.push(brief); }
+  if (!sets.length) return 0;
+  vals.push(id);
+  return db
+    .prepare(`UPDATE scheduled_messages SET ${sets.join(', ')} WHERE id = ? AND active = 1`)
+    .run(...vals).changes;
+}
+
+// ¿Ya hay una fila ACTIVA para el mismo grupo, los mismos días y la misma hora? Alimenta el
+// guardia anti-duplicado del tool: dos filas así son indistinguibles desde WhatsApp y publican
+// las dos (§18.BS).
+export function findScheduledDuplicate({ groupId, days, timeHm }) {
+  return (
+    db
+      .prepare(`SELECT * FROM scheduled_messages WHERE active = 1 AND group_id = ? AND days = ? AND time_hm = ?`)
+      .get(groupId, days, timeHm) || null
+  );
+}
+
 export function cancelScheduledMessage(id) {
   return db.prepare(`UPDATE scheduled_messages SET active = 0 WHERE id = ? AND active = 1`).run(id).changes;
+}
+
+// La vuelta de `cancelScheduledMessage`. Existe porque apagar era de una sola vía desde WhatsApp:
+// la fila queda entera (brief incluido) pero no había forma de volver a prenderla sin entrar a la
+// DB del VPS. Y "volver a crearla" NO es equivalente: el `auto_publish:<id>` está keyeado al id
+// viejo y, sobre todo, se pierde el historial de `scheduled_drafts` que alimenta
+// `listRecentPublishedDrafts` → el bloque "no repitas los últimos 3". O sea que recrear la fila
+// hace que Juanito empiece a reciclar el mismo mensaje, justo el fallo que §18.BS evita.
+export function reactivateScheduledMessage(id) {
+  return db.prepare(`UPDATE scheduled_messages SET active = 1 WHERE id = ? AND active = 0`).run(id).changes;
 }
 
 export function markScheduledMessageSent(id, dateStr) {

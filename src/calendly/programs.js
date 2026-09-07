@@ -58,8 +58,15 @@ const COMUNICARTE_ET = 'https://api.calendly.com/event_types/098ad9d0-5268-4156-
 
 // ─── Empresas (marca de cara al lead) ─────────────────────────────────────────
 // Company es HOY solo un label (ver ADR 0001): ninguna lógica se bifurca por empresa. Sirve
-// para agrupar/rotular. Ojo: empresa ≠ conexión — la conexión 30x hostea programas de DOS
-// marcas (30X y EstadoX); Retia es una marca con su propia conexión.
+// para agrupar/rotular.
+//
+// ⚠️ EMPRESA ≠ CONEXIÓN, y la confusión va en las DOS direcciones:
+//   · la conexión `30x` hostea programas de DOS marcas (30X y EstadoX);
+//   · la empresa Retia tiene DOS conexiones, una por programa.
+// **Una empresa NO tiene Calendly: lo tienen sus programas.** No existe "el Calendly de Retia"
+// ni "el de 30X" — existe el Calendly de Tactical Investor, el de ComunicArte, el que 30X usa
+// para sus seis programas. La key `retia` de ACCOUNTS nombra el primero, por historia, no
+// porque sea de la empresa (ver el comentario en accounts.js).
 export const COMPANIES = {
   '30x': '30X',
   estadox: 'EstadoX',

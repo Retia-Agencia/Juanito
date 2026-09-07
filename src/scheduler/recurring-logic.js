@@ -160,3 +160,17 @@ export function isGeneratedPublishDue({ days, timeHm, lastSentDate, nowParts }) 
   if (lastSentDate === nowParts.date) return false;
   return toMinutes(nowParts.hm) >= toMinutes(timeHm);
 }
+
+// Clave del setting que marca un mensaje kind='generated' como AUTO-PUBLICABLE (§18.BS):
+// el borrador se aprueba solo al generarse y sale a la hora SIN visto bueno humano.
+// Es POR FILA a propósito (mismo patrón que `editorial_feedback:<id>`): el auto-envío se
+// prende únicamente donde ya se verificó la calidad del copy — hoy Patah — y no arrastra
+// a los demás generados que puedan existir mañana. Vive en `settings` y no en una columna
+// para que prenderlo/apagarlo sea un comando por WhatsApp y no un deploy (que reconecta
+// Baileys y arriesga softban).
+export const autoPublishKey = (scheduledId) => `auto_publish:${scheduledId}`;
+
+// ¿Está prendido el auto-envío para esta fila? `getSetting` es el lector inyectado.
+export function isAutoPublish(getSetting, scheduledId) {
+  return getSetting?.(autoPublishKey(scheduledId), '') === '1';
+}

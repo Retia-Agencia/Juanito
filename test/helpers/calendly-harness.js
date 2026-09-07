@@ -67,6 +67,9 @@ export function makeEvent({
   createdAtIso,
   nowMs = Date.now(),
   account,
+  // §18.BW: uuid de la cita que ESTA reemplaza. Reagendar en Calendly cancela la vieja y
+  // acuña una nueva; el único hilo entre las dos es `old_invitee` en el invitee.
+  oldEventUuid,
 }) {
   const id = uuid || `evt-${Math.random().toString(36).slice(2, 10)}`;
   const start = startIso || new Date(nowMs + startInMin * 60000).toISOString();
@@ -86,7 +89,16 @@ export function makeEvent({
     __invitee:
       prospectName === null
         ? null
-        : { name: prospectName, text_reminder_number: prospectPhone, email: prospectEmail },
+        : {
+            name: prospectName,
+            text_reminder_number: prospectPhone,
+            email: prospectEmail,
+            ...(oldEventUuid
+              ? {
+                  old_invitee: `${API_BASE}/scheduled_events/${oldEventUuid}/invitees/${'0'.repeat(8)}-0000-0000-0000-${'0'.repeat(12)}`,
+                }
+              : {}),
+          },
   };
 }
 
@@ -118,19 +130,33 @@ export function makeApi(events, opts = {}) {
         .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))
         .map((e) => ({ ...e }));
     },
-    async getEvent(uri) {
+    // El token NO es decorativo (§18.BW): Calendly responde 403 a un evento de otra
+    // organización, y durante meses estas dos llamadas salieron sin token → caían al de 30X →
+    // 403 → el caller tragaba el error y entregaba el push igual, con el link de una cita
+    // cancelada. Acá se modela ese 403 para que un test lo pueda atrapar: un evento que
+    // declara `_account` SOLO se deja leer con el token de esa cuenta.
+    _assertToken(e, token) {
+      if (!e._account) return; // evento sin cuenta declarada: cualquier token (retro-compat)
+      const esperado = opts.tokensPorCuenta?.[e._account];
+      if (esperado && token !== esperado) {
+        throw new Error('Calendly 403: {"title":"Permission Denied"}');
+      }
+    },
+    async getEvent(uri, { token } = {}) {
       const uuid = uri.split('/').pop();
       const e = byUuid.get(uuid);
       if (!e) throw new Error(`Calendly 404: ${uuid}`);
+      this._assertToken(e, token);
       return { ...e };
     },
-    async getFirstInvitee(uri) {
+    async getFirstInvitee(uri, { token } = {}) {
       if (inviteeFailFirst > 0) {
         inviteeFailFirst -= 1;
         throw new Error('Calendly 500: fallo transitorio');
       }
       const uuid = uri.split('/').pop();
       const e = byUuid.get(uuid);
+      if (e) this._assertToken(e, token);
       return e?.__invitee ? { ...e.__invitee } : null;
     },
     // Helpers de escenario para mutar el calendario "en vivo":
@@ -469,6 +495,22 @@ export function makeStore({ optins = [], nowRef } = {}) {
       for (const o of outcomes) if (o.reschedule_uuid === manualUuid) o.reschedule_uuid = realUuid;
       return changes;
     },
+    // §18.BW — reagenda hecha EN Calendly.
+    getPushesByEventUuid(eventUuid) {
+      return rows.filter((r) => r.event_uuid === eventUuid).map((r) => ({ ...r }));
+    },
+    supersedeRescheduledCalendly(oldUuid, newUuid) {
+      let changes = 0;
+      for (const r of rows) {
+        if (r.event_uuid === oldUuid && r.status === 'scheduled') {
+          r.status = 'skipped';
+          r.skip_reason = 'reagendada';
+          r.message = `${r.message || ''} | skip: reagendada en Calendly → ${newUuid}`;
+          changes++;
+        }
+      }
+      return changes;
+    },
     setOutcomeResultado(id, resultado, raw = null) {
       const o = outcomes.find((x) => x.id === id);
       if (!o) return;
@@ -574,8 +616,9 @@ export function installHarness(
     // `accounts: [...]` para simular dos agencias (ver makeAccount).
     accounts: () => accounts || [accountOf(DEFAULT_ACCOUNT)],
     listProgramEvents: api.listProgramEvents,
-    getEvent: api.getEvent,
-    getFirstInvitee: api.getFirstInvitee,
+    // Bindeados: ambos usan `this._assertToken` para modelar el 403 entre cuentas.
+    getEvent: (...a) => api.getEvent(...a),
+    getFirstInvitee: (...a) => api.getFirstInvitee(...a),
     scheduleCalendlyPush: store.scheduleCalendlyPush,
     getDueCalendlyPushes: store.getDueCalendlyPushes,
     claimCalendlyPush: store.claimCalendlyPush,
@@ -605,6 +648,9 @@ export function installHarness(
     // §18.AC: reagendas.
     getPendingManualPushes: store.getPendingManualPushes,
     supersedeManualPushes: store.supersedeManualPushes,
+    // §18.BW: reagenda hecha en Calendly.
+    getPushesByEventUuid: store.getPushesByEventUuid,
+    supersedeRescheduledCalendly: store.supersedeRescheduledCalendly,
     getAwaitingDateOutcomes: store.getAwaitingDateOutcomes,
     markReschedulePrompted: store.markReschedulePrompted,
     expireAwaitingDateOutcomes: store.expireAwaitingDateOutcomes,

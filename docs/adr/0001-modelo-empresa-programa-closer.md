@@ -6,7 +6,7 @@ accepted (2026-07-21) — diseño grillado; ejecución pendiente. Implementa han
 
 ## Contexto
 
-Al entrar Retia (segunda agencia con su propio Calendly) quedó claro que el modelo
+Al entrar Retia (segunda agencia, con un Calendly propio POR PROGRAMA) quedó claro que el modelo
 "1 cuenta = 1 empresa" es falso: una **Connection** (token+org de Calendly) sirve N
 **Programs** (30x → 6) o 1 (retia), y una **Company** (marca) reparte sus programas en
 N conexiones. Sumar un programa hoy toca 5 lugares en 2 archivos sin nada que valide
@@ -58,7 +58,17 @@ live** — el copy de los tres pushes precall de cada programa debe quedar byte-
   es. La conexión dice de dónde salen las citas; la empresa, de quién es el negocio.
 - Retia pasa a ser el primer caso de **una empresa con N conexiones** (`retia` + `comunicarte`),
   la mitad del modelo que hasta ahora no tenía ejemplo vivo. 30X sigue siendo el caso inverso
-  (una conexión, N programas), y `comunicarte` es hoy el único programa con empresa ≠ conexión.
+  (una conexión, N programas).
+
+- **Convención de nombres (2026-09-02), porque las keys mienten.** Ninguna key de conexión nombra
+  una empresa, aunque `retia` y `30x` lo parezcan: `retia` es el Calendly del programa **De Cero a
+  Tactical Investor** (la key quedó de cuando era el único programa de Retia acá) y `30x` es el
+  Calendly que comparten seis programas de dos marcas. **Una empresa no tiene Calendly; sus
+  programas sí.** Las keys se conservan —son la clave del roster, de los opt-ins, de las filas ya
+  guardadas y de los nombres de sus env (`CALENDLY_TOKEN_RETIA`), así que renombrarlas es una
+  migración con riesgo de dejar un programa mudo—, pero **los labels dicen la verdad** en formato
+  `empresa · programa` (`Retia · Tactical Investor`, `Retia · ComunicArte`) y son lo que se ve en
+  `/calendly`, `/espejo` y el espejo de dev. Glosario: `docs/agents/context.md`.
 - **`resolveCloserByPushName` → `null` no es gratis** (ver la última consecuencia de arriba).
   Al ganar Andrea Machado su segunda identidad, su nombre pasó a tener dos teléfonos y dejó de
   poder AUTO-REGISTRARSE: le escribió a Juanito y no fue reconocida. El null sigue siendo lo

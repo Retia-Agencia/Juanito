@@ -6,8 +6,10 @@
 // sin las deps nativas (better-sqlite3). Las deps de /status se inyectan.
 // (recurring-logic es PURO — seguro de importar.)
 
-import { csvToDayLabels, zonedNowParts } from '../scheduler/recurring-logic.js';
-import { accountOf, DEFAULT_ACCOUNT } from '../calendly/accounts.js';
+import { csvToDayLabels, zonedNowParts, autoPublishKey, isAutoPublish } from '../scheduler/recurring-logic.js';
+import { accountOf, ACCOUNTS, DEFAULT_ACCOUNT } from '../calendly/accounts.js';
+import { PROGRAMS, COMPANIES } from '../calendly/programs.js';
+import { mirrorConnections } from '../calendly/mirror.js';
 // closerOf resuelve la identidad del closer desde su JID. Es un módulo PURO (roster + roles),
 // no arrastra deps nativas → este archivo se sigue pudiendo testear sin better-sqlite3.
 import { closerOf } from '../common/roles.js';
@@ -66,6 +68,13 @@ export async function handleCommand({ text, sender, role }, deps = {}) {
   if (cmd === '/calendly' || cmd.startsWith('/calendly ')) {
     if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
     return handleCalendly(text, deps);
+  }
+
+  // /espejo [on|off] [conexión] — alcance del espejo de dev (§18.BV). SOLO admins: decide de
+  // qué clientes se copian los pushes al DM del dev.
+  if (cmd === '/espejo' || cmd.startsWith('/espejo ')) {
+    if (role !== 'admin') return 'Ese comando es solo para el equipo técnico 🙂';
+    return handleEspejo(text, deps);
   }
 
   // /grupos [on|off] [n|nombre] — visibilidad y control remoto de los grupos de
@@ -569,35 +578,121 @@ async function handlePersona({ text, sender }, deps = {}) {
     : `"${target.name || target.id}" no tiene personalidad configurada (usa /persona <n|nombre> | <texto>).`;
 }
 
-// /programados            → lista los mensajes recurrentes activos
-// /programados off <id>   → cancela uno
+// /programados                    → lista los recurrentes activos (+ los apagados, compactos)
+// /programados off <id>           → apaga uno (active=0; la fila y su brief quedan)
+// /programados on <id>            → vuelve a prender uno apagado, si no choca con otro activo
+// /programados auto <id> on|off   → auto-envío de un generado: publica SIN aprobación (§18.BS)
 function handleProgramados(text, deps = {}) {
-  const { listScheduledMessages, cancelScheduledMessage } = deps;
-  const parts = (text || '').trim().split(/\s+/); // [ '/programados', action?, id? ]
+  const { listScheduledMessages, cancelScheduledMessage, reactivateScheduledMessage, getSetting, setSetting } = deps;
+  const parts = (text || '').trim().split(/\s+/); // [ '/programados', action?, id?, valor? ]
   const action = (parts[1] || 'list').toLowerCase();
+
+  const listar = (opts) => {
+    try {
+      return listScheduledMessages ? listScheduledMessages(opts) : [];
+    } catch {
+      return []; // DB puede no estar lista
+    }
+  };
+  const activas = () => listar();
+  const apagadas = () => listar({ activeOnly: false }).filter((r) => !r.active);
 
   if (action === 'off') {
     const id = Number(parts[2]);
     if (!Number.isInteger(id)) return 'Uso: /programados off <id>';
     const changes = cancelScheduledMessage ? cancelScheduledMessage(id) : 0;
     return changes
-      ? `Mensaje programado #${id} cancelado ✅`
+      ? `Mensaje programado #${id} cancelado ✅ — se puede volver a prender con /programados on ${id}.`
       : `No hay ningún mensaje programado activo con id ${id}.`;
   }
 
-  let rows = [];
-  try {
-    rows = listScheduledMessages ? listScheduledMessages() : [];
-  } catch {
-    /* DB puede no estar lista */
+  // La vuelta de `off`. Sin esto, apagar por error una fila obligaba a entrar a la DB del VPS:
+  // recrearla desde WhatsApp no sirve porque pierde el historial de borradores publicados que
+  // alimenta el "no repitas los últimos 3" (§18.BS).
+  if (action === 'on') {
+    const id = Number(parts[2]);
+    if (!Number.isInteger(id)) return 'Uso: /programados on <id>';
+    const row = apagadas().find((r) => r.id === id);
+    if (!row) return `No hay ningún mensaje programado apagado con id ${id}.`;
+    // Prenderla sobre un grupo+días+hora que YA tiene una fila activa reconstruye el duplicado
+    // de 11 semanas: las dos publicarían el mismo día a la misma hora. Es la misma pared que
+    // el guardia de `create` (§18.BT), que no cubre este camino porque solo mira las activas.
+    const choque = deps.findScheduledDuplicate?.({ groupId: row.group_id, days: row.days, timeHm: row.time_hm });
+    if (choque) {
+      return (
+        `No la prendo: el #${choque.id} ya está activo para el mismo grupo, los mismos días y la misma hora. ` +
+        `Dos filas así publican las DOS. Apaga el #${choque.id} primero, o dale otra hora a una.`
+      );
+    }
+    const changes = reactivateScheduledMessage ? reactivateScheduledMessage(id) : 0;
+    if (!changes) return `No pude reactivar el mensaje programado #${id}.`;
+    return (
+      `Mensaje programado #${id} reactivado ✅ → ${row.group_name || row.group_id} — ` +
+      `${csvToDayLabels(row.days)} a las ${row.time_hm}.` +
+      (row.kind === 'generated' && !isAutoPublish(getSetting, id)
+        ? ' Pide aprobación antes de publicar (/programados auto para cambiarlo).'
+        : '')
+    );
   }
-  if (!rows.length) return '📆 No hay mensajes programados activos.';
+
+  if (action === 'auto') {
+    const id = Number(parts[2]);
+    const val = (parts[3] || '').toLowerCase();
+    if (!Number.isInteger(id) || (val !== 'on' && val !== 'off')) return 'Uso: /programados auto <id> on|off';
+    // Se valida contra la fila real: prender auto en un id inexistente o en un 'fixed'
+    // guardaría un setting que no gobierna nada y parecería que quedó configurado.
+    const row = activas().find((r) => r.id === id);
+    if (!row) return `No hay ningún mensaje programado activo con id ${id}.`;
+    if (row.kind !== 'generated') {
+      return `El #${id} es de texto fijo: ya se publica solo, sin aprobación. El auto-envío solo aplica a los generados.`;
+    }
+    setSetting?.(autoPublishKey(id), val === 'on' ? '1' : '0');
+    const donde = row.group_name || row.group_id;
+    return val === 'on'
+      ? `Auto-envío ACTIVADO para #${id} → ${donde} 🤖\n` +
+          `Juanito publica sin pedir aprobación. El borrador se sigue generando antes de la hora, ` +
+          `así que se puede vetar con /aprobaciones rechazar <id>, y después de publicar llega copia a la consola.`
+      : `Auto-envío desactivado para #${id} → ${donde} — vuelve a pedir aprobación antes de publicar.`;
+  }
+
+  const rows = activas();
+  const off = apagadas();
+  // Los apagados se listan (compactos) porque si no, `on <id>` es inútil: el id de una fila
+  // apagada no aparece en ningún lado y había que ir a la DB para averiguarlo.
+  const bloqueApagados = off.length
+    ? ['', `💤 Apagados (${off.length}) — se prenden con /programados on <id>`].concat(
+        off.map(
+          (r) =>
+            `#${r.id} → ${r.group_name || r.group_id} — ${csvToDayLabels(r.days)} a las ${r.time_hm}: ` +
+            `${truncate(r.kind === 'generated' ? r.brief : r.text, 60) || '(vacío)'}`
+        )
+      )
+    : [];
+
+  if (!rows.length) {
+    return ['📆 No hay mensajes programados activos.'].concat(bloqueApagados).join('\n');
+  }
   const lines = [`📆 Mensajes programados (${rows.length})`, ''];
   for (const r of rows) {
     lines.push(`#${r.id} → ${r.group_name || r.group_id} — ${csvToDayLabels(r.days)} a las ${r.time_hm}`);
-    lines.push(`    "${truncate(r.text, 100)}"`);
+    // En un 'generated' el `text` está VACÍO hasta que el scheduler redacta el borrador del día:
+    // lo que distingue una fila de otra es el brief. Imprimir `text` mostraba "" en todas y fue
+    // exactamente lo que hizo indistinguibles a #5 y #8 durante 11 semanas — decidir cuál
+    // conservar obligó a bajar a la DB del VPS (§18.BS). Con auto-envío este listado es la única
+    // superficie donde se ve qué va a publicar Juanito sin que nadie lo revise.
+    if (r.kind === 'generated') {
+      lines.push(`    📋 ${truncate(r.brief, 100) || '(sin brief)'}`);
+      lines.push(
+        isAutoPublish(getSetting, r.id)
+          ? '    🤖 generado · auto-envío ON (publica sin aprobación)'
+          : '    📝 generado · pide aprobación antes de publicar'
+      );
+    } else {
+      lines.push(`    "${truncate(r.text, 100)}"`);
+    }
   }
-  lines.push('', 'Cancelar: /programados off <id>');
+  lines.push(...bloqueApagados);
+  lines.push('', 'Apagar: /programados off <id> · Prender: /programados on <id> · Auto-envío: /programados auto <id> on|off');
   return lines.join('\n');
 }
 
@@ -626,13 +721,14 @@ function buildHelp(role) {
       '• /persona <n|nombre> | <texto> — tono por grupo',
       '',
       'Programados:',
-      '• /programados [off <id>] — mensajes recurrentes',
+      '• /programados [off <id>] [on <id>] [auto <id> on|off] — mensajes recurrentes',
       '• /aprobaciones [ver|aprobar|rechazar <id>] — borradores generados',
       '',
       'Operación:',
       '• /tareas [ver|hecha|descartar <id>] — órdenes del jefe por hacer',
       '• /negocio [pendientes|ok|no|olvida <id>] — contexto del negocio',
       '• /calendly [on|off] [closer] [cuenta|todo] — pushes precall',
+      '• /espejo [on|off <conexión>] — copia de esos pushes a tu DM',
       '• /reportes [leads|metricas] — preview (en grupo lo publica; jefe/admin)',
       '• /agenda — manda YA la agenda diaria a la admin (la del cron de 7am)',
       '• /reportejefe — scorecard consolidado (todos los programas + closers)',
@@ -986,6 +1082,166 @@ function handleCalendly(text, deps = {}) {
   const lines = [`${who} — ${done.length}/${targets.length} identidades ${pause ? 'pausadas ⏸️' : 'reactivadas ▶️'}:`];
   for (const t of done) lines.push(`• ${t.account} (${t.accountLabel}) ✓`);
   for (const t of skipped) lines.push(`• ${t.account} (${t.accountLabel}) — sin opt-in, nada que ${nada}`);
+  return lines.join('\n');
+}
+
+// ─── /espejo — alcance del espejo de dev (§18.BV) ─────────────────────────────
+// /espejo                 → estado: destino, qué se copia y de dónde sale ese dato
+// /espejo on <conexión>   → suma una conexión al espejo
+// /espejo off <conexión>  → la saca
+// /espejo off             → apaga TODO (no se copia nada)
+//
+// Por qué es un comando y no solo el `.env`: el espejo se prende para acompañar el arranque de UNA
+// conexión y se apaga cuando esa conexión ya se verificó — o sea que su alcance cambia seguido, y
+// hasta hoy moverlo costaba un redeploy, que reconecta Baileys (el riesgo caro de este sistema).
+// Mismo razonamiento que el botón de pánico de `/calendly`, que por eso vive en `settings`.
+//
+// El DESTINO (CALENDLY_DEV_MIRROR_JID) NO se toca desde acá, a propósito: ver la nota en
+// db/index.js. El alcance dice de QUIÉNES se copian los mensajes; el JID dice a QUIÉN van.
+function handleEspejo(text, deps = {}) {
+  const { getMirrorConnections, setMirrorConnections } = deps;
+  const parts = (text || '').trim().split(/\s+/); // [ '/espejo', action?, ...conexión ]
+  const action = (parts[1] || 'status').toLowerCase();
+  const arg = parts.slice(2).join(' ').trim();
+
+  const leer = () => {
+    try {
+      return getMirrorConnections ? getMirrorConnections() : null;
+    } catch {
+      return null; // la DB puede no estar lista: caemos al .env, que es el estado previo
+    }
+  };
+
+  if (action === 'status') return buildEspejoStatus(leer());
+  if (action !== 'on' && action !== 'off') return 'Uso: /espejo [on|off] [conexión]';
+
+  // `/espejo off` a secas = silencio total. `/espejo on` a secas NO tiene análogo: "prender todo"
+  // sería copiar las cuatro conexiones a un DM, que es justo lo que el default vacío evita.
+  if (!arg) {
+    if (action === 'on') return `Uso: /espejo on <conexión> — decí cuál.\n\n${listaConexiones()}`;
+    setMirrorConnections?.('');
+    return '🪞 Espejo APAGADO — ya no se copia ninguna conexión.';
+  }
+
+  const target = resolveMirrorTarget(arg);
+  if (target.error) return target.error;
+
+  const actuales = mirrorConnections(leer(), process.env.CALENDLY_DEV_MIRROR_CONNECTIONS);
+  const estaba = actuales.includes(target.connection);
+  if (!estaba && action === 'off') {
+    return `${etiquetaConexion(target.connection)} no estaba en el espejo. Sigue igual: ${resumen(actuales)}.`;
+  }
+  const siguientes =
+    action === 'on'
+      ? estaba
+        ? actuales
+        : [...actuales, target.connection]
+      : actuales.filter((c) => c !== target.connection);
+  setMirrorConnections?.(siguientes.join(','));
+
+  const cabecera =
+    estaba && action === 'on'
+      ? `${etiquetaConexion(target.connection)} ya estaba en el espejo.`
+      : `🪞 ${etiquetaConexion(target.connection)}: ${action === 'on' ? 'ESPEJADA ✅' : 'fuera del espejo ⛔'}`;
+  const via = target.viaPrograma
+    ? `\n(Pediste "${target.viaPrograma}", un programa de ${empresasDe(target.connection)}. Vive en la conexión ${target.connection} → se copia la conexión entera: ${programasDe(target.connection)}.)`
+    : '';
+  return `${cabecera}${via}\n\nEspejando ahora: ${resumen(siguientes)}.`;
+}
+
+// Lo que el dev escribió → una CONEXIÓN. Acepta la key de la conexión ('retia') y también un
+// PROGRAMA ('tactical_investor', 'tactical', 'comunicarte'), porque el espejo se PIENSA por
+// programa ("quiero ver Tactical Investor") aunque FILTRE por conexión. Cuando entra por programa
+// se avisa: no es lo mismo, la conexión arrastra todos sus programas.
+function resolveMirrorTarget(arg) {
+  const q = String(arg || '').trim().toLowerCase();
+  if (accountOf(q)) return { connection: q };
+  const hits = Object.entries(PROGRAMS).filter(
+    ([k, p]) => k.includes(q) || String(p.label || '').toLowerCase().includes(q)
+  );
+  const conns = [...new Set(hits.map(([, p]) => p.connection))];
+  if (conns.length === 1) return { connection: conns[0], viaPrograma: hits[0][1].label };
+  if (conns.length > 1) {
+    const opciones = conns.map((c) => `• ${c} — ${etiquetaConexion(c)}`).join('\n');
+    return { error: `"${arg}" matchea programas de varias conexiones. Precisá cuál:\n${opciones}` };
+  }
+  return { error: `No reconozco "${arg}".\n\n${listaConexiones()}` };
+}
+
+const etiquetaConexion = (key) => `${accountOf(key)?.label || key} (${key})`;
+
+const programasDeConexion = (key) => Object.values(PROGRAMS).filter((p) => p.connection === key);
+
+const programasDe = (key) =>
+  programasDeConexion(key)
+    .map((p) => p.label)
+    .join(' · ') || 'sin programas declarados';
+
+// Empresa(s) dueñas de una conexión. Una conexión es una CUENTA DE CALENDLY, no una empresa:
+// Retia es UNA agencia con DOS conexiones (una por programa: Tactical Investor y ComunicArte),
+// y la conexión 30x hostea programas de dos marcas. Confundirlos hace leer "ComunicArte" como un
+// cliente aparte de Retia, que es justo lo contrario de lo que pasa.
+const empresasDe = (key) =>
+  [...new Set(programasDeConexion(key).map((p) => COMPANIES[p.company] || p.company))].join(' + ');
+
+// Empresas con MÁS DE UNA conexión, para poder decirlo en el estado sin hardcodear "Retia":
+// el día que otra empresa abra su segundo Calendly, la nota se actualiza sola.
+function empresasConVariasConexiones() {
+  const porEmpresa = new Map();
+  for (const key of Object.keys(ACCOUNTS)) {
+    for (const p of programasDeConexion(key)) {
+      const empresa = COMPANIES[p.company] || p.company;
+      if (!porEmpresa.has(empresa)) porEmpresa.set(empresa, new Set());
+      porEmpresa.get(empresa).add(key);
+    }
+  }
+  return [...porEmpresa.entries()].filter(([, conns]) => conns.size > 1);
+}
+
+const listaConexiones = () =>
+  ['Conexiones:', ...Object.keys(ACCOUNTS).map((k) => `• ${k} — ${accountOf(k).label}`)].join('\n');
+
+const resumen = (lista) => (lista.length ? lista.map(etiquetaConexion).join(' · ') : 'nada');
+
+function buildEspejoStatus(override) {
+  const jid = (process.env.CALENDLY_DEV_MIRROR_JID || '').trim();
+  const lista = mirrorConnections(override, process.env.CALENDLY_DEV_MIRROR_CONNECTIONS);
+  const lines = [
+    '🪞 *Espejo de dev* — copia a un DM de cada push precall, con el RESULTADO en el encabezado',
+    '(sirve justo para ver los que NO salen: sin opt-in, en dry-run, closer pausado).',
+    '',
+  ];
+  lines.push(
+    jid
+      ? `Destino: ${shortId(jid)} — fijo en el .env, no se cambia por comando.`
+      : '⚠️ SIN destino: falta CALENDLY_DEV_MIRROR_JID en el .env → el espejo no existe, prenda lo que prenda este comando.'
+  );
+  lines.push(`Espejando: ${resumen(lista)}`);
+  for (const c of lista) lines.push(`   └ empresa ${empresasDe(c)} · programas: ${programasDe(c)}`);
+  const apagadas = Object.keys(ACCOUNTS).filter((k) => !lista.includes(k));
+  lines.push(`Apagadas: ${resumen(apagadas)}`);
+  // Cada línea de arriba es una CONEXIÓN (una cuenta de Calendly), no una empresa. Se dice acá
+  // porque el error de lectura es caro: hace creer que un programa es de otro cliente.
+  const multi = empresasConVariasConexiones();
+  if (multi.length) {
+    lines.push(
+      '',
+      ...multi.map(
+        ([empresa, conns]) =>
+          `ℹ️ ${empresa} es UNA empresa con ${conns.size} conexiones (un Calendly por programa): ${[...conns].join(', ')}.`
+      )
+    );
+  }
+  lines.push(
+    '',
+    override == null
+      ? 'Alcance heredado del .env (nadie usó este comando todavía).'
+      : 'Alcance fijado con /espejo — desde ahora el .env NO manda acá.'
+  );
+  lines.push(
+    '',
+    'Prender: /espejo on <conexión> · Apagar: /espejo off <conexión> · Apagar todo: /espejo off'
+  );
   return lines.join('\n');
 }
 

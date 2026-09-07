@@ -451,17 +451,32 @@ test('/persona con grupo inexistente → ayuda', async () => {
 function programadosDeps() {
   const state = {
     rows: [
-      { id: 3, group_id: 'p@g.us', group_name: 'Patah San Juan de Ávila ✝️', days: '0,4', time_hm: '20:00', text: 'Muchachos, ¡los esperamos hoy en la reunión!', active: 1 },
+      { id: 3, group_id: 'p@g.us', group_name: 'Patah San Juan de Ávila ✝️', days: '0,4', time_hm: '20:00', text: 'Muchachos, ¡los esperamos hoy en la reunión!', active: 1, kind: 'fixed' },
+      { id: 4, group_id: 'p@g.us', group_name: 'Patah San Juan de Ávila ✝️', days: '1,2,3,4,5', time_hm: '09:00', text: '', active: 1, kind: 'generated', brief: 'San José' },
     ],
+    settings: {},
   };
   return {
     _state: state,
-    listScheduledMessages: () => state.rows.filter((r) => r.active),
+    listScheduledMessages: ({ activeOnly = true } = {}) =>
+      activeOnly ? state.rows.filter((r) => r.active) : state.rows,
     cancelScheduledMessage: (id) => {
       const row = state.rows.find((r) => r.id === id && r.active);
       if (!row) return 0;
       row.active = 0;
       return 1;
+    },
+    reactivateScheduledMessage: (id) => {
+      const row = state.rows.find((r) => r.id === id && !r.active);
+      if (!row) return 0;
+      row.active = 1;
+      return 1;
+    },
+    findScheduledDuplicate: ({ groupId, days, timeHm }) =>
+      state.rows.find((r) => r.active && r.group_id === groupId && r.days === days && r.time_hm === timeHm) || null,
+    getSetting: (k, def) => state.settings[k] ?? def,
+    setSetting: (k, v) => {
+      state.settings[k] = v;
     },
   };
 }
@@ -482,6 +497,76 @@ test('/programados off <id> cancela; id inexistente lo dice', async () => {
   assert.equal(deps._state.rows[0].active, 0);
   assert.match(await handleCommand({ text: '/programados off 3', sender: 'a@lid', role: 'admin' }, deps), /No hay ningún/);
   assert.match(await handleCommand({ text: '/programados off abc', sender: 'a@lid', role: 'admin' }, deps), /Uso:/);
+});
+
+test('/programados auto <id> on prende el auto-envío del generado y se ve en la lista', async () => {
+  const deps = programadosDeps();
+  const out = await handleCommand({ text: '/programados auto 4 on', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /Auto-envío ACTIVADO para #4/);
+  assert.equal(deps._state.settings['auto_publish:4'], '1');
+  assert.match(await handleCommand({ text: '/programados', sender: 'a@lid', role: 'admin' }, deps), /auto-envío ON/);
+
+  await handleCommand({ text: '/programados auto 4 off', sender: 'a@lid', role: 'admin' }, deps);
+  assert.equal(deps._state.settings['auto_publish:4'], '0');
+  assert.match(await handleCommand({ text: '/programados', sender: 'a@lid', role: 'admin' }, deps), /pide aprobación/);
+});
+
+// §18.BS·3 — en un 'generated' el `text` está vacío: lo que distingue una fila de otra es el
+// brief. Mostrar "" fue lo que hizo indistinguibles a #5 y #8 durante 11 semanas.
+test('/programados muestra el BRIEF de un generado, no su texto vacío', async () => {
+  const out = await handleCommand({ text: '/programados', sender: 'a@lid', role: 'admin' }, programadosDeps());
+  assert.match(out, /📋 San José/, 'el brief se ve');
+  assert.doesNotMatch(out, /^\s+""$/m, 'no imprime comillas vacías');
+  assert.match(out, /los esperamos hoy/, 'el fijo sigue mostrando su texto');
+});
+
+test('/programados sin brief lo dice en vez de imprimir vacío', async () => {
+  const deps = programadosDeps();
+  deps._state.rows.find((r) => r.id === 4).brief = null;
+  assert.match(await handleCommand({ text: '/programados', sender: 'a@lid', role: 'admin' }, deps), /\(sin brief\)/);
+});
+
+// §18.BS·4 — `off` era de una sola vía: recuperar una fila apagada exigía entrar a la DB del VPS.
+test('/programados on <id> reactiva una fila apagada y la lista la muestra como apagada antes', async () => {
+  const deps = programadosDeps();
+  await handleCommand({ text: '/programados off 4', sender: 'a@lid', role: 'admin' }, deps);
+
+  const lista = await handleCommand({ text: '/programados', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(lista, /💤 Apagados \(1\)/, 'el id apagado es descubrible sin bajar a la DB');
+  assert.match(lista, /#4 →.*San José/s);
+
+  const out = await handleCommand({ text: '/programados on 4', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /#4 reactivado ✅/);
+  assert.equal(deps._state.rows.find((r) => r.id === 4).active, 1);
+});
+
+test('/programados on rechaza id inexistente, fila ya activa y uso mal escrito', async () => {
+  const deps = programadosDeps();
+  assert.match(await handleCommand({ text: '/programados on 99', sender: 'a@lid', role: 'admin' }, deps), /No hay ningún/);
+  assert.match(await handleCommand({ text: '/programados on 4', sender: 'a@lid', role: 'admin' }, deps), /No hay ningún/, 'ya está activa');
+  assert.match(await handleCommand({ text: '/programados on abc', sender: 'a@lid', role: 'admin' }, deps), /Uso:/);
+});
+
+// La pared que falta: el guardia anti-duplicado de `create` (§18.BT) solo mira las ACTIVAS, así
+// que reactivar una fila apagada podía reconstruir el duplicado de 11 semanas.
+test('/programados on NO reactiva si choca con una activa del mismo grupo, días y hora', async () => {
+  const deps = programadosDeps();
+  await handleCommand({ text: '/programados off 4', sender: 'a@lid', role: 'admin' }, deps);
+  // Nace una fila nueva ocupando exactamente ese hueco.
+  deps._state.rows.push({ id: 9, group_id: 'p@g.us', group_name: 'Patah San Juan de Ávila ✝️', days: '1,2,3,4,5', time_hm: '09:00', text: '', active: 1, kind: 'generated', brief: 'otro' });
+
+  const out = await handleCommand({ text: '/programados on 4', sender: 'a@lid', role: 'admin' }, deps);
+  assert.match(out, /el #9 ya está activo/);
+  assert.equal(deps._state.rows.find((r) => r.id === 4).active, 0, 'sigue apagada');
+});
+
+test('/programados auto rechaza id inexistente, fila fija y uso mal escrito', async () => {
+  const deps = programadosDeps();
+  assert.match(await handleCommand({ text: '/programados auto 99 on', sender: 'a@lid', role: 'admin' }, deps), /No hay ningún/);
+  assert.match(await handleCommand({ text: '/programados auto 3 on', sender: 'a@lid', role: 'admin' }, deps), /texto fijo/);
+  assert.match(await handleCommand({ text: '/programados auto 4', sender: 'a@lid', role: 'admin' }, deps), /Uso:/);
+  assert.match(await handleCommand({ text: '/programados auto 4 quizas', sender: 'a@lid', role: 'admin' }, deps), /Uso:/);
+  assert.deepEqual(deps._state.settings, {}, 'nada se guardó');
 });
 
 // ─── /aprobaciones (estado y override del flujo de aprobación, admin-only) ─────

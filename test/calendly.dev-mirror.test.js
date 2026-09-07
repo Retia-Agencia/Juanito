@@ -132,6 +132,43 @@ test('una conexión que no está en la lista no se espeja', async () => {
   });
 });
 
+// ─── El alcance movible desde el DM (§18.BV) ──────────────────────────────────
+// `/espejo` guarda el alcance en `settings` y el scheduler lo lee por el seam
+// (`getMirrorConnections`). Es lo que permite mover el espejo de una agencia a otra sin
+// redeploy — y un redeploy acá no es gratis: reconecta Baileys.
+
+test('el alcance guardado por /espejo PISA al .env', async () => {
+  await withAgencia({}, async () => {
+    process.env.CALENDLY_DEV_MIRROR_JID = JID_DEV;
+    process.env.CALENDLY_DEV_MIRROR_CONNECTIONS = 'otra_conexion'; // el .env dice que no
+    const { wa, deps } = escenario({ nowMs: NOW, optins: optinCompleto() });
+    deps.getMirrorConnections = () => ACCT2; // …el comando dice que sí
+
+    await scheduler.runCalendlyPoll();
+    await scheduler.runCalendlyDelivery();
+
+    assert.equal(copias(wa).length, 1);
+  });
+});
+
+test('`/espejo off` (cadena vacía) apaga el espejo aunque el .env liste la conexión', async () => {
+  // '' NO es "no configurado": es una decisión explícita. Si se leyera con `||` en vez de `??`,
+  // apagar el espejo por comando no apagaría nada y el dev seguiría recibiendo copias de una
+  // agencia que ya verificó — el ruido que hace que se deje de mirar el espejo.
+  await withAgencia({}, async () => {
+    process.env.CALENDLY_DEV_MIRROR_JID = JID_DEV;
+    process.env.CALENDLY_DEV_MIRROR_CONNECTIONS = ACCT2;
+    const { wa, deps } = escenario({ nowMs: NOW, optins: optinCompleto() });
+    deps.getMirrorConnections = () => '';
+
+    await scheduler.runCalendlyPoll();
+    await scheduler.runCalendlyDelivery();
+
+    assert.equal(copias(wa).length, 0);
+    assert.equal(wa.sent.filter((m) => m.to === JID_A2).length, 1, 'el push real sí sale');
+  });
+});
+
 // ─── El caso normal ───────────────────────────────────────────────────────────
 
 test('conexión espejada y en vivo: el closer recibe su push y el dev una copia con resultado sent', async () => {
