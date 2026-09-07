@@ -346,7 +346,13 @@ export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora
       (programKey === 'second_brain'
         ? `\n\nUna última cosa: confírmame porfa si en el computador que usas en el día a día puedes instalar la herramienta de inteligencia artificial Claude o si tienes alguna restricción de tu compañía.`
         : '') +
-      materialsBlock(programKey)
+      materialsBlock(programKey) +
+      // Solo Instagram & TikTok: aclaración de expectativas (formación, no agencia). Va DESPUÉS
+      // del bloque de materiales — a propósito, es lo último que lee el lead (jefe, 2026-09-07).
+      (programKey === 'instagram'
+        ? `\n\nPara que tengas en cuenta: nosotros te vamos a enseñar el método con el que se han escalado decenas de marcas personales a cientos de miles de seguidores, y lo podrás aplicar a tu caso específico sin problema, pero no actuamos como una agencia que hace el contenido por ti.\n\n` +
+          `La razón es que para delegar un proceso que será tan relevante para tu negocio creemos que es importante que primero lo aprendas tu equipo o tú.`
+        : '')
     );
   }
 

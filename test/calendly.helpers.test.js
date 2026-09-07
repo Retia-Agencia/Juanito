@@ -476,6 +476,25 @@ test('Instagram & TikTok está en la lista de programas y enruta a su copy', () 
   assert.ok(ig.includes(MATERIAL_LINKS.instagram.video));
 });
 
+// Aclaración "no somos agencia" (2026-09-07): es EXCLUSIVA de Instagram & TikTok y va AL FINAL
+// de todo, después de los links de materiales. Las dos propiedades importan: si se filtra a otro
+// programa el lead recibe una aclaración que no aplica, y si queda antes del bloque de materiales
+// deja de ser lo último que lee.
+test('Push 1 de Instagram & TikTok cierra con la aclaración de que no somos agencia', () => {
+  const ig = buildPrecallText({ programKey: 'instagram', pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
+  assert.match(ig, /no actuamos como una agencia que hace el contenido por ti/);
+  assert.match(ig, /primero lo aprendas tu equipo o tú\.$/); // último párrafo del mensaje
+  // Después de los materiales, no antes.
+  assert.ok(ig.indexOf('Para que tengas en cuenta') > ig.indexOf(MATERIAL_LINKS.instagram.video));
+
+  // Y no se filtra a ningún otro programa.
+  for (const prog of Object.keys(MATERIAL_LINKS)) {
+    if (prog === 'instagram') continue;
+    const txt = buildPrecallText({ programKey: prog, pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
+    assert.ok(!txt.includes('no actuamos como una agencia'), `${prog}: le llegó la aclaración de Instagram`);
+  }
+});
+
 // Guarda del endurecimiento: un programa sin copy en PROGRAM_PITCH NO debe fabricar un
 // mensaje con el pitch de otro programa (antes caía a second_brain). El texto viaja en el
 // link wa.me que el closer toca para enviar, así que un pitch errado le llega al lead.
