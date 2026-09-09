@@ -84,6 +84,12 @@ services:
       - CALENDLY_ORG_URI=${CALENDLY_ORG_URI:-}
       - CALENDLY_PUSH3_LEAD_MIN=${CALENDLY_PUSH3_LEAD_MIN:-25}
       - CALENDLY_PUSH1_CRON=${CALENDLY_PUSH1_CRON:-0 19 * * *}
+      # Turno TEMPRANO del Push 1 (§18.BX): estos programas salen a las 5:30pm y el resto a la
+      # hora de arriba. Los defaults duplican los del código a propósito — la lista tiene que
+      # llegar al contenedor para poder moverla sin redeploy (gotcha §12: `environment:` acá es
+      # explícito, lo que no está listado NO entra aunque esté en el .env del VPS).
+      - CALENDLY_PUSH1_EARLY_CRON=${CALENDLY_PUSH1_EARLY_CRON:-30 17 * * *}
+      - CALENDLY_PUSH1_EARLY_PROGRAMS=${CALENDLY_PUSH1_EARLY_PROGRAMS:-instagram}
       - CALENDLY_PUSH2_CRON=${CALENDLY_PUSH2_CRON:-30 6 * * *}
       - CALENDLY_SKIP_AUDIT_CRON=${CALENDLY_SKIP_AUDIT_CRON:-15 * * * *}
       - CALENDLY_SKIP_ALERT_MIN=${CALENDLY_SKIP_ALERT_MIN:-2}

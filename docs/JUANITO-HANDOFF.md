@@ -6639,6 +6639,45 @@ EstadoX, no solo en 30X. Si alguna sigue en cero con citas canceladas en su Cale
 conexión no quedó. Recién ahí `CALENDLY_RESCHEDULE_ALERT=true` y confirmar con Andre o Maru que
 el aviso llegó y se entiende.
 
+### 18.BX 🔵 Instagram & TikTok: cierre propio en el Push 1 y digest a las 5:30pm (2026-09-08)
+
+Dos pedidos del jefe sobre el MISMO programa (`instagram`, "IGTK"), sin tocar a los otros siete.
+
+**1. El copy.** El Push 1 de IGTK cierra ahora aclarando el modelo: *"te vamos a enseñar el método
+… pero no actuamos como una agencia que hace el contenido por ti"*, más el porqué (para delegar
+algo tan relevante, primero hay que aprenderlo). Va **después** del bloque de materiales — es lo
+último que lee el lead. Mismo patrón que la aclaración de Claude en Second Brain: condicionado por
+`programKey` en `buildPrecallText`, así que ningún otro programa lo ve.
+
+**2. La hora.** El Push 1 de IGTK sale **5:30pm**; el resto sigue **7pm**.
+
+Implementado como **dos corridas del mismo digest particionadas por programa**, no como "mandar
+todo dos veces". La razón es el closer, no el código: uno con citas de IGTK *y* de otro programa
+recibiría dos listas superpuestas y no sabría cuál manda. `runDigest` acepta `incluyePrograma`, y
+los dos turnos son complementarios por construcción (`isEarlyPush1Program` y su negación) ⇒ toda
+cita cae en exactamente uno. Un test fija esa propiedad contando apariciones por lead.
+
+**El hueco que esto abre, y que no se ve leyendo el diff.** Entre las 5:30 y las 7pm, una cita de
+IGTK reservada para mañana ya no entra en ningún digest: el suyo pasó y el de las 7pm la excluye.
+El **Push 0** existe justamente para tapar esa ventana (§18.C), pero su gate preguntaba por el cron
+del Push 1 **global** — con lo cual habría contestado *"todavía no corrió, que avise el digest"* y
+la cita se habría quedado **sin un solo aviso**, sin error en los logs. El gate ahora se resuelve
+**por programa** (`push1CronFor`), en los dos call sites (Calendly y HubSpot). Dos tests fijan la
+asimetría: a las 6pm, una reserva de IGTK **sí** genera Push 0 y una de Operaciones **no**.
+
+**Env** (default en código, no hace falta declararla): `CALENDLY_PUSH1_EARLY_CRON` (`30 17 * * *`)
+y `CALENDLY_PUSH1_EARLY_PROGRAMS` (`instagram`). Vaciar la lista devuelve el Push 1 a un turno
+único a las 7pm y ni siquiera registra el job temprano. El log de arranque imprime el reparto.
+
+**Ojo con el conteo del log:** `calendlyCalls` (dedup contra HubSpot) sigue llevando **todas** las
+citas de Calendly aunque el turno no las liste — si se filtrara ahí, el turno de las 7pm vería las
+de IGTK como *"solo en HubSpot"* y las listaría igual. Por eso el conteo de "de Calendly" del log
+pasó a ser un contador aparte (`deCalendly`).
+
+**Pendiente de operación:** desplegar con `alcance: todo` y **verificar la primera noche** que a
+las 17:30 sale el digest de IGTK y a las 19:00 el del resto — el modo de fallo de una partición mal
+hecha es mudo por definición.
+
 ### Secretos (decididos, ver §13)
 
 - `CALENDLY_TOKEN`: **NO rotar** (decidido).

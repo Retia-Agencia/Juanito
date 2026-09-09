@@ -201,6 +201,30 @@ const DELIVER_CRON = () => process.env.CALENDLY_DELIVER_CRON || '* * * * *';
 const PUSH1_CRON = () => process.env.CALENDLY_PUSH1_CRON || '0 19 * * *'; // 7:00pm
 const PUSH2_CRON = () => process.env.CALENDLY_PUSH2_CRON || '30 6 * * *'; // 6:30am
 
+// ─── Push 1 más temprano para ALGUNOS programas (2026-09-08) ──────────────────
+// Instagram & TikTok manda su digest a las 5:30pm en vez de las 7pm (pedido del jefe). NO es
+// un cambio global: los otros 7 programas siguen a las 7pm.
+//
+// Se implementa como DOS corridas del mismo digest, particionadas por programa —una a cada
+// hora, cada una con la mitad complementaria— y no como "mandar todo dos veces": un closer con
+// citas de IGTK y de otro programa recibiría dos listas superpuestas y no sabría cuál manda.
+// La partición es exhaustiva por construcción (`onlyPrograms` vs. su complemento), así que
+// ninguna cita se puede caer entre las dos corridas.
+//
+// La lista es una env por si el jefe quiere sumar/sacar programas sin redeploy, pero el default
+// vive acá: un `.env` que no la declare tiene que comportarse igual que producción.
+const PUSH1_EARLY_CRON = () => process.env.CALENDLY_PUSH1_EARLY_CRON || '30 17 * * *'; // 5:30pm
+const PUSH1_EARLY_PROGRAMS = () => {
+  const raw = process.env.CALENDLY_PUSH1_EARLY_PROGRAMS ?? 'instagram';
+  return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
+};
+const isEarlyPush1Program = (programKey) => PUSH1_EARLY_PROGRAMS().has(programKey);
+// Cron del Push 1 que le toca a ESTE programa. Lo usa el gate del Push 0: preguntarle al cron
+// de las 7pm si ya corrió, para una cita de IGTK cuyo digest salió a las 5:30pm, deja la cita
+// sin Push 0 Y fuera del digest de las 7pm — o sea, sin ningún aviso. Esa es exactamente la
+// clase de hueco que el Push 0 existe para tapar (§18.C), así que el gate va por programa.
+const push1CronFor = (programKey) => (isEarlyPush1Program(programKey) ? PUSH1_EARLY_CRON() : PUSH1_CRON());
+
 // Agenda diaria a la ADMIN de EstadoX (7am). No es un push a closers: es el conteo de cuántas
 // llamadas tiene HOY cada closer de IA para Abogados, por DM a quien supervisa. Se autodesactiva
 // sin destinatarios, como todos los jobs del scheduler.
@@ -951,7 +975,7 @@ export async function runCalendlyPoll() {
           isToday: isSameDayInTz(ev.start_time, TZ(), now),
           push2HasRun: push2HasRunToday(PUSH2_CRON(), TZ(), now),
           isTomorrow: isNextDayInTz(ev.start_time, TZ(), now),
-          push1HasRun: dailyCronHasRunToday(PUSH1_CRON(), TZ(), now),
+          push1HasRun: dailyCronHasRunToday(push1CronFor(programKey), TZ(), now),
           recentMs: PUSH0_RECENT_MIN() * 60000,
         });
         if (d0.notify) {
@@ -1134,7 +1158,7 @@ export async function runHubspotAgendaPoll({ preview = false } = {}) {
           isToday: isSameDayInTz(startIso, TZ(), new Date(nowMs)),
           push2HasRun: push2HasRunToday(PUSH2_CRON(), TZ(), new Date(nowMs)),
           isTomorrow: isNextDayInTz(startIso, TZ(), new Date(nowMs)),
-          push1HasRun: dailyCronHasRunToday(PUSH1_CRON(), TZ(), new Date(nowMs)),
+          push1HasRun: dailyCronHasRunToday(push1CronFor(call.program), TZ(), new Date(nowMs)),
           recentMs: PUSH0_RECENT_MIN() * 60000,
         });
         if (d0.notify) {
@@ -1681,7 +1705,11 @@ function whenLabel(offsetDays, nowMs = Date.now()) {
 //
 // Falla suave a propósito: HubSpot apagado o caído devuelve [] y el digest sale con lo de
 // Calendly, exactamente como antes. Perder el complemento no puede costar el digest entero.
-async function hubspotDigestItems(d, { calendlyCalls, minStartIso, maxStartIso, pushN }) {
+// `incluyePrograma` filtra qué citas entran a ESTE digest (ver PUSH1_EARLY_PROGRAMS). Se aplica
+// DESPUÉS de `pickMeetingsToSchedule` y no antes: la dedup contra Calendly tiene que ver la lista
+// COMPLETA de citas de Calendly, o una call que este turno no lista reaparecería como "solo en
+// HubSpot" en el otro turno.
+async function hubspotDigestItems(d, { calendlyCalls, minStartIso, maxStartIso, pushN, incluyePrograma = () => true }) {
   if (!d.searchMeetingsInWindow || !d.getOwnerEmailMap) return [];
   if (d.hubspotEnabled && !d.hubspotEnabled()) return [];
   try {
@@ -1703,6 +1731,9 @@ async function hubspotDigestItems(d, { calendlyCalls, minStartIso, maxStartIso, 
     for (const call of toSchedule) {
       const startIso = callStartToIso(call.call_start);
       if (!startIso) continue;
+      // Antes de ir a buscar el contacto: si la cita no es de este turno, no gastamos la llamada
+      // a HubSpot.
+      if (!incluyePrograma(call.program)) continue;
       // El lead sale del contacto asociado, no del título ("Entrevista de Postulación…"), que
       // como nombre de prospecto no sirve y dejaría la línea del digest sin número.
       let contacto = null;
@@ -1732,7 +1763,14 @@ async function hubspotDigestItems(d, { calendlyCalls, minStartIso, maxStartIso, 
   }
 }
 
-async function runDigest(pushN, offsetDays) {
+// `incluyePrograma(programKey)` decide qué citas entran a ESTE digest. Default: todas — así el
+// Push 2 y cualquier caller viejo se comportan exactamente igual que antes. Solo el Push 1 la
+// usa hoy, para partirse en dos corridas (5:30pm IGTK / 7pm el resto).
+//
+// El filtro va sobre los ITEMS del mensaje, nunca sobre `calendlyCalls`: ese array es la lista
+// de dedup contra HubSpot y tiene que seguir siendo la foto COMPLETA de Calendly, o la corrida
+// de las 7pm vería las calls de IGTK como "solo en HubSpot" y las listaría igual.
+async function runDigest(pushN, offsetDays, { incluyePrograma = () => true } = {}) {
   const d = await deps();
   const nowMs = d.now();
   const { minStartIso, maxStartIso } = dayRangeUtc(TZ(), offsetDays, new Date(nowMs));
@@ -1750,6 +1788,11 @@ async function runDigest(pushN, offsetDays) {
 
   const byCloser = new Map(); // phone -> { name, email, items[] }
   const calendlyCalls = []; // { closer_email, call_start } — para deduplicar contra HubSpot
+  // Cuántas citas de Calendly LISTÓ este digest. Es distinto de `calendlyCalls.length` desde que
+  // el Push 1 se parte por programa: ese array las lleva todas (dedup), este conteo solo las que
+  // salieron en el mensaje. Sin separarlos, el log del turno de las 7pm restaría las de IGTK y
+  // reportaría un `delCrm` negativo.
+  let deCalendly = 0;
   for (const { ev, account } of events) {
     const email = closerEmailOf(ev);
     const closer = resolveCloser(email);
@@ -1760,6 +1803,16 @@ async function runDigest(pushN, offsetDays) {
       await notifyAdmins(d, `Closer sin mapear en Calendly: ${email}. Esa(s) cita(s) no recibirán pushes — agrégalo a src/calendly/closers.js.`, `unmapped:${email}`);
       continue;
     }
+    // La cita entra SIEMPRE al set de dedup, la liste este digest o no (ver el comentario de
+    // arriba). Va antes del filtro a propósito.
+    calendlyCalls.push({ closer_email: email, call_start: toSqliteUtc(new Date(ev.start_time)) });
+
+    const programKey = programKeyOf(ev.event_type);
+    // Si esta cita no es de este turno, cortamos ACÁ: `getFirstInvitee` y `resolvePhone` son
+    // llamadas a la API de Calendly (throttle de 1,2s cada una), y partir el Push 1 en dos
+    // corridas no puede duplicar el gasto de red del digest.
+    if (!incluyePrograma(programKey)) continue;
+
     let invitee = null;
     try {
       invitee = await d.getFirstInvitee(ev.uri, { token: account.token() });
@@ -1773,9 +1826,9 @@ async function runDigest(pushN, offsetDays) {
       firstName: firstNameFrom(invitee?.name),
       phone: await resolvePhone(d, invitee, account),
       startIso: ev.start_time,
-      programKey: programKeyOf(ev.event_type),
+      programKey,
     });
-    calendlyCalls.push({ closer_email: email, call_start: toSqliteUtc(new Date(ev.start_time)) });
+    deCalendly++;
   }
 
   // Segunda fuente: las citas que solo viven en el CRM. Se suman al MISMO mapa, así que el
@@ -1786,6 +1839,7 @@ async function runDigest(pushN, offsetDays) {
     minStartIso,
     maxStartIso,
     pushN,
+    incluyePrograma,
   })) {
     const closer = resolveCloser(closerEmail);
     if (!closer) continue; // HUBSPOT_OWNER_TO_CLOSER ya lo garantiza; defensivo
@@ -1812,18 +1866,23 @@ async function runDigest(pushN, offsetDays) {
   // `events.length` (solo Calendly) y por eso el hueco de las citas de HubSpot era invisible
   // justo en la línea donde se habría notado.
   const totalCitas = [...byCloser.values()].reduce((n, c) => n + c.items.length, 0);
-  // Contra `calendlyCalls` y no contra `events`: los eventos de un closer sin mapear se
-  // descartaron arriba y nunca llegaron al mensaje, así que restarlos daría un número negativo.
-  const delCrm = totalCitas - calendlyCalls.length;
+  // Contra `deCalendly` y no contra `events` ni `calendlyCalls`: los eventos de un closer sin
+  // mapear —y, en el Push 1, los del otro turno— se descartaron arriba y nunca llegaron al
+  // mensaje, así que restarlos daría un número negativo.
+  const delCrm = totalCitas - deCalendly;
   console.log(
     `[Calendly] Digest ${label}: ${byCloser.size} closers, ${totalCitas} citas` +
-      `${delCrm > 0 ? ` (${calendlyCalls.length} de Calendly + ${delCrm} solo en HubSpot)` : ''}` +
+      `${delCrm > 0 ? ` (${deCalendly} de Calendly + ${delCrm} solo en HubSpot)` : ''}` +
       `${DRY_RUN() ? ' [DRY-RUN]' : ''}`
   );
   return byCloser.size;
 }
 
-export const runPush1 = () => runDigest(1, 1); // mañana
+// Las dos mitades del Push 1. Son COMPLEMENTARIAS por construcción —una es la negación de la
+// otra sobre el mismo predicado—, así que toda cita cae en exactamente una: sumar un programa a
+// CALENDLY_PUSH1_EARLY_PROGRAMS lo mueve de turno, nunca lo duplica ni lo deja sin digest.
+export const runPush1Early = () => runDigest(1, 1, { incluyePrograma: isEarlyPush1Program }); // 5:30pm
+export const runPush1 = () => runDigest(1, 1, { incluyePrograma: (p) => !isEarlyPush1Program(p) }); // 7pm
 export const runPush2 = () => runDigest(2, 0); // hoy
 
 // ─── Agenda diaria a la admin de la marca (7am) ────────────────────────────────
@@ -2177,6 +2236,10 @@ export function startCalendlyJobs() {
   job(POLL_CRON(), runCalendlyPoll, 'poll');
   job(DELIVER_CRON(), runCalendlyDelivery, 'deliver');
   job(PUSH1_CRON(), runPush1, 'push1');
+  // La mitad temprana del Push 1 (IGTK, 5:30pm). Solo se registra si hay programas en la lista:
+  // vaciar CALENDLY_PUSH1_EARLY_PROGRAMS devuelve el Push 1 a una sola corrida a las 7pm, sin
+  // dejar un job fantasma que mande un digest vacío.
+  if (PUSH1_EARLY_PROGRAMS().size) job(PUSH1_EARLY_CRON(), runPush1Early, 'push1-early');
   job(PUSH2_CRON(), runPush2, 'push2');
   if (PUSH4_ENABLED()) job(OUTCOME_CRON(), runOutcomeReminders, 'outcomes');
   if (PUSH4_ENABLED() && RESCHEDULE_ENABLED())
@@ -2194,7 +2257,11 @@ export function startCalendlyJobs() {
   console.log(
     `[Calendly] Jobs activos ✅  (reagendas: ${RESCHEDULE_ENABLED()}, harvest-sweep: ${HARVEST_ENABLED() && HARVEST_SWEEP_ENABLED()}` +
       `, poll HubSpot: ${HUBSPOT_POLL_ENABLED()}, scan de reagendas: ${HUBSPOT_RESCHEDULE_SCAN()}` +
-      `, agenda admin: ${agendaDms.length ? `${ADMIN_AGENDA_CRON()} → ${agendaDms.length} DM(s) de ${ADMIN_AGENDA_CONNECTION()}` : 'off'}) — cuentas: ` +
+      `, agenda admin: ${agendaDms.length ? `${ADMIN_AGENDA_CRON()} → ${agendaDms.length} DM(s) de ${ADMIN_AGENDA_CONNECTION()}` : 'off'}` +
+      // Se loguea el reparto del Push 1 para que se pueda VER en el arranque qué programa sale a
+      // qué hora. Un turno mal configurado no da error: el digest simplemente sale sin esas
+      // citas, que es el modo de fallo mudo de siempre.
+      `, push1: ${PUSH1_CRON()} — salvo ${PUSH1_EARLY_PROGRAMS().size ? `${[...PUSH1_EARLY_PROGRAMS()].join('/')} a las ${PUSH1_EARLY_CRON()}` : 'nadie (turno único)'}) — cuentas: ` +
       accounts.map((a) => `${a.key}[dry-run:${a.dryRun()}, push4:${a.push4()}]`).join(' · ')
   );
 }

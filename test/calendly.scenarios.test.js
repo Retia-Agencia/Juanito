@@ -455,6 +455,7 @@ const LUCAS = 'lucas.mendoza@30x.com';
 const LUCAS_PHONE = '+573014477044';
 const OPERACIONES_ET = 'https://api.calendly.com/event_types/8462e92a-8210-4bb2-8e2b-583aa3c3d877';
 const INSTAGRAM_ET = 'https://api.calendly.com/event_types/d33075cb-d349-43ef-be43-6f80f9c5da03';
+const SECOND_BRAIN_ET = 'https://api.calendly.com/event_types/56efc028-ee2f-46e8-852c-e50d45b15b83';
 
 // Mañana a las 10:00 Bogotá (=15:00Z), con el reloj puesto hoy 19:00 Bogotá (=00:00Z+1).
 function tomorrowAt(hourUtc) {
@@ -486,10 +487,14 @@ test('Push 1 Operaciones: NO manda material — encabezado en negrita y sin link
   assert.ok(!copy.includes('drive.google.com'), 'ningún link de Drive en el copy');
 });
 
+// Los dos programas de este caso comparten TURNO a propósito (los dos a las 7pm). Antes eran
+// Operaciones + Instagram, pero desde que IGTK sale a las 5:30pm (2026-09-08) esos dos no
+// coinciden nunca en el mismo digest, y el test habría estado midiendo el reparto por hora en vez
+// de la segmentación por programa, que es lo que vino a fijar.
 test('Push 1: digest mixto → segmenta por programa y ninguno adjunta PDF', async () => {
   const events = [
     makeEvent({ uuid: 'm1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Ana Gómez' }),
-    makeEvent({ uuid: 'm2', startIso: tomorrowAt(19), closerEmail: LUCAS, eventType: INSTAGRAM_ET, prospectName: 'Beto Ruiz' }),
+    makeEvent({ uuid: 'm2', startIso: tomorrowAt(19), closerEmail: LUCAS, eventType: SECOND_BRAIN_ET, prospectName: 'Beto Ruiz' }),
   ];
   const h = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: Date.now() });
 
@@ -498,7 +503,105 @@ test('Push 1: digest mixto → segmenta por programa y ninguno adjunta PDF', asy
   // Con dos programas, el digest segmenta por programa (rótulo 📦) — cada uno con su copy.
   const digest = h.wa.sent[0].text;
   assert.match(digest, /📦 \*Operaciones Escalables con IA\*/);
-  assert.match(digest, /📦 \*Instagram & TikTok\*/);
+  assert.match(digest, /📦 \*AI Second Brain\*/);
+});
+
+// ─── El Push 1 partido en dos turnos: IGTK 5:30pm, el resto 7pm (2026-09-08) ──
+// Lo que importa no es que cada turno mande "lo suyo", sino que entre los dos NO se pierda ni se
+// duplique una cita: son dos crons distintos sobre el mismo día, y un error de partición no da
+// error — deja a un lead sin push, o le manda dos listas al closer.
+test('Push 1 de las 7pm: excluye IGTK y lista todo lo demás', async () => {
+  const events = [
+    makeEvent({ uuid: 'p1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Ana Gómez' }),
+    makeEvent({ uuid: 'p2', startIso: tomorrowAt(19), closerEmail: LUCAS, eventType: INSTAGRAM_ET, prospectName: 'Beto Ruiz' }),
+  ];
+  const h = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: Date.now() });
+
+  await scheduler.runPush1();
+
+  assert.equal(h.wa.sent.length, 1, 'un solo digest');
+  const digest = h.wa.sent[0].text;
+  assert.match(digest, /Ana Gómez/);
+  assert.ok(!digest.includes('Beto Ruiz'), 'la cita de IGTK no va en el turno de las 7pm');
+  assert.ok(!digest.includes('Instagram & TikTok'), 'ni su rótulo');
+  assert.match(digest, /tienes 1 llamada mañana/, 'el conteo cuenta lo que lista, no lo que filtró');
+});
+
+test('Push 1 de las 5:30pm: manda SOLO las de IGTK', async () => {
+  const events = [
+    makeEvent({ uuid: 'e1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Ana Gómez' }),
+    makeEvent({ uuid: 'e2', startIso: tomorrowAt(19), closerEmail: LUCAS, eventType: INSTAGRAM_ET, prospectName: 'Beto Ruiz' }),
+  ];
+  const h = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: Date.now() });
+
+  await scheduler.runPush1Early();
+
+  assert.equal(h.wa.sent.length, 1, 'un solo digest');
+  const digest = h.wa.sent[0].text;
+  assert.match(digest, /Beto Ruiz/);
+  assert.ok(!digest.includes('Ana Gómez'), 'lo de Operaciones espera a las 7pm');
+  // Y lleva el copy de IGTK, con su cierre propio (el de "no somos agencia").
+  assert.match(decodeURIComponent(digest), /no actuamos como una agencia que hace el contenido por ti/);
+});
+
+// Un closer SIN citas de IGTK no puede recibir un digest vacío a las 5:30pm: sería un mensaje
+// inútil, y en WhatsApp cada mensaje de más es superficie de ban.
+test('Push 1 de las 5:30pm: sin citas de IGTK no manda nada', async () => {
+  const events = [
+    makeEvent({ uuid: 'v1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Ana Gómez' }),
+  ];
+  const h = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: Date.now() });
+
+  await scheduler.runPush1Early();
+  assert.equal(h.wa.sent.length, 0);
+});
+
+// ⚠️ El hueco que abre partir el Push 1, si el gate del Push 0 no se entera del reparto.
+// Entre las 5:30pm y las 7pm, una cita de IGTK para mañana ya NO entra en ningún digest: el suyo
+// acaba de pasar y el de las 7pm la excluye. Si el Push 0 preguntara por el cron de las 7pm
+// ("todavía no corrió, que avise él"), esa cita se quedaría sin un solo aviso — y sin error en
+// los logs, que es como se pierden. Para el resto de programas, en cambio, el silencio es lo
+// correcto: su digest sale a las 7pm y avisar ahora sería duplicar.
+const SEIS_PM = Date.parse('2026-06-15T23:00:00.000Z'); // 6:00pm Bogotá — entre los dos turnos
+const CALL_MANANA = '2026-06-16T16:00:00.000Z'; // mañana 11:00am Bogotá
+const push0Rows = (store) => store._rows.filter((r) => r.push_n === 0);
+
+test('reserva de IGTK entre los dos turnos → SÍ Push 0 (su digest ya pasó)', async () => {
+  const events = [
+    makeEvent({ uuid: 'ig-tarde', startIso: CALL_MANANA, createdInMin: -2, closerEmail: LUCAS, eventType: INSTAGRAM_ET, nowMs: SEIS_PM }),
+  ];
+  const { store } = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: SEIS_PM });
+
+  await scheduler.runCalendlyPoll();
+  assert.equal(push0Rows(store).length, 1, 'nadie más va a avisar esta cita hoy');
+});
+
+test('reserva de otro programa a la misma hora → NO Push 0 (lo avisa el digest de las 7pm)', async () => {
+  const events = [
+    makeEvent({ uuid: 'ops-tarde', startIso: CALL_MANANA, createdInMin: -2, closerEmail: LUCAS, eventType: OPERACIONES_ET, nowMs: SEIS_PM }),
+  ];
+  const { store } = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: SEIS_PM });
+
+  await scheduler.runCalendlyPoll();
+  assert.equal(push0Rows(store).length, 0, 'su digest todavía no salió: avisar ahora sería duplicar');
+});
+
+// La propiedad que de verdad importa: unión de los dos turnos = TODAS las citas, sin repetir.
+test('Push 1: los dos turnos particionan el día — ni una cita perdida ni repetida', async () => {
+  const events = [
+    makeEvent({ uuid: 'x1', startIso: tomorrowAt(14), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Ana Gómez' }),
+    makeEvent({ uuid: 'x2', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: INSTAGRAM_ET, prospectName: 'Beto Ruiz' }),
+    makeEvent({ uuid: 'x3', startIso: tomorrowAt(16), closerEmail: LUCAS, eventType: SECOND_BRAIN_ET, prospectName: 'Caro Díaz' }),
+  ];
+  const h = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: Date.now() });
+
+  await scheduler.runPush1Early();
+  await scheduler.runPush1();
+
+  const todo = h.wa.sent.map((m) => m.text).join('\n');
+  for (const lead of ['Ana Gómez', 'Beto Ruiz', 'Caro Díaz']) {
+    assert.equal(todo.split(lead).length - 1, 1, `${lead} tiene que salir en exactamente un turno`);
+  }
 });
 
 test('Push 1 sin opt-in: no se manda el digest (anti-ban)', async () => {
