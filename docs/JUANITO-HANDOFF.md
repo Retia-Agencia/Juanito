@@ -6678,6 +6678,24 @@ pasó a ser un contador aparte (`deCalendly`).
 las 17:30 sale el digest de IGTK y a las 19:00 el del resto — el modo de fallo de una partición mal
 hecha es mudo por definición.
 
+### 18.BY 🔵 Deck de AI for Developers actualizado a Cohorte 5 Lun-Mié (2026-09-11)
+
+Se reemplazó el PDF que sirve `MATERIAL_LINKS.developers.brochure` (`programs.js`), mismo patrón
+de §18.BK: **contenido reemplazado conservando el file ID** (`1VEUK_yF1UxwrkiCQJP1VHFW-nG9d426I`),
+así el link ya viaja actualizado en cualquier push ya enviado, sin tocar el repo.
+
+El archivo es propiedad de Alejandro Davila (`alejandro.davila@30x.com`), no de la cuenta conectada
+(`manuel.mejia@30x.com`) — hubo que pedirle acceso de Editor antes de poder escribir. Antes de subir
+el nuevo PDF se fijó la revisión anterior (2026-08-19) con `keepForever` para garantizar rollback.
+Verificado con **SHA256 del servido por el link público sin autenticar** contra el PDF local
+(`~/Downloads/Ai for Devs - Deck (Cohorte 5 - Lun-Mie).pdf`) — idéntico — y `/view` respondiendo 200.
+
+Mismo gotcha que §18.BK: el MCP de Google no tiene herramienta para reemplazar contenido de un
+archivo existente (`drive_upload` crea uno nuevo; `update_file` del otro conector solo cambia
+título/carpeta). Se hizo con `files().update(fileId, media_body=…, keepRevisionForever=True)` de la
+API de Drive, reusando las credenciales OAuth de `~/.claude/google-workspace-mcp/accounts.py` desde
+su propio venv.
+
 ### Secretos (decididos, ver §13)
 
 - `CALENDLY_TOKEN`: **NO rotar** (decidido).
