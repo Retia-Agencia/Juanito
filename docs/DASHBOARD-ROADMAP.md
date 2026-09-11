@@ -43,7 +43,7 @@
       Repository secret (esos los usa el workflow; este lo dispara). Sin token la ruta no existe y
       la UI no dibuja los botones, que es el default seguro. Verificado: `/api/meta` responde
       `deploy: true`, el log del dash dice `deploy ON`, y el token autentica contra
-      `GET /repos/Agencia-Dani/Juanito/actions/workflows/deploy.yml` (`state: active`). El permiso
+      `GET /repos/Retia-Agencia/Juanito/actions/workflows/deploy.yml` (`state: active`). El permiso
       de **escritura** solo queda probado el día que se apriete el botón; hasta entonces el camino
       probado es `gh workflow run deploy.yml -f alcance=dash`, que ya corrió tres veces.
 
@@ -547,7 +547,7 @@ Estado de cada flag. **Mantener esta tabla actualizada es parte del trabajo.**
       existe adentro** — el archivo llega a `/app/dashboard/DEPLOYED_SHA`. Corregido; la segunda
       corrida ya reporta el sha real. Es exactamente la pregunta ("¿qué versión corre?") que este
       mecanismo existe para responder, así que valía el viaje.
-- [ ] **Botón Deploy** en la UI → `POST /repos/Agencia-Dani/Juanito/actions/workflows/deploy.yml/dispatches`.
+- [ ] **Botón Deploy** en la UI → `POST /repos/Retia-Agencia/Juanito/actions/workflows/deploy.yml/dispatches`.
 - [x] **API del dash** (`dashboard/api/`): importa `src/db/index.js` con `DB_PATH` apuntando al mismo
       archivo, e importa `src/calendly/{programs,accounts,closers}.js` para el tab de registries.
 - [x] **Frontend** (`dashboard/`): Vite + React + Tailwind, devDependencies **aisladas** en

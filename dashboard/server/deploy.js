@@ -12,7 +12,7 @@
 
 import { fetchConDeadline } from '../../src/common/http.js';
 
-const REPO = process.env.DASH_GITHUB_REPO || 'Agencia-Dani/Juanito';
+const REPO = process.env.DASH_GITHUB_REPO || 'Retia-Agencia/Juanito';
 const RAMA = process.env.DASH_GITHUB_REF || 'main';
 const TOKEN = () => (process.env.DASH_GITHUB_TOKEN || '').trim();
 
