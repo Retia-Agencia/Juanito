@@ -288,6 +288,16 @@ casi nada:
   recordatorios corre cada minuto, está siempre encendido, y ya envía a `to_phone` por la cola
   anti-ban ([src/scheduler/reminders.js](../src/scheduler/reminders.js)). El dash inserta una fila con
   `saveReminder()` y el mensaje sale solo, sin socket y sin tocar el bot.
+- ⚠️ **Pero esa outbox tiene un punto ciego, y es justo el caso grave: cuando el que está caído es
+  EL BOT, la alerta no sale.** La fila queda `pending` y no hay quién la despache — el watchdog no
+  puede avisar de lo único que nadie más va a notar. El 2026-09-14 Juanito se desvinculó
+  (`conflict / device_removed`) a las 18:51, estuvo 2 horas caído y se supo porque un closer lo
+  reportó. Por eso existe [dashboard/server/notify.js](../dashboard/server/notify.js): un canal
+  **fuera de banda** (Telegram) que no comparte modo de falla con lo que vigila — no depende de
+  WhatsApp, ni de Meta, ni de la sesión de Baileys, ni del proceso del bot. Y el check que lo
+  dispara es `agenteMudo()`: recordatorios vencidos hace >10 min sin despachar. Cuando ese check
+  está en rojo el watchdog **no** encola a WhatsApp (sería una fila muerta que, si el bot vuelve
+  horas después, entrega una alerta vieja de algo ya resuelto) y acorta el dedup a 1 hora.
 
 **Resultado:** los objetivos 1 y 2 se entregan **sin una línea de código nuevo dentro del proceso del
 bot**. Todo lo que antes era la fase 1 pasó a ser opcional (F4-F6).
@@ -473,6 +483,7 @@ Estado de cada flag. **Mantener esta tabla actualizada es parte del trabajo.**
 | Servicio `dash` en compose | ausente | No hay dashboard | F1 |
 | `DASH_BIND` | `127.0.0.1` | El puerto solo existe en loopback; se llega por `tailscale serve` | F1 |
 | `DASH_ALERTS_WHATSAPP` | `false` | Watchdog solo escribe al dashboard, no manda DM | F1 |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | sin valor | Sin canal fuera de banda: si el bot se cae, **nadie se entera** (solo queda el log del dash) | F1 |
 | `DASH_GITHUB_TOKEN` | sin valor | `/api/deploy` no existe y la UI no dibuja el botón Deploy | F1 |
 | ↳ *en producción hoy* | configurado | Botón Deploy activo (`deploy: true`) | F1 |
 | `DASH_WRITES` | vacío | Dashboard read-only: ningún POST pasa, ningún botón se dibuja | F2 |

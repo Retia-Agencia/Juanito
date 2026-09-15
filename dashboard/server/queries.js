@@ -258,6 +258,41 @@ export function reagendasColgadas() {
 
 // Recordatorios fallidos. Incluye las alertas del propio watchdog que no salieron:
 // si esto tiene filas, el canal de aviso está roto y hay que mirar el dashboard.
+// ¿El bot está despachando? Señal DIRECTA de que el proceso del agente no está vivo o perdió
+// WhatsApp, y la más barata que hay: `reminders` es la outbox que el cron del bot drena CADA
+// MINUTO (src/scheduler/reminders.js). Si hay filas 'pending' con due_at vencido hace rato, ese
+// cron no está corriendo — o está corriendo y no puede entregar.
+//
+// Por qué este check y no `frescura()`: frescura mira `messages` (entrantes), que de noche están
+// legítimamente quietos, avisa recién a los 180 min y solo como 'warn'. El 2026-09-14 el corte
+// duró 120 min y frescura nunca se habría encendido. Esto sí: es 'error' a los 10 minutos.
+//
+// ⚠️ Este es JUSTO el caso en que la alerta por WhatsApp no sirve, porque el canal de salida del
+//    watchdog es esta misma tabla. Por eso dashboard/server/notify.js manda fuera de banda.
+export function agenteMudo(graceMin = 10) {
+  const rows = q(
+    `SELECT id, text, due_at, to_phone, created_by, attempts
+       FROM reminders
+      WHERE status = 'pending'
+        AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+        AND due_at < ?
+      ORDER BY due_at ASC LIMIT 50`,
+    new Date().toLocaleString('sv', { timeZone: TZ() }),
+    new Date(Date.now() - graceMin * 60000).toLocaleString('sv', { timeZone: TZ() })
+  );
+  return {
+    key: 'agente_mudo',
+    label: 'El bot no está despachando',
+    level: rows.length ? 'error' : 'ok',
+    count: rows.length,
+    detail: rows.length
+      ? `${rows.length} recordatorio(s) vencidos hace más de ${graceMin} min sin despachar — ` +
+        `el cron del bot no está corriendo o perdió WhatsApp`
+      : 'La outbox de recordatorios se está drenando con normalidad',
+    rows,
+  };
+}
+
 export function recordatoriosFallidos(dias = 3) {
   const rows = q(
     `SELECT id, text, due_at, to_phone, to_group_name, attempts
@@ -364,6 +399,7 @@ export function salud() {
     respuestasVencidas(),
     outcomesSinRespuesta(),
     reagendasColgadas(),
+    agenteMudo(),
     recordatoriosFallidos(),
     programadosSinPublicar(),
     frescura(),

@@ -10,6 +10,15 @@
 //     new D('/app/data/brain.sqlite',{readonly:true}).exec(\"VACUUM INTO '/tmp/copia.sqlite'\")"
 //   docker exec -e DB_PATH=/tmp/copia.sqlite juanito-dash node /app/dashboard/server/selftest.js
 
+// El selftest llama a `watchdog.evaluar()`, que desde el canal fuera de banda MANDA TELEGRAM.
+// Correr la verificación no puede despertar a nadie a las 3am con una alerta de una copia de la
+// DB. Se apaga acá y no con un flag en notify.js: el módulo no tiene por qué saber que existe un
+// selftest, y esto deja la intención a la vista de quien lea el script.
+// Va ANTES de los imports que lo leen — en ESM los imports se evalúan primero, pero notify.js
+// lee las env de forma perezosa (dentro de las funciones), así que esto llega a tiempo.
+process.env.TELEGRAM_BOT_TOKEN = '';
+process.env.TELEGRAM_CHAT_ID = '';
+
 import * as Q from './queries.js';
 import * as watchdog from './watchdog.js';
 
@@ -29,6 +38,22 @@ function probar(nombre, fn) {
   try {
     const t0 = Date.now();
     const r = fn();
+    console.log(`  ok  ${nombre.padEnd(16)} ${String(Date.now() - t0).padStart(4)}ms  ${resumen(r)}`);
+    return r;
+  } catch (err) {
+    fallos++;
+    console.log(`  FALLA ${nombre.padEnd(14)} ${err.message}`);
+    return null;
+  }
+}
+
+// `watchdog.evaluar()` es async desde que manda Telegram fuera de banda. Sin await, `probar`
+// reportaba "ok" sobre una promesa pendiente y el dedup se comparaba contra un objeto que no
+// existía todavía: verde sin haber probado nada, que es peor que rojo.
+async function probarAsync(nombre, fn) {
+  try {
+    const t0 = Date.now();
+    const r = await fn();
     console.log(`  ok  ${nombre.padEnd(16)} ${String(Date.now() - t0).padStart(4)}ms  ${resumen(r)}`);
     return r;
   } catch (err) {
@@ -78,10 +103,10 @@ if (r) {
 
 console.log('\n── Watchdog (escribe en la COPIA) ───────────────────');
 probar('initSchema', () => watchdog.initSchema());
-const ev = probar('evaluar', () => watchdog.evaluar());
+const ev = await probarAsync('evaluar', () => watchdog.evaluar());
 if (ev) console.log(`     alertó=${ev.alertó} nivel=${ev.nivel} problemas=${ev.problemas.length}`);
-probar('dedup', () => {
-  const segundo = watchdog.evaluar();
+await probarAsync('dedup', async () => {
+  const segundo = await watchdog.evaluar();
   if (ev?.alertó && segundo.alertó) throw new Error('el dedup no frenó la segunda alerta');
   return `segunda corrida alertó=${segundo.alertó} (dedup ${segundo.dedup ? 'activo' : 'n/a'})`;
 });
