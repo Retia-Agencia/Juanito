@@ -287,6 +287,13 @@ services:
       - DASH_ALERTS_WHATSAPP=${DASH_ALERTS_WHATSAPP:-false}
       - DASH_WATCHDOG_MIN=${DASH_WATCHDOG_MIN:-15}
       - DASH_ALERT_DEDUP_HOURS=${DASH_ALERT_DEDUP_HOURS:-6}
+      - DASH_ALERT_DEDUP_CRITICO_HORAS=${DASH_ALERT_DEDUP_CRITICO_HORAS:-1}
+      # Canal FUERA DE BANDA de las alertas (dashboard/server/notify.js). Va solo en `dash`,
+      # no en `agent`: el bot no lo usa, y el sentido de este canal es justamente avisar
+      # cuando el bot NO está. Sin estas dos el canal se autodesactiva y el watchdog queda
+      # como estaba — mudo en el único escenario donde nadie más se entera.
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
       # Para que el check de respuestas vencidas use el mismo TTL que el bot.
       - REPLY_APPROVAL_TTL_MIN=${REPLY_APPROVAL_TTL_MIN:-30}
       # Escrituras por tab (F2). Vacío = dashboard de solo lectura, o sea F1 tal cual.
