@@ -6666,8 +6666,9 @@ la cita se habría quedado **sin un solo aviso**, sin error en los logs. El gate
 asimetría: a las 6pm, una reserva de IGTK **sí** genera Push 0 y una de Operaciones **no**.
 
 **Env** (default en código, no hace falta declararla): `CALENDLY_PUSH1_EARLY_CRON` (`30 17 * * *`)
-y `CALENDLY_PUSH1_EARLY_PROGRAMS` (`instagram`). Vaciar la lista devuelve el Push 1 a un turno
-único a las 7pm y ni siquiera registra el job temprano. El log de arranque imprime el reparto.
+y `CALENDLY_PUSH1_EARLY_PROGRAMS` (`instagram` al lanzar; hoy `instagram,operaciones` — ver
+§18.BZ). Vaciar la lista devuelve el Push 1 a un turno único a las 7pm y ni siquiera registra el
+job temprano. El log de arranque imprime el reparto.
 
 **Ojo con el conteo del log:** `calendlyCalls` (dedup contra HubSpot) sigue llevando **todas** las
 citas de Calendly aunque el turno no las liste — si se filtrara ahí, el turno de las 7pm vería las
@@ -6695,6 +6696,42 @@ archivo existente (`drive_upload` crea uno nuevo; `update_file` del otro conecto
 título/carpeta). Se hizo con `files().update(fileId, media_body=…, keepRevisionForever=True)` de la
 API de Drive, reusando las credenciales OAuth de `~/.claude/google-workspace-mcp/accounts.py` desde
 su propio venv.
+
+### 18.BZ 🔵 Operaciones se suma al turno de las 5:30pm del Push 1 (2026-09-16)
+
+Mismo pedido que §18.BX, ahora para **Operaciones Escalables con IA**: su Push 1 sale a las
+**5:30pm** en vez de las 7pm. El turno temprano queda con dos programas (`instagram`,
+`operaciones`) y los otros seis siguen a las 7pm.
+
+**El cambio de producción es un token**: el default de `CALENDLY_PUSH1_EARLY_PROGRAMS` pasa de
+`instagram` a `instagram,operaciones`, en los dos lugares donde ese default vive —
+`src/scheduler/calendly.js` y el `environment:` de `docker-compose.yml`. Producción **no**
+declara la env (verificado: no está en el `.env` del VPS, y el contenedor la traía del default
+del compose), así que tocar solo el código no habría alcanzado. Toda la mecánica —la partición
+complementaria del digest y el gate por programa del Push 0— ya estaba construida en §18.BX y
+no se tocó: la infraestructura de "algunos programas salen temprano" se estrenó con IGTK y el
+segundo programa entra por configuración.
+
+**Lo que sí costó trabajo fueron los tests.** Media docena de escenarios usaba Operaciones como
+el control implícito de *"programa del turno de las 7pm"* — el contraejemplo contra el que se
+medía que IGTK saliera temprano. Al mover Operaciones, esos tests dejan de medir lo que vinieron
+a fijar (uno de ellos, el del copy, habría pasado a correr contra un digest **vacío**: verde sin
+ejercitar una sola aserción de copy). Ese rol pasa a `developers`, que se queda tarde. Es
+exactamente la trampa que §18.BX ya había documentado al mover Instagram, y va a volver a
+aparecer con el tercer programa: **si se mueve un programa de turno, hay que buscar qué tests lo
+estaban usando como el lado "tarde" de una comparación.**
+
+También se agregó el par simétrico de tests del gate del Push 0 (una reserva de Operaciones a las
+6pm ahora **sí** genera Push 0, porque su digest ya salió) y el test de partición pasó a cubrir
+cuatro citas: dos tempranas y dos tardes.
+
+**Baseline de la suite** (Linux, en el VPS): antes 1217 tests / 1215 verdes; después 1218 / 1216,
+con los mismos **2 rojos conocidos** (`call con TODOS sus pushes skipped…` y `reagenda manual
+superseded…`). El test de más es el gate del Push 0 partido en dos.
+
+**Pendiente de operación:** desplegar con `alcance: todo` y **verificar la primera noche** que a
+las 17:30 salen IGTK *y* Operaciones, y a las 19:00 el resto. Igual que en §18.BX, el modo de
+fallo de una partición mal hecha es mudo.
 
 ### Secretos (decididos, ver §13)
 

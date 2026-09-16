@@ -201,13 +201,14 @@ const DELIVER_CRON = () => process.env.CALENDLY_DELIVER_CRON || '* * * * *';
 const PUSH1_CRON = () => process.env.CALENDLY_PUSH1_CRON || '0 19 * * *'; // 7:00pm
 const PUSH2_CRON = () => process.env.CALENDLY_PUSH2_CRON || '30 6 * * *'; // 6:30am
 
-// ─── Push 1 más temprano para ALGUNOS programas (2026-09-08) ──────────────────
-// Instagram & TikTok manda su digest a las 5:30pm en vez de las 7pm (pedido del jefe). NO es
-// un cambio global: los otros 7 programas siguen a las 7pm.
+// ─── Push 1 más temprano para ALGUNOS programas (2026-09-08; ampliado 2026-09-16) ────────────
+// Instagram & TikTok (2026-09-08) y Operaciones Escalables con IA (2026-09-16) mandan su digest
+// a las 5:30pm en vez de las 7pm (pedido del jefe). NO es un cambio global: los otros 6
+// programas siguen a las 7pm.
 //
 // Se implementa como DOS corridas del mismo digest, particionadas por programa —una a cada
 // hora, cada una con la mitad complementaria— y no como "mandar todo dos veces": un closer con
-// citas de IGTK y de otro programa recibiría dos listas superpuestas y no sabría cuál manda.
+// citas tempranas y de otro programa recibiría dos listas superpuestas y no sabría cuál manda.
 // La partición es exhaustiva por construcción (`onlyPrograms` vs. su complemento), así que
 // ninguna cita se puede caer entre las dos corridas.
 //
@@ -215,14 +216,15 @@ const PUSH2_CRON = () => process.env.CALENDLY_PUSH2_CRON || '30 6 * * *'; // 6:3
 // vive acá: un `.env` que no la declare tiene que comportarse igual que producción.
 const PUSH1_EARLY_CRON = () => process.env.CALENDLY_PUSH1_EARLY_CRON || '30 17 * * *'; // 5:30pm
 const PUSH1_EARLY_PROGRAMS = () => {
-  const raw = process.env.CALENDLY_PUSH1_EARLY_PROGRAMS ?? 'instagram';
+  const raw = process.env.CALENDLY_PUSH1_EARLY_PROGRAMS ?? 'instagram,operaciones';
   return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
 };
 const isEarlyPush1Program = (programKey) => PUSH1_EARLY_PROGRAMS().has(programKey);
 // Cron del Push 1 que le toca a ESTE programa. Lo usa el gate del Push 0: preguntarle al cron
-// de las 7pm si ya corrió, para una cita de IGTK cuyo digest salió a las 5:30pm, deja la cita
-// sin Push 0 Y fuera del digest de las 7pm — o sea, sin ningún aviso. Esa es exactamente la
-// clase de hueco que el Push 0 existe para tapar (§18.C), así que el gate va por programa.
+// de las 7pm si ya corrió, para una cita de un programa TEMPRANO cuyo digest salió a las 5:30pm,
+// deja la cita sin Push 0 Y fuera del digest de las 7pm — o sea, sin ningún aviso. Esa es
+// exactamente la clase de hueco que el Push 0 existe para tapar (§18.C), así que el gate va por
+// programa.
 const push1CronFor = (programKey) => (isEarlyPush1Program(programKey) ? PUSH1_EARLY_CRON() : PUSH1_CRON());
 
 // Agenda diaria a la ADMIN de EstadoX (7am). No es un push a closers: es el conteo de cuántas
@@ -1765,7 +1767,7 @@ async function hubspotDigestItems(d, { calendlyCalls, minStartIso, maxStartIso, 
 
 // `incluyePrograma(programKey)` decide qué citas entran a ESTE digest. Default: todas — así el
 // Push 2 y cualquier caller viejo se comportan exactamente igual que antes. Solo el Push 1 la
-// usa hoy, para partirse en dos corridas (5:30pm IGTK / 7pm el resto).
+// usa hoy, para partirse en dos corridas (5:30pm los programas tempranos / 7pm el resto).
 //
 // El filtro va sobre los ITEMS del mensaje, nunca sobre `calendlyCalls`: ese array es la lista
 // de dedup contra HubSpot y tiene que seguir siendo la foto COMPLETA de Calendly, o la corrida
@@ -2236,9 +2238,9 @@ export function startCalendlyJobs() {
   job(POLL_CRON(), runCalendlyPoll, 'poll');
   job(DELIVER_CRON(), runCalendlyDelivery, 'deliver');
   job(PUSH1_CRON(), runPush1, 'push1');
-  // La mitad temprana del Push 1 (IGTK, 5:30pm). Solo se registra si hay programas en la lista:
-  // vaciar CALENDLY_PUSH1_EARLY_PROGRAMS devuelve el Push 1 a una sola corrida a las 7pm, sin
-  // dejar un job fantasma que mande un digest vacío.
+  // La mitad temprana del Push 1 (IGTK + Operaciones, 5:30pm). Solo se registra si hay programas
+  // en la lista: vaciar CALENDLY_PUSH1_EARLY_PROGRAMS devuelve el Push 1 a una sola corrida a las
+  // 7pm, sin dejar un job fantasma que mande un digest vacío.
   if (PUSH1_EARLY_PROGRAMS().size) job(PUSH1_EARLY_CRON(), runPush1Early, 'push1-early');
   job(PUSH2_CRON(), runPush2, 'push2');
   if (PUSH4_ENABLED()) job(OUTCOME_CRON(), runOutcomeReminders, 'outcomes');

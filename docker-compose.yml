@@ -89,7 +89,7 @@ services:
       # llegar al contenedor para poder moverla sin redeploy (gotcha §12: `environment:` acá es
       # explícito, lo que no está listado NO entra aunque esté en el .env del VPS).
       - CALENDLY_PUSH1_EARLY_CRON=${CALENDLY_PUSH1_EARLY_CRON:-30 17 * * *}
-      - CALENDLY_PUSH1_EARLY_PROGRAMS=${CALENDLY_PUSH1_EARLY_PROGRAMS:-instagram}
+      - CALENDLY_PUSH1_EARLY_PROGRAMS=${CALENDLY_PUSH1_EARLY_PROGRAMS:-instagram,operaciones}
       - CALENDLY_PUSH2_CRON=${CALENDLY_PUSH2_CRON:-30 6 * * *}
       - CALENDLY_SKIP_AUDIT_CRON=${CALENDLY_SKIP_AUDIT_CRON:-15 * * * *}
       - CALENDLY_SKIP_ALERT_MIN=${CALENDLY_SKIP_ALERT_MIN:-2}
