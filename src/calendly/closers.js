@@ -21,6 +21,7 @@
 //   Daniela Camacho     Instagram & TikTok · Operaciones Escalables
 //   Sebastian Salazar   EstadoX (IA para Abogados)   ← salió de Tactical Investor 2026-09-02
 //   Esteban Aguilar     EstadoX (IA para Abogados)
+//   Alan Gonzalez       EstadoX (IA para Abogados)   ← alta 2026-09-18 (+54, Argentina)
 //   Andrea Machado      De Cero a Tactical Investor · Método Comunicarte   (los dos, Retia)
 //   Maru Marquez        Método Comunicarte · De Cero a Tactical Investor   (los dos, Retia)
 //   Dana Rodriguez      De Cero a Tactical Investor (Retia · alta 2026-08-25)
@@ -160,6 +161,32 @@ export const PEOPLE = {
     name: 'Esteban Aguilar',
     identities: [
       { connection: 'estadox', email: 'aguilare@estadox.com', phone: '+573186922796' },
+    ],
+  },
+  // Alta 2026-09-18. Juanito llevaba avisando desde el 2026-09-14 16:32 —~37 alertas en pares
+  // cada ~6h— que `gonzaleza@estadox.com` hosteaba citas sin closer mapeado, o sea CUATRO DÍAS de
+  // citas reales sin push precall. La alarma funcionó; el canal (el DM del admin) es el que nadie
+  // leyó. No es un buzón-rol como comunidad@/equipo@/registro@: es una persona.
+  //
+  // ⚠️ PRIMER TELÉFONO NO COLOMBIANO DEL ROSTER (+54, Argentina), y trae una trampa propia: los
+  // móviles argentinos llevan un `9` después del código de país, y WhatsApp a veces lo emite y a
+  // veces no. `phonesMatch` compara por igualdad o por SUFIJO, y '5492236693059' vs '542236693059'
+  // NO matchean en ninguna de las dos direcciones (el 9 está en el medio, no al final) ⇒ si el
+  // formato no es el que WhatsApp usa de verdad, su opt-in no resuelve y falla EN SILENCIO.
+  // Por eso el número NO se transcribió del dictado: se tomó de lo que WhatsApp mismo reporta
+  // (contacto 'Alan gonzalez' → phone 5492236693059, con el 9). Es dato observado, no inferido.
+  //
+  // Sin `workLid`, siguiendo la convención de Esteban Aguilar: se declara recién cuando haya un
+  // mensaje suyo A JUANITO del que sacarlo. Candidato visto desde la sesión de WhatsApp de
+  // Alejandro: 148378285547533@lid — NO se hardcodea, porque salió de otra sesión y este repo ya
+  // pagó caro confundir el aparato de destino.
+  //
+  // ⚠️ Le falta el OPT-IN: con CALENDLY_REQUIRE_OPTIN=true no recibe NADA hasta que le escriba a
+  // Juanito y quede su fila en `calendly_optins` (source 'self'). Igual que Esteban y que Dana.
+  alan_gonzalez: {
+    name: 'Alan Gonzalez',
+    identities: [
+      { connection: 'estadox', email: 'gonzaleza@estadox.com', phone: '+5492236693059' },
     ],
   },
   pablo_lozano: {
