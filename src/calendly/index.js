@@ -402,7 +402,11 @@ export function buildLeadLink(phone, text) {
 // ─── Mensajes que recibe el CLOSER (Juanito → closer) ─────────────────────────
 // Cada uno incrusta el link wa.me con el push precall listo para el lead.
 
-export function buildPush3Message({ name, firstName, phone, startIso, programKey, closer, linkLlamada = '' }) {
+// `altPhones` (§18.CA) son los teléfonos que el FORMULARIO DEL ANUNCIO tiene para este lead y
+// que NO coinciden con el de Calendly. Llega vacío en el ~95% de los pushes y en TODOS los de
+// 30X/EstadoX, y en ese caso este mensaje sale byte por byte igual que antes del cambio: el
+// camino de dos números es una rama aparte, no una variación del de siempre.
+export function buildPush3Message({ name, firstName, phone, startIso, programKey, closer, linkLlamada = '', altPhones = [] }) {
   const who = name || firstName || 'el prospecto';
   const time = formatCallTime(startIso);
   const tel = phone ? `📞 ${phone}` : '📵 sin teléfono en Calendly';
@@ -419,7 +423,29 @@ export function buildPush3Message({ name, firstName, phone, startIso, programKey
     linkLlamada,
   });
   const link = buildLeadLink(phone, text);
-  return link ? `${head}\n👉 Enviar push: ${link}` : `${head}\n(sin copy para este programa — mándalo manual)`;
+  if (!link) return `${head}\n(sin copy para este programa — mándalo manual)`;
+
+  const alternos = (altPhones || []).filter(Boolean);
+  if (!alternos.length) return `${head}\n👉 Enviar push: ${link}`;
+
+  // Rama de DOS NÚMEROS. El aviso va en la PRIMERA línea y nombrando al lead, por pedido
+  // explícito del jefe: el closer tiene que saber de quién se trata antes de tocar nada, no
+  // descubrirlo al final del mensaje. Los dos links van rotulados por su fuente porque el
+  // closer resuelve la duda mirando la hoja, y necesita saber cuál link es cuál.
+  const lineas = [
+    `⚠️ *OJO — ${who} tiene DOS números distintos*`,
+    `🔔 *Push 3* (antes de la llamada)${prog} — llamada hoy a las ${time}`,
+    `Escribió uno al agendar en Calendly y dejó otro en el formulario; lo más probable es que se haya equivocado al agendar. *Confirma en la hoja cuál es el bueno antes de escribirle.*`,
+    ``,
+    `📞 Calendly: ${phone}`,
+    `👉 Enviar push: ${link}`,
+  ];
+  for (const alt of alternos) {
+    const altLink = buildLeadLink(alt, text);
+    if (!altLink) continue;
+    lineas.push(``, `📞 Formulario: ${alt}`, `👉 Enviar push: ${altLink}`);
+  }
+  return lineas.join('\n');
 }
 
 // Aviso de reagenda (§18.BW). Sale SIEMPRE que el poll detecta que una cita se movió dentro

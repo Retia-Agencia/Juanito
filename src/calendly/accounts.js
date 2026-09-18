@@ -216,6 +216,18 @@ export const ACCOUNTS = {
     ],
     // Su CRM no es el HubSpot que Juanito tiene conectado (ese es de 30X).
     hubspot: false,
+    // El FORMULARIO DEL ANUNCIO: segunda fuente del teléfono del lead (§18.CA, lead-form.js).
+    // Es la pestaña donde cae el form de Meta Ads, NO el `sheets` de arriba (ese es donde el
+    // closer registra la call después). Declararlo es el interruptor: sin `leadForm` la
+    // conexión no hace el cruce, que es como queda 30x —su segunda fuente es HubSpot—.
+    // Las columnas son las de la hoja real, verificadas el 2026-09-18 con la service account
+    // del bot: A=nombre completo, B=correo, C=número de WhatsApp.
+    leadForm: {
+      id: '1DBKL4zwWWeJppe-6mzpJ4jT1G6MdEmT1Dd_uMiNBNwc',
+      tab: 'De Cero a Tactical Investor',
+      emailCol: 1,
+      phoneCol: 2,
+    },
   },
 
   // ComunicArte — conexión #4 (2026-08-25). Es el SEGUNDO Calendly de **Retia**, no el de otra
@@ -274,6 +286,16 @@ export const ACCOUNTS = {
     ],
     // Su CRM no es el HubSpot que Juanito tiene conectado.
     hubspot: false,
+    // Formulario del anuncio de ComunicArte (§18.CA). Mismo rol y mismas columnas que el de
+    // la conexión `retia`; es OTRA hoja porque es otro programa con otro anuncio. Es la hoja
+    // donde se vio el caso Gustavo Laguna (fila 1832, `+573006018595` contra el
+    // `+57 300 3018595` que escribió en Calendly).
+    leadForm: {
+      id: '1NN6rlZXJJcgvWXYsbP99vLt9aj7FXVPd6ep4ULAcK54',
+      tab: 'New form',
+      emailCol: 1,
+      phoneCol: 2,
+    },
   },
 };
 

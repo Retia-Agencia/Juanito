@@ -55,6 +55,7 @@ import {
   sqliteUtcToMs,
 } from '../calendly/push-logic.js';
 import { push5DueUtc, buildPush5Message } from '../calendly/sheet-push.js';
+import { fetchFormIndex, formPhonesFor, altPhonesFor } from '../calendly/lead-form.js';
 import { pickSupersededPushes, isManualUuid, planRescheduledPushes } from '../calendly/reschedule-logic.js';
 import { isCoveredProgram, decideFromAgenda } from '../hubspot/deals.js';
 import { decideNudgeAction, buildDealNudgeMessage, buildCreateDealNudgeMessage, buildTwinReviewMessage, dealUrl } from '../hubspot/nudge.js';
@@ -270,11 +271,12 @@ export function __resetDeps() {
 
 async function deps() {
   if (_injectedDeps) return _injectedDeps;
-  const [calendly, db, whatsapp, hubspot] = await Promise.all([
+  const [calendly, db, whatsapp, hubspot, sheets] = await Promise.all([
     import('../calendly/index.js'),
     import('../db/index.js'),
     import('../whatsapp/index.js'),
     import('../hubspot/client.js'),
+    import('../sheets/index.js'),
   ]);
   return {
     // Cuentas de Calendly a pollear. Va por el seam porque lee process.env (los tokens):
@@ -289,6 +291,10 @@ async function deps() {
     getContactPhone: hubspot.getContactPhone,
     // Rescate del teléfono cuando el lead agendó con otro correo (ver resolvePhone).
     findPhoneByName: hubspot.findPhoneByName,
+    // §18.CA: el formulario del anuncio como SEGUNDA fuente del teléfono, para las conexiones
+    // sin HubSpot (las dos de Retia). Read-only. Si falta, `fetchFormIndex` devuelve null y el
+    // poll se comporta exactamente como antes del cambio.
+    fetchSheetValues: sheets.fetchSheetValues,
     // §18.AF: modelo nudge — matchea la call con su deal y clasifica el estado.
     matchCallToDeal: hubspot.matchCallToDeal,
     // §18.AN: poll de las citas que solo viven en HubSpot.
@@ -369,11 +375,27 @@ async function deps() {
 // email), le meteríamos al closer de una empresa el teléfono sacado del CRM de la otra —
 // el closer terminaría escribiéndole a un contacto ajeno, y cruzaríamos datos entre
 // clientes. Sin `account` (callers viejos) se asume la cuenta default, que sí lo tiene.
-async function resolvePhone(d, invitee, account) {
+// `formIndex` (§18.CA) es el índice email → teléfonos del formulario del anuncio de ESTA
+// conexión, armado una vez por ciclo de poll. Null para 30X/EstadoX (su segunda fuente es
+// HubSpot) y también cuando la hoja no se pudo leer.
+async function resolvePhone(d, invitee, account, formIndex = null) {
   const direct = prospectPhoneOf(invitee);
   if (direct) return direct;
   const acct = account || accountOf(DEFAULT_ACCOUNT);
-  if (!acct?.hubspot) return null;
+  // Rescate por FORMULARIO, para las conexiones sin HubSpot. Es el equivalente exacto del
+  // rescate por CRM de abajo: la cita existe, Calendly no trajo número, y el número está en la
+  // hoja donde el lead lo dejó al registrarse. Sin esto el push degrada a "mándalo manual"
+  // —que fue el estado normal de ComunicArte hasta agosto: 143 citas sin teléfono en un mes—.
+  if (!acct?.hubspot) {
+    if (!formIndex) return null;
+    const [delForm] = formPhonesFor(formIndex, invitee?.email);
+    if (delForm) {
+      console.log(
+        `[Calendly] teléfono de ${invitee?.email} recuperado del formulario de ${acct?.key} (Calendly sin número)`
+      );
+    }
+    return delForm || null;
+  }
   const email = invitee?.email;
   if (!d.hubspotEnabled?.()) return null;
   if (email && d.getContactPhone) {
@@ -731,6 +753,20 @@ export async function runCalendlyPoll() {
   let manualPushes =
     RESCHEDULE_ENABLED() && d.getPendingManualPushes ? d.getPendingManualPushes() : [];
 
+  // §18.CA: índice email → teléfonos del formulario del anuncio, UNO POR CONEXIÓN y uno por
+  // ciclo de poll. Se arma perezosamente (solo si aparece una cita de esa conexión) y se
+  // memoiza en este Map, porque el poll corre cada 5 minutos y las hojas tienen miles de filas:
+  // leerlas por evento sería una llamada a Sheets por cita. Vive acá, no en un módulo, para que
+  // muera con el ciclo — así un número corregido en la hoja entra en el siguiente poll.
+  const formIndexes = new Map();
+  const formIndexFor = async (account) => {
+    if (!account?.leadForm) return null;
+    if (!formIndexes.has(account.key)) {
+      formIndexes.set(account.key, await fetchFormIndex(account, { fetchSheetValues: d.fetchSheetValues }));
+    }
+    return formIndexes.get(account.key);
+  };
+
   let nuevos = 0;
   for (const { ev, account } of events) {
     try {
@@ -756,7 +792,19 @@ export async function runCalendlyPoll() {
       const invitee = await d.getFirstInvitee(ev.uri, { token: account.token() });
       const firstName = firstNameFrom(invitee?.name);
       const name = fullNameFrom(invitee?.name);
-      const phone = await resolvePhone(d, invitee, account);
+      const formIndex = await formIndexFor(account);
+      const phone = await resolvePhone(d, invitee, account, formIndex);
+      // §18.CA: los teléfonos del formulario que NO son el que el lead escribió en Calendly.
+      // Vacío en el ~95% de los casos y siempre en 30X/EstadoX → el push sale igual que
+      // siempre. Ojo con el orden: se calcula sobre `phone` YA resuelto, así que una cita
+      // rescatada por el formulario (Calendly sin número) no se marca a sí misma como
+      // discrepante — el número mostrado y el de la hoja son el mismo.
+      const altPhones = formIndex ? altPhonesFor(phone, formPhonesFor(formIndex, invitee?.email)) : [];
+      if (altPhones.length) {
+        console.log(
+          `[Calendly] ⚠️ ${name} (${invitee?.email}) tiene DOS números: Calendly ${phone} vs formulario ${altPhones.join(', ')} — el push va con los dos links`
+        );
+      }
 
       // Dedup de reagendas (§18.AC): mismo closer + mismo lead + call futura = es la misma
       // call que el closer nos dictó por WhatsApp, pero ahora con evento real. Calendly
@@ -836,6 +884,7 @@ export async function runCalendlyPoll() {
         programKey,
         closer: firstNameFrom(closer.name),
         linkLlamada: eventJoinUrl(ev),
+        altPhones,
       });
 
       const result = d.scheduleCalendlyPush({

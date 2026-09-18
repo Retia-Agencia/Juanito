@@ -6733,6 +6733,99 @@ superseded…`). El test de más es el gate del Push 0 partido en dos.
 las 17:30 salen IGTK *y* Operaciones, y a las 19:00 el resto. Igual que en §18.BX, el modo de
 fallo de una partición mal hecha es mudo.
 
+### 18.CA 🔴 El número que Juanito "ponía mal" lo escribió el lead: segunda fuente para Retia (2026-09-18)
+
+**El reporte.** Michael (operaciones de Retia) por WhatsApp: *"Creo que está poniendo los números
+mal. El de Gustavo laguna está mal. Y así puede estar pasando con más."*
+
+**El diagnóstico: Juanito no transforma nada.** Tres fuentes, en orden:
+
+| Dónde | Qué dice |
+|---|---|
+| El push que salió (`calendly_pushes` id 5308, call del 16-sep, closer Maru) | `+57 300 3018595` → `wa.me/573003018595` |
+| La API de Calendly (invitee de `b6a3bfcb…`) | `text_reminder_number: null`, Q&A *"Ingrese su número telefónico"* = `+57 300 3018595` |
+| El formulario del anuncio (hoja de ComunicArte, pestaña `New form`, fila 1832, mismo email `gustavo.laguna21@gmail.com`) | `+573006018595` |
+
+Un dígito. `prospectPhoneOf()` devuelve el string tal cual y `buildLeadLink()` solo le quita lo
+que no es dígito; una búsqueda del nombre y del número en TODA la base devuelve solo esas dos
+filas de push, con el string idéntico al de Calendly. **El typo lo escribió el lead al agendar.**
+
+**La escala, cruzando por EMAIL exacto contra el formulario del anuncio:**
+
+| | Citas | Coincide | Difiere | Email no está en el form | Sin teléfono en Calendly |
+|---|---|---|---|---|---|
+| Método Comunicarte (desde 25-ago) | 109 | 83 | **4** | 12 | 10 |
+| De Cero a Tactical Investor | 104 | 92 | **5** | 6 | 1 |
+
+9 de 175 comparables (5%). De esas 9: cinco de UN dígito, dos de dos dígitos y dos números
+enteramente distintos (una lead vive en España y tiene línea allá y en Colombia). **No todo lo
+que difiere es un typo**, y eso decide el diseño de abajo.
+
+**Por qué solo Retia.** Sus dos programas apagaron la casilla nativa de SMS y pusieron una
+pregunta de TEXTO LIBRE (25 y 26-ago, ver §18.BN y el comentario de `prospectPhoneOf`). Y son
+las dos únicas conexiones con `hubspot:false`, o sea las únicas sin el rescate por CRM que tapa
+este hueco en 30X. Sin segunda fuente, el typo sale derecho al link del closer.
+
+**⚠️ Prender la casilla nativa NO lo arregla, y se midió antes de descartarlo.** Dos razones:
+
+1. *Ya está prendida y casi nadie la llena.* Citas de ComunicArte por mes según de dónde salió el
+   número: julio 73 sin teléfono / 0 nativa / 0 pregunta · agosto 143 / 1 / 10 · **septiembre 2 /
+   7 / 84**. La casilla existe y la usa el 7%; la pregunta obligatoria cubre el 90%. En el
+   Calendly de 30X, septiembre: 1448 citas, casilla nativa llena en **15**. Es opcional, y lo
+   opcional no lo llena nadie. Quitar la pregunta para apoyarse en ella sería volver a julio.
+2. *Aunque la llenaran, no habría atrapado a Gustavo.* La casilla valida FORMA, no propiedad.
+   `+57 300 3018595` es un móvil colombiano impecable. **Este error solo se ve contra una segunda
+   fuente**, y por eso ningún validador nuevo habría servido.
+
+**El arreglo (decidido por el jefe).** `src/calendly/lead-form.js` (nuevo, PURO salvo la lectura
+de la hoja) + `leadForm` en las dos conexiones de Retia en `accounts.js`. El poll arma UN índice
+`email → teléfonos` por conexión y por ciclo, y con él hace dos cosas:
+
+- **Cruce:** si el formulario tiene un número distinto al de Calendly, el Push 3 sale con el
+  aviso en la PRIMERA línea y nombrando al lead (pedido explícito del jefe: el closer tiene que
+  saber de quién se trata antes de tocar nada), y con **los dos links rotulados por su fuente**.
+- **Rescate:** si Calendly no trajo número, se usa el del formulario. Es el equivalente exacto
+  del rescate por HubSpot de 30X, que Retia nunca tuvo.
+
+**Lo que deliberadamente NO hace: clasificar "typo" contra "dos líneas reales".** Todo umbral se
+equivoca en el medio (Karina difiere en 2 dígitos, Miriam en el país), y la acción del closer es
+la MISMA en los tres casos: mirar los dos y escoger. Un clasificador agregaría umbral, tests y
+falsos negativos sin cambiar el resultado. **Si difieren, van los dos.**
+
+**El match es por EMAIL exacto, nunca por nombre.** El primer cruce de la investigación se hizo
+por nombre y le asignó a "Gustavo Laguna" el teléfono de un desconocido, porque en el formulario
+ese lead se llama "Gustavo Adolfo Laguna Leal". Un push a un número equivocado es PEOR que un
+push sin número. Hay test que lo fija.
+
+**Verificado antes de desplegar:** la service account del bot ya leía las dos hojas (cero
+credenciales nuevas, cero dependencias nuevas — `fetchSheetValues` ya existía). Dry-run contra
+los datos reales: 29 citas en 7 días, **4 con dos números** (Laura Sofia Nieto y Karina el 21-sep;
+Sergio Pérez y Miriam Manrique el 22-sep), 25 con el push idéntico al de siempre. Cero falsos
+positivos.
+
+**Si la hoja falla, el push sale igual que hoy.** `fetchFormIndex` devuelve `null` —no lanza—
+ante cualquier problema (sin `leadForm`, sin credenciales, 403, hoja vacía). Un push NUNCA se
+bloquea porque Sheets no respondió.
+
+**Baseline de la suite** (Linux, en el VPS): antes 1218 / 1216 verdes; después **1229 / 1227**,
+con los mismos **2 rojos conocidos**. Los 11 de más son los del módulo nuevo.
+
+**🕳️ Dos huecos conocidos que se dejaron a propósito (el pedido era cambiar lo mínimo):**
+
+1. **Los digests Push 1 y Push 2 NO tienen el cruce.** `buildDigestMessage` arma sus propios
+   links wa.me y su `resolvePhone` (el de la línea ~1878 de `scheduler/calendly.js`) no recibe
+   `formIndex`. Un lead con dos números sale en el digest de la mañana con UN solo link y sin
+   aviso; el Push 3 de 25 minutos antes sí avisa. Cerrarlo son ~6 líneas simétricas a las de
+   este cambio.
+2. **El re-resolve en la entrega tampoco** (línea ~1662): una cita de Retia que quedó sin
+   teléfono en el poll no se rescata al momento de enviar. Marginal, porque el poll ya intenta
+   el rescate.
+
+**🔎 Hallazgo aparte, sin tocar:** el Push 5 de ComunicArte manda al closer a la pestaña
+**"Estudiantes Agosto"** (`gid=1633631553`, en `accounts.js`), no a "Registro de llamadas"
+(`gid=0`), que es a donde sí apunta la conexión de Tactical Investor. Parece pinneado a la
+cohorte de agosto. **Confirmar con Michael antes de moverlo.**
+
 ### Secretos (decididos, ver §13)
 
 - `CALENDLY_TOKEN`: **NO rotar** (decidido).
