@@ -102,6 +102,23 @@ export function altPhonesFor(calendlyPhone, formPhones) {
 // lanza— ante cualquier problema: la conexión sin `leadForm`, sin credenciales, o un fallo
 // de la API. Null significa "no hay segunda fuente" y el poll se comporta igual que antes de
 // este cambio. Un push NUNCA se bloquea porque la hoja no respondió.
+// Memo por CONEXIÓN para una corrida (un ciclo de poll, un digest). Existe porque los dos
+// consumidores —el poll y el digest— recorren varias citas de la misma conexión y las hojas
+// tienen miles de filas: sin memo sería una llamada a Sheets por cita. Se crea por corrida y se
+// tira al terminar, así que un número corregido en la hoja entra en la corrida siguiente.
+// El `null` de un fallo TAMBIÉN se memoiza: si la hoja no respondió, no se le insiste 30 veces
+// en el mismo ciclo.
+export function makeFormIndexCache({ fetchSheetValues } = {}) {
+  const porConexion = new Map();
+  return async (account) => {
+    if (!account?.leadForm) return null;
+    if (!porConexion.has(account.key)) {
+      porConexion.set(account.key, await fetchFormIndex(account, { fetchSheetValues }));
+    }
+    return porConexion.get(account.key);
+  };
+}
+
 export async function fetchFormIndex(account, { fetchSheetValues } = {}) {
   const form = account?.leadForm;
   if (!form?.id || !form?.tab || !fetchSheetValues) return null;

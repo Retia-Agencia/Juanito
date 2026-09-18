@@ -6781,11 +6781,41 @@ este hueco en 30X. Sin segunda fuente, el typo sale derecho al link del closer.
 de la hoja) + `leadForm` en las dos conexiones de Retia en `accounts.js`. El poll arma UN índice
 `email → teléfonos` por conexión y por ciclo, y con él hace dos cosas:
 
-- **Cruce:** si el formulario tiene un número distinto al de Calendly, el Push 3 sale con el
-  aviso en la PRIMERA línea y nombrando al lead (pedido explícito del jefe: el closer tiene que
-  saber de quién se trata antes de tocar nada), y con **los dos links rotulados por su fuente**.
+- **Cruce:** si el formulario tiene un número distinto al de Calendly, el push sale con el aviso
+  en la PRIMERA línea y nombrando al lead (pedido explícito del jefe: el closer tiene que saber
+  de quién se trata antes de tocar nada), y con **los dos links rotulados por lead y por fuente**
+  (`📞 Gustavo, según Calendly:` / `📞 Gustavo, según el formulario:`).
 - **Rescate:** si Calendly no trajo número, se usa el del formulario. Es el equivalente exacto
   del rescate por HubSpot de 30X, que Retia nunca tuvo.
+
+**Cubre TODOS los pushes de Retia que llevan el número del lead, que no son todos:**
+
+| Push | Muestra el número | Lleva link wa.me | ¿Cubierto? |
+|---|---|---|---|
+| Push 0 (nueva call) | Sí | No | Sí — avisa, sin links (ver abajo) |
+| Push 1 / 2 (digests) | Sí | Sí | Sí — con anclaje por lead |
+| Push 3 (precall) | Sí | Sí | Sí |
+| Push 4 (outcome) | No | No | N/A — Retia tiene `push4:false` |
+| Push 5 (sheet) | No | No | N/A — no toca al lead |
+| Reagenda correctiva | Sí | Sí | Sí |
+
+**El anclaje por lead sale de una pregunta del jefe** al revisar el primer despliegue: *"¿cómo
+sabe el closer cuáles números y links corresponden a la misma persona?"* En el Push 3 y la
+reagenda el mensaje es de un solo lead, así que bastaba el encabezado; se repite el nombre en
+cada línea igual, porque el closer lee esto en medio de una ráfaga y "📞 Calendly" a secas no
+dice de quién es. **En el digest no es cosmético: lista varias citas en UN mensaje**, y dos links
+sueltos bajo una viñeta son dos links que hay que adivinar a quién pertenecen. Hay un test que
+recorre el mensaje línea por línea y exige que encima de cada `wa.me` esté el nombre del lead.
+
+**El Push 0 avisa pero no ofrece links, a propósito.** No lleva `wa.me` (es un heads-up), así
+que ahí el aviso no puede ofrecer dos botones: ofrece TIEMPO. Llega en cuanto entra la reserva,
+para que el closer resuelva la duda en la hoja antes de que llegue el Push 3, que es el que sí
+tiene que salir bien. Tampoco repite el número de Calendly (ya está en la línea de arriba), solo
+agrega el del formulario.
+
+**La reagenda correctiva es donde más duele equivocarse** y por eso entró: el lead ya tiene un
+link muerto en la mano y ese mensaje es el que lo corrige. La reagenda INFORMATIVA no cambia —no
+le pide nada al closer— y hay test que lo fija.
 
 **Lo que deliberadamente NO hace: clasificar "typo" contra "dos líneas reales".** Todo umbral se
 equivoca en el medio (Karina difiere en 2 dígitos, Miriam en el país), y la acción del closer es
@@ -6807,19 +6837,21 @@ positivos.
 ante cualquier problema (sin `leadForm`, sin credenciales, 403, hoja vacía). Un push NUNCA se
 bloquea porque Sheets no respondió.
 
-**Baseline de la suite** (Linux, en el VPS): antes 1218 / 1216 verdes; después **1229 / 1227**,
-con los mismos **2 rojos conocidos**. Los 11 de más son los del módulo nuevo.
+**Baseline de la suite** (Linux, en el VPS): antes 1218 / 1216 verdes; después **1234 / 1232**,
+con los mismos **2 rojos conocidos**. Los 16 de más son los del módulo nuevo y los de los otros
+tres pushes.
 
-**🕳️ Dos huecos conocidos que se dejaron a propósito (el pedido era cambiar lo mínimo):**
+**El índice se memoiza por CORRIDA, no por proceso** (`makeFormIndexCache`). Los dos
+consumidores —el poll y el digest— recorren decenas de citas de la misma conexión, y sin memo
+sería una llamada a Sheets por cita. Muere al terminar la corrida, así que un número corregido
+en la hoja entra en la siguiente. Un fallo también se memoiza: si la hoja no respondió, no se le
+insiste treinta veces en el mismo ciclo. Hay test que cuenta las lecturas.
 
-1. **Los digests Push 1 y Push 2 NO tienen el cruce.** `buildDigestMessage` arma sus propios
-   links wa.me y su `resolvePhone` (el de la línea ~1878 de `scheduler/calendly.js`) no recibe
-   `formIndex`. Un lead con dos números sale en el digest de la mañana con UN solo link y sin
-   aviso; el Push 3 de 25 minutos antes sí avisa. Cerrarlo son ~6 líneas simétricas a las de
-   este cambio.
-2. **El re-resolve en la entrega tampoco** (línea ~1662): una cita de Retia que quedó sin
-   teléfono en el poll no se rescata al momento de enviar. Marginal, porque el poll ya intenta
-   el rescate.
+**🕳️ Hueco conocido que queda (uno solo, y es marginal):** el re-resolve en la ENTREGA
+(línea ~1662 de `scheduler/calendly.js`) no recibe `formIndex`. Solo corre cuando el
+`prospect_phone` congelado quedó null, y para Retia el poll ya intentó el rescate en ese caso,
+así que en la práctica no cambia nada. Se deja anotado por si algún día el poll y la entrega se
+desincronizan.
 
 **🔎 Hallazgo aparte, sin tocar:** el Push 5 de ComunicArte manda al closer a la pestaña
 **"Estudiantes Agosto"** (`gid=1633631553`, en `accounts.js`), no a "Registro de llamadas"

@@ -5,8 +5,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildFormIndex, formPhonesFor, altPhonesFor, fetchFormIndex } from '../src/calendly/lead-form.js';
-import { buildPush3Message } from '../src/calendly/index.js';
+import { buildFormIndex, formPhonesFor, altPhonesFor, fetchFormIndex, makeFormIndexCache } from '../src/calendly/lead-form.js';
+import {
+  buildPush3Message,
+  buildPush0Message,
+  buildDigestMessage,
+  buildRescheduleMessage,
+} from '../src/calendly/index.js';
 import { ACCOUNTS } from '../src/calendly/accounts.js';
 
 // Filas como las devuelve src/sheets/client.js: arreglos de celdas, con el encabezado incluido.
@@ -78,13 +83,87 @@ test('el push con DOS números abre nombrando al lead y lleva los dos links rotu
   assert.match(primera, /OJO/);
   assert.match(primera, /Gustavo Laguna/);
   assert.match(primera, /DOS números distintos/);
-  // Los dos links, cada uno rotulado por su fuente.
-  assert.match(msg, /📞 Calendly: \+57 300 3018595/);
-  assert.match(msg, /📞 Formulario: \+573006018595/);
+  // Los dos links, cada uno rotulado por su fuente Y por el lead: el closer lee esto en medio
+  // de una ráfaga de pushes, y "Calendly" a secas no dice de quién es ese número.
+  assert.match(msg, /📞 Gustavo, según Calendly: \+57 300 3018595/);
+  assert.match(msg, /📞 Gustavo, según el formulario: \+573006018595/);
   assert.match(msg, /wa\.me\/573003018595\?text=/);
   assert.match(msg, /wa\.me\/573006018595\?text=/);
   // Y le dice qué hacer con la duda.
   assert.match(msg, /hoja/);
+});
+
+// ─── Los otros pushes de Retia que llevan el número (§18.CA) ──────────────────
+// Push 4 y Push 5 no entran: el 4 está apagado en Retia (push4:false) y el 5 es el
+// recordatorio del sheet, que no toca al lead.
+
+test('el digest (Push 1/2) ancla CADA link a su lead, porque lista varias citas en un mensaje', () => {
+  const msg = buildDigestMessage({
+    pushLabel: 'Push 1 (la noche anterior)',
+    whenLabel: 'mañana',
+    pushN: 1,
+    closer: 'Maru',
+    items: [
+      { name: 'Gustavo Laguna', firstName: 'Gustavo', phone: '+57 300 3018595', altPhones: ['+573006018595'], startIso: '2026-09-16T13:30:00Z', programKey: 'comunicarte' },
+      { name: 'Ana Gómez', firstName: 'Ana', phone: '+573001112222', startIso: '2026-09-16T14:30:00Z', programKey: 'comunicarte' },
+    ],
+  });
+  // El lead con dos números queda marcado y sus DOS links dicen su nombre.
+  assert.match(msg, /DOS números distintos/);
+  assert.match(msg, /📞 Gustavo, según Calendly: \+57 300 3018595/);
+  assert.match(msg, /📞 Gustavo, según el formulario: \+573006018595/);
+  // El otro lead de la MISMA lista sigue con su línea de siempre, sin contaminarse.
+  assert.match(msg, /Ana Gómez/);
+  assert.doesNotMatch(msg, /Ana, según/);
+  // Y ningún link de Gustavo puede quedar sin nombre al lado (es el riesgo propio de la lista).
+  const lineas = msg.split('\n');
+  for (let i = 0; i < lineas.length; i++) {
+    if (!lineas[i].includes('wa.me/573003018595') && !lineas[i].includes('wa.me/573006018595')) continue;
+    assert.match(lineas[i - 1], /Gustavo/, `el link de la línea ${i} no tiene el nombre del lead encima`);
+  }
+});
+
+test('la reagenda correctiva de un lead con dos números lleva los dos links', () => {
+  const comun = {
+    name: 'Gustavo Laguna', firstName: 'Gustavo', phone: '+57 300 3018595',
+    programKey: 'comunicarte', closer: 'Maru', forma: 'correctivo',
+    deIso: '2026-09-16T13:30:00Z', aIso: '2026-09-18T13:30:00Z',
+    linkLlamada: 'https://meet.google.com/abc', ahora: new Date('2026-09-17T12:00:00Z'),
+  };
+  const msg = buildRescheduleMessage({ ...comun, altPhones: ['+573006018595'] });
+  assert.match(msg.split('\n')[0], /OJO — Gustavo Laguna tiene DOS números/);
+  assert.match(msg, /📞 Gustavo, según Calendly/);
+  assert.match(msg, /📞 Gustavo, según el formulario/);
+  assert.match(msg, /wa\.me\/573006018595/);
+  // Sin alternos, idéntica a la de antes del cambio.
+  const sinAlt = buildRescheduleMessage(comun);
+  assert.equal(sinAlt, buildRescheduleMessage({ ...comun, altPhones: [] }));
+  assert.doesNotMatch(sinAlt, /OJO/);
+  assert.match(sinAlt, /Mándale el nuevo/);
+});
+
+test('la reagenda INFORMATIVA no cambia aunque el lead tenga dos números (no pide nada al closer)', () => {
+  const args = {
+    name: 'Gustavo Laguna', firstName: 'Gustavo', phone: '+57 300 3018595',
+    programKey: 'comunicarte', closer: 'Maru', forma: 'informativo',
+    deIso: '2026-09-16T13:30:00Z', aIso: '2026-09-18T13:30:00Z',
+  };
+  assert.equal(buildRescheduleMessage(args), buildRescheduleMessage({ ...args, altPhones: ['+573006018595'] }));
+});
+
+// El Push 0 no lleva link wa.me (es un heads-up), así que acá el aviso no ofrece dos botones:
+// ofrece TIEMPO para resolver la duda antes de que llegue el Push 3.
+test('el Push 0 avisa de los dos números pero NO inventa links (no es su rol)', () => {
+  const args = {
+    name: 'Gustavo Laguna', firstName: 'Gustavo', phone: '+57 300 3018595',
+    startIso: '2026-09-16T13:30:00Z', programKey: 'comunicarte',
+  };
+  const msg = buildPush0Message({ ...args, altPhones: ['+573006018595'] });
+  assert.match(msg, /DOS números distintos/);
+  assert.match(msg, /\+573006018595/);
+  assert.ok(!msg.includes('wa.me'), 'el Push 0 nunca lleva link wa.me');
+  assert.equal(buildPush0Message(args), buildPush0Message({ ...args, altPhones: [] }));
+  assert.doesNotMatch(buildPush0Message(args), /DOS números/);
 });
 
 test('sin alternos el push sale IDÉNTICO al de antes del cambio (la rama vieja no se toca)', () => {
@@ -144,4 +223,25 @@ test('fetchFormIndex devuelve null (no lanza) si la hoja falla, si está vacía 
   // Y en el camino feliz sí indexa.
   const idx = await fetchFormIndex(cuenta, { fetchSheetValues: async () => HOJA });
   assert.equal(idx.size, 2);
+});
+
+// El memo es lo que impide que el poll (o el digest) lean una hoja de miles de filas UNA VEZ
+// POR CITA. Con 30 citas de la misma conexión, eso serían 30 llamadas a Sheets por ciclo.
+test('makeFormIndexCache lee la hoja UNA vez por conexión, y no reintenta el fallo en la misma corrida', async () => {
+  let lecturas = 0;
+  const cache = makeFormIndexCache({ fetchSheetValues: async () => { lecturas++; return HOJA; } });
+  const retia = { key: 'retia', leadForm: { id: 'a', tab: 't' } };
+  const comunicarte = { key: 'comunicarte', leadForm: { id: 'b', tab: 't' } };
+  await cache(retia); await cache(retia); await cache(retia);
+  assert.equal(lecturas, 1, 'la misma conexión se lee una sola vez');
+  await cache(comunicarte);
+  assert.equal(lecturas, 2, 'cada conexión tiene su propia hoja');
+  assert.equal(await cache({ key: '30x' }), null, 'sin leadForm no se lee nada');
+  assert.equal(lecturas, 2);
+
+  let fallos = 0;
+  const roto = makeFormIndexCache({ fetchSheetValues: async () => { fallos++; throw new Error('403'); } });
+  assert.equal(await roto(retia), null);
+  assert.equal(await roto(retia), null);
+  assert.equal(fallos, 1, 'un fallo no se reintenta 30 veces en el mismo ciclo');
 });

@@ -430,22 +430,33 @@ export function buildPush3Message({ name, firstName, phone, startIso, programKey
 
   // Rama de DOS NÚMEROS. El aviso va en la PRIMERA línea y nombrando al lead, por pedido
   // explícito del jefe: el closer tiene que saber de quién se trata antes de tocar nada, no
-  // descubrirlo al final del mensaje. Los dos links van rotulados por su fuente porque el
-  // closer resuelve la duda mirando la hoja, y necesita saber cuál link es cuál.
-  const lineas = [
+  // descubrirlo al final del mensaje.
+  return [
     `⚠️ *OJO — ${who} tiene DOS números distintos*`,
     `🔔 *Push 3* (antes de la llamada)${prog} — llamada hoy a las ${time}`,
     `Escribió uno al agendar en Calendly y dejó otro en el formulario; lo más probable es que se haya equivocado al agendar. *Confirma en la hoja cuál es el bueno antes de escribirle.*`,
-    ``,
-    `📞 Calendly: ${phone}`,
-    `👉 Enviar push: ${link}`,
-  ];
+    ...bloqueDosNumeros({ firstName: firstName || firstNameFrom(name), phone, alternos, text }),
+  ].join('\n');
+}
+
+// ─── Bloque de DOS NÚMEROS, para los pushes de UN SOLO lead (§18.CA) ──────────
+// Lo comparten el Push 3 y la reagenda correctiva; el digest y el Push 0 lo resuelven aparte
+// (uno es una lista, el otro no lleva links).
+//
+// Cada línea NOMBRA al lead aunque el mensaje sea de una sola persona. Parece redundante y no
+// lo es: el closer lee esto en medio de una ráfaga de pushes de varios leads, y "📞 Calendly"
+// a secas no dice de quién es ese número. Si mira el mensaje a medias —o lo reenvía, o vuelve
+// a él media hora después— el nombre tiene que estar pegado al link que va a tocar, no solo
+// en el encabezado. Pedido explícito del jefe al revisar el primer despliegue.
+function bloqueDosNumeros({ firstName, phone, alternos, text }) {
+  const quien = firstName || 'el lead';
+  const lineas = [``, `📞 ${quien}, según Calendly: ${phone}`, `👉 Enviar push: ${buildLeadLink(phone, text)}`];
   for (const alt of alternos) {
     const altLink = buildLeadLink(alt, text);
     if (!altLink) continue;
-    lineas.push(``, `📞 Formulario: ${alt}`, `👉 Enviar push: ${altLink}`);
+    lineas.push(``, `📞 ${quien}, según el formulario: ${alt}`, `👉 Enviar push: ${altLink}`);
   }
-  return lineas.join('\n');
+  return lineas;
 }
 
 // Aviso de reagenda (§18.BW). Sale SIEMPRE que el poll detecta que una cita se movió dentro
@@ -468,6 +479,7 @@ export function buildRescheduleMessage({
   aIso,
   forma = 'informativo',
   linkLlamada = '',
+  altPhones = [],
   tz = TZ(),
   // El reloj entra por parámetro, no `Date.now()` adentro: el 'hoy'/'mañana' del texto al lead
   // depende de él, y con el reloj del sistema el harness compara contra la fecha real y el
@@ -500,7 +512,19 @@ export function buildRescheduleMessage({
     linkLlamada,
   });
   const link = buildLeadLink(phone, text);
-  return link ? `${head}\nYa le mandaste el link viejo y ese ya no sirve. Mándale el nuevo:\n👉 ${link}` : manual;
+  if (!link) return manual;
+
+  // §18.CA: si el lead tiene dos números, la reagenda correctiva es JUSTO el momento en que
+  // más duele mandarlo al equivocado — el lead ya tiene un link muerto en la mano y este es el
+  // mensaje que lo corrige. Van los dos, igual que en el Push 3.
+  const alternos = (altPhones || []).filter(Boolean);
+  if (!alternos.length) return `${head}\nYa le mandaste el link viejo y ese ya no sirve. Mándale el nuevo:\n👉 ${link}`;
+  return [
+    `⚠️ *OJO — ${who} tiene DOS números distintos*`,
+    head,
+    `Ya le mandaste el link viejo y ese ya no sirve. *Confirma en la hoja cuál número es el bueno* y mándale el nuevo:`,
+    ...bloqueDosNumeros({ firstName: firstName || firstNameFrom(name), phone, alternos, text }),
+  ].join('\n');
 }
 
 // Push 0 (aviso de nueva call HOY): mensaje INFORMATIVO al closer — "te reservaron
@@ -510,7 +534,7 @@ export function buildRescheduleMessage({
 // de la noche (ver push-logic.js): una reserva de las 9pm para el día siguiente no
 // entra en ningún digest, así que este es el ÚNICO aviso que el closer recibe esa
 // noche. Decir "hoy" ahí sería peor que no avisar — lo manda a la agenda equivocada.
-export function buildPush0Message({ name, firstName, phone, startIso, programKey, tz = TZ(), when = 'hoy' }) {
+export function buildPush0Message({ name, firstName, phone, startIso, programKey, tz = TZ(), when = 'hoy', altPhones = [] }) {
   const who = name || firstName || 'el prospecto';
   const time = formatCallTime(startIso, tz);
   const tel = phone ? `📞 ${phone}` : '📵 sin teléfono en Calendly';
@@ -521,10 +545,21 @@ export function buildPush0Message({ name, firstName, phone, startIso, programKey
   const cola = esManana
     ? 'Mañana te llega el resumen del día y el push con el link ~25 min antes.'
     : 'Te llegará el push con el link ~25 min antes de la llamada.';
+  // §18.CA: este push NO lleva link wa.me (es un heads-up), así que acá el aviso de dos números
+  // no puede ofrecer dos botones — ofrece TIEMPO. Avisa ahora para que el closer resuelva la
+  // duda en la hoja antes de que llegue el Push 3, que es el que sí tiene que salir bien.
+  const alternos = (altPhones || []).filter(Boolean);
+  // El número de arriba ya es el de Calendly, así que el aviso NO lo repite: solo agrega el
+  // otro. Repetirlo hacía que el closer leyera el mismo número dos veces y tuviera que
+  // compararlos a ojo para darse cuenta de cuál era cuál.
+  const aviso = alternos.length
+    ? `\n⚠️ *${who} dejó DOS números distintos*: arriba está el de Calendly, y en el formulario dejó ${alternos.join(' / ')}. Confirma en la hoja cuál es el bueno antes de que llegue el push con el link.`
+    : '';
   return (
     `📅 *${titulo}* — te acaban de reservar un espacio en tu agenda.\n` +
     `*${who}*${prog} — ${tel} — ${when} a las ${time}\n` +
-    cola
+    cola +
+    aviso
   );
 }
 
@@ -544,7 +579,27 @@ export function buildDigestMessage({ pushLabel, whenLabel, items, pushN, closer,
       hora: formatLeadTime(it.startIso, tz),
     });
     const link = buildLeadLink(it.phone, text);
-    return link ? `${head}\n  👉 ${link}` : `${head} (mándalo manual)`;
+    if (!link) return `${head} (mándalo manual)`;
+    const alternos = (it.altPhones || []).filter(Boolean);
+    if (!alternos.length) return `${head}\n  👉 ${link}`;
+
+    // §18.CA en una LISTA. Acá el anclaje por lead no es cosmético como en el Push 3: el
+    // digest lista varias citas en UN solo mensaje, así que dos links sueltos bajo una
+    // viñeta son dos links que el closer tiene que adivinar a quién pertenecen. Por eso
+    // cada línea de link repite el primer nombre y su fuente, y el número va con la hora
+    // arriba para que la viñeta siga siendo escaneable.
+    const quien = it.firstName || firstNameFrom(it.name);
+    const lineas = [
+      `• ${time} — ${who} — ⚠️ *DOS números distintos* (confirma en la hoja cuál es el bueno)`,
+      `  📞 ${quien}, según Calendly: ${it.phone}`,
+      `  👉 ${link}`,
+    ];
+    for (const alt of alternos) {
+      const altLink = buildLeadLink(alt, text);
+      if (!altLink) continue;
+      lineas.push(`  📞 ${quien}, según el formulario: ${alt}`, `  👉 ${altLink}`);
+    }
+    return lineas.join('\n');
   };
 
   // Segmentación por programa: un closer con citas de dos programas necesita saber cuál es

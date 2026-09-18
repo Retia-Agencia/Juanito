@@ -55,7 +55,7 @@ import {
   sqliteUtcToMs,
 } from '../calendly/push-logic.js';
 import { push5DueUtc, buildPush5Message } from '../calendly/sheet-push.js';
-import { fetchFormIndex, formPhonesFor, altPhonesFor } from '../calendly/lead-form.js';
+import { makeFormIndexCache, formPhonesFor, altPhonesFor } from '../calendly/lead-form.js';
 import { pickSupersededPushes, isManualUuid, planRescheduledPushes } from '../calendly/reschedule-logic.js';
 import { isCoveredProgram, decideFromAgenda } from '../hubspot/deals.js';
 import { decideNudgeAction, buildDealNudgeMessage, buildCreateDealNudgeMessage, buildTwinReviewMessage, dealUrl } from '../hubspot/nudge.js';
@@ -753,19 +753,10 @@ export async function runCalendlyPoll() {
   let manualPushes =
     RESCHEDULE_ENABLED() && d.getPendingManualPushes ? d.getPendingManualPushes() : [];
 
-  // §18.CA: índice email → teléfonos del formulario del anuncio, UNO POR CONEXIÓN y uno por
-  // ciclo de poll. Se arma perezosamente (solo si aparece una cita de esa conexión) y se
-  // memoiza en este Map, porque el poll corre cada 5 minutos y las hojas tienen miles de filas:
-  // leerlas por evento sería una llamada a Sheets por cita. Vive acá, no en un módulo, para que
-  // muera con el ciclo — así un número corregido en la hoja entra en el siguiente poll.
-  const formIndexes = new Map();
-  const formIndexFor = async (account) => {
-    if (!account?.leadForm) return null;
-    if (!formIndexes.has(account.key)) {
-      formIndexes.set(account.key, await fetchFormIndex(account, { fetchSheetValues: d.fetchSheetValues }));
-    }
-    return formIndexes.get(account.key);
-  };
+  // §18.CA: índice email → teléfonos del formulario del anuncio, uno por conexión, memoizado
+  // para ESTE ciclo de poll (ver makeFormIndexCache). Muere con el ciclo, así que un número
+  // corregido en la hoja entra en el poll siguiente.
+  const formIndexFor = makeFormIndexCache({ fetchSheetValues: d.fetchSheetValues });
 
   let nuevos = 0;
   for (const { ev, account } of events) {
@@ -937,6 +928,7 @@ export async function runCalendlyPoll() {
             aIso: ev.start_time,
             forma: reagenda.forma,
             linkLlamada: eventJoinUrl(ev),
+            altPhones,
             ahora: now,
           }),
         });
@@ -1031,7 +1023,7 @@ export async function runCalendlyPoll() {
         });
         if (d0.notify) {
           const when = d0.reason === 'new-booking-tomorrow' ? 'mañana' : 'hoy';
-          const msg0 = buildPush0Message({ name, firstName, phone, startIso: ev.start_time, programKey, when });
+          const msg0 = buildPush0Message({ name, firstName, phone, startIso: ev.start_time, programKey, when, altPhones });
           const r0 = d.scheduleCalendlyPush({
             event_uuid: uuid,
             push_n: 0,
@@ -1838,6 +1830,9 @@ async function runDigest(pushN, offsetDays, { incluyePrograma = () => true } = {
   if (failed && !events.length) return 0;
 
   const byCloser = new Map(); // phone -> { name, email, items[] }
+  // §18.CA: mismo índice del poll, memoizado para ESTA corrida del digest. Un digest es una
+  // pasada sobre las citas del día, así que la hoja de cada conexión se lee una sola vez.
+  const formIndexFor = makeFormIndexCache({ fetchSheetValues: d.fetchSheetValues });
   const calendlyCalls = []; // { closer_email, call_start } — para deduplicar contra HubSpot
   // Cuántas citas de Calendly LISTÓ este digest. Es distinto de `calendlyCalls.length` desde que
   // el Push 1 se parte por programa: ese array las lleva todas (dedup), este conteo solo las que
@@ -1872,10 +1867,16 @@ async function runDigest(pushN, offsetDays, { incluyePrograma = () => true } = {
     }
     if (!byCloser.has(closer.phone))
       byCloser.set(closer.phone, { name: closer.name, email, items: [] });
+    // §18.CA: mismo par que en el poll —rescate por formulario y cruce de los dos números—,
+    // acá para las citas que el digest lista. Las que vienen de HubSpot (el bloque de abajo)
+    // no lo llevan: son de 30X, que tiene su propia segunda fuente.
+    const formIndex = await formIndexFor(account);
+    const phone = await resolvePhone(d, invitee, account, formIndex);
     byCloser.get(closer.phone).items.push({
       name: fullNameFrom(invitee?.name),
       firstName: firstNameFrom(invitee?.name),
-      phone: await resolvePhone(d, invitee, account),
+      phone,
+      altPhones: formIndex ? altPhonesFor(phone, formPhonesFor(formIndex, invitee?.email)) : [],
       startIso: ev.start_time,
       programKey,
     });
