@@ -59,6 +59,24 @@ nombra su Connection (quién lo hostea) y su Company (marca de cara al lead). El
 cita se deriva de su event_type, no se almacena en el Closer.
 _Avoid_: producto, curso.
 
+**Lead Form** (formulario del anuncio):
+La hoja donde cae el formulario de Meta Ads con el que el lead se registró, ANTES de agendar.
+Es la SEGUNDA FUENTE del teléfono del lead para las Conexiones sin CRM conectado, declarada por
+Conexión en `leadForm`. Juanito la cruza por email exacto contra lo que el lead escribió en
+Calendly: si difieren, el push va con los dos números; si Calendly no trajo número, lo rescata.
+Ver [ADR 0003](../adr/0003-segunda-fuente-del-telefono-del-lead.md).
+
+⚠️ **NO confundir con `sheets`, aunque las dos sean Google Sheets y vivan en el MISMO archivo.**
+Son dos cosas distintas del mismo registro y se parecen lo suficiente para cambiar una por otra:
+
+| Campo | Qué es | Quién la llena | Para qué la usa Juanito |
+|---|---|---|---|
+| `leadForm` | El formulario del ANUNCIO | El lead, antes de agendar | Leerla: sacar el teléfono (§18.CA) |
+| `sheets` | El REGISTRO DE LLAMADAS | El closer, después de la call | Solo linkearla en el Push 5 |
+
+Juanito **nunca escribe** en ninguna de las dos.
+_Avoid_: "el sheet de Retia" (ambiguo: hay dos, y para cosas opuestas), hoja de leads.
+
 **Invariante — no romper lo live**:
 El copy de los tres pushes precall de CADA programa debe quedar BYTE-IDÉNTICO antes/después
 del refactor. Es reshaping de datos, no de lógica. Los tests de copy son la red.

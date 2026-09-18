@@ -6777,7 +6777,7 @@ este hueco en 30X. Sin segunda fuente, el typo sale derecho al link del closer.
    `+57 300 3018595` es un móvil colombiano impecable. **Este error solo se ve contra una segunda
    fuente**, y por eso ningún validador nuevo habría servido.
 
-**El arreglo (decidido por el jefe).** `src/calendly/lead-form.js` (nuevo, PURO salvo la lectura
+**El arreglo (decidido por el jefe). La decisión de modelo está en [ADR 0003](adr/0003-segunda-fuente-del-telefono-del-lead.md); acá va la evidencia y el detalle.** `src/calendly/lead-form.js` (nuevo, PURO salvo la lectura
 de la hoja) + `leadForm` en las dos conexiones de Retia en `accounts.js`. El poll arma UN índice
 `email → teléfonos` por conexión y por ciclo, y con él hace dos cosas:
 

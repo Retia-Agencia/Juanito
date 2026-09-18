@@ -301,6 +301,43 @@ Para apagarlo:
 > Ojo con la numeración si andás mirando logs: internamente es el **Push 5**. Los programas de
 > Retia no tienen Push 4 (el registro de calls de la sección de abajo), así que saltan del 3 al 5.
 
+### Cuando un lead dejó DOS números distintos (solo Retia)
+
+En los dos programas de Retia el lead escribe su teléfono **a mano** al agendar en Calendly, así
+que a veces se equivoca en un dígito. Juanito no lo puede adivinar —el número mal escrito suele
+ser un celular perfectamente válido— pero **sí lo puede pillar**, porque ese mismo lead ya había
+dejado su número en el formulario del anuncio. Juanito cruza los dos por correo electrónico.
+
+Si no coinciden, el push le llega al closer así, con **los dos links** y el nombre del lead al
+lado de cada uno:
+
+```
+⚠️ OJO — Gustavo Laguna tiene DOS números distintos
+🔔 Push 3 (antes de la llamada) — 📦 Método Comunicarte — llamada hoy a las 08:30 a. m.
+Escribió uno al agendar en Calendly y dejó otro en el formulario; lo más probable es que se
+haya equivocado al agendar. Confirma en la hoja cuál es el bueno antes de escribirle.
+
+📞 Gustavo, según Calendly: +57 300 3018595
+👉 Enviar push: https://wa.me/...
+
+📞 Gustavo, según el formulario: +573006018595
+👉 Enviar push: https://wa.me/...
+```
+
+**Qué tiene que hacer el closer:** mirar la hoja del programa, ver cuál de los dos números es el
+bueno, y tocar ESE link. No mandar los dos.
+
+**Dónde más aparece el aviso:** en el resumen de la noche anterior y el de la mañana (ahí cada
+link lleva el nombre del lead, porque son listas de varias citas), en el aviso de *"nueva call"*
+—que no lleva links, solo avisa temprano para que haya tiempo de resolverlo— y en el aviso de
+reagenda cuando hay que remandarle el link nuevo.
+
+Pasa en ~1 de cada 20 citas de Retia. Si un lead no aparece en el formulario del anuncio (agendó
+con otro correo, por ejemplo), no hay con qué comparar y el push sale normal, como siempre.
+
+> Esto es solo de Retia. Los programas de 30X y EstadoX sacan el respaldo del teléfono de su CRM
+> (HubSpot), que es el equivalente y ya existía.
+
 ---
 
 ## Registro de calls — lo que responde el **closer** (sin comandos)
