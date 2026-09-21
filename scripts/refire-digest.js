@@ -38,6 +38,9 @@
 //   --push 1        el digest de las 7pm (excluye los programas del turno temprano)
 //   --push 1-early  la mitad temprana (IGTK, 5:30pm)
 //   --push 2        el digest de la mañana (llamadas de HOY)
+//   --push 1-adelantado --dias N [--conexion 30x]
+//                   Push 1 de las citas de dentro de N días (2 = pasado mañana), las dos mitades
+//                   juntas. Con --send marca esas citas y el Push 1 de su noche se las salta.
 //   --send          MANDA de verdad. Sin este flag es dry-run y no escribe nada.
 //
 // Es DRY-RUN POR DEFECTO a propósito: el modo que manda mensajes a closers reales se pide
@@ -66,6 +69,12 @@ const localNow = () => new Date().toLocaleString('sv', { timeZone: TZ() });
 const encolados = [];
 
 async function sinkSendMessage(to, text) {
+  // En la tanda adelantada solo viaja el digest (y su espejo de dev). Una alerta de closer sin
+  // mapear hacia el admin no tiene por qué salir de una corrida manual.
+  if (which === '1-adelantado' && !text.includes('Push 1 (adelantado)')) {
+    console.log(`[refire] descartado (no es el digest) → ${to}: ${text.slice(0, 80)}`);
+    return;
+  }
   encolados.push({ to, text });
   if (!SEND) {
     console.log(`\n──────── [DRY-RUN] destino ${to} ────────\n${text}\n`);
@@ -140,6 +149,8 @@ async function main() {
     isCloserPaused: db.isCloserPaused,
     getMirrorConnections: db.getMirrorConnections,
     hasDmThread: db.hasDmThread,
+    getPush1PrefiredKeys: db.getPush1PrefiredKeys,
+    markPush1Prefired: db.markPush1Prefired,
     sendMessage: sinkSendMessage,
     now: () => Date.now(),
   };
@@ -150,10 +161,22 @@ async function main() {
     '1': ['Push 1 (7pm — agenda de mañana)', calendlySched.runPush1],
     '1-early': ['Push 1 temprano (5:30pm — IGTK)', calendlySched.runPush1Early],
     '2': ['Push 2 (mañana — llamadas de hoy)', calendlySched.runPush2],
+    '1-adelantado': [
+      `Push 1 adelantado (+${valueOf('--dias')} días${valueOf('--conexion') ? `, ${valueOf('--conexion')}` : ''})`,
+      () => {
+        const offsetDays = Number(valueOf('--dias'));
+        if (!Number.isInteger(offsetDays) || offsetDays < 2) {
+          console.error('--dias tiene que ser un entero >= 2 (1 es el Push 1 normal de esta noche).');
+          process.exit(1);
+        }
+        // Solo marca con --send: un dry-run que marcara dejaría esas citas sin ningún Push 1.
+        return calendlySched.runPush1Adelantado({ offsetDays, conexion: valueOf('--conexion'), marcar: SEND });
+      },
+    ],
   };
   const elegido = runners[which];
   if (!elegido) {
-    console.error(`--push inválido: "${which}". Usá 1, 1-early o 2.`);
+    console.error(`--push inválido: "${which}". Usá 1, 1-early, 1-adelantado o 2.`);
     process.exit(1);
   }
   const [label, run] = elegido;

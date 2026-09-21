@@ -354,6 +354,9 @@ async function deps() {
     // Alcance del espejo de dev, movible en caliente con `/espejo` (§18.BV). Sin esto el
     // espejo solo sabía del `.env` y cambiarlo costaba un redeploy.
     getMirrorConnections: db.getMirrorConnections,
+    // Push 1 adelantado (2026-09-21): citas cuyo Push 1 ya salió antes de su noche.
+    getPush1PrefiredKeys: db.getPush1PrefiredKeys,
+    markPush1Prefired: db.markPush1Prefired,
     // Anti-ban: la agenda a la admin es un DM a un tercero, no a un closer con opt-in.
     // Sin hilo previo NO se entrega (mismo gate que el reporte de las 8pm).
     hasDmThread: db.hasDmThread,
@@ -1730,6 +1733,7 @@ function whenLabel(offsetDays, nowMs = Date.now()) {
     day: 'numeric',
     month: 'short',
   }).format(base);
+  if (offsetDays > 1) return `el ${fmt}`; // Push 1 adelantado: "mañana"/"hoy" serían falsos
   return offsetDays === 1 ? `mañana (${fmt})` : `hoy (${fmt})`;
 }
 
@@ -1752,7 +1756,7 @@ function whenLabel(offsetDays, nowMs = Date.now()) {
 // DESPUÉS de `pickMeetingsToSchedule` y no antes: la dedup contra Calendly tiene que ver la lista
 // COMPLETA de citas de Calendly, o una call que este turno no lista reaparecería como "solo en
 // HubSpot" en el otro turno.
-async function hubspotDigestItems(d, { calendlyCalls, minStartIso, maxStartIso, pushN, incluyePrograma = () => true }) {
+async function hubspotDigestItems(d, { calendlyCalls, minStartIso, maxStartIso, pushN, incluyePrograma = () => true, prefired = null }) {
   if (!d.searchMeetingsInWindow || !d.getOwnerEmailMap) return [];
   if (d.hubspotEnabled && !d.hubspotEnabled()) return [];
   try {
@@ -1777,6 +1781,8 @@ async function hubspotDigestItems(d, { calendlyCalls, minStartIso, maxStartIso, 
       // Antes de ir a buscar el contacto: si la cita no es de este turno, no gastamos la llamada
       // a HubSpot.
       if (!incluyePrograma(call.program)) continue;
+      const prefiredKey = `hubspot:${call.meeting_id}`;
+      if (prefired?.has(prefiredKey)) continue; // su Push 1 ya salió adelantado
       // El lead sale del contacto asociado, no del título ("Entrevista de Postulación…"), que
       // como nombre de prospecto no sirve y dejaría la línea del digest sin número.
       let contacto = null;
@@ -1793,6 +1799,7 @@ async function hubspotDigestItems(d, { calendlyCalls, minStartIso, maxStartIso, 
           phone: contacto?.phone || null,
           startIso,
           programKey: call.program,
+          prefiredKey,
         },
       });
     }
@@ -1813,10 +1820,25 @@ async function hubspotDigestItems(d, { calendlyCalls, minStartIso, maxStartIso, 
 // El filtro va sobre los ITEMS del mensaje, nunca sobre `calendlyCalls`: ese array es la lista
 // de dedup contra HubSpot y tiene que seguir siendo la foto COMPLETA de Calendly, o la corrida
 // de las 7pm vería las calls de IGTK como "solo en HubSpot" y las listaría igual.
-async function runDigest(pushN, offsetDays, { incluyePrograma = () => true } = {}) {
-  const d = await deps();
+//
+// Push 1 adelantado (2026-09-21): el Push 1 de varios días sale de una vez, en tandas.
+//  - `excluirPrefired`: el digest de cada noche se salta las citas cuyo Push 1 ya salió.
+//  - `marcarPrefired`: la tanda adelantada marca las citas de cada closer cuyo digest salió
+//    ('sent'). Un closer sin opt-in no se marca y su noche normal lo sigue cubriendo.
+//  - `soloConexion`: la tanda es de UNA conexión (30x); las demás siguen su noche normal.
+async function runDigest(
+  pushN,
+  offsetDays,
+  { incluyePrograma = () => true, excluirPrefired = false, marcarPrefired = false, soloConexion = null, adelantado = false } = {}
+) {
+  const d0 = await deps();
+  const d = soloConexion
+    ? { ...d0, accounts: () => (d0.accounts ? d0.accounts() : activeAccounts()).filter((a) => a.key === soloConexion) }
+    : d0;
   const nowMs = d.now();
   const { minStartIso, maxStartIso } = dayRangeUtc(TZ(), offsetDays, new Date(nowMs));
+  const prefired = excluirPrefired && d.getPush1PrefiredKeys ? d.getPush1PrefiredKeys() : null;
+  let saltadas = 0;
 
   // Una cuenta caída no puede dejar sin digest a la otra → se listan por separado.
   const { events, failed } = await listEventsAllAccounts(d, {
@@ -1858,6 +1880,11 @@ async function runDigest(pushN, offsetDays, { incluyePrograma = () => true } = {
     // llamadas a la API de Calendly (throttle de 1,2s cada una), y partir el Push 1 en dos
     // corridas no puede duplicar el gasto de red del digest.
     if (!incluyePrograma(programKey)) continue;
+    if (soloConexion && accountOfCloser(email) !== soloConexion) continue;
+    if (prefired?.has(ev.uri)) {
+      saltadas++;
+      continue;
+    }
 
     let invitee = null;
     try {
@@ -1879,6 +1906,7 @@ async function runDigest(pushN, offsetDays, { incluyePrograma = () => true } = {
       altPhones: formIndex ? altPhonesFor(phone, formPhonesFor(formIndex, invitee?.email)) : [],
       startIso: ev.start_time,
       programKey,
+      prefiredKey: ev.uri,
     });
     deCalendly++;
   }
@@ -1892,15 +1920,17 @@ async function runDigest(pushN, offsetDays, { incluyePrograma = () => true } = {
     maxStartIso,
     pushN,
     incluyePrograma,
+    prefired,
   })) {
     const closer = resolveCloser(closerEmail);
     if (!closer) continue; // HUBSPOT_OWNER_TO_CLOSER ya lo garantiza; defensivo
+    if (soloConexion && accountOfCloser(closerEmail) !== soloConexion) continue;
     if (!byCloser.has(closer.phone))
       byCloser.set(closer.phone, { name: closer.name, email: closerEmail, items: [] });
     byCloser.get(closer.phone).items.push(item);
   }
 
-  const desc = pushN === 1 ? 'la noche anterior' : 'en la mañana';
+  const desc = adelantado ? 'adelantado' : pushN === 1 ? 'la noche anterior' : 'en la mañana';
   const label = `Push ${pushN} (${desc})`;
   const when = whenLabel(offsetDays, nowMs);
   for (const [phone, { name, email, items }] of byCloser) {
@@ -1910,9 +1940,17 @@ async function runDigest(pushN, offsetDays, { incluyePrograma = () => true } = {
       items,
       pushN,
       closer: firstNameFrom(name),
+      base: new Date(nowMs),
+      // Las tandas adelantadas le piden al closer unos ~40 envíos en una tarde desde su propio
+      // teléfono: ese es el patrón que quema números, no el digest de Juanito.
+      nota: adelantado ? '🐢 Mándalos con calma, uno por minuto más o menos, para no quemar tu número.' : '',
     });
-    await deliver(d, phone, msg, `push${pushN}`, email);
+    const outcome = await deliver(d, phone, msg, `push${pushN}`, email);
+    if (marcarPrefired && outcome === 'sent' && d.markPush1Prefired) {
+      d.markPush1Prefired(items.map((it) => it.prefiredKey).filter(Boolean));
+    }
   }
+  if (saltadas) console.log(`[Calendly] Digest push${pushN}: ${saltadas} cita(s) omitidas, su Push 1 ya salió adelantado`);
 
   // Se loguea el total REAL enviado y, aparte, cuántas vinieron del CRM: el log viejo decía
   // `events.length` (solo Calendly) y por eso el hueco de las citas de HubSpot era invisible
@@ -1933,8 +1971,17 @@ async function runDigest(pushN, offsetDays, { incluyePrograma = () => true } = {
 // Las dos mitades del Push 1. Son COMPLEMENTARIAS por construcción —una es la negación de la
 // otra sobre el mismo predicado—, así que toda cita cae en exactamente una: sumar un programa a
 // CALENDLY_PUSH1_EARLY_PROGRAMS lo mueve de turno, nunca lo duplica ni lo deja sin digest.
-export const runPush1Early = () => runDigest(1, 1, { incluyePrograma: isEarlyPush1Program }); // 5:30pm
-export const runPush1 = () => runDigest(1, 1, { incluyePrograma: (p) => !isEarlyPush1Program(p) }); // 7pm
+export const runPush1Early = () => runDigest(1, 1, { incluyePrograma: isEarlyPush1Program, excluirPrefired: true }); // 5:30pm
+export const runPush1 = () => runDigest(1, 1, { incluyePrograma: (p) => !isEarlyPush1Program(p), excluirPrefired: true }); // 7pm
+// Push 1 adelantado: el de las citas de dentro de `offsetDays` días, las dos mitades juntas (un
+// digest por closer). Lo corre a mano scripts/refire-digest.js; no tiene cron.
+export const runPush1Adelantado = ({ offsetDays, conexion = null, marcar = false }) =>
+  runDigest(1, offsetDays, {
+    excluirPrefired: true,
+    marcarPrefired: marcar,
+    soloConexion: conexion,
+    adelantado: true,
+  });
 export const runPush2 = () => runDigest(2, 0); // hoy
 
 // ─── Agenda diaria a la admin de la marca (7am) ────────────────────────────────

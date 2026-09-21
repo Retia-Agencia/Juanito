@@ -1185,6 +1185,25 @@ export function getSetting(key, def = null) {
   return row ? row.value : def;
 }
 
+// Push 1 adelantado (2026-09-21): el Push 1 de varios días se mandó de una vez, y el digest de
+// cada noche tiene que saltarse esas citas o el lead recibe dos recordatorios. La clave es el
+// `uri` del evento de Calendly (o `hubspot:<meeting_id>`): una reagenda crea un evento nuevo,
+// así que la cita movida SÍ vuelve a recibir su Push 1, con la hora correcta. Vive en `settings`
+// para no necesitar migración.
+const PUSH1_PREFIRED = 'push1_prefired:';
+export function getPush1PrefiredKeys() {
+  return new Set(
+    db
+      .prepare(`SELECT key FROM settings WHERE key LIKE ?`)
+      .all(`${PUSH1_PREFIRED}%`)
+      .map((r) => r.key.slice(PUSH1_PREFIRED.length))
+  );
+}
+export function markPush1Prefired(keys) {
+  const when = new Date().toISOString();
+  for (const k of keys || []) if (k) setSetting(`${PUSH1_PREFIRED}${k}`, when);
+}
+
 export function setSetting(key, value) {
   return db
     .prepare(`

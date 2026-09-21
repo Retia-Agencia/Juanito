@@ -326,7 +326,7 @@ function materialsBlock(programKey) {
 // second_brain, así que agregar un programa sin su copy le mandaba al lead un mensaje
 // que lo invitaba al programa EQUIVOCADO (el texto viaja en el link wa.me que el closer
 // toca para enviar, o sea que sale casi tal cual). Mejor sin push que con el push errado.
-export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora, cuando = '', linkLlamada = '' }) {
+export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora, cuando = '', dia = '', linkLlamada = '' }) {
   const lead = primerNombre || 'hola';
 
   // Reagenda hecha EN Calendly (§18.BW). Va ANTES del portón de PROGRAM_PITCH a propósito:
@@ -355,7 +355,7 @@ export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora
   if (pushN === 1) {
     return (
       `Hola ${lead}, cómo va todo? Por acá ${closer} ${pitch.from}.\n\n` +
-      `Quería personalmente recordarte tu llamada de mañana a las ${hora}, hora Colombia, para tu postulación al ${pitch.program}.\n\n` +
+      `Quería personalmente recordarte tu llamada ${dia || 'de mañana'} a las ${hora}, hora Colombia, para tu postulación al ${pitch.program}.\n\n` +
       `Muy importante que:\n` +
       `* Puedas prender la cámara\n` +
       `* Estés en un espacio dispuesto para conversar\n` +
@@ -563,7 +563,11 @@ export function buildPush0Message({ name, firstName, phone, startIso, programKey
   );
 }
 
-export function buildDigestMessage({ pushLabel, whenLabel, items, pushN, closer, tz = TZ() }) {
+// `base`: el reloj contra el que se decide el día que dice el Push 1 ("de mañana martes" /
+// "del jueves 24"). Entra por parámetro por lo mismo que en el Push 0: con `Date.now()` adentro,
+// el Push 1 adelantado (citas de pasado mañana en adelante) diría "mañana" a todas.
+// `nota`: línea opcional bajo el encabezado (el Push 1 adelantado pide mandar con calma).
+export function buildDigestMessage({ pushLabel, whenLabel, items, pushN, closer, tz = TZ(), base = new Date(), nota = '' }) {
   const sorted = [...items].sort((a, b) => new Date(a.startIso) - new Date(b.startIso));
   const renderLine = (it) => {
     const who = it.name || it.firstName || 'el prospecto';
@@ -577,6 +581,7 @@ export function buildDigestMessage({ pushLabel, whenLabel, items, pushN, closer,
       primerNombre: it.firstName || firstNameFrom(it.name),
       closer,
       hora: formatLeadTime(it.startIso, tz),
+      dia: pushN === 1 ? formatLeadDay(it.startIso, tz, base) : '',
     });
     const link = buildLeadLink(it.phone, text);
     if (!link) return `${head} (mándalo manual)`;
@@ -623,6 +628,7 @@ export function buildDigestMessage({ pushLabel, whenLabel, items, pushN, closer,
   const plural = n === 1 ? 'llamada' : 'llamadas';
   return (
     `📋 *${pushLabel}* — tienes ${n} ${plural} ${whenLabel}.\n` +
+    (nota ? `${nota}\n` : '') +
     `Toca el link de cada lead para enviarle su push precall (se abre el chat con el mensaje listo, solo dale enviar):\n\n` +
     body
   );
@@ -830,6 +836,19 @@ export function formatLeadWhen(startIso, tz = TZ(), base = new Date()) {
   // es-CO mete una coma tras el día de la semana ("sábado, 12 de septiembre"); en una frase
   // corrida sobra.
   return `el ${dia.replace(/^(\S+),/, '$1')} a las ${hora}`;
+}
+
+// El día de la call dicho al lead en el Push 1: "de mañana martes" o "del jueves 24". Siempre
+// con el día de la semana (Alejandro, 2026-09-21): si el Push 1 sale con días de anticipación,
+// "mañana" a secas es falso, y aun al día siguiente el nombre del día evita confusiones.
+// Encaja en "tu llamada ___ a las 3:00 pm".
+export function formatLeadDay(startIso, tz = TZ(), base = new Date()) {
+  const d = new Date(startIso);
+  const dia = new Intl.DateTimeFormat('es-CO', { timeZone: tz, weekday: 'long' }).format(d);
+  if (isSameDayInTz(startIso, tz, base)) return `de hoy ${dia}`;
+  if (isNextDayInTz(startIso, tz, base)) return `de mañana ${dia}`;
+  const num = new Intl.DateTimeFormat('es-CO', { timeZone: tz, day: 'numeric' }).format(d);
+  return `del ${dia} ${num}`;
 }
 
 // Recordatorio (insistencia v1): si no respondió el Push 4 en ~30 min.
