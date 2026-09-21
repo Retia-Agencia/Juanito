@@ -65,6 +65,12 @@ const TZ = () => process.env.TZ || 'America/Bogota';
 // Usar UTC acá dejaría la fila en el futuro y el digest saldría con horas de retraso.
 const localNow = () => new Date().toLocaleString('sv', { timeZone: TZ() });
 
+const AVISO_ADELANTADO =
+  'ℹ️ *Esta semana adelantamos el Push 1.* Hoy te llegan juntos los de tus llamadas del miércoles, ' +
+  'jueves y viernes, en un mensaje por día. *Mándalos hoy*: cada link ya dice el día de la llamada.\n' +
+  'La noche anterior a esas llamadas NO te vuelven a llegar (solo si entra una reserva nueva). ' +
+  'El Push 2 y el Push 3 siguen igual, el día de cada llamada.';
+
 // Lo que se encoló/se habría encolado, para el resumen final.
 const encolados = [];
 
@@ -75,6 +81,9 @@ async function sinkSendMessage(to, text) {
     console.log(`[refire] descartado (no es el digest) → ${to}: ${text.slice(0, 80)}`);
     return;
   }
+  // El closer no esperaba un Push 1 de pasado mañana: sin explicación, lo lee como un error o lo
+  // guarda para la noche anterior, y entonces el lead se queda sin recordatorio.
+  if (which === '1-adelantado') text = `${AVISO_ADELANTADO}\n\n${text}`;
   encolados.push({ to, text });
   if (!SEND) {
     console.log(`\n──────── [DRY-RUN] destino ${to} ────────\n${text}\n`);
