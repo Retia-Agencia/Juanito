@@ -90,7 +90,9 @@ export const PROGRAMS = {
     pitch: {
       // El lead tiene que entender de UNA que la empresa es 30X y que Andrés es su dueño; con
       // "de Andrés Bilbao en 30X" el nombre iba primero y se leía como que el closer venía de
-      // parte de una persona (Alejandro, 2026-09-22).
+      // parte de una persona (Alejandro, 2026-09-22). Los CINCO programas de 30X lo dicen igual
+      // desde ese mismo día; el de Retia (tactical_investor) se dejó como estaba a propósito:
+      // ahí el nombre de Juan Pablo Vieira vende más que la marca, y es decisión de ese equipo.
       from: 'de 30X, la empresa de Andrés Bilbao',
       program: 'programa de implementación de tecnología AI Second Brain para ti y tus proyectos',
     },
@@ -132,7 +134,7 @@ export const PROGRAMS = {
     connection: '30x',
     eventType: LINKEDIN_ET,
     pitch: {
-      from: 'de 30X',
+      from: 'de 30X, la empresa de Andrés Bilbao',
       program: 'programa de LinkedIn Sales de 30X',
     },
     materials: {
@@ -159,7 +161,7 @@ export const PROGRAMS = {
     connection: '30x',
     eventType: DEVELOPERS_ET,
     pitch: {
-      from: 'de 30X',
+      from: 'de 30X, la empresa de Andrés Bilbao',
       program: 'programa de AI for Developers de 30X',
     },
     materials: {
@@ -178,7 +180,7 @@ export const PROGRAMS = {
     // programas: el nombre va SIN "de" delante y SIN "de 30X" al final (la marca ya se dijo en
     // "Por acá <closer> de 30X"), y dice "IA", no "AI" — que es como se llama el programa.
     pitch: {
-      from: 'de 30X',
+      from: 'de 30X, la empresa de Andrés Bilbao',
       program: 'programa Operaciones Escalables con IA',
     },
     // ÚNICO programa que no manda links en el push (decisión del jefe, 2026-07-28). Los dos
@@ -203,7 +205,7 @@ export const PROGRAMS = {
     connection: '30x',
     eventType: INSTAGRAM_ET,
     pitch: {
-      from: 'de 30X',
+      from: 'de 30X, la empresa de Andrés Bilbao',
       program: 'programa de Instagram & TikTok for Business de 30X',
     },
     materials: {
