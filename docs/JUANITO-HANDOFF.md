@@ -1145,7 +1145,7 @@ function isUnlimitedSender(sender) {
 **Item 3 — Links wa.me pre-escritos closer→lead (bajar fricción del closer) — ✅ IMPLEMENTADO (2026-06-09)**
 - *Copy entregado por el owner:* 3 textos precall POR PRODUCTO (Push 1 largo con materiales, Push 2
   recordatorio corto, Push 3 con link de la llamada). Son 2 productos × 3 pushes = 6 variantes. El
-  Push 2 es idéntico entre productos; el Push 1 cambia intro ("de Andrés Bilbao en 30X" vs "de
+  Push 2 es idéntico entre productos; el Push 1 cambia intro ("de 30X, la empresa de Andrés Bilbao" vs "de
   EstadoX") + nombre del programa; el Push 3 solo cambia por el link de la llamada.
 - *Detección de producto POR LLAMADA:* `programKeyOf(event_type)` (`src/calendly/index.js`) mapea cada
   cita a `second_brain` | `abogados`. Necesario por-línea porque un closer puede tener citas de los dos

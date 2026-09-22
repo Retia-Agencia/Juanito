@@ -88,7 +88,10 @@ export const PROGRAMS = {
     connection: '30x',
     eventType: SECOND_BRAIN_ET,
     pitch: {
-      from: 'de Andrés Bilbao en 30X',
+      // El lead tiene que entender de UNA que la empresa es 30X y que Andrés es su dueño; con
+      // "de Andrés Bilbao en 30X" el nombre iba primero y se leía como que el closer venía de
+      // parte de una persona (Alejandro, 2026-09-22).
+      from: 'de 30X, la empresa de Andrés Bilbao',
       program: 'programa de implementación de tecnología AI Second Brain para ti y tus proyectos',
     },
     materials: {

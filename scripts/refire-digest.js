@@ -42,6 +42,8 @@
 //                   Push 1 de las citas de dentro de N días (2 = pasado mañana), las dos mitades
 //                   juntas. Con --send marca esas citas y el Push 1 de su noche se las salta.
 //   --send          MANDA de verdad. Sin este flag es dry-run y no escribe nada.
+//   --marcar-sin-enviar   (con 1-adelantado) NO manda: solo marca esas citas para que el Push 1
+//                   de su noche NO salga. Apaga el Push 1 de un día entero.
 //
 // Es DRY-RUN POR DEFECTO a propósito: el modo que manda mensajes a closers reales se pide
 // explícito.
@@ -58,6 +60,10 @@ const valueOf = (f) => {
 };
 
 const SEND = has('--send');
+// Marca las citas como "su Push 1 ya salió" SIN mandar nada. Sirve para APAGAR el Push 1 de
+// esas citas: el digest de la noche se las salta igual que si hubieran salido en una tanda.
+// Es lo contrario de --send y no se combinan.
+const SOLO_MARCAR = has('--marcar-sin-enviar');
 const which = valueOf('--push') || '1';
 
 const TZ = () => process.env.TZ || 'America/Bogota';
@@ -85,6 +91,10 @@ async function sinkSendMessage(to, text) {
   // guarda para la noche anterior, y entonces el lead se queda sin recordatorio.
   if (which === '1-adelantado') text = `${AVISO_ADELANTADO}\n\n${text}`;
   encolados.push({ to, text });
+  if (SOLO_MARCAR) {
+    console.log(`[refire] MARCADO sin enviar → ${to} (${text.length} chars)`);
+    return;
+  }
   if (!SEND) {
     console.log(`\n──────── [DRY-RUN] destino ${to} ────────\n${text}\n`);
     return;
@@ -174,12 +184,15 @@ async function main() {
       `Push 1 adelantado (+${valueOf('--dias')} días${valueOf('--conexion') ? `, ${valueOf('--conexion')}` : ''})`,
       () => {
         const offsetDays = Number(valueOf('--dias'));
-        if (!Number.isInteger(offsetDays) || offsetDays < 2) {
-          console.error('--dias tiene que ser un entero >= 2 (1 es el Push 1 normal de esta noche).');
+        // Con --marcar-sin-enviar se permite `--dias 1`: apagar el Push 1 de ESTA noche es
+        // justo uno de los casos de uso, y no se manda nada.
+        const minDias = SOLO_MARCAR ? 1 : 2;
+        if (!Number.isInteger(offsetDays) || offsetDays < minDias) {
+          console.error(`--dias tiene que ser un entero >= ${minDias}.`);
           process.exit(1);
         }
         // Solo marca con --send: un dry-run que marcara dejaría esas citas sin ningún Push 1.
-        return calendlySched.runPush1Adelantado({ offsetDays, conexion: valueOf('--conexion'), marcar: SEND });
+        return calendlySched.runPush1Adelantado({ offsetDays, conexion: valueOf('--conexion'), marcar: SEND || SOLO_MARCAR });
       },
     ],
   };
@@ -190,7 +203,8 @@ async function main() {
   }
   const [label, run] = elegido;
 
-  console.log(`[refire] ${label} · modo ${SEND ? 'ENVÍO REAL' : 'DRY-RUN'} · ${localNow()} ${TZ()}`);
+  const modo = SOLO_MARCAR ? 'MARCAR SIN ENVIAR' : SEND ? 'ENVÍO REAL' : 'DRY-RUN';
+  console.log(`[refire] ${label} · modo ${modo} · ${localNow()} ${TZ()}`);
   if (!SEND) console.log('[refire] nada se escribe en la DB. Agregá --send para mandar.\n');
 
   const closers = await run();

@@ -318,7 +318,7 @@ test('buildDigestMessage elige el copy por producto en cada línea (digest mixto
   // El de Ana (second_brain) menciona 30X; el de Beto (abogados) menciona EstadoX.
   const ana = decoded.find((t) => /Hola Ana/.test(t));
   const beto = decoded.find((t) => /Hola Beto/.test(t));
-  assert.match(ana, /Andrés Bilbao en 30X/);
+  assert.match(ana, /de 30X, la empresa de Andrés Bilbao/);
   assert.match(ana, /AI Second Brain/);
   assert.match(beto, /de EstadoX/);
   assert.match(beto, /IA para Abogados de EstadoX/);
@@ -423,7 +423,7 @@ test('buildLeadLink normaliza el teléfono a dígitos y url-encodea el texto', (
 test('buildPrecallText Push 1 distingue producto (intro + nombre del programa)', () => {
   const sb = buildPrecallText({ programKey: 'second_brain', pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3:00 p. m.' });
   assert.match(sb, /Hola Ana/);
-  assert.match(sb, /Por acá Sebastian de Andrés Bilbao en 30X/);
+  assert.match(sb, /Por acá Sebastian de 30X, la empresa de Andrés Bilbao/);
   assert.match(sb, /AI Second Brain/);
   assert.match(sb, /a las 3:00 p\. m\./);
   assert.match(sb, /prender la cámara/);
