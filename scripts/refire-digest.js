@@ -44,6 +44,10 @@
 //   --send          MANDA de verdad. Sin este flag es dry-run y no escribe nada.
 //   --marcar-sin-enviar   (con 1-adelantado) NO manda: solo marca esas citas para que el Push 1
 //                   de su noche NO salga. Apaga el Push 1 de un día entero.
+//   --revivir-marcadas-desde <ISO UTC>   (con 1-adelantado) las marcas escritas DESDE esa hora
+//                   no cuentan como "ya salió": vuelve a incluir citas que se apagaron con
+//                   --marcar-sin-enviar. Solo afecta al día de --dias; los demás siguen marcados.
+//   --aviso-dias "<texto>"   qué días nombra el aviso al closer (default: miércoles, jueves y viernes).
 //
 // Es DRY-RUN POR DEFECTO a propósito: el modo que manda mensajes a closers reales se pide
 // explícito.
@@ -72,8 +76,8 @@ const TZ = () => process.env.TZ || 'America/Bogota';
 const localNow = () => new Date().toLocaleString('sv', { timeZone: TZ() });
 
 const AVISO_ADELANTADO =
-  'ℹ️ *Esta semana adelantamos el Push 1.* Hoy te llegan juntos los de tus llamadas del miércoles, ' +
-  'jueves y viernes, en un mensaje por día. *Mándalos hoy*: cada link ya dice el día de la llamada.\n' +
+  'ℹ️ *Esta semana adelantamos el Push 1.* Hoy te llegan juntos los de tus llamadas del ' +
+  `${valueOf('--aviso-dias') || 'miércoles, jueves y viernes'}, en un mensaje por día. *Mándalos hoy*: cada link ya dice el día de la llamada.\n` +
   'La noche anterior a esas llamadas NO te vuelven a llegar (solo si entra una reserva nueva). ' +
   'El Push 2 y el Push 3 siguen igual, el día de cada llamada.';
 
@@ -101,6 +105,27 @@ async function sinkSendMessage(to, text) {
   }
   saveReminder({ text, dueAt: localNow(), toPhone: to, createdBy: 'refire-digest' });
   console.log(`[refire] encolado → ${to} (${text.length} chars)`);
+}
+
+// Las marcas guardan la hora en que se escribieron (ISO UTC). Con --revivir-marcadas-desde, las
+// de esa hora en adelante —las de un --marcar-sin-enviar— dejan de contar y la cita vuelve al
+// digest. Se decide por hora y no borrando filas: borrar reviviría también el Push 1 de la noche
+// de OTROS días, que sí tienen que seguir apagados.
+function prefiredKeys(db) {
+  const desde = valueOf('--revivir-marcadas-desde');
+  if (!desde) return db.getPush1PrefiredKeys;
+  if (Number.isNaN(Date.parse(desde))) {
+    console.error(`--revivir-marcadas-desde inválido: "${desde}" (usá ISO UTC, ej. 2026-09-22T12:00:00Z)`);
+    process.exit(1);
+  }
+  return () => {
+    const filas = db.default
+      .prepare(`SELECT key, value FROM settings WHERE key LIKE 'push1_prefired:%'`)
+      .all();
+    const vivas = filas.filter((r) => !(Date.parse(r.value) >= Date.parse(desde)));
+    console.log(`[refire] ${filas.length - vivas.length} marca(s) desde ${desde} no cuentan (se revive su Push 1)`);
+    return new Set(vivas.map((r) => r.key.slice('push1_prefired:'.length)));
+  };
 }
 
 async function main() {
@@ -168,7 +193,7 @@ async function main() {
     isCloserPaused: db.isCloserPaused,
     getMirrorConnections: db.getMirrorConnections,
     hasDmThread: db.hasDmThread,
-    getPush1PrefiredKeys: db.getPush1PrefiredKeys,
+    getPush1PrefiredKeys: prefiredKeys(db),
     markPush1Prefired: db.markPush1Prefired,
     sendMessage: sinkSendMessage,
     now: () => Date.now(),
