@@ -172,7 +172,12 @@ export const PROGRAMS = {
   operaciones: {
     key: 'operaciones',
     label: 'Operaciones Escalables con IA',
-    titleHints: ['operaciones escalables'],
+    // 2026-09-23: los agendamientos nativos de HubSpot nombran el programa "Operaciones con AI"
+    // ("<lead> | Operaciones con AI | 30X", "Operaciones con AI Admisiones — <lead>") y el slug
+    // "operaciones-con-ai". Con solo 'operaciones escalables' esas citas caían en programFromTitle
+    // → null y el poll las descartaba EN SILENCIO: Daniela Camacho y Lucas Mendoza se quedaron
+    // sin push en ~50 citas (Anais Goncalves fue la que lo destapó).
+    titleHints: ['operaciones escalables', 'operaciones con ai', 'operaciones con ia', 'operaciones-con-ai'],
     company: '30x',
     connection: '30x',
     eventType: OPERACIONES_ET,

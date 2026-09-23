@@ -50,6 +50,15 @@ test('"Hardcore AI" (naming interno de los deals) también cae en AI for Develop
   assert.equal(programFromTitle('HARDCORE AI'), 'developers');
 });
 
+test('"Operaciones con AI" (agendamiento nativo de HubSpot) cae en operaciones', () => {
+  // Títulos REALES de 2026-09: con solo 'operaciones escalables' daban null y la cita se perdía
+  // sin push (Anais Goncalves, de Daniela Camacho).
+  assert.equal(programFromTitle('Anais Goncalves | Operaciones con AI | 30X'), 'operaciones');
+  assert.equal(programFromTitle('Operaciones con AI Admisiones — Anais Goncalves'), 'operaciones');
+  assert.equal(programFromTitle('Agendamiento — operaciones-con-ai — Daniela Camacho'), 'operaciones');
+  assert.equal(programFromTitle('Operaciones con IA Admisiones — Nelson Teran'), 'operaciones');
+});
+
 test('programFromTitle ignora acentos y mayúsculas', () => {
   assert.equal(programFromTitle('ENTREVISTA POSTULACION PROGRAMA IA PARA ABOGADOS'), 'abogados');
   assert.equal(programFromTitle('entrevista de postulación programa ia para abogádos'), 'abogados');
