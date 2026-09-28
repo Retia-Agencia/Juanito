@@ -6858,6 +6858,38 @@ desincronizan.
 (`gid=0`), que es a donde sí apunta la conexión de Tactical Investor. Parece pinneado a la
 cohorte de agosto. **Confirmar con Michael antes de moverlo.**
 
+### 18.CB 🔵 Push 1 de 30X en tres tandas por semana, todo a las 5:30pm (2026-09-28)
+
+Pedido de Alejandro: en 30X el Push 1 deja de salir la víspera de cada call. Sale en **tandas
+fijas a las 5:30pm**: el **domingo** el de las calls de lunes y martes, el **martes** el de
+miércoles y jueves, y el **jueves** el de viernes y sábado. Y **todos** los programas de 30X pasan
+al turno de las 5:30pm (antes solo IGTK y Operaciones). EstadoX y Retia no cambian: siguen a las 7pm.
+
+**Mecánica: la misma de las tandas a mano del 21-sep, ahora con cron.** `runPush1TurnoTemprano`
+(el job de las 5:30pm) corre la tanda **primero y en serie** si hoy es día de tanda
+(`runPush1Tanda`: un digest por día cubierto, `soloConexion: '30x'`, marca lo que salió) y
+después el digest diario del turno temprano, que se salta lo marcado. En un día de tanda ese
+digest no manda nada. En los demás solo lista **lo reservado después de la tanda** (una call del
+martes reservada el lunes a mediodía): sin él esa cita se quedaba sin Push 1, porque la tanda ya
+había pasado y el Push 0 no la avisa (según su gate, el digest de hoy todavía no corrió). Las
+calls de **domingo**, que ninguna tanda cubre, salen el sábado por esa misma vía. El gate del
+Push 0 no se tocó: sigue preguntándole al cron diario de 5:30pm, que sigue corriendo todos los días.
+
+**Configuración** (default en código y en `docker-compose.yml`; producción no declara ninguna):
+`CALENDLY_PUSH1_TANDAS_DIAS=0,2,4` (días de ENVÍO, 0 = domingo; vacío apaga las tandas),
+`CALENDLY_PUSH1_TANDAS_CONEXION=30x`, y `CALENDLY_PUSH1_EARLY_PROGRAMS` pasa a los cinco
+programas de 30X. En código, si esa env no está, el default se deriva de `programs.js`
+(`company === '30x'`).
+
+**Tests:** el control implícito "programa de las 7pm" era `developers`. Ahora es `abogados`
+(EstadoX): es la trampa de §18.BX/§18.BZ por tercera vez. Hay tests nuevos para las tres tandas,
+el día sin tanda y las calls de domingo. **Suite en Linux (VPS): 1257 / 1255**, con los mismos
+**2 rojos conocidos**.
+
+**Pendiente de operación:** desplegar con `alcance: todo` y verificar la **primera tanda real**
+(domingo 5:30pm): cada closer de 30X recibe dos digests (lunes "la noche anterior", martes
+"adelantado"), y el lunes a las 5:30pm solo le llega lo nuevo.
+
 ### Secretos (decididos, ver §13)
 
 - `CALENDLY_TOKEN`: **NO rotar** (decidido).

@@ -69,6 +69,7 @@ import { accountOf, activeAccounts, DEFAULT_ACCOUNT } from '../calendly/accounts
 import { mirrorConnections } from '../calendly/mirror.js';
 import { SKIP_SLUGS, SKIP_ALERTABLES, ETIQUETA_SKIP } from '../calendly/skip-reasons.js';
 import { isBlockedPhone, anyBlockedPhone, mentionsBlockedPhone } from '../calendly/blocklist.js';
+import { PROGRAMS } from '../calendly/programs.js';
 import {
   recordPollOk,
   recordPollError,
@@ -205,8 +206,8 @@ const PUSH2_CRON = () => process.env.CALENDLY_PUSH2_CRON || '30 6 * * *'; // 6:3
 
 // ─── Push 1 más temprano para ALGUNOS programas (2026-09-08; ampliado 2026-09-16) ────────────
 // Instagram & TikTok (2026-09-08) y Operaciones Escalables con IA (2026-09-16) mandan su digest
-// a las 5:30pm en vez de las 7pm (pedido del jefe). NO es un cambio global: los otros 6
-// programas siguen a las 7pm.
+// a las 5:30pm en vez de las 7pm (pedido del jefe). Desde 2026-09-28 son todos los de 30X; los
+// de EstadoX y Retia siguen a las 7pm.
 //
 // Se implementa como DOS corridas del mismo digest, particionadas por programa —una a cada
 // hora, cada una con la mitad complementaria— y no como "mandar todo dos veces": un closer con
@@ -216,11 +217,47 @@ const PUSH2_CRON = () => process.env.CALENDLY_PUSH2_CRON || '30 6 * * *'; // 6:3
 //
 // La lista es una env por si el jefe quiere sumar/sacar programas sin redeploy, pero el default
 // vive acá: un `.env` que no la declare tiene que comportarse igual que producción.
+//
+// Desde 2026-09-28 el turno temprano son TODOS los programas de 30X (pedido de Alejandro): el
+// default se deriva de `programs.js` para que un programa nuevo de 30X caiga solo en su turno.
+// Los de las otras empresas (EstadoX, Retia) siguen a las 7pm.
 const PUSH1_EARLY_CRON = () => process.env.CALENDLY_PUSH1_EARLY_CRON || '30 17 * * *'; // 5:30pm
+const PROGRAMAS_30X = () =>
+  Object.values(PROGRAMS)
+    .filter((p) => p.company === '30x')
+    .map((p) => p.key);
 const PUSH1_EARLY_PROGRAMS = () => {
-  const raw = process.env.CALENDLY_PUSH1_EARLY_PROGRAMS ?? 'instagram,operaciones';
+  const raw = process.env.CALENDLY_PUSH1_EARLY_PROGRAMS ?? PROGRAMAS_30X().join(',');
   return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean));
 };
+
+// ─── Push 1 por tandas fijas (2026-09-28) ────────────────────────────────────────────────────
+// En 30X el Push 1 ya no sale la víspera de cada llamada sino en tres tandas por semana, a la
+// hora del turno temprano (5:30pm): el DOMINGO sale el de las calls de lunes y martes, el MARTES
+// el de miércoles y jueves, y el JUEVES el de viernes y sábado. Cada tanda son dos digests por
+// closer (mañana y pasado mañana) y MARCA las citas que salieron, igual que las tandas a mano del
+// 21-sep (`runPush1Adelantado`).
+//
+// El digest diario de las 5:30pm NO se apaga: corre justo después de la tanda y se salta lo
+// marcado, así que en un día de tanda no manda nada y en los demás solo lista lo que se reservó
+// DESPUÉS de la tanda (una call del martes reservada el lunes a mediodía). Sin él esas citas se
+// quedaban sin Push 1: la tanda del domingo ya pasó y el Push 0 no las avisa porque, según su
+// gate, "todavía no corrió el digest de hoy". Y las calls de domingo, que ninguna tanda cubre,
+// salen el sábado por esa misma vía.
+//
+// Días de la semana de ENVÍO (0 = domingo), en la zona del bot. Vacío apaga las tandas y el Push
+// 1 de 30X vuelve a ser el de la víspera.
+const PUSH1_TANDAS_DIAS = () => {
+  const raw = process.env.CALENDLY_PUSH1_TANDAS_DIAS ?? '0,2,4';
+  return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean).map(Number));
+};
+const PUSH1_TANDAS_CONEXION = () => process.env.CALENDLY_PUSH1_TANDAS_CONEXION || '30x';
+const PUSH1_TANDAS_OFFSETS = [1, 2]; // cada tanda cubre mañana y pasado mañana
+const weekdayInTz = (tz, base) =>
+  ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(
+    new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' }).format(base)
+  );
+const esDiaDeTanda = (nowMs) => PUSH1_TANDAS_DIAS().has(weekdayInTz(TZ(), new Date(nowMs)));
 const isEarlyPush1Program = (programKey) => PUSH1_EARLY_PROGRAMS().has(programKey);
 // Cron del Push 1 que le toca a ESTE programa. Lo usa el gate del Push 0: preguntarle al cron
 // de las 7pm si ya corrió, para una cita de un programa TEMPRANO cuyo digest salió a las 5:30pm,
@@ -2004,6 +2041,28 @@ export const runPush1Adelantado = ({ offsetDays, conexion = null, marcar = false
     soloConexion: conexion,
     adelantado: true,
   });
+// Una tanda fija (ver PUSH1_TANDAS_DIAS): un digest por día cubierto, marcando lo que salió. El
+// de mañana lleva el rótulo de siempre; el de pasado mañana, el de "adelantado" con la nota de
+// mandarlos con calma.
+export async function runPush1Tanda() {
+  let closers = 0;
+  for (const offsetDays of PUSH1_TANDAS_OFFSETS) {
+    closers += await runDigest(1, offsetDays, {
+      excluirPrefired: true,
+      marcarPrefired: true,
+      soloConexion: PUSH1_TANDAS_CONEXION(),
+      adelantado: offsetDays > 1,
+    });
+  }
+  return closers;
+}
+// El job de las 5:30pm. En días de tanda la tanda va PRIMERO y en serie: el digest diario lee las
+// marcas que ella escribe, y si corrieran en paralelo el lead de mañana saldría en los dos.
+export async function runPush1TurnoTemprano() {
+  const d = await deps();
+  if (PUSH1_TANDAS_DIAS().size && esDiaDeTanda(d.now())) await runPush1Tanda();
+  return runPush1Early();
+}
 export const runPush2 = () => runDigest(2, 0); // hoy
 
 // ─── Agenda diaria a la admin de la marca (7am) ────────────────────────────────
@@ -2357,10 +2416,11 @@ export function startCalendlyJobs() {
   job(POLL_CRON(), runCalendlyPoll, 'poll');
   job(DELIVER_CRON(), runCalendlyDelivery, 'deliver');
   job(PUSH1_CRON(), runPush1, 'push1');
-  // La mitad temprana del Push 1 (IGTK + Operaciones, 5:30pm). Solo se registra si hay programas
-  // en la lista: vaciar CALENDLY_PUSH1_EARLY_PROGRAMS devuelve el Push 1 a una sola corrida a las
-  // 7pm, sin dejar un job fantasma que mande un digest vacío.
-  if (PUSH1_EARLY_PROGRAMS().size) job(PUSH1_EARLY_CRON(), runPush1Early, 'push1-early');
+  // La mitad temprana del Push 1 (los programas de 30X, 5:30pm), con la tanda delante en los días
+  // que toca. Solo se registra si hay programas en la lista o tandas: vaciar las dos envs devuelve
+  // el Push 1 a una sola corrida a las 7pm, sin dejar un job fantasma que mande un digest vacío.
+  if (PUSH1_EARLY_PROGRAMS().size || PUSH1_TANDAS_DIAS().size)
+    job(PUSH1_EARLY_CRON(), runPush1TurnoTemprano, 'push1-early');
   job(PUSH2_CRON(), runPush2, 'push2');
   if (PUSH4_ENABLED()) job(OUTCOME_CRON(), runOutcomeReminders, 'outcomes');
   if (PUSH4_ENABLED() && RESCHEDULE_ENABLED())
@@ -2382,7 +2442,8 @@ export function startCalendlyJobs() {
       // Se loguea el reparto del Push 1 para que se pueda VER en el arranque qué programa sale a
       // qué hora. Un turno mal configurado no da error: el digest simplemente sale sin esas
       // citas, que es el modo de fallo mudo de siempre.
-      `, push1: ${PUSH1_CRON()} — salvo ${PUSH1_EARLY_PROGRAMS().size ? `${[...PUSH1_EARLY_PROGRAMS()].join('/')} a las ${PUSH1_EARLY_CRON()}` : 'nadie (turno único)'}) — cuentas: ` +
+      `, push1: ${PUSH1_CRON()} — salvo ${PUSH1_EARLY_PROGRAMS().size ? `${[...PUSH1_EARLY_PROGRAMS()].join('/')} a las ${PUSH1_EARLY_CRON()}` : 'nadie (turno único)'}` +
+      `, tandas push1: ${PUSH1_TANDAS_DIAS().size ? `${PUSH1_TANDAS_CONEXION()} los días ${[...PUSH1_TANDAS_DIAS()].join(',')} (0=dom) a las ${PUSH1_EARLY_CRON()}` : 'off'}) — cuentas: ` +
       accounts.map((a) => `${a.key}[dry-run:${a.dryRun()}, push4:${a.push4()}]`).join(' · ')
   );
 }

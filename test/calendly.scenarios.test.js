@@ -456,9 +456,12 @@ const LUCAS_PHONE = '+573014477044';
 const OPERACIONES_ET = 'https://api.calendly.com/event_types/8462e92a-8210-4bb2-8e2b-583aa3c3d877';
 const INSTAGRAM_ET = 'https://api.calendly.com/event_types/d33075cb-d349-43ef-be43-6f80f9c5da03';
 const SECOND_BRAIN_ET = 'https://api.calendly.com/event_types/56efc028-ee2f-46e8-852c-e50d45b15b83';
-// El control de «programa del turno de las 7pm» de los tests de partición. Era `operaciones`,
-// que desde 2026-09-16 sale a las 5:30pm junto con IGTK; `developers` sigue en el turno tarde.
 const DEVELOPERS_ET = 'https://api.calendly.com/event_types/dff3e48a-4859-417a-98fb-822048aef5d9';
+// El control de «programa del turno de las 7pm» de los tests de partición. Fue `operaciones` y
+// después `developers`; desde 2026-09-28 TODO 30X sale a las 5:30pm, así que el control tiene
+// que ser de otra empresa: `abogados` (EstadoX). Va en el digest de Lucas porque lo que fija el
+// test es el reparto por PROGRAMA, no quién es el closer.
+const ABOGADOS_ET = 'https://api.calendly.com/event_types/83bb87b3-0c73-43ea-a618-196a74512eab';
 
 // Mañana a las 10:00 Bogotá (=15:00Z), con el reloj puesto hoy 19:00 Bogotá (=00:00Z+1).
 function tomorrowAt(hourUtc) {
@@ -493,10 +496,9 @@ test('Push 1 Operaciones: NO manda material — encabezado en negrita y sin link
   assert.ok(!copy.includes('drive.google.com'), 'ningún link de Drive en el copy');
 });
 
-// Los dos programas de este caso comparten TURNO a propósito (los dos a las 7pm). Antes eran
-// Operaciones + Instagram, pero IGTK sale a las 5:30pm (2026-09-08) y Operaciones también
-// (2026-09-16), así que ninguno de los dos coincide con el turno tarde: el test habría estado
-// midiendo el reparto por hora en vez de la segmentación por programa, que es lo que vino a fijar.
+// Los dos programas de este caso comparten TURNO a propósito (los dos a las 5:30pm desde que todo
+// 30X sale temprano, 2026-09-28): si cayeran en turnos distintos el test mediría el reparto por
+// hora en vez de la segmentación por programa, que es lo que vino a fijar.
 test('Push 1: digest mixto → segmenta por programa y ninguno adjunta PDF', async () => {
   const events = [
     makeEvent({ uuid: 'm1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: DEVELOPERS_ET, prospectName: 'Ana Gómez' }),
@@ -504,7 +506,7 @@ test('Push 1: digest mixto → segmenta por programa y ninguno adjunta PDF', asy
   ];
   const h = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: Date.now() });
 
-  await scheduler.runPush1();
+  await scheduler.runPush1Early();
   assert.equal(h.wa.docs.length, 0, 'ningún programa adjunta PDF');
   // Con dos programas, el digest segmenta por programa (rótulo 📦) — cada uno con su copy.
   const digest = h.wa.sent[0].text;
@@ -513,13 +515,14 @@ test('Push 1: digest mixto → segmenta por programa y ninguno adjunta PDF', asy
 });
 
 // ─── El Push 1 partido en dos turnos: los tempranos 5:30pm, el resto 7pm ──────
-// (IGTK 2026-09-08; Operaciones se sumó al turno temprano el 2026-09-16.)
+// (IGTK 2026-09-08; Operaciones 2026-09-16; todo 30X desde 2026-09-28.)
 // Lo que importa no es que cada turno mande "lo suyo", sino que entre los dos NO se pierda ni se
 // duplique una cita: son dos crons distintos sobre el mismo día, y un error de partición no da
 // error — deja a un lead sin push, o le manda dos listas al closer.
 test('Push 1 de las 7pm: excluye los programas tempranos y lista todo lo demás', async () => {
   const events = [
-    makeEvent({ uuid: 'p1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: DEVELOPERS_ET, prospectName: 'Ana Gómez' }),
+    makeEvent({ uuid: 'p1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: ABOGADOS_ET, prospectName: 'Ana Gómez' }),
+    makeEvent({ uuid: 'p0', startIso: tomorrowAt(16), closerEmail: LUCAS, eventType: DEVELOPERS_ET, prospectName: 'Dani Soto' }),
     makeEvent({ uuid: 'p2', startIso: tomorrowAt(19), closerEmail: LUCAS, eventType: INSTAGRAM_ET, prospectName: 'Beto Ruiz' }),
     makeEvent({ uuid: 'p3', startIso: tomorrowAt(20), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Caro Díaz' }),
   ];
@@ -534,14 +537,17 @@ test('Push 1 de las 7pm: excluye los programas tempranos y lista todo lo demás'
   assert.ok(!digest.includes('Instagram & TikTok'), 'ni su rótulo');
   assert.ok(!digest.includes('Caro Díaz'), 'la de Operaciones tampoco (2026-09-16)');
   assert.ok(!digest.includes('Operaciones Escalables con IA'), 'ni su rótulo');
+  assert.ok(!digest.includes('Dani Soto'), 'AI for Developers tampoco (todo 30X sale a las 5:30pm, 2026-09-28)');
   assert.match(digest, /tienes 1 llamada mañana/, 'el conteo cuenta lo que lista, no lo que filtró');
 });
 
 test('Push 1 de las 5:30pm: manda SOLO las de los programas tempranos', async () => {
   const events = [
-    makeEvent({ uuid: 'e1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: DEVELOPERS_ET, prospectName: 'Ana Gómez' }),
+    makeEvent({ uuid: 'e1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: ABOGADOS_ET, prospectName: 'Ana Gómez' }),
     makeEvent({ uuid: 'e2', startIso: tomorrowAt(19), closerEmail: LUCAS, eventType: INSTAGRAM_ET, prospectName: 'Beto Ruiz' }),
     makeEvent({ uuid: 'e3', startIso: tomorrowAt(20), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Caro Díaz' }),
+    makeEvent({ uuid: 'e4', startIso: tomorrowAt(21), closerEmail: LUCAS, eventType: DEVELOPERS_ET, prospectName: 'Dani Soto' }),
+    makeEvent({ uuid: 'e5', startIso: tomorrowAt(22), closerEmail: LUCAS, eventType: SECOND_BRAIN_ET, prospectName: 'Eva Paz' }),
   ];
   const h = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: Date.now() });
 
@@ -551,7 +557,9 @@ test('Push 1 de las 5:30pm: manda SOLO las de los programas tempranos', async ()
   const digest = h.wa.sent[0].text;
   assert.match(digest, /Beto Ruiz/);
   assert.match(digest, /Caro Díaz/, 'Operaciones comparte el turno temprano con IGTK');
-  assert.ok(!digest.includes('Ana Gómez'), 'lo de AI for Developers espera a las 7pm');
+  assert.match(digest, /Dani Soto/, 'y AI for Developers también (2026-09-28)');
+  assert.match(digest, /Eva Paz/, 'y AI Second Brain');
+  assert.ok(!digest.includes('Ana Gómez'), 'lo de EstadoX espera a las 7pm');
   // Y lleva el copy de IGTK, con su cierre propio (el de "no somos agencia").
   assert.match(decodeURIComponent(digest), /no actuamos como una agencia que hace el contenido por ti/);
 });
@@ -560,7 +568,7 @@ test('Push 1 de las 5:30pm: manda SOLO las de los programas tempranos', async ()
 // sería un mensaje inútil, y en WhatsApp cada mensaje de más es superficie de ban.
 test('Push 1 de las 5:30pm: sin citas tempranas no manda nada', async () => {
   const events = [
-    makeEvent({ uuid: 'v1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: DEVELOPERS_ET, prospectName: 'Ana Gómez' }),
+    makeEvent({ uuid: 'v1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: ABOGADOS_ET, prospectName: 'Ana Gómez' }),
   ];
   const h = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: Date.now() });
 
@@ -600,9 +608,21 @@ test('reserva de Operaciones entre los dos turnos → SÍ Push 0 (su digest ya p
   assert.equal(push0Rows(store).length, 1, 'nadie más va a avisar esta cita hoy');
 });
 
+// Desde 2026-09-28 todo 30X es del turno temprano: una reserva de AI for Developers a las 6pm ya
+// no la cubre ningún digest y el Push 0 tiene que avisarla.
+test('reserva de AI for Developers entre los dos turnos → SÍ Push 0 (su digest ya pasó)', async () => {
+  const events = [
+    makeEvent({ uuid: 'dev-temprano', startIso: CALL_MANANA, createdInMin: -2, closerEmail: LUCAS, eventType: DEVELOPERS_ET, nowMs: SEIS_PM }),
+  ];
+  const { store } = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: SEIS_PM });
+
+  await scheduler.runCalendlyPoll();
+  assert.equal(push0Rows(store).length, 1, 'nadie más va a avisar esta cita hoy');
+});
+
 test('reserva de un programa TARDE a la misma hora → NO Push 0 (lo avisa el digest de las 7pm)', async () => {
   const events = [
-    makeEvent({ uuid: 'dev-tarde', startIso: CALL_MANANA, createdInMin: -2, closerEmail: LUCAS, eventType: DEVELOPERS_ET, nowMs: SEIS_PM }),
+    makeEvent({ uuid: 'abog-tarde', startIso: CALL_MANANA, createdInMin: -2, closerEmail: LUCAS, eventType: ABOGADOS_ET, nowMs: SEIS_PM }),
   ];
   const { store } = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: SEIS_PM });
 
@@ -617,6 +637,7 @@ test('Push 1: los dos turnos particionan el día — ni una cita perdida ni repe
     makeEvent({ uuid: 'x2', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: INSTAGRAM_ET, prospectName: 'Beto Ruiz' }),
     makeEvent({ uuid: 'x3', startIso: tomorrowAt(16), closerEmail: LUCAS, eventType: SECOND_BRAIN_ET, prospectName: 'Caro Díaz' }),
     makeEvent({ uuid: 'x4', startIso: tomorrowAt(17), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Dani Soto' }),
+    makeEvent({ uuid: 'x5', startIso: tomorrowAt(18), closerEmail: LUCAS, eventType: ABOGADOS_ET, prospectName: 'Eva Paz' }),
   ];
   const h = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: Date.now() });
 
@@ -624,7 +645,7 @@ test('Push 1: los dos turnos particionan el día — ni una cita perdida ni repe
   await scheduler.runPush1();
 
   const todo = h.wa.sent.map((m) => m.text).join('\n');
-  for (const lead of ['Ana Gómez', 'Beto Ruiz', 'Caro Díaz', 'Dani Soto']) {
+  for (const lead of ['Ana Gómez', 'Beto Ruiz', 'Caro Díaz', 'Dani Soto', 'Eva Paz']) {
     assert.equal(todo.split(lead).length - 1, 1, `${lead} tiene que salir en exactamente un turno`);
   }
 });
@@ -635,7 +656,9 @@ test('Push 1 sin opt-in: no se manda el digest (anti-ban)', async () => {
   ];
   const h = installHarness(scheduler, { events, optins: [], nowMs: Date.now() });
 
-  await scheduler.runPush1();
+  // Por el turno temprano: por el de las 7pm el digest saldría vacío por el reparto y el test
+  // pasaría sin llegar a medir el gate del opt-in.
+  await scheduler.runPush1Early();
   assert.equal(h.wa.sent.length, 0);
   assert.equal(h.wa.docs.length, 0);
 });

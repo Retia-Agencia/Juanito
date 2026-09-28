@@ -260,7 +260,8 @@ test('digest Push 1 (mañana): también suma las citas del CRM', async () => {
     contacts: { m1: { name: 'Carla Díaz', phone: '+573001112222' } },
   });
 
-  await scheduler.runPush1();
+  // AI Second Brain es de 30X → turno de las 5:30pm (2026-09-28).
+  await scheduler.runPush1Early();
 
   assert.equal(h.wa.sent.length, 1);
   assert.match(h.wa.sent[0].text, /Push 1/);

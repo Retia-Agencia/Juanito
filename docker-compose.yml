@@ -89,7 +89,11 @@ services:
       # llegar al contenedor para poder moverla sin redeploy (gotcha §12: `environment:` acá es
       # explícito, lo que no está listado NO entra aunque esté en el .env del VPS).
       - CALENDLY_PUSH1_EARLY_CRON=${CALENDLY_PUSH1_EARLY_CRON:-30 17 * * *}
-      - CALENDLY_PUSH1_EARLY_PROGRAMS=${CALENDLY_PUSH1_EARLY_PROGRAMS:-instagram,operaciones}
+      - CALENDLY_PUSH1_EARLY_PROGRAMS=${CALENDLY_PUSH1_EARLY_PROGRAMS:-second_brain,linkedin,developers,operaciones,instagram}
+      # Tandas fijas del Push 1 de 30X (2026-09-28): dom → lun+mar, mar → mié+jue, jue → vie+sáb,
+      # a la hora del turno temprano. Vacío = Push 1 de la víspera, como antes.
+      - CALENDLY_PUSH1_TANDAS_DIAS=${CALENDLY_PUSH1_TANDAS_DIAS-0,2,4}
+      - CALENDLY_PUSH1_TANDAS_CONEXION=${CALENDLY_PUSH1_TANDAS_CONEXION:-30x}
       - CALENDLY_PUSH2_CRON=${CALENDLY_PUSH2_CRON:-30 6 * * *}
       - CALENDLY_SKIP_AUDIT_CRON=${CALENDLY_SKIP_AUDIT_CRON:-15 * * * *}
       - CALENDLY_SKIP_ALERT_MIN=${CALENDLY_SKIP_ALERT_MIN:-2}
