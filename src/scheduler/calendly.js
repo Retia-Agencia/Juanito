@@ -68,6 +68,7 @@ import { tallyByCloser, buildAgendaMessage } from '../calendly/agenda-admin.js';
 import { accountOf, activeAccounts, DEFAULT_ACCOUNT } from '../calendly/accounts.js';
 import { mirrorConnections } from '../calendly/mirror.js';
 import { SKIP_SLUGS, SKIP_ALERTABLES, ETIQUETA_SKIP } from '../calendly/skip-reasons.js';
+import { isBlockedPhone, anyBlockedPhone, mentionsBlockedPhone } from '../calendly/blocklist.js';
 import {
   recordPollOk,
   recordPollError,
@@ -1374,6 +1375,16 @@ export async function runCalendlyDelivery() {
       // Claim atómico: si otro worker ya la tomó, claim devuelve false → saltar.
       if (d.claimCalendlyPush && !d.claimCalendlyPush(p.id)) continue;
       try {
+        // Lead en lista negra: no se le avisa al closer de NINGÚN push de esa cita (incluido
+        // el 4: preguntar el outcome de una call troll es igual de inútil). Va primero para no
+        // gastar ni la consulta a Calendly. Se mira también el texto porque el alterno del
+        // formulario solo vive en el mensaje, no en `prospect_phone`.
+        if (isBlockedPhone(p.prospect_phone) || mentionsBlockedPhone(p.message)) {
+          d.markCalendlyPushSkipped(p.id, 'lead en lista negra', SKIP_SLUGS.BLOQUEADO);
+          console.log(`[Calendly] Push ${p.push_n} #${p.id}: lead en lista negra (${p.prospect_phone || 's/tel'}) — no se envía`);
+          procesados++;
+          continue;
+        }
         // ─── Push 4: registro de outcome post-call (§18.AB) ──────────────────
         // INVIERTE el guard de obsolescencia: este push es JUSTAMENTE post-call
         // (due = start + duración + gracia), así que NO se salta por "ya pasó".
@@ -1892,18 +1903,25 @@ async function runDigest(
     } catch {
       /* sin invitee igual listamos la cita */
     }
-    if (!byCloser.has(closer.phone))
-      byCloser.set(closer.phone, { name: closer.name, email, items: [] });
     // §18.CA: mismo par que en el poll —rescate por formulario y cruce de los dos números—,
     // acá para las citas que el digest lista. Las que vienen de HubSpot (el bloque de abajo)
     // no lo llevan: son de 30X, que tiene su propia segunda fuente.
     const formIndex = await formIndexFor(account);
     const phone = await resolvePhone(d, invitee, account, formIndex);
+    const altPhones = formIndex ? altPhonesFor(phone, formPhonesFor(formIndex, invitee?.email)) : [];
+    // Lista negra: la cita no entra al digest. Antes de crear la entrada del closer, para no
+    // mandarle un digest vacío si era su única cita.
+    if (anyBlockedPhone([phone, ...altPhones])) {
+      console.log(`[Calendly] digest push${pushN}: omito cita de lead en lista negra (${phone || 's/tel'})`);
+      continue;
+    }
+    if (!byCloser.has(closer.phone))
+      byCloser.set(closer.phone, { name: closer.name, email, items: [] });
     byCloser.get(closer.phone).items.push({
       name: fullNameFrom(invitee?.name),
       firstName: firstNameFrom(invitee?.name),
       phone,
-      altPhones: formIndex ? altPhonesFor(phone, formPhonesFor(formIndex, invitee?.email)) : [],
+      altPhones,
       startIso: ev.start_time,
       programKey,
       prefiredKey: ev.uri,
@@ -1925,6 +1943,10 @@ async function runDigest(
     const closer = resolveCloser(closerEmail);
     if (!closer) continue; // HUBSPOT_OWNER_TO_CLOSER ya lo garantiza; defensivo
     if (soloConexion && accountOfCloser(closerEmail) !== soloConexion) continue;
+    if (isBlockedPhone(item.phone)) {
+      console.log(`[HubSpot] digest push${pushN}: omito cita de lead en lista negra (${item.phone})`);
+      continue;
+    }
     if (!byCloser.has(closer.phone))
       byCloser.set(closer.phone, { name: closer.name, email: closerEmail, items: [] });
     byCloser.get(closer.phone).items.push(item);
