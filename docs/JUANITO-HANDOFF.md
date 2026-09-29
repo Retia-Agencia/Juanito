@@ -6890,6 +6890,47 @@ el día sin tanda y las calls de domingo. **Suite en Linux (VPS): 1257 / 1255**,
 (domingo 5:30pm): cada closer de 30X recibe dos digests (lunes "la noche anterior", martes
 "adelantado"), y el lunes a las 5:30pm solo le llega lo nuevo.
 
+### 18.CC 🔴 "Enviado" no es "entregado": recibos de WhatsApp y reintentos con el mensaje real (2026-09-29)
+
+**El caso.** Andrea Machado no recibió el Push 1 (lun 28, 7pm) ni el Push 2 (mar 29, 6:31am) de
+sus 23 calls, en su 317 (`122836635136119@lid`, el destino de sus DOS identidades, ver arriba).
+El log decía `enviado` para los cuatro digests. La copia del espejo de dev llegó completa. En el
+log no había ningún error de ack (463/479) ni pedidos de reintento visibles (Baileys los loguea en
+debug). Juanito **no escuchaba los recibos de entrega**, así que no había forma de saber si un
+push llegó al teléfono. Lo único raro fue una racha de cierres 428/503 con tres reinicios del
+proceso entre las 4:48 y las 4:56pm del lunes, justo antes del primer digest perdido. **Causa raíz
+sin confirmar.**
+
+**Bug encontrado de paso.** `getMessage` devolvía siempre `{ conversation: '' }`. Cuando un
+aparato del destinatario no puede descifrar, pide el mensaje de nuevo. Baileys lo busca en su
+caché en memoria (**5 min**, se pierde al reiniciar) y, si no está, usa `getMessage`. O sea que un
+teléfono que se conectaba tarde recibía un **mensaje en blanco** en vez del push.
+
+**Lo que se hizo.**
+- Tabla `wa_outbound`: todo envío de `sendMessage`/`sendDocument` queda con su `msg_id`, el
+  proto codificado y un `tag`/`ref` opcional. Los pushes de Calendly pasan `{ tag: 'push1', ref:
+  <email del closer> }`.
+- `messages.update` actualiza `status` (sent → server_ack → delivered → read, o error con su
+  código). Solo sube de estado, porque los recibos llegan por aparato y desordenados.
+- `getMessage` reenvía el original desde `wa_outbound` y loguea
+  `⚠️ pedido de reenvío de <id>` con el push y el closer. **Esa línea es la señal de que un
+  aparato no pudo descifrar.**
+- Limpieza: el contenido se vacía a los 2 días y la fila se borra a los 30.
+
+**Cómo responder "no me llegó":**
+```sql
+SELECT tag, sent_at, status, status_at, retries, error FROM wa_outbound
+WHERE ref = 'registro@ttrading.co' ORDER BY sent_at DESC LIMIT 20;
+```
+`sent`/`server_ack` y nunca `delivered` = no llegó al teléfono. `retries > 0` = no lo pudo
+descifrar.
+
+**Tests:** `test/data.wa-outbound.test.js`. **Suite en Linux (VPS): 1262 / 1260**, con los mismos
+**2 rojos conocidos**.
+
+**Pendiente de operación:** desplegar con `alcance: todo` (reconecta Baileys) y mirar
+`wa_outbound` después del Push 1 de las 7pm de Andrea.
+
 ### Secretos (decididos, ver §13)
 
 - `CALENDLY_TOKEN`: **NO rotar** (decidido).

@@ -1987,6 +1987,43 @@ export function updateSetteoFlags({ id, closerEmail, contesto, agendo, vendio })
     .run({ ...args, id: Number(id), email: String(closerEmail).toLowerCase().trim() }).changes;
 }
 
+// ─── Envíos de WhatsApp y sus recibos (tabla wa_outbound, ver migrate.js) ─────
+
+// Nombres del enum proto.WebMessageInfo.Status de Baileys. 1 = PENDING es el estado con el
+// que nace la fila ('sent'): salió del socket y todavía no hay recibo.
+const WA_STATUS = { 0: 'error', 1: 'sent', 2: 'server_ack', 3: 'delivered', 4: 'read', 5: 'played' };
+
+export function recordWaOutbound({ msgId, jid, tag = null, ref = null, message = null }) {
+  return db
+    .prepare(
+      `INSERT OR IGNORE INTO wa_outbound (msg_id, jid, tag, ref, message) VALUES (?, ?, ?, ?, ?)`
+    )
+    .run(msgId, jid, tag, ref, message);
+}
+
+// Solo sube de estado: los recibos llegan desordenados y uno por aparato, así que un
+// 'delivered' tardío del aparato vinculado no puede pisar un 'read' del teléfono. ERROR (0) es
+// la excepción: un rechazo del servidor se registra siempre, con su código.
+export function updateWaOutboundStatus(msgId, rank, error = null) {
+  const status = WA_STATUS[rank];
+  if (!status) return 0;
+  return db
+    .prepare(
+      `UPDATE wa_outbound SET status = @status, status_rank = @rank, status_at = datetime('now'),
+         error = COALESCE(@error, error)
+       WHERE msg_id = @msgId AND (@rank = 0 OR @rank > status_rank)`
+    )
+    .run({ msgId, rank, status, error }).changes;
+}
+
+// Para responder un pedido de reintento: devuelve el proto codificado (o null) y cuenta el
+// reintento, que es en sí la señal de que ese aparato no pudo descifrar.
+export function takeWaOutboundForRetry(msgId) {
+  const row = db.prepare(`SELECT message, tag, ref, jid FROM wa_outbound WHERE msg_id = ?`).get(msgId);
+  if (row) db.prepare(`UPDATE wa_outbound SET retries = retries + 1 WHERE msg_id = ?`).run(msgId);
+  return row || null;
+}
+
 // ─── Limpieza periódica ───────────────────────────────────────────────────────
 
 export function cleanup() {
@@ -2002,6 +2039,10 @@ export function cleanup() {
     `DELETE FROM group_usage WHERE date < date('now', 'localtime', '-7 days')`,
     `DELETE FROM group_reply_usage WHERE hour_bucket < strftime('%Y-%m-%d-%H', datetime('now', 'localtime', '-2 days'))`,
     `DELETE FROM outreach_schedules WHERE status != 'active' AND created_at < datetime('now', '-30 days')`,
+    // El contenido solo sirve para reintentos (minutos u horas): se vacía a los 2 días. Los
+    // estados se guardan un mes para poder auditar una queja de "no me llegó".
+    `UPDATE wa_outbound SET message = NULL WHERE message IS NOT NULL AND sent_at < datetime('now', '-2 days')`,
+    `DELETE FROM wa_outbound WHERE sent_at < datetime('now', '-30 days')`,
   ];
   let total = 0;
   for (const sql of stmts) total += db.prepare(sql).run().changes;

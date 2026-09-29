@@ -441,6 +441,32 @@ db.exec(`
   );
 `);
 
+// Registro de lo que Juanito ENVÍA por WhatsApp (2026-09-29, caso Andrea Machado). Dos usos:
+//  1. Recibos de entrega: WhatsApp avisa server_ack → delivered → read por mensaje. Sin esto
+//     un push "enviado" que nunca llegó al teléfono se ve idéntico a uno leído.
+//  2. Reintentos de descifrado: si el aparato del destinatario no puede descifrar, pide el
+//     mensaje de nuevo. `message` guarda el proto para reenviar el ORIGINAL; antes Baileys
+//     reenviaba un texto vacío pasados los 5 min de su caché en memoria.
+// `status_rank` sigue el enum de Baileys (0 error · 2 server_ack · 3 delivered · 4 read ·
+// 5 played) y solo sube: los recibos llegan desordenados y por aparato.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS wa_outbound (
+    msg_id      TEXT PRIMARY KEY,
+    jid         TEXT NOT NULL,
+    tag         TEXT,              -- quién lo mandó (p. ej. 'push1'); NULL = sin etiquetar
+    ref         TEXT,              -- a quién iba en el dominio (p. ej. el email del closer)
+    message     BLOB,              -- proto.Message codificado, para responder reintentos
+    sent_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status      TEXT NOT NULL DEFAULT 'sent',
+    status_rank INTEGER NOT NULL DEFAULT 1,
+    status_at   TEXT,
+    error       TEXT,
+    retries     INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX IF NOT EXISTS idx_wa_outbound_ref ON wa_outbound(ref, sent_at);
+  CREATE INDEX IF NOT EXISTS idx_wa_outbound_sent ON wa_outbound(sent_at);
+`);
+
 // Migrar el flag legacy `sent` -> `status` (una sola vez, idempotente)
 if (columnExists('reminders', 'sent')) {
   const migrated = db

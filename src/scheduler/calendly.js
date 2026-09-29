@@ -754,7 +754,10 @@ async function deliverToCloser(d, to, text, tag, closerEmail) {
       console.log(`[Calendly][DRY-RUN:${accountOfCloser(closerEmail)}] copia (${tag}) → ${extra} [aparato secundario]`);
     return 'dry-run';
   }
-  await d.sendMessage(target, text);
+  // `track` deja el envío en `wa_outbound` con su push y su closer: así "no me llegó" se
+  // responde con el recibo de WhatsApp (delivered/read) en vez de adivinar (§18.CC).
+  const track = { tag, ref: closerEmail };
+  await d.sendMessage(target, text, { track });
   console.log(`[Calendly] enviado (${tag}) → ${target}${via}`);
   // La copia es BEST-EFFORT y va después del primario a propósito: si el secundario falla
   // (aparato desvinculado, JID muerto), el push ya se entregó donde importa y el estado sigue
@@ -762,7 +765,7 @@ async function deliverToCloser(d, to, text, tag, closerEmail) {
   // fallido y dispararía reintentos de algo que SÍ llegó.
   for (const extra of extras) {
     try {
-      await d.sendMessage(extra, text);
+      await d.sendMessage(extra, text, { track });
       console.log(`[Calendly] copia (${tag}) → ${extra} [aparato secundario; closer ${phone}]`);
     } catch (e) {
       console.error(`[Calendly] ⚠️ copia (${tag}) a ${extra} falló (el primario SÍ salió): ${e.message}`);

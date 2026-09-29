@@ -8,13 +8,14 @@ import makeWASocket, {
   makeCacheableSignalKeyStore,
   fetchLatestBaileysVersion,
   Browsers,
+  proto,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import { mkdirSync } from 'fs';
 import qrcode from 'qrcode-terminal';
 import QRCode from 'qrcode';
 import { updateQR, markConnected, startQRServer } from './qr-server.js';
-import { saveMessage } from '../db/index.js';
+import { saveMessage, recordWaOutbound, updateWaOutboundStatus, takeWaOutboundForRetry } from '../db/index.js';
 import db from '../db/index.js';
 import { phonesMatch, extractQuotedText, extractSharedContacts, describeSharedContacts } from '../common/utils.js';
 import { createSendQueue } from './send-queue.js';
@@ -146,9 +147,23 @@ export async function connect({ onMessage, onGroupJoin, onGroupChange }) {
           keys: makeCacheableSignalKeyStore(state.keys),
         },
         browser: Browsers.ubuntu('Chrome'),
-        // Necesario para que Baileys pueda resolver reintentos de descifrado
-        // cuando el session Signal del remitente cambia (LID key rotation).
-        getMessage: async () => ({ conversation: '' }),
+        // Reintentos de descifrado: el aparato del destinatario no pudo descifrar un mensaje
+        // nuestro y lo pide de nuevo. Baileys lo busca primero en su caché en memoria (5 min);
+        // pasado eso llega acá. Antes esto devolvía SIEMPRE un texto vacío, o sea que un
+        // teléfono que se conectaba tarde recibía un mensaje en blanco en vez del push (§18.CC).
+        // Ahora se reenvía el original guardado en `wa_outbound`; el vacío queda solo de
+        // último recurso, como antes.
+        getMessage: async (key) => {
+          try {
+            const row = key?.id ? takeWaOutboundForRetry(key.id) : null;
+            const what = row ? `${row.tag || 'sin tag'}${row.ref ? ` · ${row.ref}` : ''}` : 'no está en wa_outbound';
+            console.warn(`[WhatsApp] ⚠️ pedido de reenvío de ${key?.id} → ${key?.remoteJid} (${what})${row?.message ? '' : ' — va vacío'}`);
+            if (row?.message) return proto.Message.decode(row.message);
+          } catch (e) {
+            console.error(`[WhatsApp] getMessage falló para ${key?.id}: ${e.message}`);
+          }
+          return { conversation: '' };
+        },
       });
 
       sock.ev.on('creds.update', saveCreds);
@@ -307,6 +322,21 @@ export async function connect({ onMessage, onGroupJoin, onGroupChange }) {
         }
       });
 
+      // Recibos de lo que enviamos (server_ack → delivered → read, o error). En un DM llegan
+      // por messages.update; los de grupo van por message-receipt.update y no se registran.
+      sock.ev.on('messages.update', (updates) => {
+        for (const { key, update } of updates) {
+          if (!key?.fromMe || typeof update?.status !== 'number') continue;
+          try {
+            const error = update.status === 0 ? (update.messageStubParameters || []).join(',') || 'error' : null;
+            updateWaOutboundStatus(key.id, update.status, error);
+            if (error) console.warn(`[WhatsApp] ⚠️ WhatsApp rechazó ${key.id} → ${key.remoteJid}: ${error}`);
+          } catch (e) {
+            console.error(`[WhatsApp] no pude registrar el recibo de ${key?.id}: ${e.message}`);
+          }
+        }
+      });
+
       // Mensajes entrantes — ev.on es el API estable; ev.process tiene problemas
       // de buffering en Baileys v7 RC que hacen que messages.upsert nunca dispare.
       sock.ev.on('messages.upsert', async ({ messages, type }) => {
@@ -414,18 +444,34 @@ export function isConnected() {
 // `opts.quoted` (opcional): un WAMessage ({ key, message }) para responder CITANDO ese
 // mensaje (reply nativo de WhatsApp). Se usa en grupos para que la respuesta no se
 // confunda con quién preguntó, dado el delay de la cola anti-ban.
-export async function sendMessage(to, text, { quoted } = {}) {
+// Registra un envío en `wa_outbound` (recibos + reintentos). Best-effort: una falla acá no
+// puede convertir en error un mensaje que ya salió.
+function trackSent(sent, jid, { tag = null, ref = null } = {}) {
+  try {
+    if (!sent?.key?.id) return;
+    const message = sent.message ? proto.Message.encode(proto.Message.fromObject(sent.message)).finish() : null;
+    recordWaOutbound({ msgId: sent.key.id, jid, tag, ref, message: message ? Buffer.from(message) : null });
+  } catch (e) {
+    console.error(`[WhatsApp] no pude registrar el envío a ${jid}: ${e.message}`);
+  }
+}
+
+// `opts.track` (opcional): { tag, ref } para encontrar el envío después en `wa_outbound`
+// (p. ej. { tag: 'push1', ref: <email del closer> }). Sin él el envío se registra igual,
+// solo que sin etiqueta.
+export async function sendMessage(to, text, { quoted, track } = {}) {
   if (!sock) throw new Error('sendMessage: WhatsApp no conectado aún');
   const jid = toJid(to);
   // Espaciado por-grupo: los envíos a un grupo (@g.us) llevan key = jid → la cola los
   // separa entre sí. Los DMs van sin key (no se retrasan entre ellos).
   const key = jid.endsWith('@g.us') ? jid : null;
   // Todos los envíos pasan por la cola global (gap + jitter) — anti-ban §18.D P1-a.
-  await sendQueue.enqueue(
+  const sent = await sendQueue.enqueue(
     () => sock.sendMessage(jid, { text }, quoted ? { quoted } : {}),
     { key }
   );
-  console.log(`[WhatsApp] → ${to} (cola: ${sendQueue.size()} pendientes)`);
+  trackSent(sent, jid, track);
+  console.log(`[WhatsApp] → ${to} (cola: ${sendQueue.size()} pendientes)${sent?.key?.id ? ` [${sent.key.id}]` : ''}`);
 }
 
 // Envía un DOCUMENTO (archivo adjunto) por WhatsApp. buffer = contenido en memoria,
@@ -436,10 +482,11 @@ export async function sendDocument(to, { buffer, fileName, mimetype, caption } =
   if (!buffer || !buffer.length) throw new Error('sendDocument: documento vacío');
   const jid = toJid(to);
   const key = jid.endsWith('@g.us') ? jid : null;
-  await sendQueue.enqueue(
+  const sent = await sendQueue.enqueue(
     () => sock.sendMessage(jid, { document: buffer, fileName, mimetype, caption: caption || undefined }),
     { key }
   );
+  trackSent(sent, jid, { tag: 'document' });
   console.log(`[WhatsApp] → ${to} documento "${fileName}" (${buffer.length} bytes, cola: ${sendQueue.size()})`);
 }
 
