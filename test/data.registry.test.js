@@ -84,8 +84,7 @@ test('PROGRAMS: DB ≡ código', () => {
 });
 
 test('PROGRAMS conserva el ORDEN de declaración', () => {
-  // No es cosmético: programFromTitle devuelve el PRIMER programa cuyo hint matchea el título.
-  // Un orden distinto puede clasificar una cita a otro programa → otro copy, otro pitch.
+  // El sort_order del registry conserva el orden editorial del literal.
   assert.deepStrictEqual(Object.keys(leido.PROGRAMS), Object.keys(PROGRAMS));
 });
 

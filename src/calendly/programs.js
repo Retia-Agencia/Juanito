@@ -56,6 +56,12 @@ const TACTICAL_INVESTOR_ET = 'https://api.calendly.com/event_types/0049872a-7a3f
 // evento no clasifica nada, el event_type sí).
 const COMUNICARTE_ET = 'https://api.calendly.com/event_types/098ad9d0-5268-4156-afc1-b371a42f6945';
 
+// AI Second Brain Jurídico (EstadoX) — derivado 2026-10-05 con scripts/calendly-account-derive.js
+// juridico. Es POOL (`pooling_type: round_robin`): sale de la reserva real, no de /event_types.
+// ⚠️ SEÑUELOS: la org expone tres ET *solo* "30 Minute Meeting" (188a391f…, b1e23a15…, 52d5a5c0…).
+// Ninguno es la postulación; cablear uno de esos da cero reservas para siempre.
+const JURIDICO_ET = 'https://api.calendly.com/event_types/9ef431be-4023-4dac-bd12-4c0ae64c2f09';
+
 // ─── Empresas (marca de cara al lead) ─────────────────────────────────────────
 // Company es HOY solo un label (ver ADR 0001): ninguna lógica se bifurca por empresa. Sirve
 // para agrupar/rotular.
@@ -303,6 +309,31 @@ export const PROGRAMS = {
     },
     active: true,
   },
+  // AI Second Brain Jurídico — SEGUNDO programa de EstadoX (2026-10-05), con Calendly PROPIO
+  // (conexión `juridico`, owner admisiones@estadox.com), no el de IA para Abogados.
+  second_brain_juridico: {
+    key: 'second_brain_juridico',
+    label: 'AI Second Brain Jurídico',
+    // Más largo que el 'second brain' de second_brain: programFromTitle gana por hint más largo,
+    // así que una cita "…Second Brain Juridico" no cae en el programa de 30X.
+    titleHints: ['second brain juridico'],
+    company: 'estadox',
+    connection: 'juridico',
+    eventType: JURIDICO_ET,
+    // Copy dictado por el jefe (2026-10-05): el mismo de AI Second Brain de 30X, cambiando 30X por
+    // EstadoX y el nombre del programa. Sin "la empresa de Andrés Bilbao": esa frase es de 30X.
+    pitch: {
+      from: 'de EstadoX',
+      program: 'programa de implementación de tecnología AI Second Brain Jurídico EstadoX para ti y tus proyectos',
+    },
+    // `brochure` es una CARPETA de Drive ("SB Jurídico"), como tactical_investor y comunicarte:
+    // apuntar a la carpeta sirve el material vigente sin tocar el repo. Verificada HTTP 200 sin
+    // autenticar (2026-10-05). Video pendiente: sin `video`, materialsBlock omite esa línea.
+    materials: {
+      brochure: 'https://drive.google.com/drive/folders/1skYLghPb_2kDSwE7eQXJvsPyn7qC58SY?usp=drive_link',
+    },
+    active: true,
+  },
 };
 // ▲▲▲ EDITA AQUÍ ▲▲▲
 
@@ -349,13 +380,22 @@ const normalizeTitle = (s) =>
 // Hints declarados en PROGRAMS; sin ellos cae al label, que suele estar contenido en el título.
 const hintsOf = (p) => (p.titleHints?.length ? p.titleHints : [p.label]).map(normalizeTitle);
 
-export function programFromTitle(title) {
+export function pickProgramByHints(title, programs) {
   const t = normalizeTitle(title);
   if (!t) return null;
-  for (const p of Object.values(PROGRAMS).filter(isActive)) {
-    if (hintsOf(p).some((h) => h && t.includes(h))) return p.key;
+  let mejor = null;
+  for (const p of Object.values(programs).filter(isActive)) {
+    for (const hint of hintsOf(p)) {
+      if (hint && t.includes(hint) && (!mejor || hint.length > mejor.hint.length)) {
+        mejor = { key: p.key, hint };
+      }
+    }
   }
-  return null;
+  return mejor?.key || null;
+}
+
+export function programFromTitle(title) {
+  return pickProgramByHints(title, PROGRAMS);
 }
 
 // Rótulo corto, pitch y materiales por programKey. Incluyen TODOS los programas (el copy es

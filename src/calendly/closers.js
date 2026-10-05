@@ -24,7 +24,9 @@
 //   Alan Gonzalez       EstadoX (IA para Abogados)   ← alta 2026-09-18 (+54, Argentina)
 //   Andrea Machado      De Cero a Tactical Investor · Método Comunicarte   (los dos, Retia)
 //   Maru Marquez        Método Comunicarte · De Cero a Tactical Investor   (los dos, Retia)
-//   Dana Rodriguez      De Cero a Tactical Investor (Retia · alta 2026-08-25)
+//   Dana Rodriguez      De Cero a Tactical Investor · AI Second Brain Jurídico
+//   Yuli                 AI Second Brain Jurídico
+//   Juanjo               AI Second Brain Jurídico
 //
 // ⚠️ Los de arriba se listan por PROGRAMA, no por conexión, y no es un detalle de formato:
 // "De Cero a Tactical Investor" y "Método Comunicarte" son los DOS programas de la MISMA
@@ -288,11 +290,9 @@ export const PEOPLE = {
   // detectó, la del 25-ago 7pm). Estaba SIN MAPEAR: ni en CLOSERS ni en IGNORED_CLOSERS ⇒ alerta
   // de "closer sin mapear" en cada poll y esa call sin un solo push.
   //
-  // ⚠️ NO confundir con `dana@30x.com`, que sigue en IGNORED_CLOSERS: ese correo se ignora porque
-  // su volumen real está en "AI for Executives", un programa que no gestionamos. Esta identidad es
-  // otra cosa (otro correo, otra conexión, otro programa) y no toca aquella decisión. Si algún día
-  // se quiere cubrir su lado de 30x, es un alta nueva —una segunda identidad acá—, no un
-  // des-ignorar: lo que se ignoró fue el PROGRAMA, no la persona.
+  // `dana@30x.com` es su host en AI Second Brain Jurídico (2026-10-05). Misma línea que Retia ⇒
+  // reusa su opt-in (keyeado por teléfono). El workLid va SOLO en la identidad de Retia, como Maru:
+  // CLOSER_LIDS es lid → UN email, y repetirlo opacaría una de las dos identidades.
   //
   // Ojo con la historia: Dana ya había salido de Retia el 2026-07-22 (la reemplazó Sebastian
   // Salazar en el buzón-rol equipo@ttrading.co, que desde el 2026-09-02 atiende Maru Marquez).
@@ -310,7 +310,21 @@ export const PEOPLE = {
     name: 'Dana Rodriguez',
     // workLid capturado 2026-08-26 del mapeo lid↔número de la sesión de Baileys. Mismo caso que
     // Maru: escribió y no fue reconocida.
-    identities: [{ connection: 'retia', email: 'hola.danvar@gmail.com', phone: '+573169835624', workLid: '264471603867732' }],
+    identities: [
+      { connection: 'retia', email: 'hola.danvar@gmail.com', phone: '+573169835624', workLid: '264471603867732' },
+      { connection: 'juridico', email: 'dana@30x.com', phone: '+573169835624' },
+    ],
+  },
+  // Sin `workLid`: necesita hacer opt-in escribiéndole a Juanito, como Esteban Aguilar.
+  yuli: {
+    name: 'Yuli',
+    identities: [{ connection: 'juridico', email: 'yuli@30x.com', phone: '+573186713735' }],
+  },
+  // Buzón-rol; el correo puede cambiar. Si rota la persona se cambia el teléfono, nunca se retira
+  // el buzón, siguiendo la cicatriz de equipo@ttrading.co.
+  juanjo: {
+    name: 'Juanjo',
+    identities: [{ connection: 'juridico', email: 'admisiones@estadox.com', phone: '+573104363830' }],
   },
   // ─── ComunicArte (conexión #4) — programa "Método Comunicarte" ─────────────
   // Hosts verificados 2026-08-25 contra la cuenta real: la org tiene DOS miembros y los dos
@@ -505,8 +519,8 @@ export const IGNORED_CLOSERS = new Set([
   'mateo.leon@30x.com',       // salió del equipo (2026-06-24)
   'natalia.gonzalez@30x.com', // salió del equipo (2026-06-24; se documentó pero no se ignoró → alertas)
   'camilo.castiblanco@30x.com', // salió del equipo (2026-07-14; última call 8 jun)
-  'dana@30x.com',             // su volumen real está en "AI for Executives" (programa no gestionado)
-  'yuli@30x.com',             // idem Dana
+  // dana@30x.com y yuli@30x.com ahora cierran AI Second Brain Jurídico. Antes de activar, el
+  // derive debe confirmar que esos son los correos host reales de Calendly.
   'equipo@estadox.com',       // cuenta compartida de EstadoX — standby
   'registro@estadox.com',     // cuenta de sistema de EstadoX — nunca fue un closer
   // Retia (2026-07-21):

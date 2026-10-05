@@ -45,18 +45,15 @@ const CUENTAS = Object.keys(ACCOUNTS);
 const TOKENS = Object.fromEntries(CUENTAS.map((k) => [k, `tok-${k}`]));
 
 beforeEach(() => {
-  process.env.CALENDLY_DRY_RUN = 'false';
-  process.env.CALENDLY_DRY_RUN_ESTADOX = 'false';
-  process.env.CALENDLY_DRY_RUN_RETIA = 'false';
-  process.env.CALENDLY_DRY_RUN_COMUNICARTE = 'false';
   process.env.CALENDLY_REQUIRE_OPTIN = 'true';
   process.env.CALENDLY_PUSH3_LEAD_MIN = '25';
   process.env.ADMIN_LID = '129446371655733@lid';
-  // Cada conexión con SU token, que es justo lo que el bug ignoraba.
-  process.env.CALENDLY_TOKEN = TOKENS['30x'];
-  process.env.CALENDLY_TOKEN_ESTADOX = TOKENS.estadox;
-  process.env.CALENDLY_TOKEN_RETIA = TOKENS.retia;
-  process.env.CALENDLY_TOKEN_COMUNICARTE = TOKENS.comunicarte;
+  // Cada conexión con SU token y en vivo, que es justo lo que el bug ignoraba. Se leen los
+  // nombres de env del registro (`ACCOUNTS[k].env`) para que una conexión nueva entre sola.
+  for (const k of CUENTAS) {
+    process.env[ACCOUNTS[k].env.token] = TOKENS[k];
+    process.env[ACCOUNTS[k].env.dryRun] = 'false';
+  }
   delete process.env.CALENDLY_RESCHEDULE_ALERT; // default: apagado
   delete process.env.CALENDLY_PUSH0_ENABLED;
   __resetHealth();
