@@ -21,6 +21,7 @@ process.env.CALENDLY_DRY_RUN = 'false'; // 30x en vivo, como en producción
 process.env.CALENDLY_DRY_RUN_ESTADOX = 'false'; // estadox también (Salazar vive ahí desde 2026-08-25)
 process.env.CALENDLY_DRY_RUN_RETIA = 'false'; // retia también (así está en el VPS)
 process.env.CALENDLY_DRY_RUN_COMUNICARTE = 'false'; // y comunicarte (en vivo desde 2026-08-25)
+process.env.CALENDLY_DRY_RUN_POWERTALK = 'false'; // powertalk, para ejercitar la entrega real
 process.env.ADMIN_LID = '129446371655733@lid';
 
 const scheduler = await import('../src/scheduler/calendly.js');
@@ -35,6 +36,8 @@ const RETIA = accountOf('retia');
 const ET_RETIA = Object.keys(RETIA.eventTypes)[0];
 const COMUNICARTE = accountOf('comunicarte');
 const ET_COMUNICARTE = Object.keys(COMUNICARTE.eventTypes)[0];
+const POWERTALK = accountOf('powertalk');
+const ET_POWERTALK = Object.keys(POWERTALK.eventTypes)[0];
 // Maru Marquez es el caso filoso del roster desde el 2026-09-02: UNA persona, UNA línea de
 // WhatsApp y DOS identidades (comunicarte + retia), cada una con SU sheet. La cuenta se resuelve
 // por EMAIL, así que sus dos calls tienen que caer en lados distintos aunque compartan teléfono,
@@ -165,6 +168,56 @@ test('ComunicArte declara `sheets` → su closer recibe el Push 5, con SU sheet'
   assert.ok(enviados[0].text.includes(COMUNICARTE.sheets[0].url), 'con el sheet de Comunicarte');
   for (const s of RETIA.sheets)
     assert.ok(!enviados[0].text.includes(s.url), `y sin el sheet de "${s.label}", que es de otra conexión`);
+  scheduler.__resetDeps();
+});
+
+// ─── PowerTalk: Push 5 sin sheet, contra el CRM propio de Retia ──────────────
+// PowerTalk no usa sheets: sus closers registran la call en el CRM de Retia. La conexión
+// declara `crm` en vez de `sheets`, y el recordatorio sale igual pero sin link.
+
+test('mensaje con `crm` y sin sheets: recuerda el CRM y no trae links', () => {
+  const msg = buildPush5Message({
+    name: 'Juan Pérez',
+    firstName: 'Juan',
+    startIso: '2026-07-28T20:00:00Z',
+    crm: 'CRM Retia',
+  });
+  assert.match(msg, /Registra la call/);
+  assert.match(msg, /Juan Pérez/);
+  assert.match(msg, /registrar la actividad de la llamada en el CRM Retia/);
+  assert.doesNotMatch(msg, /https?:\/\//, 'sin sheet no hay link que mandar');
+});
+
+test('PowerTalk declara `crm` → su closer recibe el Push 5 del CRM', async () => {
+  __resetHealth();
+  const now = Date.parse('2026-07-28T14:00:00Z');
+  const NICOLAS = 'nicolas@swagger-lab.com';
+  const { store, wa, clock } = installHarness(scheduler, {
+    nowMs: now,
+    accounts: [POWERTALK],
+    optins: [{ phone: CLOSERS[NICOLAS].phone, source: 'self', contactJid: '777@lid' }],
+    events: [
+      eventoCon(30, {
+        uuid: 'e-powertalk',
+        startInMin: 40,
+        closerEmail: NICOLAS,
+        eventType: ET_POWERTALK,
+        nowMs: now,
+        account: 'powertalk',
+      }),
+    ],
+  });
+
+  await scheduler.runCalendlyPoll();
+  assert.ok(store._rows.find((p) => p.push_n === 5), 'se agendó el Push 5 de PowerTalk');
+
+  clock.ms = now + 95 * MIN;
+  await scheduler.runCalendlyDelivery();
+
+  const enviados = wa.sent.filter((m) => m.text.includes('Registra la call'));
+  assert.equal(enviados.length, 1, 'un solo recordatorio');
+  assert.match(enviados[0].text, /CRM Retia/);
+  assert.doesNotMatch(enviados[0].text, /docs\.google\.com/, 'ningún sheet de otra conexión');
   scheduler.__resetDeps();
 });
 

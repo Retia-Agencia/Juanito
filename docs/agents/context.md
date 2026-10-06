@@ -26,8 +26,9 @@ graduar a objeto más adelante si aparece una conducta suya (p. ej. ruteo de ale
 equipo), pero ese ruteo naturalmente cuelga de la Conexión, no de la marca.
 
 ⚠️ **REGLA DE LECTURA, y se rompe seguido: una Empresa NO tiene Calendly. Los Programas sí.**
-Retia es la empresa (la agencia) y maneja DOS programas —"De Cero a Tactical Investor" y
-"Método Comunicarte"—, cada uno con su propia cuenta de Calendly ⇒ **dos Conexiones**.
+Retia es la empresa (la agencia) y maneja TRES programas —"De Cero a Tactical Investor",
+"Método Comunicarte" y "Comunícate con Confianza" (marca PowerTalk, desde 2026-10-05)—, cada
+uno con su propia cuenta de Calendly ⇒ **tres Conexiones**.
 Exactamente igual que 30X, que es empresa y maneja seis programas (esos sí comparten un
 Calendly, que es la asimetría del sistema, no la regla). Decir "el Calendly de Retia" o
 "la conexión Retia" es un error de modelo: no existe tal cosa.
@@ -37,7 +38,7 @@ _Avoid_: cuenta, agencia (esos son Connection); "el Calendly de <empresa>".
 Una cuenta de Calendly conectada: su token, su organización y los event_types que Juanito
 pushea de ella. Es la unidad de autenticación y polling, y el scope natural del rate limit,
 las alertas de "closer sin mapear" y el off-switch. Una Connection puede servir N Programs
-(30x sirve 6) o 1 (`retia`, `comunicarte`, `estadox`). En el código existente se llama
+(30x sirve 6) o 1 (`retia`, `comunicarte`, `powertalk`, `estadox`). En el código existente se llama
 `account`/`ACCOUNTS` (se conserva ese nombre en la capa derivada); "Connection" es el término
 del modelo nuevo.
 
@@ -47,7 +48,7 @@ quedó de cuando ese era el único programa de Retia acá (2026-07-21). Igual `3
 programas de DOS marcas (30X y EstadoX). Las keys se conservan porque son la clave del roster,
 de los opt-ins, de las filas ya guardadas y de los nombres de sus env (`CALENDLY_TOKEN_RETIA`):
 renombrarlas es una migración con riesgo de dejar un programa mudo, no un rename. **Los LABELS
-sí dicen la verdad** (`Retia · Tactical Investor`, `Retia · ComunicArte`, formato
+sí dicen la verdad** (`Retia · Tactical Investor`, `Retia · ComunicArte`, `Retia · PowerTalk`, formato
 `empresa · programa`) y son lo que ve el humano en `/calendly`, `/espejo` y el espejo de dev.
 _Avoid_: cuenta (ambiguo con la de banco), empresa.
 

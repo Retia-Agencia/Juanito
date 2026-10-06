@@ -38,9 +38,14 @@ export function push5DueUtc(startIso, endIso, { durationMin = 30, delayMin = 10 
 // sheet se haya llenado (no tiene acceso a esos archivos) y no insiste. Un disparo por call.
 // `tz` sin default a propósito: formatCallTime ya cae a TZ() cuando llega undefined, y TZ es
 // privado de index.js (no se exporta y este cambio no puede tocar ese archivo).
-export function buildPush5Message({ name, firstName, startIso, sheets = [], tz }) {
+// `crm`: conexión que registra la call en un CRM propio, sin sheet (PowerTalk → 'CRM Retia').
+// Ahí no hay link que mandar: el push solo recuerda registrar la actividad.
+export function buildPush5Message({ name, firstName, startIso, sheets = [], crm, tz }) {
   const who = name || firstName || 'el prospecto';
   const time = formatCallTime(startIso, tz);
+  if (!sheets.length && crm) {
+    return `📝 *Registra la call* — *${who}* (de las ${time}). Acuérdate de registrar la actividad de la llamada en el ${crm}.`;
+  }
   const lista = sheets.map((s) => `• ${s.label}: ${s.url}`).join('\n');
   const cuantos = sheets.length === 1 ? 'el sheet' : 'los dos sheets';
   return `📝 *Registra la call* — *${who}* (de las ${time}). Llena ${cuantos}:\n${lista}`;

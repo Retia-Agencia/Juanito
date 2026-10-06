@@ -130,17 +130,17 @@ test('/espejo on repetido es idempotente (no duplica la conexión)', async () =>
 });
 
 // ─── Empresa ≠ conexión ───────────────────────────────────────────────────────
-// Retia es UNA agencia y maneja DOS programas ("De Cero a Tactical Investor" y "Método
-// Comunicarte"), cada uno con su propio Calendly ⇒ dos conexiones. Leer las conexiones como
+// Retia es UNA agencia y maneja TRES programas ("De Cero a Tactical Investor", "Método
+// Comunicarte" y "Comunícate con Confianza"), cada uno con su propio Calendly ⇒ tres conexiones. Leer las conexiones como
 // empresas hace creer que ComunicArte es un cliente aparte, y sobre esa lectura se decide a
 // quién se le apaga qué.
 
-test('el estado nombra la empresa de cada conexión y avisa que Retia tiene dos', async () => {
+test('el estado nombra la empresa de cada conexión y avisa que Retia tiene tres', async () => {
   await withEnv('comunicarte,retia', '999@lid', async () => {
     const out = await espejo('/espejo', espejoDeps(null));
     assert.match(out, /empresa Retia · programas: De Cero a Tactical Investor/);
     assert.match(out, /empresa Retia · programas: Método Comunicarte/);
-    assert.match(out, /Retia es UNA empresa con 2 conexiones/);
+    assert.match(out, /Retia es UNA empresa con 3 conexiones/);
   });
 });
 

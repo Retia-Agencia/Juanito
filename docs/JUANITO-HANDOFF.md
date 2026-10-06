@@ -5,7 +5,8 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-09-02** (§18.BR — Maru Marquez entra a "De Cero a Tactical
+Última actualización: **2026-10-05** (§18.CD — tercer programa de Retia: PowerTalk · "Comunícate con
+Confianza", conexión `powertalk` en dry-run, Push 5 contra el CRM de Retia). Anterior: **2026-09-02** (§18.BR — Maru Marquez entra a "De Cero a Tactical
 Investor" heredando el buzón-rol `equipo@ttrading.co`; Sebastian Salazar queda desvinculado del
 programa. Una cuenta de Calendly pertenece a UNA organización: por eso su gmail de ComunicArte no
 servía). Anterior: **2026-08-28** (§18.BQ — los seis restantes de la auditoría de
@@ -6930,6 +6931,51 @@ descifrar.
 
 **Pendiente de operación:** desplegar con `alcance: todo` (reconecta Baileys) y mirar
 `wa_outbound` después del Push 1 de las 7pm de Andrea.
+
+### 18.CD 🔵 Tercer programa de Retia: PowerTalk · "Comunícate con Confianza" (2026-10-05)
+
+**Qué es.** Retia suma un tercer programa, "Comunícate con Confianza", con la marca **PowerTalk**.
+Lo vende Francisco Vargas, que es la cara del pitch como Vieira en Tactical Investor. Tiene
+**Calendly propio**, así que entra como conexión nueva: `powertalk` (label `Retia · PowerTalk`,
+org `267dcdc8…`, token `CALENDLY_TOKEN_POWERTALK`). Arranca en **dry-run**
+(`CALENDLY_DRY_RUN_POWERTALK=true`), igual que las demás conexiones el día que entraron.
+
+**Lo que se cableó.**
+- `programs.js` → `powertalk`: pitch *"de Francisco Vargas en PowerTalk"* + *"programa
+  Comunícate con Confianza"*, el mismo template de los demás programas. Materiales: video de
+  YouTube (`crmfzGyGgU4`, lo eligió el jefe en vez de la landing de Lovable) y antes la carpeta de
+  Drive del brochure (`order: ['video','brochure']`, como Tactical). Los dos links abren sin
+  iniciar sesión.
+- ET `030f9e46…` (**POOL round robin**, no sale en `/event_types`). Se sacó de una reserva de
+  prueba del jefe. Los tres ETs que la API sí lista son señuelos (los "30 Minute Meeting"
+  personales de los dos closers y "Equipo - Power Talk" de Francisco).
+- `closers.js` → Nicolas Ramirez (`nicolas@swagger-lab.com`, +573005333530) y Juan Jose Giraldo
+  (`juanjogiraldoguz12@gmail.com`, +573104363830), los dos miembros `user` de la org. Sin
+  `workLid` hasta que escriban. Francisco es `owner` y no closer: si algún día hostea una cita,
+  sale la alerta de "closer sin mapear", que es lo que queremos que pase.
+- **Push 5 sin sheet.** PowerTalk registra las calls en el **CRM propio de Retia**, no en
+  Sheets. La conexión declara `crm: 'CRM Retia'` en vez de `sheets`, y `buildPush5Message`
+  manda solo *"Acuérdate de registrar la actividad de la llamada en el CRM Retia"*, sin link. El
+  gate del scheduler pasó a `sheets?.length || crm`. `crm` no se siembra en la tabla
+  `connections` (igual que `leadForm`): hoy el runtime lee `ACCOUNTS`, no la DB.
+- `docker-compose.yml` pasa `CALENDLY_TOKEN_POWERTALK` y `CALENDLY_DRY_RUN_POWERTALK`.
+
+**⚠️ BLOQUEANTE conocido: el lead llega SIN TELÉFONO.** El ET no tiene pregunta de teléfono (su
+única pregunta es "información adicional", opcional). La reserva de prueba trajo
+`text_reminder_number: null` y `questions_and_answers: []`. Tampoco hay segunda fuente: ni
+HubSpot ni `leadForm`, porque el formulario es un Typeform y no un Sheet. Mientras eso siga así,
+los pushes que llevan link wa.me caen a "(mándalo manual)". Es el mismo hueco con el que nació
+ComunicArte. **Arreglo recomendado:** agregar en el ET de Calendly una pregunta de teléfono
+obligatoria. Es configuración y no toca código.
+
+**Tests.** `test/calendly.sheet-push.test.js` suma el mensaje con `crm` y la entrega de punta a
+punta de PowerTalk. Otros dos tests se actualizaron porque iteran el registro: el de la guardia de
+cancelación necesitaba el token fixture de la conexión nueva, y el de `/espejo` ahora espera "3
+conexiones" de Retia.
+
+**Pendiente de operación.** (1) Opt-in de Nicolás y Juan José. (2) Validar un ciclo de poll y
+pasar `CALENDLY_DRY_RUN_POWERTALK=false`. (3) Que Retia agregue la pregunta de teléfono al ET.
+(4) Cancelar la reserva de prueba "TEST Manuel" (16-oct 4:30pm, host Juan José).
 
 ### Secretos (decididos, ver §13)
 

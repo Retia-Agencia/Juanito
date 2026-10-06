@@ -297,6 +297,38 @@ export const ACCOUNTS = {
       phoneCol: 2,
     },
   },
+
+  // PowerTalk — "Comunícate con Confianza" (2026-10-05). TERCER Calendly de **Retia**, mismo
+  // modelo que `comunicarte`: un Calendly por programa. Arranca MUDA
+  // (CALENDLY_DRY_RUN_POWERTALK=true) hasta validar un ciclo de poll completo, como las demás.
+  //
+  // Diferencia con las otras dos de Retia: NO usa sheets. Sus closers registran la call en el
+  // CRM propio de Retia, así que el Push 5 se arma con `crm` (un recordatorio sin link) en vez
+  // de `sheets`. Tampoco hay formulario del anuncio en Sheets ⇒ sin `leadForm`.
+  powertalk: {
+    key: 'powertalk',
+    label: 'Retia · PowerTalk',
+    env: {
+      token: 'CALENDLY_TOKEN_POWERTALK',
+      orgUri: 'CALENDLY_ORG_URI_POWERTALK',
+      orgUriDefault: 'https://api.calendly.com/organizations/267dcdc8-f653-434d-975a-4739ae3c59f2',
+      dryRun: 'CALENDLY_DRY_RUN_POWERTALK',
+      dryRunDefault: true,
+      push4: null,
+      push4Default: false,
+    },
+    token: () => process.env.CALENDLY_TOKEN_POWERTALK || '',
+    // Org derivada 2026-10-05 (GET /users/me con el PAT de PowerTalk).
+    orgUri: () =>
+      process.env.CALENDLY_ORG_URI_POWERTALK ||
+      'https://api.calendly.com/organizations/267dcdc8-f653-434d-975a-4739ae3c59f2',
+    eventTypes: eventTypesForConnection('powertalk'),
+    dryRun: () => process.env.CALENDLY_DRY_RUN_POWERTALK !== 'false',
+    push4: () => false,
+    // Push 5 sin sheet: solo recuerda registrar la actividad en este CRM (ver sheet-push.js).
+    crm: 'CRM Retia',
+    hubspot: false,
+  },
 };
 
 // Cuentas utilizables = las que tienen token. Sin token, la cuenta no existe (mismo patrón

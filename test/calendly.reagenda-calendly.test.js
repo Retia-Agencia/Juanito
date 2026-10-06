@@ -49,6 +49,7 @@ beforeEach(() => {
   process.env.CALENDLY_DRY_RUN_ESTADOX = 'false';
   process.env.CALENDLY_DRY_RUN_RETIA = 'false';
   process.env.CALENDLY_DRY_RUN_COMUNICARTE = 'false';
+  process.env.CALENDLY_DRY_RUN_POWERTALK = 'false';
   process.env.CALENDLY_REQUIRE_OPTIN = 'true';
   process.env.CALENDLY_PUSH3_LEAD_MIN = '25';
   process.env.ADMIN_LID = '129446371655733@lid';
@@ -57,6 +58,7 @@ beforeEach(() => {
   process.env.CALENDLY_TOKEN_ESTADOX = TOKENS.estadox;
   process.env.CALENDLY_TOKEN_RETIA = TOKENS.retia;
   process.env.CALENDLY_TOKEN_COMUNICARTE = TOKENS.comunicarte;
+  process.env.CALENDLY_TOKEN_POWERTALK = TOKENS.powertalk;
   delete process.env.CALENDLY_RESCHEDULE_ALERT; // default: apagado
   delete process.env.CALENDLY_PUSH0_ENABLED;
   __resetHealth();

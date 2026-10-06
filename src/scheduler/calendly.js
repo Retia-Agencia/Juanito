@@ -1012,14 +1012,14 @@ export async function runCalendlyPoll() {
       }
 
       // ─── Push 5: recordatorio de llenar los Sheets (§18.AP) ──────────────────
-      // Solo las conexiones que declaran `sheets` (hoy retia y comunicarte). Vence al FIN REAL de la call
+      // Solo las conexiones que declaran `sheets` (retia, comunicarte) o `crm` (powertalk). Vence al FIN REAL de la call
       // (ev.end_time) + delay, no a start+duración: una call de 45 min no debe recibirlo
       // mientras sigue en curso. Mismo dedup UNIQUE(event_uuid, push_n) que los demás; el
       // mensaje real se reconstruye al entregar.
       //
       // OJO con la numeración: es 5 y no 4 porque el 4 es el registro de outcome de 30x, que
       // esta cuenta tiene apagado (account.push4() → false). Las conexiones de Retia se saltan el 4.
-      if (SHEET_PUSH_ENABLED() && account.sheets?.length) {
+      if (SHEET_PUSH_ENABLED() && (account.sheets?.length || account.crm)) {
         const due5 = push5DueUtc(ev.start_time, ev.end_time, {
           durationMin: CALL_DURATION_MIN(),
           delayMin: SHEET_PUSH_DELAY_MIN(),
@@ -1034,7 +1034,7 @@ export async function runCalendlyPoll() {
           prospect_phone: phone,
           call_start: toSqliteUtc(new Date(ev.start_time)),
           due_at: toSqliteUtc(due5),
-          message: buildPush5Message({ name, firstName, startIso: ev.start_time, sheets: account.sheets }),
+          message: buildPush5Message({ name, firstName, startIso: ev.start_time, sheets: account.sheets, crm: account.crm }),
         });
         if (r5 === 'new' || r5 === 'rescheduled') {
           console.log(
@@ -1632,6 +1632,7 @@ export async function runCalendlyDelivery() {
             firstName: firstNameFrom(p.prospect_name),
             startIso: ev5?.start_time || `${p.call_start.replace(' ', 'T')}Z`,
             sheets: acct5?.sheets || [],
+            crm: acct5?.crm,
           });
           const r5 = await deliver(d, p.closer_phone, msg5, 'push5', p.closer_email);
           if (r5 === 'sent' || r5 === 'dry-run') {

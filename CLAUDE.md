@@ -43,8 +43,8 @@ Todo lo demás ───────┴─▶ src/whatsapp/send-queue.js (cola F
 Regla clave: **todo envío sale del proceso principal y pasa por la cola anti-ban**.
 
 Vocabulario clave (se confunde seguido): **una EMPRESA no tiene Calendly — lo tienen sus
-PROGRAMAS.** Retia es empresa y maneja dos programas ("De Cero a Tactical Investor" y "Método
-Comunicarte"), cada uno con su cuenta ⇒ **dos conexiones**; 30X es empresa y sus seis programas
+PROGRAMAS.** Retia es empresa y maneja tres programas ("De Cero a Tactical Investor", "Método
+Comunicarte" y "Comunícate con Confianza"/PowerTalk), cada uno con su cuenta ⇒ **tres conexiones**; 30X es empresa y sus seis programas
 comparten una. Las keys de conexión no son nombres de empresa aunque lo parezcan: `retia` es el
 Calendly de Tactical Investor, por historia. Se conservan (son clave del roster, los opt-ins, las
 filas guardadas y los nombres de sus env); los LABELS sí dicen la verdad, en formato

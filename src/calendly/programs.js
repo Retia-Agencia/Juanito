@@ -55,6 +55,15 @@ const TACTICAL_INVESTOR_ET = 'https://api.calendly.com/event_types/0049872a-7a3f
 // ("Postulación Método Comunicarte" y "Postulación Evento Comunicarte" — mismo ET, el nombre del
 // evento no clasifica nada, el event_type sí).
 const COMUNICARTE_ET = 'https://api.calendly.com/event_types/098ad9d0-5268-4156-afc1-b371a42f6945';
+// PowerTalk — "Postulación Comunícate con Confianza". ES POOL (`pooling_type: round_robin`) ⇒
+// NO sale en /event_types: se sacó de la reserva de prueba del jefe (2026-10-05), mismo método
+// que EstadoX y ComunicArte. Los tres ETs que SÍ salen por la API son señuelos: los "30 Minute
+// Meeting" personales de los dos closers y "Equipo - Power Talk" de Francisco Vargas.
+//
+// ⚠️ Este ET NO pide teléfono (su única pregunta es "información adicional", opcional) y la
+// conexión no tiene leadForm ni HubSpot ⇒ hoy los pushes llegan sin link wa.me ("mándalo
+// manual"). Se arregla del lado de Calendly agregando la pregunta de teléfono. Ver §18.CD.
+const POWERTALK_ET = 'https://api.calendly.com/event_types/030f9e46-1bf8-4be7-b8f4-406a19fd78f7';
 
 // ─── Empresas (marca de cara al lead) ─────────────────────────────────────────
 // Company es HOY solo un label (ver ADR 0001): ninguna lógica se bifurca por empresa. Sirve
@@ -70,9 +79,10 @@ const COMUNICARTE_ET = 'https://api.calendly.com/event_types/098ad9d0-5268-4156-
 export const COMPANIES = {
   '30x': '30X',
   estadox: 'EstadoX',
-  // Retia tiene DOS programas: "De Cero a Tactical Investor" y "Método Comunicarte". Cada uno con
-  // su PROPIO Calendly (Retia no tiene cuenta unificada — ver accounts.js), así que la empresa es
-  // una y las Conexiones son dos. ComunicArte NO es una empresa: es un programa de Retia.
+  // Retia tiene TRES programas: "De Cero a Tactical Investor", "Método Comunicarte" y, desde el
+  // 2026-10-05, "Comunícate con Confianza" (PowerTalk). Cada uno con su PROPIO Calendly (Retia no
+  // tiene cuenta unificada — ver accounts.js), así que la empresa es una y las Conexiones son
+  // tres. Ni ComunicArte ni PowerTalk son empresas: son programas de Retia.
   retia: 'Retia',
 };
 
@@ -300,6 +310,33 @@ export const PROGRAMS = {
     // Carpeta verificada HTTP 200 sin autenticar, y sus archivos con `anyoneWithLink: reader`.
     materials: {
       brochure: 'https://drive.google.com/drive/folders/1OPBf5UufbzREVSwVmNIVXYH_cfeuPVQq?usp=sharing',
+    },
+    active: true,
+  },
+  // PowerTalk — "Comunícate con Confianza" (2026-10-05). Tercer programa de Retia, con Calendly
+  // PROPIO (conexión `powertalk`, arranca en dry-run). Lo VENDE Francisco Vargas (la CARA, va en
+  // el pitch, igual que Vieira en Tactical Investor); PowerTalk es la marca de cara al lead.
+  // Copy y orden de materiales aprobados por el jefe el mismo día: mismo template de los demás
+  // programas, video (la landing) antes del brochure como en Tactical Investor.
+  powertalk: {
+    key: 'powertalk',
+    label: 'Comunícate con Confianza',
+    titleHints: ['powertalk', 'power talk', 'comunicate con confianza'],
+    company: 'retia',
+    connection: 'powertalk',
+    eventType: POWERTALK_ET,
+    pitch: {
+      from: 'de Francisco Vargas en PowerTalk',
+      program: 'programa Comunícate con Confianza',
+    },
+    materials: {
+      // YouTube elegido por el jefe (2026-10-05) en vez de la landing del programa
+      // (https://programapowertalk.lovable.app/): abre en un clic desde el celular.
+      video: 'https://www.youtube.com/watch?v=crmfzGyGgU4',
+      // CARPETA de Drive (como tactical_investor y comunicarte): sirve el material vigente sin
+      // tocar el repo. Verificada HTTP 200 sin autenticar el 2026-10-05.
+      brochure: 'https://drive.google.com/drive/folders/1exIjDZ7XT96D_2F_JF2ep_1ydg1OYkDK?usp=sharing',
+      order: ['video', 'brochure'],
     },
     active: true,
   },

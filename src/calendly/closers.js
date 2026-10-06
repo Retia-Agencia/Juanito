@@ -372,6 +372,18 @@ export const PEOPLE = {
       { connection: 'retia', email: 'equipo@ttrading.co', phone: '+573108600134' },
     ],
   },
+  // ─── PowerTalk (conexión `powertalk`) — programa "Comunícate con Confianza" ───────────────
+  // Alta 2026-10-05. Hosts verificados contra la org real (267dcdc8…): miembros `user` de ese
+  // Calendly. El owner es Francisco Vargas (francisco@powertalkco.com), la CARA del programa, no
+  // closer — igual que Vieira en Tactical Investor. Sin `workLid`: se declara cuando escriban.
+  nicolas_ramirez: {
+    name: 'Nicolas Ramirez',
+    identities: [{ connection: 'powertalk', email: 'nicolas@swagger-lab.com', phone: '+573005333530' }],
+  },
+  juan_jose_giraldo: {
+    name: 'Juan Jose Giraldo',
+    identities: [{ connection: 'powertalk', email: 'juanjogiraldoguz12@gmail.com', phone: '+573104363830' }],
+  },
 };
 
 // ─── Identidad de PRUEBA, gateada por entorno (§18.BB) ───────────────────────────────────────

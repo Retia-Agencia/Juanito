@@ -140,6 +140,8 @@ services:
       # Conexión ComunicArte (2026-08-25). Sin el token la conexión se autodesactiva.
       - CALENDLY_TOKEN_COMUNICARTE=${CALENDLY_TOKEN_COMUNICARTE:-}
       - CALENDLY_DRY_RUN_COMUNICARTE=${CALENDLY_DRY_RUN_COMUNICARTE:-true}
+      - CALENDLY_TOKEN_POWERTALK=${CALENDLY_TOKEN_POWERTALK:-}
+      - CALENDLY_DRY_RUN_POWERTALK=${CALENDLY_DRY_RUN_POWERTALK:-true}
       # Espejo de dev: copia de los pushes de ciertas conexiones a un JID de dev, para
       # acompañar un rollout. Sin JID no existe; sin conexiones declaradas no copia nada.
       - CALENDLY_DEV_MIRROR_JID=${CALENDLY_DEV_MIRROR_JID:-}
