@@ -6977,9 +6977,15 @@ punta de PowerTalk. Otros dos tests se actualizaron porque iteran el registro: e
 cancelación necesitaba el token fixture de la conexión nueva, y el de `/espejo` ahora espera "3
 conexiones" de Retia.
 
-**Pendiente de operación.** (1) Opt-in de Nicolás y Juan José. (2) Validar un ciclo de poll y
-pasar `CALENDLY_DRY_RUN_POWERTALK=false`. (3) Cancelar la reserva de prueba "TEST 2 Manuel" (26-oct 9:30pm, host Juan José); la primera
-("TEST Manuel") ya se canceló.
+**EN PRODUCCIÓN, enviando de verdad desde el 2026-10-05** (`CALENDLY_DRY_RUN_POWERTALK=false` en
+`/root/juanito/.env`, respaldo `.env.bak-20261005-powertalk-live`). Lo decidió el jefe antes de
+los opt-ins. Es seguro porque `CALENDLY_REQUIRE_OPTIN=true`: mientras un closer no haga opt-in,
+sus pushes se marcan `skipped` con `sin-optin` y no le sale ningún mensaje. Después del cambio,
+un ciclo de poll corrió sin errores.
+
+**Pendiente de operación.** (1) Opt-in de Nicolás y Juan José. Al confirmarlo, revisar su fila en
+`calendly_optins` y que el `contact_jid` resuelva; si vienen como `@lid` opaco, declarar su
+`workLid`. (2) Cancelar la reserva de prueba "TEST 2 Manuel" (26-oct 9:30pm, host Juan José).
 
 ### Secretos (decididos, ver §13)
 
