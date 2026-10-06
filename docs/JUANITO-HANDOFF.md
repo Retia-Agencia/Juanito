@@ -6985,9 +6985,12 @@ los opt-ins. Es seguro porque `CALENDLY_REQUIRE_OPTIN=true`: mientras un closer 
 sus pushes se marcan `skipped` con `sin-optin` y no le sale ningún mensaje. Después del cambio,
 un ciclo de poll corrió sin errores.
 
-**Pendiente de operación.** (1) Opt-in de Nicolás y Juan José. Al confirmarlo, revisar su fila en
-`calendly_optins` y que el `contact_jid` resuelva; si vienen como `@lid` opaco, declarar su
-`workLid`. (2) Cancelar la reserva de prueba "TEST 2 Manuel" (26-oct 9:30pm, host Juan José).
+**Opt-ins completados 2026-10-06.** Juan José quedó registrado automáticamente desde
+`48228254916771@lid`. Nicolás escribió desde `139453360263216@lid`, pero el LID era opaco y su
+pushName no coincidió con el nombre completo del roster, así que se hizo el backfill confirmado
+con `source='self'`. Los dos destinos quedaron declarados como `workLid` para fijar la entrega al
+hilo probado. **Pendiente de operación:** cancelar la reserva de prueba "TEST 2 Manuel"
+(26-oct 9:30pm, host Juan José).
 
 ### 18.CE 🔵 Push 1 de 30X a las 8am de la víspera, todos los días, sin tandas (2026-10-06)
 

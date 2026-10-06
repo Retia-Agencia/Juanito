@@ -202,6 +202,13 @@ test('workLidForCloser: closer mapeado en CLOSER_LIDS → devuelve su LID de tra
   assert.equal(workLidForCloser('SEBASTIAN@30X.COM'), '158025419608301@lid'); // case-insensitive
 });
 
+test('PowerTalk fija los pushes a los hilos que hicieron opt-in', () => {
+  assert.equal(resolveCloserByLid('139453360263216@lid').email, 'nicolas@swagger-lab.com');
+  assert.equal(workLidForCloser('nicolas@swagger-lab.com'), '139453360263216@lid');
+  assert.equal(resolveCloserByLid('48228254916771@lid').email, 'juanjogiraldoguz12@gmail.com');
+  assert.equal(workLidForCloser('juanjogiraldoguz12@gmail.com'), '48228254916771@lid');
+});
+
 test('workLidForCloser: closer sin LID mapeado / vacío → null', () => {
   // Retia no declara workLid (no recibe Push 4, así que no hay entrega probada que copiar).
   assert.equal(workLidForCloser('registro@ttrading.co'), null);

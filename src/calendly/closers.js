@@ -378,11 +378,29 @@ export const PEOPLE = {
   // closer — igual que Vieira en Tactical Investor. Sin `workLid`: se declara cuando escriban.
   nicolas_ramirez: {
     name: 'Nicolas Ramirez',
-    identities: [{ connection: 'powertalk', email: 'nicolas@swagger-lab.com', phone: '+573005333530' }],
+    identities: [
+      {
+        connection: 'powertalk',
+        email: 'nicolas@swagger-lab.com',
+        phone: '+573005333530',
+        // Capturado de su mensaje de opt-in a Juanito el 2026-10-06. WhatsApp entregó el DM
+        // como LID opaco y su pushName no coincidió con el nombre completo del roster, por eso
+        // el auto-opt-in no pudo resolverlo por teléfono ni por nombre.
+        workLid: '139453360263216',
+      },
+    ],
   },
   juan_jose_giraldo: {
     name: 'Juan Jose Giraldo',
-    identities: [{ connection: 'powertalk', email: 'juanjogiraldoguz12@gmail.com', phone: '+573104363830' }],
+    identities: [
+      {
+        connection: 'powertalk',
+        email: 'juanjogiraldoguz12@gmail.com',
+        phone: '+573104363830',
+        // Capturado del opt-in exitoso del 2026-10-06; fija los pushes al hilo probado.
+        workLid: '48228254916771',
+      },
+    ],
   },
 };
 
