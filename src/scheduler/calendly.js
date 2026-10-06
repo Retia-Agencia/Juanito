@@ -221,7 +221,12 @@ const PUSH2_CRON = () => process.env.CALENDLY_PUSH2_CRON || '30 6 * * *'; // 6:3
 // Desde 2026-09-28 el turno temprano son TODOS los programas de 30X (pedido de Alejandro): el
 // default se deriva de `programs.js` para que un programa nuevo de 30X caiga solo en su turno.
 // Los de las otras empresas (EstadoX, Retia) siguen a las 7pm.
-const PUSH1_EARLY_CRON = () => process.env.CALENDLY_PUSH1_EARLY_CRON || '30 17 * * *'; // 5:30pm
+//
+// Desde 2026-10-06 ese turno sale a las 8:00am de la víspera, todos los días y sin tandas (pedido
+// de Alejandro): el domingo el de lunes, el lunes el de martes… El gate del Push 0 no necesita
+// cambio: pregunta por `push1CronFor`, que lee esta misma env, así que una cita de 30X para mañana
+// reservada después de las 8am la avisa el Push 0 y una reservada antes espera al digest.
+const PUSH1_EARLY_CRON = () => process.env.CALENDLY_PUSH1_EARLY_CRON || '0 8 * * *'; // 8:00am
 const PROGRAMAS_30X = () =>
   Object.values(PROGRAMS)
     .filter((p) => p.company === '30x')
@@ -247,8 +252,11 @@ const PUSH1_EARLY_PROGRAMS = () => {
 //
 // Días de la semana de ENVÍO (0 = domingo), en la zona del bot. Vacío apaga las tandas y el Push
 // 1 de 30X vuelve a ser el de la víspera.
+//
+// APAGADAS por default desde 2026-10-06: el Push 1 de 30X vuelve a salir solo la víspera, ahora a
+// las 8am (ver PUSH1_EARLY_CRON). El mecanismo se conserva: `0,2,4` lo vuelve a prender.
 const PUSH1_TANDAS_DIAS = () => {
-  const raw = process.env.CALENDLY_PUSH1_TANDAS_DIAS ?? '0,2,4';
+  const raw = process.env.CALENDLY_PUSH1_TANDAS_DIAS ?? '';
   return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean).map(Number));
 };
 const PUSH1_TANDAS_CONEXION = () => process.env.CALENDLY_PUSH1_TANDAS_CONEXION || '30x';
@@ -257,6 +265,8 @@ const weekdayInTz = (tz, base) =>
   ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(
     new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' }).format(base)
   );
+const horaLocal = (nowMs) =>
+  Number(new Intl.DateTimeFormat('en-US', { timeZone: TZ(), hour: 'numeric', hourCycle: 'h23' }).format(new Date(nowMs)));
 const esDiaDeTanda = (nowMs) => PUSH1_TANDAS_DIAS().has(weekdayInTz(TZ(), new Date(nowMs)));
 const isEarlyPush1Program = (programKey) => PUSH1_EARLY_PROGRAMS().has(programKey);
 // Cron del Push 1 que le toca a ESTE programa. Lo usa el gate del Push 0: preguntarle al cron
@@ -1993,7 +2003,9 @@ async function runDigest(
     byCloser.get(closer.phone).items.push(item);
   }
 
-  const desc = adelantado ? 'adelantado' : pushN === 1 ? 'la noche anterior' : 'en la mañana';
+  // El Push 1 de 30X sale a las 8am (2026-10-06): a esa hora "la noche anterior" sería falso.
+  const push1Desc = horaLocal(nowMs) < 14 ? 'el día anterior' : 'la noche anterior';
+  const desc = adelantado ? 'adelantado' : pushN === 1 ? push1Desc : 'en la mañana';
   const label = `Push ${pushN} (${desc})`;
   const when = whenLabel(offsetDays, nowMs);
   for (const [phone, { name, email, items }] of byCloser) {
@@ -2034,7 +2046,7 @@ async function runDigest(
 // Las dos mitades del Push 1. Son COMPLEMENTARIAS por construcción —una es la negación de la
 // otra sobre el mismo predicado—, así que toda cita cae en exactamente una: sumar un programa a
 // CALENDLY_PUSH1_EARLY_PROGRAMS lo mueve de turno, nunca lo duplica ni lo deja sin digest.
-export const runPush1Early = () => runDigest(1, 1, { incluyePrograma: isEarlyPush1Program, excluirPrefired: true }); // 5:30pm
+export const runPush1Early = () => runDigest(1, 1, { incluyePrograma: isEarlyPush1Program, excluirPrefired: true }); // 8am (30X)
 export const runPush1 = () => runDigest(1, 1, { incluyePrograma: (p) => !isEarlyPush1Program(p), excluirPrefired: true }); // 7pm
 // Push 1 adelantado: el de las citas de dentro de `offsetDays` días, las dos mitades juntas (un
 // digest por closer). Lo corre a mano scripts/refire-digest.js; no tiene cron.
@@ -2420,7 +2432,7 @@ export function startCalendlyJobs() {
   job(POLL_CRON(), runCalendlyPoll, 'poll');
   job(DELIVER_CRON(), runCalendlyDelivery, 'deliver');
   job(PUSH1_CRON(), runPush1, 'push1');
-  // La mitad temprana del Push 1 (los programas de 30X, 5:30pm), con la tanda delante en los días
+  // La mitad temprana del Push 1 (los programas de 30X, 8am), con la tanda delante en los días
   // que toca. Solo se registra si hay programas en la lista o tandas: vaciar las dos envs devuelve
   // el Push 1 a una sola corrida a las 7pm, sin dejar un job fantasma que mande un digest vacío.
   if (PUSH1_EARLY_PROGRAMS().size || PUSH1_TANDAS_DIAS().size)

@@ -84,15 +84,16 @@ services:
       - CALENDLY_ORG_URI=${CALENDLY_ORG_URI:-}
       - CALENDLY_PUSH3_LEAD_MIN=${CALENDLY_PUSH3_LEAD_MIN:-25}
       - CALENDLY_PUSH1_CRON=${CALENDLY_PUSH1_CRON:-0 19 * * *}
-      # Turno TEMPRANO del Push 1 (§18.BX): estos programas salen a las 5:30pm y el resto a la
+      # Turno TEMPRANO del Push 1 (§18.BX): estos programas salen a las 8am (2026-10-06) y el resto a la
       # hora de arriba. Los defaults duplican los del código a propósito — la lista tiene que
       # llegar al contenedor para poder moverla sin redeploy (gotcha §12: `environment:` acá es
       # explícito, lo que no está listado NO entra aunque esté en el .env del VPS).
-      - CALENDLY_PUSH1_EARLY_CRON=${CALENDLY_PUSH1_EARLY_CRON:-30 17 * * *}
+      - CALENDLY_PUSH1_EARLY_CRON=${CALENDLY_PUSH1_EARLY_CRON:-0 8 * * *}
       - CALENDLY_PUSH1_EARLY_PROGRAMS=${CALENDLY_PUSH1_EARLY_PROGRAMS:-second_brain,linkedin,developers,operaciones,instagram}
       # Tandas fijas del Push 1 de 30X (2026-09-28): dom → lun+mar, mar → mié+jue, jue → vie+sáb,
-      # a la hora del turno temprano. Vacío = Push 1 de la víspera, como antes.
-      - CALENDLY_PUSH1_TANDAS_DIAS=${CALENDLY_PUSH1_TANDAS_DIAS-0,2,4}
+      # a la hora del turno temprano. APAGADAS desde 2026-10-06 (vacío = Push 1 de la víspera);
+      # `0,2,4` las vuelve a prender.
+      - CALENDLY_PUSH1_TANDAS_DIAS=${CALENDLY_PUSH1_TANDAS_DIAS-}
       - CALENDLY_PUSH1_TANDAS_CONEXION=${CALENDLY_PUSH1_TANDAS_CONEXION:-30x}
       - CALENDLY_PUSH2_CRON=${CALENDLY_PUSH2_CRON:-30 6 * * *}
       - CALENDLY_SKIP_AUDIT_CRON=${CALENDLY_SKIP_AUDIT_CRON:-15 * * * *}

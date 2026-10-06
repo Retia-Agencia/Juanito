@@ -6891,6 +6891,8 @@ el día sin tanda y las calls de domingo. **Suite en Linux (VPS): 1257 / 1255**,
 (domingo 5:30pm): cada closer de 30X recibe dos digests (lunes "la noche anterior", martes
 "adelantado"), y el lunes a las 5:30pm solo le llega lo nuevo.
 
+**Reemplazado por §18.CE (2026-10-06).**
+
 ### 18.CC 🔴 "Enviado" no es "entregado": recibos de WhatsApp y reintentos con el mensaje real (2026-09-29)
 
 **El caso.** Andrea Machado no recibió el Push 1 (lun 28, 7pm) ni el Push 2 (mar 29, 6:31am) de
@@ -6986,6 +6988,31 @@ un ciclo de poll corrió sin errores.
 **Pendiente de operación.** (1) Opt-in de Nicolás y Juan José. Al confirmarlo, revisar su fila en
 `calendly_optins` y que el `contact_jid` resuelva; si vienen como `@lid` opaco, declarar su
 `workLid`. (2) Cancelar la reserva de prueba "TEST 2 Manuel" (26-oct 9:30pm, host Juan José).
+
+### 18.CE 🔵 Push 1 de 30X a las 8am de la víspera, todos los días, sin tandas (2026-10-06)
+
+Pedido de Alejandro: el Push 1 de 30X sale **solo la víspera, a las 8:00am**: el domingo el de
+las calls del lunes, el lunes el del martes, y así. Las tandas de §18.CB se **apagan**. EstadoX
+y Retia no cambian: siguen a las 7pm.
+
+**Qué cambió:** default de `CALENDLY_PUSH1_EARLY_CRON` → `0 8 * * *` y de
+`CALENDLY_PUSH1_TANDAS_DIAS` → vacío, en código **y** en `docker-compose.yml` (producción no los
+declara, así que el default del compose es el valor real). El mecanismo de tandas sigue en el
+código: `CALENDLY_PUSH1_TANDAS_DIAS=0,2,4` lo prende. El rótulo del digest dice **"Push 1 (el día
+anterior)"** si corre antes de las 2pm; a las 8am "la noche anterior" era falso. El mensaje de
+opt-in también dice "el día anterior".
+
+**Gate del Push 0:** sin cambios de código, porque `push1CronFor` ya lee la env del turno
+temprano. Ahora una cita de 30X para mañana reservada **antes** de las 8am la lista el digest, y
+una reservada **después** la avisa el Push 0. Hay tests para los dos lados. El test de push0 que
+usaba el evento por default (AI Second Brain) como control de "el digest de la noche todavía no
+corrió" pasó a `abogados`: es la trampa de §18.BX/§18.BZ/§18.CB por cuarta vez.
+
+**Suite en Linux:** ver el commit; mismos rojos conocidos que la línea base.
+
+**Pendiente de operación:** desplegar con `alcance: todo`. Verificar que el arranque diga
+`salvo second_brain/... a las 0 8 * * *, tandas push1: off` y que el primer digest de 30X salga
+a las 8am del día siguiente.
 
 ### Secretos (decididos, ver §13)
 

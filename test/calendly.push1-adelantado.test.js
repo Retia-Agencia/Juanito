@@ -29,6 +29,7 @@ beforeEach(() => {
   process.env.CALENDLY_DRY_RUN_ESTADOX = 'false';
   process.env.CALENDLY_REQUIRE_OPTIN = 'true';
   process.env.CALENDLY_PUSH4_ENABLED = 'false';
+  delete process.env.CALENDLY_PUSH1_TANDAS_DIAS; // default: apagadas (2026-10-06)
   __resetHealth();
   scheduler.__resetDeps();
 });
@@ -129,7 +130,7 @@ test('conexion: 30x deja fuera a los closers de otras conexiones', async () => {
   assert.doesNotMatch(destinos, /3054312905/, 'Salazar (estadox) no recibe la tanda de 30x');
 });
 
-// ─── Tandas fijas del Push 1 de 30X (2026-09-28) ─────────────────────────────────────────────
+// ─── Tandas fijas del Push 1 de 30X (2026-09-28; apagadas por default desde 2026-10-06) ─────────────────────────────────────────────
 // Domingo → lunes y martes; martes → miércoles y jueves; jueves → viernes y sábado. Todo a las
 // 5:30pm, dentro del job del turno temprano. Lo que fijan estos tests:
 //   1. cada día de tanda cubre EXACTAMENTE sus dos días (ni el tercero, ni otra conexión);
@@ -148,6 +149,7 @@ const TANDAS = [
 
 for (const { envio, nombre, cubre, fuera } of TANDAS) {
   test(`tanda del ${nombre}: manda los dos días que le tocan, marca y no repite`, async () => {
+    process.env.CALENDLY_PUSH1_TANDAS_DIAS = '0,2,4'; // el mecanismo sigue vivo detrás de la env
     const nowMs = at530(envio);
     const events = [
       makeEvent({ uuid: 'd1', startIso: a10am(cubre[0]), closerEmail: LUCAS, prospectName: 'Ana Gómez', nowMs }),
@@ -202,3 +204,38 @@ test('las calls de domingo salen el sábado por el digest diario', async () => {
   assert.equal(h.wa.sent.length, 1);
   assert.match(h.wa.sent[0].text, /Ana Gómez/);
 });
+
+// ─── Push 1 de 30X a las 8am de la víspera, sin tandas (2026-10-06) ─────────────────────────
+// Domingo → lunes, lunes → martes, martes → miércoles… Lo que fijan:
+//   1. por default ya no hay tanda: el domingo sale SOLO lo del lunes, nada de pasado mañana;
+//   2. el rótulo dice "el día anterior" (a las 8am "la noche anterior" sería falso);
+//   3. EstadoX no entra: sigue en su turno de las 7pm.
+const a8am = (fecha) => Date.parse(`${fecha}T13:00:00Z`); // 8:00am Bogotá
+
+for (const { envio, nombre, manana, pasado } of [
+  { envio: '2026-10-04', nombre: 'domingo', manana: '2026-10-05', pasado: '2026-10-06' },
+  { envio: '2026-10-05', nombre: 'lunes', manana: '2026-10-06', pasado: '2026-10-07' },
+  { envio: '2026-10-06', nombre: 'martes', manana: '2026-10-07', pasado: '2026-10-08' },
+]) {
+  test(`8am del ${nombre}: sale solo lo de mañana, sin tanda`, async () => {
+    const nowMs = a8am(envio);
+    const events = [
+      makeEvent({ uuid: 'm1', startIso: a10am(manana), closerEmail: LUCAS, prospectName: 'Ana Gómez', nowMs }),
+      makeEvent({ uuid: 'm2', startIso: a10am(pasado), closerEmail: LUCAS, prospectName: 'Beto Ruiz', nowMs }),
+      makeEvent({ uuid: 'm3', startIso: a10am(manana), closerEmail: SALAZAR, eventType: ABOGADOS_ET, prospectName: 'Dani Soto', nowMs }),
+    ];
+    const h = installHarness(scheduler, { events, optins: [LUCAS_PHONE, SALAZAR_PHONE], nowMs });
+    const marcadas = withPrefired(h);
+
+    await scheduler.runPush1TurnoTemprano();
+
+    assert.equal(h.wa.sent.length, 1, 'un solo digest: el de mañana');
+    const texto = h.wa.sent[0].text;
+    assert.match(texto, /Ana Gómez/);
+    assert.match(texto, /Push 1 \(el día anterior\)/);
+    assert.doesNotMatch(texto, /noche anterior/);
+    assert.doesNotMatch(texto, /Beto Ruiz/, 'pasado mañana espera a su víspera');
+    assert.doesNotMatch(texto, /Dani Soto/, 'EstadoX sigue a las 7pm');
+    assert.equal(marcadas.size, 0, 'sin tanda no se marca nada');
+  });
+}

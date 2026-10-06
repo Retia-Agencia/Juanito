@@ -144,11 +144,24 @@ test('reserva vieja que recién entró a la ventana → NO Push 0', async () => 
   assert.equal(push0Rows(store).length, 0, 'una reserva no-reciente no dispara aviso');
 });
 
+// El evento por default es de AI Second Brain (30X), cuyo Push 1 sale a las 8am desde 2026-10-06.
+// Para fijar "el digest de la noche todavía no corrió" el control tiene que ser de otra empresa:
+// `abogados` (EstadoX) sigue a las 7pm.
+const ABOGADOS_ET = 'https://api.calendly.com/event_types/83bb87b3-0c73-43ea-a618-196a74512eab';
+
 test('call para MAÑANA reservada de DÍA → NO Push 0 (el digest de las 7pm la cubre)', async () => {
-  const events = [makeEvent({ uuid: 'tom', startIso: CALL_TOMORROW, createdInMin: -2, closerEmail: SALAZAR, nowMs: NOW_POST })];
+  const events = [makeEvent({ uuid: 'tom', startIso: CALL_TOMORROW, createdInMin: -2, closerEmail: SALAZAR, eventType: ABOGADOS_ET, nowMs: NOW_POST })];
   const { store } = installHarness(scheduler, { events, optins: [SALAZAR_PHONE], nowMs: NOW_POST });
   await scheduler.runCalendlyPoll();
   assert.equal(push0Rows(store).length, 0, 'a las 9am el Push 1 todavía no corrió → él avisa');
+});
+
+// Y el lado de 30X: a las 9am su digest de las 8am ya salió, así que nadie más avisa esta cita.
+test('call de 30X para MAÑANA reservada a las 9am → SÍ Push 0 (su digest de las 8am ya pasó)', async () => {
+  const events = [makeEvent({ uuid: 'tom30x', startIso: CALL_TOMORROW, createdInMin: -2, closerEmail: SALAZAR, nowMs: NOW_POST })];
+  const { store } = installHarness(scheduler, { events, optins: [SALAZAR_PHONE], nowMs: NOW_POST });
+  await scheduler.runCalendlyPoll();
+  assert.equal(push0Rows(store).length, 1, 'el Push 1 de 30X ya corrió a las 8am');
 });
 
 // ─── Ventana ciega de la noche (2026-08-18) ───────────────────────────────────

@@ -541,7 +541,7 @@ test('Push 1 de las 7pm: excluye los programas tempranos y lista todo lo demás'
   assert.match(digest, /tienes 1 llamada mañana/, 'el conteo cuenta lo que lista, no lo que filtró');
 });
 
-test('Push 1 de las 5:30pm: manda SOLO las de los programas tempranos', async () => {
+test('Push 1 del turno temprano (8am): manda SOLO las de los programas tempranos', async () => {
   const events = [
     makeEvent({ uuid: 'e1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: ABOGADOS_ET, prospectName: 'Ana Gómez' }),
     makeEvent({ uuid: 'e2', startIso: tomorrowAt(19), closerEmail: LUCAS, eventType: INSTAGRAM_ET, prospectName: 'Beto Ruiz' }),
@@ -566,7 +566,7 @@ test('Push 1 de las 5:30pm: manda SOLO las de los programas tempranos', async ()
 
 // Un closer SIN citas de los programas tempranos no puede recibir un digest vacío a las 5:30pm:
 // sería un mensaje inútil, y en WhatsApp cada mensaje de más es superficie de ban.
-test('Push 1 de las 5:30pm: sin citas tempranas no manda nada', async () => {
+test('Push 1 del turno temprano (8am): sin citas tempranas no manda nada', async () => {
   const events = [
     makeEvent({ uuid: 'v1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: ABOGADOS_ET, prospectName: 'Ana Gómez' }),
   ];
@@ -583,6 +583,7 @@ test('Push 1 de las 5:30pm: sin citas tempranas no manda nada', async () => {
 // los logs, que es como se pierden. Para el resto de programas, en cambio, el silencio es lo
 // correcto: su digest sale a las 7pm y avisar ahora sería duplicar.
 const SEIS_PM = Date.parse('2026-06-15T23:00:00.000Z'); // 6:00pm Bogotá — entre los dos turnos
+const SIETE_AM = Date.parse('2026-06-15T12:00:00.000Z'); // 7:00am Bogotá — antes del turno de las 8am
 const CALL_MANANA = '2026-06-16T16:00:00.000Z'; // mañana 11:00am Bogotá
 const push0Rows = (store) => store._rows.filter((r) => r.push_n === 0);
 
@@ -618,6 +619,18 @@ test('reserva de AI for Developers entre los dos turnos → SÍ Push 0 (su diges
 
   await scheduler.runCalendlyPoll();
   assert.equal(push0Rows(store).length, 1, 'nadie más va a avisar esta cita hoy');
+});
+
+// Desde 2026-10-06 el turno de 30X sale a las 8am: una reserva de las 7am para mañana todavía
+// entra en ese digest, así que el Push 0 tiene que callarse para no duplicarla.
+test('reserva de 30X ANTES de las 8am para mañana → NO Push 0 (la lista el digest de las 8am)', async () => {
+  const events = [
+    makeEvent({ uuid: 'dev-madrugada', startIso: CALL_MANANA, createdInMin: -2, closerEmail: LUCAS, eventType: DEVELOPERS_ET, nowMs: SIETE_AM }),
+  ];
+  const { store } = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs: SIETE_AM });
+
+  await scheduler.runCalendlyPoll();
+  assert.equal(push0Rows(store).length, 0, 'su digest todavía no salió: avisar ahora sería duplicar');
 });
 
 test('reserva de un programa TARDE a la misma hora → NO Push 0 (lo avisa el digest de las 7pm)', async () => {

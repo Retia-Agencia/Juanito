@@ -88,7 +88,7 @@ export async function handleCloserOptin({ from, pushName, messageId, consume = t
     // Responder a SU mensaje (acción segura: es una respuesta, no un mensaje en frío)
     await sendMessage(
       from,
-      `¡Hola ${nombre}! Quedaste registrado ✅\n\nA partir de ahora te aviso por aquí cuándo mandarle los pushes precall a tus prospectos (Push 1 la noche anterior, Push 2 en la mañana, y Push 3 antes de cada llamada).`
+      `¡Hola ${nombre}! Quedaste registrado ✅\n\nA partir de ahora te aviso por aquí cuándo mandarle los pushes precall a tus prospectos (Push 1 el día anterior, Push 2 en la mañana, y Push 3 antes de cada llamada).`
     ).catch((e) => console.error('[Calendly] Error confirmando opt-in:', e.message));
   } else {
     console.log(`[Calendly] Closer ya registrado, mensaje recibido: ${closer.name}`);
