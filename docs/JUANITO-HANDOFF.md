@@ -6960,13 +6960,14 @@ org `267dcdc8…`, token `CALENDLY_TOKEN_POWERTALK`). Arranca en **dry-run**
   `connections` (igual que `leadForm`): hoy el runtime lee `ACCOUNTS`, no la DB.
 - `docker-compose.yml` pasa `CALENDLY_TOKEN_POWERTALK` y `CALENDLY_DRY_RUN_POWERTALK`.
 
-**⚠️ BLOQUEANTE conocido: el lead llega SIN TELÉFONO.** El ET no tiene pregunta de teléfono (su
-única pregunta es "información adicional", opcional). La reserva de prueba trajo
-`text_reminder_number: null` y `questions_and_answers: []`. Tampoco hay segunda fuente: ni
-HubSpot ni `leadForm`, porque el formulario es un Typeform y no un Sheet. Mientras eso siga así,
-los pushes que llevan link wa.me caen a "(mándalo manual)". Es el mismo hueco con el que nació
-ComunicArte. **Arreglo recomendado:** agregar en el ET de Calendly una pregunta de teléfono
-obligatoria. Es configuración y no toca código.
+**Teléfono del lead: RESUELTO el mismo día.** El ET nació sin pregunta de teléfono y la primera
+reserva de prueba llegó con `text_reminder_number: null` y `questions_and_answers: []`. No hay
+segunda fuente: ni HubSpot ni `leadForm`, porque el formulario es un Typeform y no un Sheet. El
+jefe agregó en Calendly la pregunta obligatoria **"Número de Contacto"**. La segunda reserva sí
+trajo el número, pero `prospectPhoneOf` igual lo perdía, porque la pregunta no tiene ninguna raíz
+de `PREGUNTA_TELEFONO`. Se agregó la frase `'numero de contacto'`, entera: con `'numero'` a secas
+entraría también un "Número de cédula", que tiene forma de teléfono. Test en
+`calendly.helpers.test.js` con el texto de producción y el caso de la cédula.
 
 **Tests.** `test/calendly.sheet-push.test.js` suma el mensaje con `crm` y la entrega de punta a
 punta de PowerTalk. Otros dos tests se actualizaron porque iteran el registro: el de la guardia de
@@ -6974,8 +6975,8 @@ cancelación necesitaba el token fixture de la conexión nueva, y el de `/espejo
 conexiones" de Retia.
 
 **Pendiente de operación.** (1) Opt-in de Nicolás y Juan José. (2) Validar un ciclo de poll y
-pasar `CALENDLY_DRY_RUN_POWERTALK=false`. (3) Que Retia agregue la pregunta de teléfono al ET.
-(4) Cancelar la reserva de prueba "TEST Manuel" (16-oct 4:30pm, host Juan José).
+pasar `CALENDLY_DRY_RUN_POWERTALK=false`. (3) Cancelar la reserva de prueba "TEST 2 Manuel" (26-oct 9:30pm, host Juan José); la primera
+("TEST Manuel") ya se canceló.
 
 ### Secretos (decididos, ver §13)
 

@@ -60,9 +60,9 @@ const COMUNICARTE_ET = 'https://api.calendly.com/event_types/098ad9d0-5268-4156-
 // que EstadoX y ComunicArte. Los tres ETs que SÍ salen por la API son señuelos: los "30 Minute
 // Meeting" personales de los dos closers y "Equipo - Power Talk" de Francisco Vargas.
 //
-// ⚠️ Este ET NO pide teléfono (su única pregunta es "información adicional", opcional) y la
-// conexión no tiene leadForm ni HubSpot ⇒ hoy los pushes llegan sin link wa.me ("mándalo
-// manual"). Se arregla del lado de Calendly agregando la pregunta de teléfono. Ver §18.CD.
+// El teléfono del lead sale de la pregunta obligatoria "Número de Contacto", que se agregó el mismo
+// día. Es la ÚNICA fuente: esta conexión no tiene ni leadForm ni HubSpot. Si alguien le cambia
+// el nombre a la pregunta, revisar PREGUNTA_TELEFONO en index.js. Ver §18.CD.
 const POWERTALK_ET = 'https://api.calendly.com/event_types/030f9e46-1bf8-4be7-b8f4-406a19fd78f7';
 
 // ─── Empresas (marca de cara al lead) ─────────────────────────────────────────

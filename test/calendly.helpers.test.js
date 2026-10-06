@@ -98,6 +98,21 @@ test('prospectPhoneOf ignora respuestas numéricas de preguntas que NO son de te
   assert.equal(prospectPhoneOf(inv), null);
 });
 
+test('prospectPhoneOf reconoce "Número de Contacto" (pregunta real de PowerTalk) sin abrirle la puerta a "número de cédula"', () => {
+  // Texto exacto del ET de PowerTalk (2026-10-05). No trae ninguna raíz de teléfono y el lead
+  // llegaba sin número. "numero" a secas NO sirve: una cédula también parece teléfono.
+  const powertalk = {
+    text_reminder_number: null,
+    questions_and_answers: [{ question: 'Número de Contacto', answer: '+57 310 5643297', position: 0 }],
+  };
+  assert.equal(prospectPhoneOf(powertalk), '+57 310 5643297');
+  const cedula = {
+    text_reminder_number: null,
+    questions_and_answers: [{ question: 'Número de cédula', answer: '1020304050' }],
+  };
+  assert.equal(prospectPhoneOf(cedula), null);
+});
+
 test('prospectPhoneOf ignora respuestas de texto libre a una pregunta de teléfono', () => {
   const inv = {
     text_reminder_number: null,

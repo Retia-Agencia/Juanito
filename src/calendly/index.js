@@ -230,7 +230,11 @@ const sinAcentos = (s) =>
 // Van como RAÍZ, no como palabra completa: la pregunta real de Tactical Investor dice "telefonico", y
 // 'telefono' no es substring de 'telefonico' (la 8ª letra es i, no o). Ese detalle tonto costó
 // el primer intento de este arreglo — de ahí el test con los dos textos de producción.
-const PREGUNTA_TELEFONO = ['telefon', 'tel.', 'celular', 'movil', 'whatsapp', 'wpp', 'phone', 'mobile'];
+//
+// 'numero de contacto' es la pregunta de PowerTalk (2026-10-05), que no trae ninguna raíz de
+// las otras. Va la frase entera y no 'numero' a secas: "Número de cédula" también tiene forma de
+// teléfono y pasaría el filtro de pareceTelefono.
+const PREGUNTA_TELEFONO = ['telefon', 'tel.', 'celular', 'movil', 'whatsapp', 'wpp', 'phone', 'mobile', 'numero de contacto'];
 
 // ¿Esto tiene forma de número marcable? 7 a 15 dígitos (el rango de E.164, que cubre desde un
 // fijo local hasta el internacional más largo) y ningún carácter fuera de dígitos, '+' y los
