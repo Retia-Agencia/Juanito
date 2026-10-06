@@ -6968,6 +6968,9 @@ trajo el número, pero `prospectPhoneOf` igual lo perdía, porque la pregunta no
 de `PREGUNTA_TELEFONO`. Se agregó la frase `'numero de contacto'`, entera: con `'numero'` a secas
 entraría también un "Número de cédula", que tiene forma de teléfono. Test en
 `calendly.helpers.test.js` con el texto de producción y el caso de la cédula.
+Después el jefe renombró la pregunta a **"Teléfono"**, que ya matchea por `'telefon'`. La frase
+`'numero de contacto'` se queda: cada reserva guarda el texto de la pregunta tal como estaba al
+agendar, así que las citas viejas siguen llegando con el nombre anterior.
 
 **Tests.** `test/calendly.sheet-push.test.js` suma el mensaje con `crm` y la entrega de punta a
 punta de PowerTalk. Otros dos tests se actualizaron porque iteran el registro: el de la guardia de
