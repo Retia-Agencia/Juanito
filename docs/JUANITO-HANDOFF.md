@@ -7017,6 +7017,29 @@ corrió" pasó a `abogados`: es la trampa de §18.BX/§18.BZ/§18.CB por cuarta 
 `salvo second_brain/... a las 0 8 * * *, tandas push1: off` y que el primer digest de 30X salga
 a las 8am del día siguiente.
 
+### 18.CF 🔵 Los outcomes de 30X salen al Dashboard de Closers (2026-10-07)
+
+Pedido de Sebastián Rubí y Daniel Tovar: un dashboard por closer y programa (repo aparte,
+`dashboard-closers`, Supabase). HubSpot casi nunca trae el outcome de la reunión, así que el
+show/no-show confiable es el de `call_outcomes`. Juanito solo **entrega** esa tabla; no lee nada
+del dashboard ni cambia su comportamiento.
+
+**Qué hace:** `dashboard/server/sync-closers.js`, en el contenedor `dash`. Al arrancar manda el
+histórico completo de `call_outcomes` de los programas de **30X** (`company === '30x'`); después,
+cada `CLOSERS_SYNC_MIN` minutos (60), lo de los últimos 14 días. Upsert idempotente por
+`event_uuid`, en lotes de 500, a la RPC `ingest_juanito` de Supabase con la llave **publicable** y
+un secreto compartido. No viajan teléfonos ni `raw_reply`. Fechas UTC salen con `Z`.
+
+**Por qué en `dash` y no en el scheduler del bot:** solo lee la DB y hace un POST saliente. Un bug
+acá no tumba WhatsApp, y se despliega con `alcance: dash`, que no reconecta Baileys.
+
+**Se autodesactiva** sin `CLOSERS_SYNC_URL`, `CLOSERS_SYNC_KEY` o `CLOSERS_SYNC_SECRET`.
+Tests: `test/dashboard.sync-closers.test.js` (corren en Windows, sin better-sqlite3).
+
+**Pendiente de operación:** agregar las tres variables al `.env` del VPS, desplegar con
+`alcance: dash` y verificar en `docker logs juanito-dash` la línea
+`sync dashboard-closers: N/N outcomes (histórico completo)`.
+
 ### Secretos (decididos, ver §13)
 
 - `CALENDLY_TOKEN`: **NO rotar** (decidido).
