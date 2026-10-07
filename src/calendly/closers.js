@@ -19,6 +19,7 @@
 //   Lucas Mendoza       LinkedIn Sales  · Operaciones Escalables
 //   Pablo Suarez        AI For Developers
 //   Daniela Camacho     Instagram & TikTok · Operaciones Escalables
+//   Sebastian Rubi      Instagram & TikTok · Operaciones Escalables   ← alta 2026-10-07
 //   Sebastian Salazar   EstadoX (IA para Abogados)   ← salió de Tactical Investor 2026-09-02
 //   Esteban Aguilar     EstadoX (IA para Abogados)
 //   Alan Gonzalez       EstadoX (IA para Abogados)   ← alta 2026-09-18 (+54, Argentina)
@@ -376,6 +377,19 @@ export const PEOPLE = {
   // Alta 2026-10-05. Hosts verificados contra la org real (267dcdc8…): miembros `user` de ese
   // Calendly. El owner es Francisco Vargas (francisco@powertalkco.com), la CARA del programa, no
   // closer — igual que Vieira en Tactical Investor. Sin `workLid`: se declara cuando escriban.
+  // Alta 2026-10-07. Hostea Instagram & TikTok y Operaciones Escalables en la conexión 30x; su
+  // usuario de Calendly existe desde el 2026-07-06 y el poll venía descartando sus citas con
+  // "sin closer mapeado para sebas@30x.com" (28 eventos distintos en 10 días).
+  // ⚠️ NO es Sebastian Rodriguez (sebastian@30x.com), aunque el email se parezca y el WhatsApp de
+  // Alejandro tenga a Rodriguez agendado como "Sebas Rodriguez Rubio". Son personas distintas
+  // (confirmado por Alejandro), con usuarios de Calendly distintos y teléfonos distintos.
+  // El nombre es "Rubi" y no "Rubio" A PROPÓSITO: es como figura en su Calendly y en su WhatsApp, y
+  // resolveCloserByPushName exige TODAS las palabras del roster en el pushName. Con "Rubio" el
+  // fallback del opt-in no lo reconocería. Sin `workLid` hasta que le escriba a Juanito.
+  sebastian_rubi: {
+    name: 'Sebastian Rubi',
+    identities: [{ connection: '30x', email: 'sebas@30x.com', phone: '+573144047192' }],
+  },
   nicolas_ramirez: {
     name: 'Nicolas Ramirez',
     identities: [

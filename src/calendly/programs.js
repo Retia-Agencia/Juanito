@@ -198,15 +198,12 @@ export const PROGRAMS = {
       from: 'de 30X, la empresa de Andrés Bilbao',
       program: 'programa Operaciones Escalables con IA',
     },
-    // ÚNICO programa que no manda links en el push (decisión del jefe, 2026-07-28). Los dos
-    // flags son por-programa, como `order`: sin ellos materialsBlock se comporta igual que
-    // siempre → los otros 6 programas no se enteran de nada de esto.
+    // Del 2026-07-28 al 2026-10-07 fue el único programa que NO mandaba el link (`sendLinks:
+    // false`, el closer entregaba el material por su cuenta). Desde el 2026-10-07 lo manda como
+    // todos: el deck de la cohorte de noviembre ya está en este mismo file ID (reemplazo en sitio
+    // del 2026-10-06). `boldHeader` es por-programa como `order`: los otros no se enteran.
     materials: {
-      // El link NO está muerto: se conserva a propósito. El brochure sigue existiendo y sigue
-      // siendo el de este programa; lo único que cambió es que dejó de viajar en el push.
-      // Para volver a mandarlo: borrar `sendLinks: false`, nada más.
       brochure: 'https://drive.google.com/file/d/16NbFnJq1gCYSfQA0a2sfLbGuEBxVc8Yp/view',
-      sendLinks: false, // el closer entrega el material por su cuenta
       boldHeader: true, // la línea de materiales va en negrita
     },
     active: true,

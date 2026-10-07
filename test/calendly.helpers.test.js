@@ -368,15 +368,10 @@ test('todo programa cableado tiene copy y brochure propios', () => {
     assert.ok(key, `event_type sin clave de programa: ${et}`);
     const push1 = buildPrecallText({ programKey: key, pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
     assert.ok(push1, `${key}: no tiene copy en PROGRAM_PITCH`);
-    // Todo programa DECLARA su brochure, aunque no lo mande: el registro es la fuente de verdad
-    // del material del programa, y `sendLinks:false` (operaciones) solo decide si viaja en el
-    // push. Si algún día se reactiva, el link ya está donde tiene que estar.
+    // Todo programa DECLARA su brochure y lo entrega por LINK dentro del copy: abre renderizado
+    // en el celular del lead y no depende de que el closer reenvíe un PDF.
     assert.ok(MATERIAL_LINKS[key]?.brochure, `${key}: no declara brochure`);
-    // Los que SÍ mandan links lo hacen por LINK dentro del copy: abre renderizado en el celular
-    // del lead y no depende de que el closer reenvíe un PDF.
-    if (MATERIAL_LINKS[key].sendLinks !== false) {
-      assert.ok(push1.includes(MATERIAL_LINKS[key].brochure), `${key}: no entrega brochure por link`);
-    }
+    assert.ok(push1.includes(MATERIAL_LINKS[key].brochure), `${key}: no entrega brochure por link`);
   }
 });
 
@@ -393,24 +388,27 @@ test('los programas nuevos nombran SU programa, no el de otro', () => {
   assert.ok(!ops.includes('con AI'), 'operaciones: el programa se llama "con IA", no "con AI"');
 });
 
-// Operaciones Escalables es la ÚNICA excepción a "el material viaja en el push" (jefe,
-// 2026-07-28): el brochure sigue declarado en PROGRAMS pero el closer lo entrega por su cuenta.
-// El encabezado se queda —en negrita— aunque no lo siga ningún link. Sin este test, un refactor
-// de materialsBlock puede "arreglar" el encabezado huérfano borrándolo, o recuperar el link.
-test('operaciones: encabezado de materiales en negrita y SIN links; el resto no se entera', () => {
+// Operaciones: encabezado de materiales en negrita y, desde el 2026-10-07, CON su brochure (antes
+// el closer lo entregaba por su cuenta). Los dos puntos van FUERA de la negrita: `llamada:*`
+// lleva el emoticón `:*`, que WhatsApp convierte en 😘 al abrir el wa.me — así les llegó a los
+// leads durante dos meses. Ningún texto que viaje en un wa.me puede contener `:*`.
+test('operaciones: encabezado en negrita sin el emoticón `:*`, y con su brochure; el resto no se entera', () => {
   const ops = buildPrecallText({ programKey: 'operaciones', pushN: 1, primerNombre: 'Ana', closer: 'Lucas', hora: '3pm' });
-  assert.match(ops, /\*Es MUY IMPORTANTE que puedas ver estos materiales sí o sí antes de nuestra llamada:\*/);
-  assert.ok(!ops.includes(MATERIAL_LINKS.operaciones.brochure), 'operaciones: el brochure NO debe viajar en el push');
-  assert.ok(!ops.includes('📄'), 'operaciones: sin línea de brochure');
-  assert.ok(!ops.includes('🎥'), 'operaciones: sin línea de video');
-  assert.ok(ops.trimEnd().endsWith(':*'), 'el encabezado en negrita cierra el mensaje');
+  assert.ok(ops.includes(`*${MATERIALS_HEADER_TXT.slice(0, -1)}*:`), 'operaciones: encabezado en negrita, ":" afuera');
+  assert.ok(ops.includes(`📄 Brochure: ${MATERIAL_LINKS.operaciones.brochure}`), 'operaciones: el brochure viaja en el push');
 
-  // El flag es por-programa: los demás siguen con encabezado SIN negrita y CON sus links.
   for (const prog of Object.keys(MATERIAL_LINKS)) {
+    for (const pushN of [1, 2, 3]) {
+      const txt = buildPrecallText({ programKey: prog, pushN, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm', linkLlamada: 'https://x.y/z' });
+      assert.ok(!/[:;]-?\*/.test(txt), `${prog} push ${pushN}: contiene un emoticón que WhatsApp vuelve emoji`);
+    }
     if (prog === 'operaciones') continue;
+    // El flag es por-programa: los demás siguen con encabezado SIN negrita.
     const txt = buildPrecallText({ programKey: prog, pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
-    assert.ok(txt.includes(`\n${MATERIALS_HEADER_TXT}\n`), `${prog}: el encabezado no debe llevar negrita`);
-    assert.ok(!txt.includes(`*${MATERIALS_HEADER_TXT}*`), `${prog}: se le coló la negrita de operaciones`);
+    assert.ok(txt.includes(`
+${MATERIALS_HEADER_TXT}
+`), `${prog}: el encabezado no debe llevar negrita`);
+    assert.ok(!txt.includes(`*${MATERIALS_HEADER_TXT.slice(0, -1)}*`), `${prog}: se le coló la negrita de operaciones`);
   }
 });
 
@@ -462,14 +460,10 @@ test('buildPrecallText Push 1 distingue producto (intro + nombre del programa)',
 test('buildPrecallText Push 1 incrusta el bloque de materiales del producto correcto', () => {
   for (const prog of Object.keys(MATERIAL_LINKS)) {
     const txt = buildPrecallText({ programKey: prog, pushN: 1, primerNombre: 'Ana', closer: 'Sebastian', hora: '3pm' });
-    // El encabezado va SIEMPRE, mande links o no (operaciones lo conserva con `sendLinks:false`).
     assert.match(txt, /Es MUY IMPORTANTE que puedas ver estos materiales/);
     // Brochure y video son AMBOS opcionales, pero si el programa declara uno, tiene que viajar en
     // el copy. developers/operaciones lanzaron con solo brochure; tactical_investor con solo video
     // (deck PDF pendiente). El link va dentro del copy — el lead lo abre sin depender de reenvíos.
-    // Excepción: `sendLinks:false` (operaciones) declara sus links pero no los manda — su test
-    // propio cubre ese caso, acá solo lo saltamos.
-    if (MATERIAL_LINKS[prog].sendLinks === false) continue;
     if (MATERIAL_LINKS[prog].brochure) assert.ok(txt.includes(MATERIAL_LINKS[prog].brochure), `${prog}: falta su brochure`);
     if (MATERIAL_LINKS[prog].video) assert.ok(txt.includes(MATERIAL_LINKS[prog].video), `${prog}: falta su video`);
   }

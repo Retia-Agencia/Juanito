@@ -475,7 +475,7 @@ function tomorrowAt(hourUtc) {
 // Corre por `runPush1Early`, no por `runPush1`: Operaciones pasó al turno de las 5:30pm
 // (2026-09-16). Lo que fija este test es el COPY del programa, no la hora — pero en el turno
 // equivocado el digest sale vacío y las aserciones de copy no llegan a correr.
-test('Push 1 Operaciones: NO manda material — encabezado en negrita y sin link ni PDF', async () => {
+test('Push 1 Operaciones: manda el brochure por link, encabezado en negrita sin el emoticón `:*`', async () => {
   const events = [
     makeEvent({ uuid: 'o1', startIso: tomorrowAt(15), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Ana Gómez' }),
     makeEvent({ uuid: 'o2', startIso: tomorrowAt(19), closerEmail: LUCAS, eventType: OPERACIONES_ET, prospectName: 'Beto Ruiz' }),
@@ -489,11 +489,12 @@ test('Push 1 Operaciones: NO manda material — encabezado en negrita y sin link
   // El copy del lead viaja percent-encoded dentro del wa.me → hay que decodificar.
   const copy = decodeURIComponent(h.wa.sent[0].text);
   assert.match(copy, /postulación al programa Operaciones Escalables con IA\./);
-  // Desde 2026-07-28 el material NO viaja en el push (lo entrega el closer). El encabezado se
-  // queda, en negrita. Se assertan las dos mitades: que la línea esté Y que el link no.
-  assert.match(copy, /\*Es MUY IMPORTANTE que puedas ver estos materiales sí o sí antes de nuestra llamada:\*/);
-  assert.ok(!copy.includes('📄 Brochure'), 'el brochure NO debe viajar en el push');
-  assert.ok(!copy.includes('drive.google.com'), 'ningún link de Drive en el copy');
+  // Del 2026-07-28 al 2026-10-07 el material no viajaba (lo entregaba el closer); desde ahí va
+  // como en todos los programas. El encabezado sigue en negrita, con los dos puntos AFUERA: con
+  // `llamada:*` WhatsApp convertía el `:*` en 😘 al abrir el wa.me.
+  assert.match(copy, /\*Es MUY IMPORTANTE que puedas ver estos materiales sí o sí antes de nuestra llamada\*:/);
+  assert.ok(copy.includes('📄 Brochure: https://drive.google.com/'), 'el brochure viaja por link');
+  assert.ok(!/[:;]-?\*/.test(copy), 'ningún emoticón que WhatsApp convierta en emoji');
 });
 
 // Los dos programas de este caso comparten TURNO a propósito (los dos a las 5:30pm desde que todo

@@ -307,8 +307,11 @@ export function programLabelOf(programKey) {
 //                    en el push. El encabezado SÍ se mantiene: el material lo entrega el closer
 //                    por su cuenta (operaciones, 2026-07-28). Ojo con la diferencia respecto a
 //                    "no tiene links": ahí el bloque entero se omite (ver abajo).
-//   · `boldHeader` — encabezado en negrita de WhatsApp (`*…*`).
-const MATERIALS_HEADER = 'Es MUY IMPORTANTE que puedas ver estos materiales sí o sí antes de nuestra llamada:';
+//   · `boldHeader` — encabezado en negrita de WhatsApp (`*…*`). Los dos puntos van FUERA de la
+//                    negrita: `…llamada:*` contiene el emoticón `:*`, que WhatsApp convierte en 😘
+//                    al abrir el wa.me. Así le llegó a los leads de Operaciones hasta el 2026-10-07.
+const MATERIALS_HEADER_TEXT = 'Es MUY IMPORTANTE que puedas ver estos materiales sí o sí antes de nuestra llamada';
+const MATERIALS_HEADER = `${MATERIALS_HEADER_TEXT}:`;
 
 function materialsBlock(programKey) {
   const links = MATERIAL_LINKS[programKey] || {};
@@ -320,7 +323,7 @@ function materialsBlock(programKey) {
   // el bloque entero, para no mandarle al lead un "mirá estos materiales:" seguido de nada. Un
   // `sendLinks:false` explícito SÍ deja el encabezado solo — eso es una decisión, no un olvido.
   if (!lines.length && !hideLinks) return '';
-  const header = links.boldHeader ? `*${MATERIALS_HEADER}*` : MATERIALS_HEADER;
+  const header = links.boldHeader ? `*${MATERIALS_HEADER_TEXT}*:` : MATERIALS_HEADER;
   return lines.length ? `\n\n${header}\n\n${lines.join('\n')}` : `\n\n${header}`;
 }
 
