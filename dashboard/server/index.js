@@ -19,6 +19,7 @@ import * as Q from './queries.js';
 import * as watchdog from './watchdog.js';
 import * as A from './actions.js';
 import * as deploy from './deploy.js';
+import * as syncClosers from './sync-closers.js';
 import { motivoRechazoCsrf } from './csrf.js';
 
 const RAIZ = fileURLToPath(new URL('..', import.meta.url)); // dashboard/
@@ -252,4 +253,5 @@ server.listen(PUERTO, () => {
       `deploy ${deploy.habilitado() ? 'ON' : 'OFF (sin DASH_GITHUB_TOKEN)'}`
   );
   watchdog.start();
+  syncClosers.start();
 });

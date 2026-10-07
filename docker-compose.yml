@@ -319,6 +319,13 @@ services:
       # roster que ejecuta el bot: un dashboard que contradice al proceso que audita es peor
       # que no tenerlo — es la clase de dato falso que este panel existe para eliminar.
       - TEST_CLOSER_ENABLED=${TEST_CLOSER_ENABLED:-false}
+      # Envío de call_outcomes de 30X al Dashboard de Closers (dashboard/server/sync-closers.js).
+      # URL del proyecto Supabase + llave PUBLICABLE + secreto compartido de la RPC
+      # ingest_juanito. Sin las tres el envío se autodesactiva. Solo va en `dash`.
+      - CLOSERS_SYNC_URL=${CLOSERS_SYNC_URL:-}
+      - CLOSERS_SYNC_KEY=${CLOSERS_SYNC_KEY:-}
+      - CLOSERS_SYNC_SECRET=${CLOSERS_SYNC_SECRET:-}
+      - CLOSERS_SYNC_MIN=${CLOSERS_SYNC_MIN:-60}
     ports:
       # NUNCA 0.0.0.0, y ni siquiera la interfaz del tailnet: el puerto escucha SOLO en
       # loopback. Quien lo publica es `tailscale serve`, que proxea
