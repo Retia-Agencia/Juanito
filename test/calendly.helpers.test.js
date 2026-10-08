@@ -33,6 +33,7 @@ const DEVELOPERS_ET = 'https://api.calendly.com/event_types/dff3e48a-4859-417a-9
 const OPERACIONES_ET = 'https://api.calendly.com/event_types/8462e92a-8210-4bb2-8e2b-583aa3c3d877';
 const INSTAGRAM_ET = 'https://api.calendly.com/event_types/d33075cb-d349-43ef-be43-6f80f9c5da03';
 const { resolveCloser, resolveCloserByPhone, resolveCloserByLid, resolveCloserByPushName, isNonCanonicalOptinJid, isIgnoredCloser, workLidForCloser, extraJidsForCloser } = await import('../src/calendly/closers.js');
+const { programFromTitle } = await import('../src/calendly/programs.js');
 
 // Encabezado del bloque de materiales, literal. Se repite acá a propósito (no se importa): si
 // alguien cambia el copy en index.js, este test tiene que fallar y obligar a decidirlo.
@@ -414,7 +415,7 @@ ${MATERIALS_HEADER_TXT}
 
 test('isIgnoredCloser: hosts conocidos no gestionados → true; mapeados/desconocidos → false', () => {
   assert.equal(isIgnoredCloser('andrea.machado@30x.com'), true);
-  assert.equal(isIgnoredCloser('DANA@30x.com'), true); // case-insensitive
+  assert.equal(isIgnoredCloser('DANA@30x.com'), false); // ahora mapeada en Jurídico; case-insensitive
   assert.equal(isIgnoredCloser('mateo.leon@30x.com'), true); // salió → se ignora en silencio
   assert.equal(isIgnoredCloser('sebastian.marin@30x.com'), false); // closer activo de LinkedIn
   assert.equal(isIgnoredCloser('desconocido@x.com'), false);
@@ -568,4 +569,17 @@ test('buildPush3Message incrusta el link wa.me con el push precall del lead', ()
 test('formatCallTime formatea en hora local', () => {
   const t = formatCallTime('2026-06-10T12:30:00Z'); // 07:30 en Bogota
   assert.match(t, /30/);
+});
+
+test('AI Second Brain Jurídico: copy de 30X con EstadoX y su propio brochure', () => {
+  const p1 = buildPrecallText({ programKey: 'second_brain_juridico', pushN: 1, primerNombre: 'Ana', closer: 'Dana', hora: '3:00 pm' });
+  assert.match(p1, /Por acá Dana de EstadoX\./);
+  assert.match(p1, /postulación al programa de implementación de tecnología AI Second Brain Jurídico EstadoX para ti y tus proyectos\./);
+  assert.match(p1, /instalar la herramienta de inteligencia artificial Claude/);
+  assert.doesNotMatch(p1, /30X|Andrés Bilbao/);
+  assert.match(p1, /📄 Brochure: https:\/\/drive\.google\.com\/drive\/folders\/1skYLghPb_2kDSwE7eQXJvsPyn7qC58SY/);
+  assert.doesNotMatch(p1, /🎥|youtube/); // video pendiente
+  assert.equal(programKeyOf('https://api.calendly.com/event_types/9ef431be-4023-4dac-bd12-4c0ae64c2f09'), 'second_brain_juridico');
+  assert.equal(programFromTitle('Postulacion Second Brain Juridico | EstadoX'), 'second_brain_juridico');
+  assert.equal(programFromTitle('Entrevista de Postulación Programa de Implementación AI Second Brain'), 'second_brain');
 });

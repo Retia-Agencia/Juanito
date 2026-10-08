@@ -329,6 +329,33 @@ export const ACCOUNTS = {
     crm: 'CRM Retia',
     hubspot: false,
   },
+
+  // Calendly propio nuevo de EstadoX para su segundo programa. Sin token queda completamente
+  // inactivo; cuando se configure, arranca en dry-run por default hasta validar un ciclo.
+  juridico: {
+    key: 'juridico',
+    label: 'EstadoX · AI Second Brain Jurídico',
+    env: {
+      token: 'CALENDLY_TOKEN_JURIDICO',
+      orgUri: 'CALENDLY_ORG_URI_JURIDICO',
+      orgUriDefault: 'https://api.calendly.com/organizations/0c8bad00-0e99-4519-bcd7-9fb8c7237372',
+      dryRun: 'CALENDLY_DRY_RUN_JURIDICO',
+      dryRunDefault: true,
+      push4: null,
+      push4Default: false,
+    },
+    token: () => process.env.CALENDLY_TOKEN_JURIDICO || '',
+    // Org derivada 2026-10-05 (GET /users/me con el PAT de admisiones@estadox.com → HTTP 200).
+    orgUri: () =>
+      process.env.CALENDLY_ORG_URI_JURIDICO ||
+      'https://api.calendly.com/organizations/0c8bad00-0e99-4519-bcd7-9fb8c7237372',
+    eventTypes: eventTypesForConnection('juridico'),
+    dryRun: () => process.env.CALENDLY_DRY_RUN_JURIDICO !== 'false',
+    push4: () => false,
+    // Los leads viven en el HubSpot de 30X, igual que los de IA para Abogados (confirmado por Mani
+    // 2026-10-05). El SKU del programa en HubSpot todavía no existe.
+    hubspot: true,
+  },
 };
 
 // Cuentas utilizables = las que tienen token. Sin token, la cuenta no existe (mismo patrón

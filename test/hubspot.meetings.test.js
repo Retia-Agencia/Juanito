@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { meetingsToCalls, mergeAgendaSources, meetingStartMs, toDbUtc, conferencingUrl } from '../src/hubspot/meetings.js';
-import { programFromTitle } from '../src/calendly/programs.js';
+import { pickProgramByHints, programFromTitle } from '../src/calendly/programs.js';
 import { HUBSPOT_OWNER_TO_CLOSER, CLOSERS } from '../src/calendly/closers.js';
 
 const OWNERS = {
@@ -38,6 +38,14 @@ test('programa derivado del título, con los naming reales de HubSpot', () => {
   assert.equal(programFromTitle('Entrevista de postulación para el programa Instagram & TikTok'), 'instagram');
   assert.equal(programFromTitle('Seguimiento de Postulación Programa LinkedIn Sales 30X'), 'linkedin');
   assert.equal(programFromTitle('Entrevista de Postulación Programa AI for Developers 30X'), 'developers');
+});
+
+test('programFromTitle prioriza el hint más largo, sin depender del orden', () => {
+  const titulo = 'Entrevista AI Second Brain Jurídico';
+  const corto = { key: 'general', label: 'General', titleHints: ['second brain'] };
+  const largo = { key: 'juridico', label: 'Jurídico', titleHints: ['second brain juridico'] };
+  assert.equal(pickProgramByHints(titulo, { general: corto, juridico: largo }), 'juridico');
+  assert.equal(pickProgramByHints(titulo, { juridico: largo, general: corto }), 'juridico');
 });
 
 test('"Hardcore AI" (naming interno de los deals) también cae en AI for Developers', () => {

@@ -404,6 +404,13 @@ test('resolveCloser resuelve por email y tolera mayúsculas/espacios', () => {
   assert.equal(resolveCloser(null), null);
 });
 
+test('AI Second Brain Jurídico resuelve sus tres closers en la conexión propia', () => {
+  assert.equal(resolveCloser('yuli@30x.com')?.name, 'Yuli');
+  assert.equal(resolveCloser('admisiones@estadox.com')?.name, 'Juan Jose Giraldo');
+  assert.equal(isIgnoredCloser('dana@30x.com'), false);
+  assert.equal(accountOfCloser('dana@30x.com'), 'juridico');
+});
+
 test('resolveCloserByPhone encuentra a la PERSONA correcta por su número canónico', () => {
   // Para identidades que comparten teléfono (una persona, dos Conexiones: Sebastian Salazar)
   // resuelve a UNA de ellas — la misma persona —: correcto, porque el opt-in que crearía va por

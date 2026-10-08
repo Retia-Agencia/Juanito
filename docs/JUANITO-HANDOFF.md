@@ -7061,6 +7061,37 @@ reconectó Baileys y no se tocó `CALENDLY_DEV_MIRROR_JID`, los tokens, los dry-
 la entrega normal de pushes. Si se elimina el override de DB en el futuro, el fallback seguirá
 apuntando a `powertalk` en el próximo arranque.
 
+### 18.CH 🟡 "AI Second Brain Jurídico" preparado en código, todavía no live (2026-10-07)
+
+Segundo programa de EstadoX, con Calendly PROPIO (conexión `juridico`, owner
+`admisiones@estadox.com`, org `0c8bad00…`). Derivado con `scripts/calendly-account-derive.js
+juridico`: el ET bueno es POOL round_robin (`9ef431be…`, "Postulacion Second Brain Juridico |
+EstadoX") y la org expone tres ET *solo* "30 Minute Meeting" que son SEÑUELOS (ver programs.js).
+
+- **Copy:** el de AI Second Brain de 30X con EstadoX en vez de 30X (sin "la empresa de Andrés
+  Bilbao") y el programa "AI Second Brain Jurídico EstadoX" (dictado por el jefe). Conserva la
+  pregunta de instalar Claude. Brochure = carpeta de Drive "SB Jurídico"; video pendiente.
+- **HubSpot:** `hubspot:true` (los leads viven en el de 30X). Sin SKU/pipeline todavía ⇒ no entra
+  al modelo nudge, solo al rescate de teléfono por CRM.
+- **Closers:** Dana Rodriguez (2ª identidad, mismo teléfono que su Retia ⇒ reusa el opt-in; el
+  workLid va solo en la de Retia), Yuli y Juan José Giraldo (`admisiones@`, buzón-rol y misma
+  línea que su identidad de PowerTalk ⇒ reusa ese opt-in). `dana@30x.com` y
+  `yuli@30x.com` salieron de `IGNORED_CLOSERS` ⇒ sus setteos de HubSpot cuentan en el reporte.
+- `programFromTitle` ahora gana por el hint MÁS LARGO (antes, el primero en orden): sin eso
+  "Second Brain Juridico" caía en el `second_brain` de 30X.
+
+**Estado operativo:** el código queda integrado en `main`, pero el programa **no está live**.
+Sin `CALENDLY_TOKEN_JURIDICO` la conexión no entra en `activeAccounts()` y no se inicia ningún
+poll ni se agenda ningún push. Cuando se agregue el token, el default sigue siendo seguro:
+`CALENDLY_DRY_RUN_JURIDICO=true`.
+
+**⚠️ Pendiente al darlo de alta:** la org de Calendly tiene 3 miembros (`admisiones@`, Alejandro
+Davila, Mariana Cerón). **Dana y Yuli NO son miembros** ⇒ no pueden hostear todavía. Cuando entren,
+confirmar con el derive que su correo de host es el de closers.js (`dana@30x.com`, `yuli@30x.com`):
+si es otro, la cita alerta "closer sin mapear" (no falla en silencio). Falta el opt-in de Yuli y
+Juanjo (escribirle a Juanito). Arranca en `CALENDLY_DRY_RUN_JURIDICO=true`: pasarlo a `false` tras
+validar un ciclo de poll completo.
+
 ### Secretos (decididos, ver §13)
 
 - `CALENDLY_TOKEN`: **NO rotar** (decidido).

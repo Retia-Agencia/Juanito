@@ -138,6 +138,9 @@ services:
       - ADMIN_AGENDA_CONNECTION=${ADMIN_AGENDA_CONNECTION:-estadox}
       - CALENDLY_TOKEN_ESTADOX=${CALENDLY_TOKEN_ESTADOX:-}
       - CALENDLY_DRY_RUN_ESTADOX=${CALENDLY_DRY_RUN_ESTADOX:-true}
+      # AI Second Brain Jurídico (EstadoX). Sin token queda inerte; con token arranca en dry-run.
+      - CALENDLY_TOKEN_JURIDICO=${CALENDLY_TOKEN_JURIDICO:-}
+      - CALENDLY_DRY_RUN_JURIDICO=${CALENDLY_DRY_RUN_JURIDICO:-true}
       # Conexión ComunicArte (2026-08-25). Sin el token la conexión se autodesactiva.
       - CALENDLY_TOKEN_COMUNICARTE=${CALENDLY_TOKEN_COMUNICARTE:-}
       - CALENDLY_DRY_RUN_COMUNICARTE=${CALENDLY_DRY_RUN_COMUNICARTE:-true}
