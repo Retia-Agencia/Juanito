@@ -307,12 +307,15 @@ export const PROGRAMS = {
     // se descartó: apuntar a la carpeta es lo que hace que el push siga sirviendo el material
     // VIGENTE cuando ComunicArte lo actualice, sin tocar el repo.
     //
-    // Por eso NO declara `video`: el .mp4 vive DENTRO de la carpeta, no es una línea aparte.
-    // Si algún día ComunicArte publica el VSL en YouTube o en una landing, ahí sí conviene
-    // sumarlo como `video` (un .mp4 de 3,2 GB en Drive es pesado de abrir desde un celular).
+    // `video` (2026-10-08, pedido de operaciones): ComunicArte publicó el VSL en YouTube, el caso
+    // que este comentario dejaba previsto. Va como línea aparte porque el .mp4 de la carpeta pesa
+    // 3,2 GB y no abre bien desde un celular; YouTube abre en un clic. La carpeta se queda como
+    // `brochure` (orden default brochure→video). Igual que en tactical_investor, el video
+    // "duplicado" dentro de la carpeta es a propósito.
     // Carpeta verificada HTTP 200 sin autenticar, y sus archivos con `anyoneWithLink: reader`.
     materials: {
       brochure: 'https://drive.google.com/drive/folders/1OPBf5UufbzREVSwVmNIVXYH_cfeuPVQq?usp=sharing',
+      video: 'https://youtu.be/D4BkMf8hnZY',
     },
     active: true,
   },

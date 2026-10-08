@@ -7092,6 +7092,20 @@ si es otro, la cita alerta "closer sin mapear" (no falla en silencio). Falta el 
 Juanjo (escribirle a Juanito). Arranca en `CALENDLY_DRY_RUN_JURIDICO=true`: pasarlo a `false` tras
 validar un ciclo de poll completo.
 
+### 18.CI 🔵 Método Comunicarte manda Brochure + Video en el Push 1 (2026-10-08)
+
+Pedido de operaciones: el Push 1 de **Método Comunicarte** dejaba de mandar solo la carpeta de
+Drive. Ahora lleva dos líneas, en el orden default (brochure→video):
+
+- `📄 Brochure:` la misma carpeta de Drive (`1OPBf5Uu…`), que sigue sirviendo el paquete vigente.
+- `🎥 Video:` `https://youtu.be/D4BkMf8hnZY` ("Las 5 piezas para comunicarte sin miedo", canal
+  RETIA GROWTH, verificado público por oEmbed).
+
+Es el caso que el comentario de `programs.js` dejaba previsto: el .mp4 de la carpeta pesa 3,2 GB
+y no abre bien desde un celular, YouTube abre en un clic. El video "duplicado" dentro de la
+carpeta es a propósito, igual que en Tactical Investor. Solo cambia el Push 1: el 0, 2 y 3 no
+llevan materiales. Un solo cambio de datos en `materials.comunicarte.video`; no se tocó el render.
+
 ### Secretos (decididos, ver §13)
 
 - `CALENDLY_TOKEN`: **NO rotar** (decidido).
