@@ -266,9 +266,16 @@ Se prende para verificar una agencia y se apaga cuando ya se verificó.
 | `/espejo off <conexión>` | Deja de copiarla |
 | `/espejo off` | Apaga el espejo entero |
 
-> `<conexión>` es la key corta (`30x`, `estadox`, `retia`, `comunicarte`), pero también se acepta
-> el **programa** (`tactical`, `comunicarte`, `abogados`): Juanito lo traduce a su conexión y
-> **avisa que va a copiar la conexión entera**, con todos sus programas. No es lo mismo.
+> `<conexión>` es la key corta (`30x`, `estadox`, `retia`, `comunicarte`, `powertalk`), pero
+> también se acepta el **programa** (`tactical`, `comunicarte`, `comunícate con confianza`,
+> `abogados`): Juanito lo traduce a su conexión y **avisa que va a copiar la conexión entera**,
+> con todos sus programas. No es lo mismo.
+
+> **Estado en producción desde 2026-10-07:** el destino técnico configurado para el espejo recibe
+> únicamente la conexión `powertalk` (**Comunícate con Confianza**). `retia` (Tactical Investor) y
+> `comunicarte` (Método Comunicarte) están fuera del espejo. La DB guarda el override
+> `settings.calendly_mirror_connections = 'powertalk'` y el `.env` del VPS conserva el mismo valor
+> como fallback; cambiar solo el `.env` no pisa el override de la DB.
 
 > **A quién le llega NO se cambia por comando.** El destino vive en `CALENDLY_DEV_MIRROR_JID` del
 > `.env` del VPS y no hay comando que lo mueva: el alcance decide *de quiénes* se copian los

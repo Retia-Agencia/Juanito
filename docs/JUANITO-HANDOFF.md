@@ -7040,6 +7040,27 @@ Tests: `test/dashboard.sync-closers.test.js` (corren en Windows, sin better-sqli
 `alcance: dash` y verificar en `docker logs juanito-dash` la línea
 `sync dashboard-closers: N/N outcomes (histórico completo)`.
 
+### 18.CG 🔵 Espejo de pushes movido exclusivamente a PowerTalk (2026-10-07)
+
+Pedido del jefe: dejar de recibir las copias de **De Cero a Tactical Investor** y **Método
+Comunicarte**, y usar el espejo únicamente para observar la salud del programa nuevo
+**Comunícate con Confianza**. El destino técnico sigue siendo el mismo; no se modificó el JID ni
+el ruteo de los pushes reales a los closers.
+
+**Estado efectivo en producción:** `settings.calendly_mirror_connections = 'powertalk'`. Este
+override de DB gana sobre `CALENDLY_DEV_MIRROR_CONNECTIONS`, así que el scheduler copia solamente
+la conexión `powertalk`. Quedan fuera `retia` (Tactical Investor) y `comunicarte` (Método
+Comunicarte). Antes del cambio no había override en DB y el fallback del `.env` era `retia`; es
+decir, Método Comunicarte ya estaba fuera y lo que seguía llegando era Tactical Investor.
+
+**Persistencia y seguridad operativa:** el fallback de `/root/juanito/.env` también quedó en
+`CALENDLY_DEV_MIRROR_CONNECTIONS=powertalk`, con respaldo
+`/root/juanito/.env.bak-20261007-powertalk-mirror`. La modificación del `.env` no requirió recrear
+el contenedor porque la DB ya había aplicado el alcance en caliente. No se reinició Juanito, no se
+reconectó Baileys y no se tocó `CALENDLY_DEV_MIRROR_JID`, los tokens, los dry-runs, los opt-ins ni
+la entrega normal de pushes. Si se elimina el override de DB en el futuro, el fallback seguirá
+apuntando a `powertalk` en el próximo arranque.
+
 ### Secretos (decididos, ver §13)
 
 - `CALENDLY_TOKEN`: **NO rotar** (decidido).
