@@ -1,0 +1,6 @@
+{
+  "name": "juanito-status",
+  "version": "0.1.0",
+  "description": "Muestra la salud en vivo de Juanito dentro de Claude Code.",
+  "types": "./types/index.d.ts"
+}
