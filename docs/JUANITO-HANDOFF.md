@@ -7106,6 +7106,9 @@ y no abre bien desde un celular, YouTube abre en un clic. El video "duplicado" d
 carpeta es a propósito, igual que en Tactical Investor. Solo cambia el Push 1: el 0, 2 y 3 no
 llevan materiales. Un solo cambio de datos en `materials.comunicarte.video`; no se tocó el render.
 
+**Live:** desplegado el 2026-10-08 con `alcance: todo` (run 37852343203, commit `28e397f`). El
+contenedor `juanito-agent` tiene el link nuevo y Baileys reconectó a la primera.
+
 ### Secretos (decididos, ver §13)
 
 - `CALENDLY_TOKEN`: **NO rotar** (decidido).
