@@ -423,7 +423,7 @@ export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora
   if (pushN === 2) {
     return (
       `Buenos días ${lead}, feliz mañana!\n\n` +
-      `Recuerda que nos vemos hoy a las ${hora}. Súper importante que antes de nuestra llamada tengas clara la información del material que te dejé anoche.\n\n` +
+      `Recuerda que nos vemos hoy a las ${hora}. Súper importante que antes de nuestra llamada tengas clara la información del material que te compartí.\n\n` +
       `Si tienes alguna pregunta sobre la info de este material, házmela saber`
     );
   }
@@ -572,39 +572,92 @@ export function buildRescheduleMessage({
   ].join('\n');
 }
 
-// Push 0 (aviso de nueva call HOY): mensaje INFORMATIVO al closer — "te reservaron
-// un espacio". No lleva link wa.me; el push accionable con el link llega ~25 min
-// antes (Push 3). Concíso a propósito: es un heads-up, no el recordatorio precall.
-// `when`: 'hoy' (default) | 'mañana'. El caso 'mañana' existe por la ventana ciega
-// de la noche (ver push-logic.js): una reserva de las 9pm para el día siguiente no
-// entra en ningún digest, así que este es el ÚNICO aviso que el closer recibe esa
-// noche. Decir "hoy" ahí sería peor que no avisar — lo manda a la agenda equivocada.
-export function buildPush0Message({ name, firstName, phone, startIso, programKey, tz = TZ(), when = 'hoy', altPhones = [] }) {
+// Push 0 (aviso de nueva call HOY / MAÑANA): sale cuando la cita se reservó DESPUÉS del
+// digest que la habría listado (ver decidePush0). Desde 2026-10-09 no es solo un heads-up:
+// trae el link wa.me con el Push 1 para el lead, el mismo texto que habría ido en el digest.
+// Sin eso el closer se enteraba de la cita pero no tenía con qué escribirle al lead, y ese lead
+// llegaba a la call sin los materiales que el resto recibió la víspera.
+//
+// El texto es el del Push 1 también para las calls de HOY, no el del Push 2: el Push 2 da por
+// hecho que el material ya se compartió, y a este lead nadie le compartió nada. `dia` sale de
+// `formatLeadDay` ("de hoy jueves" / "de mañana viernes") contra `base`, que entra por
+// parámetro por lo mismo que en el digest: el delivery re-arma este mensaje con su propio reloj.
+//
+// `when`: 'hoy' (default) | 'mañana' | 'otro' (más adelante, solo con la prueba §18.CK). Decir "hoy" de una call de mañana sería peor que no
+// avisar — lo manda a la agenda equivocada. `closer` es el primer nombre del closer: firma el
+// texto del lead ("Por acá Sebastián…"); sin él no se arma el link, para no mandar un
+// "Por acá undefined".
+export function buildPush0Message({
+  name,
+  firstName,
+  phone,
+  startIso,
+  programKey,
+  closer = '',
+  tz = TZ(),
+  when = 'hoy',
+  altPhones = [],
+  base = new Date(),
+}) {
   const who = name || firstName || 'el prospecto';
   const time = formatCallTime(startIso, tz);
   const tel = phone ? `📞 ${phone}` : '📵 sin teléfono en Calendly';
   const label = programLabelOf(programKey);
   const prog = label ? ` — 📦 *${label}*` : '';
-  const esManana = when === 'mañana';
-  const titulo = esManana ? 'Nueva call MAÑANA' : 'Nueva call HOY';
-  const cola = esManana
-    ? 'Mañana te llega el resumen del día y el push con el link ~25 min antes.'
-    : 'Te llegará el push con el link ~25 min antes de la llamada.';
-  // §18.CA: este push NO lleva link wa.me (es un heads-up), así que acá el aviso de dos números
-  // no puede ofrecer dos botones — ofrece TIEMPO. Avisa ahora para que el closer resuelva la
-  // duda en la hoja antes de que llegue el Push 3, que es el que sí tiene que salir bien.
+  // 'otro' = pasado mañana en adelante: solo pasa con la prueba "Push 1 al agendar" (§18.CK).
+  // "el jueves 15" sale de formatLeadDay ("del jueves 15") sin la preposición.
+  const diaCall = when === 'otro' ? formatLeadDay(startIso, tz, base).replace(/^del /, 'el ') : when;
+  const titulo = `Nueva call ${diaCall.toUpperCase()}`;
+  const cola =
+    when === 'mañana'
+      ? 'Mañana te llega el resumen del día y el push con el link ~25 min antes.'
+      : when === 'otro'
+        ? 'Ya no te va a salir en el resumen de la víspera: este es su Push 1. El día de la call te llega el resumen y el push con el link ~25 min antes.'
+        : 'Te llegará el push con el link ~25 min antes de la llamada.';
+
+  const quien = firstName || firstNameFrom(name);
+  const text = closer
+    ? buildPrecallText({
+        programKey,
+        pushN: 1,
+        primerNombre: quien,
+        closer,
+        hora: formatLeadTime(startIso, tz),
+        dia: formatLeadDay(startIso, tz, base),
+      })
+    : null;
+  const link = buildLeadLink(phone, text);
   const alternos = (altPhones || []).filter(Boolean);
-  // El número de arriba ya es el de Calendly, así que el aviso NO lo repite: solo agrega el
-  // otro. Repetirlo hacía que el closer leyera el mismo número dos veces y tuviera que
-  // compararlos a ojo para darse cuenta de cuál era cuál.
-  const aviso = alternos.length
-    ? `\n⚠️ *${who} dejó DOS números distintos*: arriba está el de Calendly, y en el formulario dejó ${alternos.join(' / ')}. Confirma en la hoja cuál es el bueno antes de que llegue el push con el link.`
-    : '';
+
+  let accion;
+  if (!link) {
+    accion = `No pude armarle el link: mándale el recordatorio a mano (con los materiales del programa).`;
+    if (alternos.length) {
+      accion += `\n⚠️ *${who} dejó DOS números distintos*: arriba está el de Calendly, y en el formulario dejó ${alternos.join(' / ')}. Confirma en la hoja cuál es el bueno.`;
+    }
+  } else if (!alternos.length) {
+    accion = `Toca el link para enviarle su recordatorio con los materiales (se abre el chat con el mensaje listo, solo dale enviar):\n👉 ${link}`;
+  } else {
+    // §18.CA: con dos números, un link por número y rotulado por lead y por fuente, igual que
+    // en el digest. El número de Calendly ya está arriba, pero acá se repite junto a SU link:
+    // dos links sueltos sin rótulo son dos links que el closer tiene que adivinar.
+    const lineas = [
+      `⚠️ *${who} dejó DOS números distintos* — confirma en la hoja cuál es el bueno y toca ese link:`,
+      `📞 ${quien || who}, según Calendly: ${phone}`,
+      `👉 ${link}`,
+    ];
+    for (const alt of alternos) {
+      const altLink = buildLeadLink(alt, text);
+      if (altLink) lineas.push(`📞 ${quien || who}, según el formulario: ${alt}`, `👉 ${altLink}`);
+    }
+    accion = lineas.join('\n');
+  }
+
   return (
     `📅 *${titulo}* — te acaban de reservar un espacio en tu agenda.\n` +
-    `*${who}*${prog} — ${tel} — ${when} a las ${time}\n` +
-    cola +
-    aviso
+    `*${who}*${prog} — ${tel} — ${diaCall} a las ${time}\n\n` +
+    `${accion}\n\n` +
+    cola
   );
 }
 

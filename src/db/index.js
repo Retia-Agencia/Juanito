@@ -879,6 +879,12 @@ export function getScheduledCallsInWindow(fromUtc, toUtc) {
       FROM calendly_pushes p
       WHERE call_start >= ? AND call_start < ?
         AND status IN ('scheduled', 'sent')
+        -- El Push 0 solo no prueba que la call va. Con la prueba "Push 1 al agendar" (§18.CK)
+        -- una cita a 10 días tiene su Push 0 enviado y todavía ningún Push 3; si se cancela
+        -- antes de entrar a las 48h del poll, nada la marca muerta y seguía contándose. Toda
+        -- call viva tiene Push 3 (se agenda en el mismo tick que el Push 0), así que esto no
+        -- saca ninguna.
+        AND p.push_n <> 0
         -- La call no ocurrió: su Push 3 murió porque la cita se canceló o se movió. Sin esto
         -- alcanzaba con que CUALQUIER otro push de la misma cita siguiera 'sent' para que la
         -- call reviviera acá — y eso alimenta la agenda de las 7am y los digests Push 1/2, o

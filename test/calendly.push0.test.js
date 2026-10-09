@@ -22,6 +22,7 @@ import {
 } from '../src/calendly/index.js';
 import { decidePush0 } from '../src/calendly/push-logic.js';
 import { installHarness, makeEvent } from './helpers/calendly-harness.js';
+import { accountOf } from '../src/calendly/accounts.js';
 
 const TZ = 'America/Bogota';
 const SALAZAR = 'sebastian.salazar@30x.com';
@@ -103,12 +104,40 @@ test('decidePush0: descarta por not-today / call-passed / not-recent / push2-pen
 
 // ─── Plantilla ────────────────────────────────────────────────────────────────
 
-test('buildPush0Message: heads-up informativo, sin link wa.me', () => {
-  const msg = buildPush0Message({ name: 'Ana Gómez', phone: '+573001112222', startIso: CALL_TODAY, tz: TZ });
+// El texto del lead es el del PUSH 1 (con materiales) también para HOY: el del Push 2 da por
+// hecho que el material ya se compartió, y a este lead nadie le compartió nada.
+const leadText = (msg) => decodeURIComponent(msg.match(/wa\.me\/\d+\?text=([^\s]+)/)[1]);
+
+test('buildPush0Message HOY: trae el link con el Push 1 "de hoy", no el Push 2', () => {
+  const msg = buildPush0Message({
+    name: 'Ana Gómez', phone: '+573001112222', startIso: CALL_TODAY, tz: TZ,
+    programKey: 'abogados', closer: 'Sebastian', base: new Date(NOW_POST),
+  });
   assert.match(msg, /Nueva call HOY/);
   assert.match(msg, /Ana Gómez/);
-  assert.match(msg, /\+573001112222/);
-  assert.doesNotMatch(msg, /wa\.me/);
+  assert.match(msg, /👉 https:\/\/wa\.me\/573001112222\?text=/);
+  const texto = leadText(msg);
+  assert.match(texto, /Hola Ana/);
+  assert.match(texto, /Por acá Sebastian/);
+  assert.match(texto, /tu llamada de hoy lunes a las 11:00 am/);
+  assert.doesNotMatch(texto, /te compartí/, 'no es el texto del Push 2');
+});
+
+test('buildPush0Message MAÑANA: el Push 1 dice "de mañana", nunca "hoy"', () => {
+  const msg = buildPush0Message({
+    name: 'Ana Gómez', phone: '+573001112222', startIso: CALL_TOMORROW, tz: TZ, when: 'mañana',
+    programKey: 'abogados', closer: 'Sebastian', base: new Date(NOW_NIGHT),
+  });
+  assert.match(leadText(msg), /tu llamada de mañana martes a las 11:00 am/);
+});
+
+test('buildPush0Message: sin teléfono o sin copy del programa → mándalo a mano, sin link roto', () => {
+  const sinTel = buildPush0Message({ name: 'Ana', phone: null, startIso: CALL_TODAY, tz: TZ, programKey: 'abogados', closer: 'Sebastian' });
+  assert.match(sinTel, /sin teléfono en Calendly/);
+  assert.match(sinTel, /mándale el recordatorio a mano/);
+  assert.doesNotMatch(sinTel, /wa\.me/);
+  const sinCopy = buildPush0Message({ name: 'Ana', phone: '+573001112222', startIso: CALL_TODAY, tz: TZ, programKey: 'no_existe', closer: 'Sebastian' });
+  assert.doesNotMatch(sinCopy, /wa\.me|null|undefined/);
 });
 
 // ─── Escenarios de integración (poll + delivery) ──────────────────────────────
@@ -127,6 +156,10 @@ test('happy path: nueva call HOY tras el Push 2 → se agenda Push 0 y se entreg
   assert.equal(wa.sent.length, 1, 'solo el Push 0 vence ahora (el Push 3 está en el futuro)');
   assert.match(wa.sent[0].text, /Nueva call HOY/);
   assert.match(wa.sent[0].text, /Ana/);
+  // Lo entregado es el re-armado del delivery, no lo que guardó el poll: el link tiene que
+  // sobrevivir a ese re-armado.
+  assert.match(wa.sent[0].text, /👉 https:\/\/wa\.me\/\d+\?text=/);
+  assert.match(leadText(wa.sent[0].text), /tu llamada de hoy/);
 });
 
 test('pre Push 2 (madrugada): el digest lo cubrirá → NO se agenda Push 0', async () => {
@@ -178,6 +211,7 @@ test('call para MAÑANA reservada de NOCHE → SÍ Push 0 (el digest ya pasó)',
   await scheduler.runCalendlyDelivery();
   assert.equal(wa.sent.length, 1);
   assert.match(wa.sent[0].text, /Nueva call MAÑANA/, 'el aviso NO puede decir "hoy"');
+  assert.match(leadText(wa.sent[0].text), /tu llamada de mañana/, 'trae el Push 1 que el digest ya no le va a dar');
 });
 
 test('decidePush0: la rama de mañana se gatea con el Push 1, no con el Push 2', () => {
@@ -255,4 +289,107 @@ test('flag CALENDLY_PUSH0_ENABLED=false → no se agenda Push 0', async () => {
   await scheduler.runCalendlyPoll();
   assert.equal(push0Rows(store).length, 0);
   assert.ok(store._rows.find((r) => r.push_n === 3), 'el Push 3 sigue funcionando con el flag apagado');
+});
+
+// ─── Prueba "Push 1 al agendar" (§18.CK) ──────────────────────────────────────
+// Salazar es de la conexión 'estadox'. NOW_POST = lunes 15-jun 09:00 Bogotá.
+// La cita llega por la cuenta de EstadoX, como en producción: el barrido solo lista las
+// conexiones en prueba.
+const ESTADOX = [accountOf('estadox')];
+const CALL_SABADO = '2026-06-20T16:00:00.000Z'; // sábado 20, 11:00 Bogotá: fuera de las 48h del poll
+
+function conPrueba(h, { conexion = 'estadox', hasta = '2026-06-21' } = {}) {
+  process.env.CALENDLY_PUSH1_AL_AGENDAR = conexion;
+  process.env.CALENDLY_PUSH1_AL_AGENDAR_HASTA = hasta;
+  const marcadas = new Set();
+  scheduler.__setDeps({
+    ...h.deps,
+    getPush1PrefiredKeys: () => new Set(marcadas),
+    markPush1Prefired: (keys) => keys.forEach((k) => marcadas.add(k)),
+  });
+  return marcadas;
+}
+const sinPrueba = () => {
+  delete process.env.CALENDLY_PUSH1_AL_AGENDAR;
+  delete process.env.CALENDLY_PUSH1_AL_AGENDAR_HASTA;
+};
+
+test('decidePush0 alAgendar: cualquier día y sin mirar el digest, pero solo reservas nuevas', () => {
+  const base = { startMs: Date.parse(CALL_SABADO), createdAtMs: NOW_POST - 60000, nowMs: NOW_POST, isToday: false, push2HasRun: false };
+  assert.equal(decidePush0(base).notify, false, 'sin la prueba, una call a 5 días no avisa');
+  assert.deepEqual(decidePush0({ ...base, alAgendar: true }), { notify: true, reason: 'al-agendar' });
+  assert.equal(decidePush0({ ...base, alAgendar: true, isToday: true }).reason, 'al-agendar', 'hoy antes del Push 2 también');
+  assert.equal(decidePush0({ ...base, alAgendar: true, createdAtMs: NOW_POST - 3600000 }).reason, 'not-recent');
+  assert.equal(decidePush0({ ...base, alAgendar: true, startMs: NOW_POST - 1 }).reason, 'call-passed');
+});
+
+test('prueba: reserva para dentro de 5 días → Push 1 en el acto, y la víspera se la salta', async (t) => {
+  t.after(sinPrueba);
+  const events = [makeEvent({ uuid: 'lejos', startIso: CALL_SABADO, createdInMin: -2, closerEmail: SALAZAR, prospectName: 'Ana Gómez', nowMs: NOW_POST })];
+  const h = installHarness(scheduler, { events, optins: [SALAZAR_PHONE], nowMs: NOW_POST, accounts: ESTADOX });
+  const marcadas = conPrueba(h);
+
+  await scheduler.runCalendlyPoll();
+  assert.equal(push0Rows(h.store).length, 1, 'el barrido lejano la vio aunque esté fuera de las 48h');
+  assert.equal(h.store._rows.filter((r) => r.push_n === 3).length, 0, 'el Push 3 lo agenda el poll normal cuando entre a su ventana');
+
+  await scheduler.runCalendlyDelivery();
+  assert.equal(h.wa.sent.length, 1);
+  const msg = h.wa.sent[0].text;
+  assert.match(msg, /Nueva call EL SÁBADO 20/);
+  assert.match(msg, /el sábado 20 a las/);
+  assert.match(msg, /resumen de la víspera/);
+  assert.match(leadText(msg), /tu llamada del sábado 20 a las 11:00 am/);
+  assert.ok(marcadas.has(events[0].uri), 'marcada para que el digest de la víspera no la repita');
+
+  // Viernes 19 por la noche: los dos turnos del Push 1 corren y ninguno la lista.
+  h.clock.ms = Date.parse('2026-06-20T01:00:00.000Z');
+  await scheduler.runPush1Early();
+  await scheduler.runPush1();
+  assert.equal(h.wa.sent.length, 1, 'ningún digest repitió el Push 1');
+});
+
+test('prueba: una reserva vieja de la ventana lejana no dispara nada', async (t) => {
+  t.after(sinPrueba);
+  const events = [makeEvent({ uuid: 'vieja', startIso: CALL_SABADO, closerEmail: SALAZAR, nowMs: NOW_POST })];
+  const h = installHarness(scheduler, { events, optins: [SALAZAR_PHONE], nowMs: NOW_POST, accounts: ESTADOX });
+  conPrueba(h);
+  await scheduler.runCalendlyPoll();
+  assert.equal(push0Rows(h.store).length, 0);
+});
+
+test('prueba: reserva para mañana ANTES del digest → igual sale en el acto', async (t) => {
+  t.after(sinPrueba);
+  // 05:00 Bogotá: ni el Push 2 ni ningún Push 1 corrieron todavía.
+  const events = [makeEvent({ uuid: 'temprano', startIso: CALL_TOMORROW, createdInMin: -2, closerEmail: SALAZAR, nowMs: NOW_PRE })];
+  const h = installHarness(scheduler, { events, optins: [SALAZAR_PHONE], nowMs: NOW_PRE, accounts: ESTADOX });
+  conPrueba(h);
+  await scheduler.runCalendlyPoll();
+  assert.equal(push0Rows(h.store).length, 1);
+});
+
+test('prueba vencida o de otra conexión → todo como antes', async (t) => {
+  t.after(sinPrueba);
+  for (const opts of [{ hasta: '2026-06-14' }, { conexion: '30x' }]) {
+    const events = [
+      makeEvent({ uuid: `lejos-${opts.hasta || opts.conexion}`, startIso: CALL_SABADO, createdInMin: -2, closerEmail: SALAZAR, nowMs: NOW_POST }),
+      makeEvent({ uuid: `temp-${opts.hasta || opts.conexion}`, startIso: CALL_TOMORROW, createdInMin: -2, closerEmail: SALAZAR, nowMs: NOW_PRE }),
+    ];
+    const h = installHarness(scheduler, { events, optins: [SALAZAR_PHONE], nowMs: NOW_PRE, accounts: ESTADOX });
+    conPrueba(h, opts);
+    await scheduler.runCalendlyPoll();
+    assert.equal(push0Rows(h.store).length, 0, JSON.stringify(opts));
+  }
+});
+
+test('prueba: Push 0 lejano de un closer sin opt-in se abandona (no reintenta por días)', async (t) => {
+  t.after(sinPrueba);
+  const events = [makeEvent({ uuid: 'sinopt', startIso: CALL_SABADO, createdInMin: -2, closerEmail: SALAZAR, nowMs: NOW_POST })];
+  const h = installHarness(scheduler, { events, optins: [], nowMs: NOW_POST, accounts: ESTADOX });
+  const marcadas = conPrueba(h);
+  await scheduler.runCalendlyPoll();
+  await scheduler.runCalendlyDelivery();
+  const p0 = push0Rows(h.store)[0];
+  assert.equal(p0.status, 'skipped', 'la víspera la cubre');
+  assert.equal(marcadas.size, 0, 'sin marca: el digest de la víspera la lista');
 });

@@ -81,14 +81,19 @@ export function decidePush0({
   isTomorrow = false,
   push1HasRun = false,
   recentMs = 10 * 60000,
+  // Prueba "Push 1 al agendar" (§18.CK): toda reserva nueva recibe su Push 1 en el acto, sea
+  // para el día que sea, sin mirar si el digest ya corrió. El digest de la víspera se la salta
+  // después (se marca como prefired al entregarse), así que no hay duplicado.
+  alAgendar = false,
 }) {
-  if (!isToday && !isTomorrow) return { notify: false, reason: 'not-today' };
+  if (!isToday && !isTomorrow && !alAgendar) return { notify: false, reason: 'not-today' };
   if (!Number.isFinite(startMs) || startMs <= nowMs) {
     return { notify: false, reason: 'call-passed' };
   }
   if (!Number.isFinite(createdAtMs)) return { notify: false, reason: 'no-created-at' };
   if (createdAtMs > nowMs + 60000) return { notify: false, reason: 'created-in-future' };
   if (nowMs - createdAtMs > recentMs) return { notify: false, reason: 'not-recent' };
+  if (alAgendar) return { notify: true, reason: 'al-agendar' };
   // `isToday` gana si por algún motivo llegan los dos: el aviso de hoy es más urgente
   // y su gate (push 2) es el correcto para una call que ocurre en unas horas.
   if (isToday) {

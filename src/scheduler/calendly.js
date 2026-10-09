@@ -38,6 +38,7 @@ import {
   toSqliteUtc,
   formatCallTime,
   buildPush0Message,
+  formatLeadDay,
   buildRescheduleMessage,
   isSameDayInTz,
   isNextDayInTz,
@@ -284,6 +285,32 @@ const isEarlyPush1Program = (programKey) => PUSH1_EARLY_PROGRAMS().has(programKe
 // exactamente la clase de hueco que el Push 0 existe para tapar (§18.C), así que el gate va por
 // programa.
 const push1CronFor = (programKey) => (isEarlyPush1Program(programKey) ? PUSH1_EARLY_CRON() : PUSH1_CRON());
+
+// ─── Prueba "Push 1 al agendar" (§18.CK, 2026-10-09) ─────────────────────────────────────────
+// En las conexiones listadas, el Push 1 sale en el acto en que el lead reserva (vía Push 0), para
+// el día que sea, y el digest de la víspera se salta esa cita. Es una PRUEBA de una semana: vence
+// sola el día `HASTA` (inclusive, en la zona del bot) para que no quede prendida por olvido.
+// Vacío = apagada, y todo se comporta exactamente como antes.
+const PUSH1_AL_AGENDAR = () =>
+  new Set((process.env.CALENDLY_PUSH1_AL_AGENDAR || '').split(',').map((s) => s.trim()).filter(Boolean));
+const PUSH1_AL_AGENDAR_HASTA = () => (process.env.CALENDLY_PUSH1_AL_AGENDAR_HASTA || '').trim();
+// Cuántos días hacia adelante se buscan reservas nuevas. El poll normal mira solo 48h: una cita
+// para dentro de 5 días no se veía hasta 3 días después de reservada.
+const PUSH1_AL_AGENDAR_DIAS = () => Number(process.env.CALENDLY_PUSH1_AL_AGENDAR_DIAS || 21);
+const fechaLocal = (nowMs) =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: TZ(), year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(nowMs));
+const push1AlAgendarPara = (conexion, nowMs) => {
+  if (!conexion || !PUSH1_AL_AGENDAR().has(conexion)) return false;
+  const hasta = PUSH1_AL_AGENDAR_HASTA();
+  return !hasta || fechaLocal(nowMs) <= hasta;
+};
+// 'hoy' | 'mañana' | 'otro' — cómo el Push 0 nombra el día de la call.
+const whenOfCall = (startIso, base) =>
+  isSameDayInTz(startIso, TZ(), base) ? 'hoy' : isNextDayInTz(startIso, TZ(), base) ? 'mañana' : 'otro';
+// La misma clave que usa el digest para saltarse una cita (`prefiredKey`): la uri del evento en
+// Calendly, o el uuid sintético `hubspot:<id>` de las citas que solo viven en el CRM.
+const prefiredKeyOfRow = (p) =>
+  String(p.event_uuid).startsWith('hubspot:') ? p.event_uuid : `https://api.calendly.com/scheduled_events/${p.event_uuid}`;
 
 // Agenda diaria a la ADMIN de EstadoX (7am). No es un push a closers: es el conteo de cuántas
 // llamadas tiene HOY cada closer de IA para Abogados, por DM a quien supervisa. Se autodesactiva
@@ -793,6 +820,57 @@ async function deliverToCloser(d, to, text, tag, closerEmail) {
   return 'sent';
 }
 
+// Decide y agenda el Push 0 de una cita de Calendly. Lo comparten el poll normal (48h) y el
+// barrido lejano de la prueba "Push 1 al agendar" (§18.CK): una sola regla para las dos puntas.
+// Reusa la misma fila/dedup que los demás pushes (push_n=0, due=ahora) → lo entrega
+// `runCalendlyDelivery` con todos los gates anti-ban.
+function agendarPush0Calendly(d, { ev, uuid, programKey, email, closer, invitee, name, firstName, phone, altPhones, nowMs }) {
+  const now = new Date(nowMs);
+  const d0 = decidePush0({
+    startMs: new Date(ev.start_time).getTime(),
+    createdAtMs: ev.created_at ? new Date(ev.created_at).getTime() : NaN,
+    nowMs,
+    isToday: isSameDayInTz(ev.start_time, TZ(), now),
+    push2HasRun: push2HasRunToday(PUSH2_CRON(), TZ(), now),
+    isTomorrow: isNextDayInTz(ev.start_time, TZ(), now),
+    push1HasRun: dailyCronHasRunToday(push1CronFor(programKey), TZ(), now),
+    recentMs: PUSH0_RECENT_MIN() * 60000,
+    // Por la conexión del CLOSER, igual que el delivery y el poll de HubSpot: es la que decide
+    // dry-run y token en todo el resto del flujo.
+    alAgendar: push1AlAgendarPara(accountOfCloser(email), nowMs),
+  });
+  if (!d0.notify) return null;
+  const when = whenOfCall(ev.start_time, now);
+  const r0 = d.scheduleCalendlyPush({
+    event_uuid: uuid,
+    push_n: 0,
+    program: programKey,
+    closer_email: email,
+    closer_phone: closer.phone,
+    prospect_name: invitee?.name || null,
+    prospect_phone: phone,
+    call_start: toSqliteUtc(new Date(ev.start_time)),
+    due_at: toSqliteUtc(now),
+    message: buildPush0Message({
+      name,
+      firstName,
+      phone,
+      startIso: ev.start_time,
+      programKey,
+      when,
+      altPhones,
+      closer: firstNameFrom(closer.name),
+      base: now,
+    }),
+  });
+  if (r0 === 'new') {
+    console.log(
+      `[Calendly] Push 0 (nueva call ${when === 'otro' ? formatLeadDay(ev.start_time, TZ(), now) : when}, con su Push 1${d0.reason === 'al-agendar' ? ' — prueba al agendar' : ''}) → ${closer.name} | ${firstName} | ${formatCallTime(ev.start_time)}`
+    );
+  }
+  return r0;
+}
+
 // ─── Poll: descubre citas y agenda Push 3 ─────────────────────────────────────
 
 export async function runCalendlyPoll() {
@@ -1074,37 +1152,7 @@ export async function runCalendlyPoll() {
       // una reserva, fue una mudanza, y ahora hay un aviso que lo dice bien. Un aviso por
       // reagenda, nunca dos.
       if (PUSH0_ENABLED() && !reagenda) {
-        const d0 = decidePush0({
-          startMs: new Date(ev.start_time).getTime(),
-          createdAtMs: ev.created_at ? new Date(ev.created_at).getTime() : NaN,
-          nowMs,
-          isToday: isSameDayInTz(ev.start_time, TZ(), now),
-          push2HasRun: push2HasRunToday(PUSH2_CRON(), TZ(), now),
-          isTomorrow: isNextDayInTz(ev.start_time, TZ(), now),
-          push1HasRun: dailyCronHasRunToday(push1CronFor(programKey), TZ(), now),
-          recentMs: PUSH0_RECENT_MIN() * 60000,
-        });
-        if (d0.notify) {
-          const when = d0.reason === 'new-booking-tomorrow' ? 'mañana' : 'hoy';
-          const msg0 = buildPush0Message({ name, firstName, phone, startIso: ev.start_time, programKey, when, altPhones });
-          const r0 = d.scheduleCalendlyPush({
-            event_uuid: uuid,
-            push_n: 0,
-            program: programKey,
-            closer_email: email,
-            closer_phone: closer.phone,
-            prospect_name: invitee?.name || null,
-            prospect_phone: phone,
-            call_start: toSqliteUtc(new Date(ev.start_time)),
-            due_at: toSqliteUtc(new Date(nowMs)),
-            message: msg0,
-          });
-          if (r0 === 'new') {
-            console.log(
-              `[Calendly] Push 0 (nueva call HOY) → ${closer.name} | ${firstName} | ${formatCallTime(ev.start_time)}`
-            );
-          }
-        }
+        agendarPush0Calendly(d, { ev, uuid, programKey, email, closer, invitee, name, firstName, phone, altPhones, nowMs });
       }
     } catch (e) {
       console.error(`[Calendly] poll: error en evento ${ev.uri}:`, e.message);
@@ -1114,6 +1162,14 @@ export async function runCalendlyPoll() {
   recordPollOk(events.length);
   console.log(
     `[Calendly] Poll completo: ${events.length} citas, ${nuevos} push 3 agendados/actualizados${DRY_RUN() ? ' [DRY-RUN]' : ''}`
+  );
+
+  // La prueba "Push 1 al agendar" (§18.CK) necesita ver reservas para MÁS ALLÁ de las 48h del
+  // poll. Va aparte y no ensanchando la ventana de arriba: ese loop pide el invitee de CADA cita
+  // (throttle de 1,2s), y con tres semanas de agenda el poll de 5 minutos dejaría de caber en 5
+  // minutos. Apagada la prueba, no hace ni una request.
+  await barridoPush1AlAgendar(d, nowMs).catch((e) =>
+    console.error('[Calendly] barrido Push 1 al agendar falló (el poll normal no se ve afectado):', e.message)
   );
 
   // Las citas que solo existen en HubSpot, DESPUÉS de Calendly y en el mismo tick. El orden no
@@ -1132,6 +1188,64 @@ export async function runCalendlyPoll() {
     console.error('[HubSpot] scan de reagendas falló (ningún push se canceló):', e.message)
   );
 
+  return nuevos;
+}
+
+// Reservas NUEVAS de las conexiones en prueba para citas de pasado las 48h. El filtro por
+// `created_at` va antes de cualquier otra llamada a la API: la lista de tres semanas cuesta un par
+// de páginas, y solo las reservas de los últimos minutos (casi siempre ninguna) piden su invitee.
+// Las citas que solo viven en HubSpot no entran: el poll de HubSpot también mira 48h, así que esas
+// siguen con su Push 1 de la víspera.
+async function barridoPush1AlAgendar(d, nowMs) {
+  if (!PUSH0_ENABLED()) return 0;
+  const cuentas = (d.accounts ? d.accounts() : activeAccounts()).filter((a) => push1AlAgendarPara(a.key, nowMs));
+  if (!cuentas.length) return 0;
+  const { events } = await listEventsAllAccounts(
+    { ...d, accounts: () => cuentas },
+    {
+      minStartIso: new Date(nowMs + 48 * 3600 * 1000).toISOString(),
+      maxStartIso: new Date(nowMs + PUSH1_AL_AGENDAR_DIAS() * 86400000).toISOString(),
+      tag: 'push1 al agendar',
+    }
+  );
+  const recentMs = PUSH0_RECENT_MIN() * 60000;
+  const formIndexFor = makeFormIndexCache({ fetchSheetValues: d.fetchSheetValues });
+  let nuevos = 0;
+  for (const { ev, account } of events) {
+    const createdMs = ev.created_at ? Date.parse(ev.created_at) : NaN;
+    if (!Number.isFinite(createdMs) || nowMs - createdMs > recentMs) continue;
+    try {
+      const uuid = ev.uri.split('/').pop();
+      const email = closerEmailOf(ev);
+      const closer = resolveCloser(email);
+      // Sin closer no hay a quién avisar; el poll normal alerta del host sin mapear cuando la
+      // cita entra a su ventana, no hace falta duplicar esa alerta acá.
+      if (!closer) continue;
+      const programKey = programKeyOf(ev.event_type);
+      const invitee = await d.getFirstInvitee(ev.uri, { token: account.token() });
+      // Una reagenda a una fecha lejana no es una reserva nueva: misma regla del poll normal.
+      if (oldEventUuidFrom(invitee)) continue;
+      const formIndex = await formIndexFor(account);
+      const phone = await resolvePhone(d, invitee, account, formIndex);
+      const altPhones = formIndex ? altPhonesFor(phone, formPhonesFor(formIndex, invitee?.email)) : [];
+      const r0 = agendarPush0Calendly(d, {
+        ev,
+        uuid,
+        programKey,
+        email,
+        closer,
+        invitee,
+        name: fullNameFrom(invitee?.name),
+        firstName: firstNameFrom(invitee?.name),
+        phone,
+        altPhones,
+        nowMs,
+      });
+      if (r0 === 'new') nuevos++;
+    } catch (e) {
+      console.error(`[Calendly] barrido Push 1 al agendar: error en evento ${ev.uri}:`, e.message);
+    }
+  }
   return nuevos;
 }
 
@@ -1266,6 +1380,7 @@ export async function runHubspotAgendaPoll({ preview = false } = {}) {
           isTomorrow: isNextDayInTz(startIso, TZ(), new Date(nowMs)),
           push1HasRun: dailyCronHasRunToday(push1CronFor(call.program), TZ(), new Date(nowMs)),
           recentMs: PUSH0_RECENT_MIN() * 60000,
+          alAgendar: push1AlAgendarPara(accountOfCloser(email), nowMs),
         });
         if (d0.notify) {
           d.scheduleCalendlyPush({
@@ -1278,7 +1393,9 @@ export async function runHubspotAgendaPoll({ preview = false } = {}) {
               phone,
               startIso,
               programKey: call.program,
-              when: d0.reason === 'new-booking-tomorrow' ? 'mañana' : 'hoy',
+              when: whenOfCall(startIso, new Date(nowMs)),
+              closer: firstNameFrom(closer.name),
+              base: new Date(nowMs),
             }),
           });
         }
@@ -1429,6 +1546,8 @@ export async function runCalendlyDelivery() {
         console.warn(`[Calendly] ${rescatadas} push(es) atascado(s) en 'sending' devueltos a 'scheduled' (proceso caído a mitad de entrega)`);
     }
     const due = d.getDueCalendlyPushes();
+    // §18.CA: la hoja del formulario, leída a lo sumo una vez por conexión en este tick.
+    const formIndexFor = makeFormIndexCache({ fetchSheetValues: d.fetchSheetValues });
     let procesados = 0;
     for (const p of due) {
       // Claim atómico: si otro worker ya la tomó, claim devuelve false → saltar.
@@ -1721,11 +1840,18 @@ export async function runCalendlyDelivery() {
           // Guardrail por empresa: la cuenta del CLOSER (accountOfCloser) decide si se busca
           // en el HubSpot conectado — igual que el resto del flujo de envío.
           let phone = p.prospect_phone;
-          if (!phone) {
+          // §18.CA: los números del formulario que difieren del de Calendly. La fila no los
+          // guarda, así que hay que volver a cruzarlos acá: sin esto el re-armado tiraba el
+          // segundo link que el poll sí había puesto, y el push de dos números salía con uno.
+          // Solo las conexiones con `leadForm` (Retia) pagan el invitee extra.
+          let altPhones = [];
+          const acct = accountOf(accountOfCloser(p.closer_email));
+          if (!phone || acct?.leadForm) {
             try {
-              const acct = accountOf(accountOfCloser(p.closer_email));
               const invitee = await d.getFirstInvitee(ev.uri, { token: acct?.token?.() });
-              phone = await resolvePhone(d, invitee, acct);
+              const formIndex = await formIndexFor(acct);
+              if (!phone) phone = await resolvePhone(d, invitee, acct, formIndex);
+              altPhones = formIndex ? altPhonesFor(phone, formPhonesFor(formIndex, invitee?.email)) : [];
             } catch {
               /* sin invitee → queda null → "mándalo manual", exactamente como hoy */
             }
@@ -1744,7 +1870,10 @@ export async function runCalendlyDelivery() {
                   // El reloj va por `d.now()` (inyectable), NO por Date.now(): con el
                   // reloj del sistema el harness comparaba contra la fecha real y
                   // todo Push 0 salía como "mañana".
-                  when: isSameDayInTz(ev.start_time, TZ(), new Date(d.now())) ? 'hoy' : 'mañana',
+                  when: whenOfCall(ev.start_time, new Date(d.now())),
+                  closer: closer ? firstNameFrom(closer.name) : '',
+                  base: new Date(d.now()),
+                  altPhones,
                 })
               : buildPush3Message({
                   name: fullNameFrom(p.prospect_name),
@@ -1754,12 +1883,30 @@ export async function runCalendlyDelivery() {
                   programKey: programKeyOf(ev.event_type),
                   closer: closer ? firstNameFrom(closer.name) : '',
                   linkLlamada: eventJoinUrl(ev),
+                  altPhones,
                 });
         }
 
         const result = await deliver(d, p.closer_phone, message, `push${p.push_n}`, p.closer_email);
+        // Prueba "Push 1 al agendar" (§18.CK): el Push 0 YA llevó el Push 1, así que el digest de
+        // la víspera se salta esta cita. Solo con 'sent': si no salió (dry-run, sin opt-in), la
+        // víspera la sigue cubriendo como siempre.
+        const conPrueba = p.push_n === 0 && push1AlAgendarPara(accountOfCloser(p.closer_email), d.now());
+        if (result === 'sent' && conPrueba && d.markPush1Prefired) {
+          d.markPush1Prefired([prefiredKeyOfRow(p)]);
+        }
         if (result === 'sent' || result === 'dry-run') {
           d.markCalendlyPushSent(p.id);
+        } else if (
+          (result === 'skipped-optin' || result === 'skipped-no-thread') &&
+          p.push_n === 0 &&
+          sqliteUtcToMs(p.call_start) - d.now() > 48 * 3600 * 1000
+        ) {
+          // El reintento de abajo está acotado por el guard de obsolescencia (la call empieza
+          // y la fila muere), que para un Push 0 de una cita a 10 días significa reintentar
+          // cada minuto durante 10 días, con un getEvent por intento. Más allá de 48h se
+          // abandona: sin marca de prefired, el digest de la víspera la cubre.
+          d.markCalendlyPushSkipped(p.id, 'closer sin opt-in (lo cubre la víspera)', SKIP_SLUGS.SIN_OPTIN);
         } else if (result === 'paused' || result === 'paused-closer') {
           // Pausa = botón de pánico TEMPORAL: no consumir el push. Revertir a
           // 'scheduled' para reanudar al despausar (la llamada puede seguir en el futuro).
@@ -2480,7 +2627,8 @@ export function startCalendlyJobs() {
       // citas, que es el modo de fallo mudo de siempre.
       `, push1: ${PUSH1_CRON()} — salvo ${PUSH1_EARLY_PROGRAMS().size ? `${[...PUSH1_EARLY_PROGRAMS()].join('/')} a las ${PUSH1_EARLY_CRON()}` : 'nadie (turno único)'}` +
       `, push viernes: ${PUSH_VIERNES_ENABLED() ? PUSH_VIERNES_CRON() : 'off'}` +
-      `, tandas push1: ${PUSH1_TANDAS_DIAS().size ? `${PUSH1_TANDAS_CONEXION()} los días ${[...PUSH1_TANDAS_DIAS()].join(',')} (0=dom) a las ${PUSH1_EARLY_CRON()}` : 'off'}) — cuentas: ` +
+      `, tandas push1: ${PUSH1_TANDAS_DIAS().size ? `${PUSH1_TANDAS_CONEXION()} los días ${[...PUSH1_TANDAS_DIAS()].join(',')} (0=dom) a las ${PUSH1_EARLY_CRON()}` : 'off'}` +
+      `, push1 al agendar: ${PUSH1_AL_AGENDAR().size ? `${[...PUSH1_AL_AGENDAR()].join('/')} hasta ${PUSH1_AL_AGENDAR_HASTA() || 'sin fecha'} (${PUSH1_AL_AGENDAR_DIAS()}d)` : 'off'}) — cuentas: ` +
       accounts.map((a) => `${a.key}[dry-run:${a.dryRun()}, push4:${a.push4()}]`).join(' · ')
   );
 }

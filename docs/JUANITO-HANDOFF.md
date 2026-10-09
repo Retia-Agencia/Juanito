@@ -5,7 +5,8 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-10-05** (§18.CD — tercer programa de Retia: PowerTalk · "Comunícate con
+Última actualización: **2026-10-09** (§18.CK — el Push 0 trae el Push 1; prueba de una semana de
+Push 1 al agendar en 30X). Anterior: **2026-10-05** (§18.CD — tercer programa de Retia: PowerTalk · "Comunícate con
 Confianza", conexión `powertalk` en dry-run, Push 5 contra el CRM de Retia). Anterior: **2026-09-02** (§18.BR — Maru Marquez entra a "De Cero a Tactical
 Investor" heredando el buzón-rol `equipo@ttrading.co`; Sebastian Salazar queda desvinculado del
 programa. Una cuenta de Calendly pertenece a UNA organización: por eso su gmail de ComunicArte no
@@ -7141,6 +7142,51 @@ Primer envío real: viernes 2026-10-09 16:00, o sea que el arranque ya cayó a l
 
 Tests: `test/calendly.push-viernes.test.js` (6). En Mac el set de rojos de la suite es idéntico antes y
 después (los de `better-sqlite3`).
+
+### 18.CK 🟡 El Push 0 trae el Push 1, y prueba de una semana: Push 1 al agendar en 30X (2026-10-09)
+
+**1. El Push 0 lleva link (permanente).** Una reserva que llega DESPUÉS de su digest (para
+mañana tras el Push 1, para hoy tras el Push 2) recibía un Push 0 informativo: el closer se
+enteraba pero no tenía con qué escribirle al lead, y ese lead llegaba a la call sin los materiales
+que el resto recibió la víspera. Ahora el Push 0 trae el link wa.me con el **texto del Push 1**
+(`buildPrecallText` pushN=1, mismos materiales y overrides por programa), también para las calls
+de hoy: el Push 2 da por hecho que el material ya se compartió. Un mensaje, no dos. El Push 2 y
+el Push 3 ya la incluían solos (el digest se arma en vivo; el Push 3 lo agenda el poll).
+
+**2. Bug arreglado de paso (§18.CA).** El delivery re-arma el Push 0 y el Push 3 al entregarlos y
+no les pasaba `altPhones` (la fila no los guarda): en Retia, un lead con dos números recibía el push
+con UN link aunque el log del poll dijera "el push va con los dos links". Ahora el delivery vuelve
+a cruzar la hoja, solo en las conexiones con `leadForm`. Sin test end-to-end (el harness no simula
+la hoja): confirmarlo con el primer caso real.
+
+**3. Prueba "Push 1 al agendar" (30X, hasta el 2026-10-16 inclusive).** En las conexiones de
+`CALENDLY_PUSH1_AL_AGENDAR` toda reserva nueva recibe su Push 1 en el acto, para el día que sea
+(`decidePush0({ alAgendar })`), y se marca como prefired al entregarse ('sent') para que el
+digest de la víspera se la salte. Piezas:
+- El poll mira solo 48h, así que hay un **barrido aparte** (`barridoPush1AlAgendar`) de 48h a
+  `_DIAS` (21) que filtra por `created_at` reciente ANTES de pedir el invitee: ensanchar el poll
+  normal le pediría el invitee a tres semanas de citas cada 5 min.
+- La conexión que decide es la del **closer** (`accountOfCloser`), igual que el delivery.
+- Un Push 0 a >48h de un closer sin opt-in se **abandona** (skipped) en vez de reintentar cada
+  minuto durante días; sin marca, la víspera lo cubre.
+- `getScheduledCallsInWindow` ignora las filas de push 0: una cita lejana cancelada antes de
+  entrar a las 48h no tiene Push 3 que la marque muerta y seguía contando en la agenda.
+- Las citas que solo viven en HubSpot y están a >48h no entran (su poll también mira 48h):
+  siguen con el Push 1 de la víspera.
+- Copy del Push 2: "el material que te dejé anoche" → **"que te compartí"**, para todos (ya era
+  falso para 30X desde que su Push 1 sale a las 8am).
+
+**Medir al cerrar la prueba:** show rate de 30X (outcomes del Push 4) del 10 al 16 de octubre
+contra las semanas de víspera, y contra la de tandas (§18.CB, 28-sep a 6-oct). Después: apagar
+(`CALENDLY_PUSH1_AL_AGENDAR=` vacío) o adoptarla y sacar la fecha.
+
+**Tests:** 9 nuevos en `calendly.push0.test.js` (plantillas hoy/mañana/otro día, barrido lejano +
+víspera que se la salta, reserva vieja, prueba vencida, otra conexión, sin opt-in) y 2 reescritos
+en `calendly.lead-form.test.js`. **Suite en Linux: 1298 / 1295**, los 3 rojos de la línea base
+(los 2 conocidos + "el mensaje lleva los links de Retia", que ya estaba rojo antes de este cambio).
+
+**Pendiente de operación:** desplegar con `alcance: todo` y verificar que el arranque diga
+`push1 al agendar: 30x hasta 2026-10-16 (21d)`.
 
 ### Secretos (decididos, ver §13)
 

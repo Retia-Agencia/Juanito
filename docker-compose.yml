@@ -95,6 +95,11 @@ services:
       # `0,2,4` las vuelve a prender.
       - CALENDLY_PUSH1_TANDAS_DIAS=${CALENDLY_PUSH1_TANDAS_DIAS-}
       - CALENDLY_PUSH1_TANDAS_CONEXION=${CALENDLY_PUSH1_TANDAS_CONEXION:-30x}
+      # Prueba "Push 1 al agendar" (§18.CK): en estas conexiones el Push 1 sale apenas el lead
+      # reserva, y la víspera se salta esa cita. Vence sola después de _HASTA (inclusive). Vacío = off.
+      - CALENDLY_PUSH1_AL_AGENDAR=${CALENDLY_PUSH1_AL_AGENDAR-30x}
+      - CALENDLY_PUSH1_AL_AGENDAR_HASTA=${CALENDLY_PUSH1_AL_AGENDAR_HASTA:-2026-10-16}
+      - CALENDLY_PUSH1_AL_AGENDAR_DIAS=${CALENDLY_PUSH1_AL_AGENDAR_DIAS:-21}
       - CALENDLY_PUSH2_CRON=${CALENDLY_PUSH2_CRON:-30 6 * * *}
       - CALENDLY_SKIP_AUDIT_CRON=${CALENDLY_SKIP_AUDIT_CRON:-15 * * * *}
       - CALENDLY_SKIP_ALERT_MIN=${CALENDLY_SKIP_ALERT_MIN:-2}

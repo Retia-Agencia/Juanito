@@ -151,19 +151,32 @@ test('la reagenda INFORMATIVA no cambia aunque el lead tenga dos números (no pi
   assert.equal(buildRescheduleMessage(args), buildRescheduleMessage({ ...args, altPhones: ['+573006018595'] }));
 });
 
-// El Push 0 no lleva link wa.me (es un heads-up), así que acá el aviso no ofrece dos botones:
-// ofrece TIEMPO para resolver la duda antes de que llegue el Push 3.
-test('el Push 0 avisa de los dos números pero NO inventa links (no es su rol)', () => {
+// El Push 0 lleva el link del Push 1 (2026-10-09): con dos números, un link por número,
+// rotulado por lead y por fuente, igual que el digest.
+test('el Push 0 con dos números trae un link por número, rotulado por fuente', () => {
   const args = {
     name: 'Gustavo Laguna', firstName: 'Gustavo', phone: '+57 300 3018595',
-    startIso: '2026-09-16T13:30:00Z', programKey: 'comunicarte',
+    startIso: '2026-09-16T13:30:00Z', programKey: 'comunicarte', closer: 'Maru',
+    base: new Date('2026-09-15T22:00:00Z'), when: 'mañana',
   };
   const msg = buildPush0Message({ ...args, altPhones: ['+573006018595'] });
   assert.match(msg, /DOS números distintos/);
-  assert.match(msg, /\+573006018595/);
-  assert.ok(!msg.includes('wa.me'), 'el Push 0 nunca lleva link wa.me');
-  assert.equal(buildPush0Message(args), buildPush0Message({ ...args, altPhones: [] }));
-  assert.doesNotMatch(buildPush0Message(args), /DOS números/);
+  assert.match(msg, /Gustavo, según Calendly: \+57 300 3018595\n👉 https:\/\/wa\.me\/573003018595\?text=/);
+  assert.match(msg, /Gustavo, según el formulario: \+573006018595\n👉 https:\/\/wa\.me\/573006018595\?text=/);
+  const sinAlt = buildPush0Message(args);
+  assert.equal(sinAlt, buildPush0Message({ ...args, altPhones: [] }));
+  assert.doesNotMatch(sinAlt, /DOS números/);
+  assert.equal((sinAlt.match(/wa\.me/g) || []).length, 1);
+});
+
+test('el Push 0 sin link (sin closer) igual avisa de los dos números', () => {
+  const msg = buildPush0Message({
+    name: 'Gustavo Laguna', firstName: 'Gustavo', phone: '+57 300 3018595',
+    startIso: '2026-09-16T13:30:00Z', programKey: 'comunicarte', altPhones: ['+573006018595'],
+  });
+  assert.ok(!msg.includes('wa.me'));
+  assert.match(msg, /mándale el recordatorio a mano/);
+  assert.match(msg, /DOS números distintos.*\+573006018595/);
 });
 
 test('sin alternos el push sale IDÉNTICO al de antes del cambio (la rama vieja no se toca)', () => {
