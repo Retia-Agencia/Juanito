@@ -7133,6 +7133,10 @@ Pedido del jefe, tres cambios:
    eligió a propósito (sirve el material vigente aunque Retia lo actualice; ver comentarios en
    `programs.js`); apuntar al PDF pierde eso.
 
+**Live:** desplegado el 2026-10-09 con `alcance: todo` (run 37988219262, commit `ba18c9d`). VPS verificado:
+`juanito-agent` y `juanito-dash` Up, Baileys reconectó, el log de arranque muestra `push viernes: 0 16 * * 5`.
+Primer envío real: viernes 2026-10-09 16:00, o sea que el arranque ya cayó a las 3:38pm, antes de la hora.
+
 Tests: `test/calendly.push-viernes.test.js` (6). En Mac el set de rojos de la suite es idéntico antes y
 después (los de `better-sqlite3`).
 
