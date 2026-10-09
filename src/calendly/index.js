@@ -327,13 +327,41 @@ function materialsBlock(programKey) {
   return lines.length ? `\n\n${header}\n\n${lines.join('\n')}` : `\n\n${header}`;
 }
 
-// Construye el texto precall (lo que el closer envía al lead). pushN: 1 | 2 | 3.
+// Programas que reciben el push del viernes (ver runPushViernes) y su plantilla. El video y el
+// brochure salen de PROGRAMS (MATERIAL_LINKS), no se repiten acá: cambiar un link allá cambia
+// también este push.
+const FRIDAY_COPY = {
+  comunicarte: ({ lead, closer, fecha, hora, links }) =>
+    `¡Hola, ${lead}! ¿Cómo vas? Te habla ${closer}, del equipo de Comunicarte.\n\n` +
+    `Te escribo para recordarte que el lunes ${fecha} a las ${hora} (hora Colombia) tenemos tu llamada. Es una charla cortica para conocerte y ver si el método es para ti.\n\n` +
+    `Te dejo un video para que lo veas el fin de semana con calma 👇\n${links.video}\n\n` +
+    `Y aquí el brochure con todo el programa, por si quieres darle una mirada antes:\n${links.brochure}\n\n` +
+    `Una cosa para que la vayas pensando: acuérdate de una conversación en la que sentiste que no te entendieron. Por ahí arrancamos el lunes.\n\n` +
+    `¿Me confirmas con un 👍 que el lunes a esa hora te queda bien? Si se te cruzó algo, me dices y la movemos sin problema.\n\n` +
+    `¡Feliz fin de semana!`,
+  tactical_investor: ({ lead, closer, fecha, hora, links }) =>
+    `¡Hola, ${lead}! ¿Como estás? Te habla ${closer}, del equipo de Tactical Investor.\n\n` +
+    `Te recuerdo que el lunes ${fecha} a las ${hora} (hora Colombia) tenemos tu llamada. La idea es conocerte: en qué vas con tus inversiones, qué quieres lograr y, con toda honestidad, si el programa te sirve o no.\n\n` +
+    `Te dejo este video para que lo veas el fin de semana 👇\n${links.video}\n\n` +
+    `Y el brochure con el detalle del programa:\n${links.brochure}\n\n` +
+    `Una pregunta para que la lleves a la llamada: ¿qué te ha frenado hasta ahora para invertir como quieres? No hay respuesta mala.\n\n` +
+    `¿Me confirmas con un 👍 que el lunes a esa hora te queda bien? Si necesitas moverla, me avisas y la reprogramamos.\n\n` +
+    `¡Buen fin de semana!`,
+};
+export const FRIDAY_PROGRAMS = Object.keys(FRIDAY_COPY);
+
+// "12 de octubre" — la fecha del lunes para el push del viernes ("el lunes 12 de octubre").
+export function formatLeadDate(startIso, tz = TZ()) {
+  return new Intl.DateTimeFormat('es-CO', { timeZone: tz, day: 'numeric', month: 'long' }).format(new Date(startIso));
+}
+
+// Construye el texto precall (lo que el closer envía al lead). pushN: 1 | 2 | 3 | 'viernes'.
 // Devuelve null si el programa no tiene copy propio en PROGRAM_PITCH — los callers
 // degradan a "mándalo manual". NO hay fallback a otro programa: antes caía a
 // second_brain, así que agregar un programa sin su copy le mandaba al lead un mensaje
 // que lo invitaba al programa EQUIVOCADO (el texto viaja en el link wa.me que el closer
 // toca para enviar, o sea que sale casi tal cual). Mejor sin push que con el push errado.
-export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora, cuando = '', dia = '', linkLlamada = '' }) {
+export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora, cuando = '', dia = '', fecha = '', linkLlamada = '' }) {
   const lead = primerNombre || 'hola';
 
   // Reagenda hecha EN Calendly (§18.BW). Va ANTES del portón de PROGRAM_PITCH a propósito:
@@ -357,6 +385,15 @@ export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora
   if (!pitch) {
     console.warn(`[Calendly] programa "${programKey}" sin copy en PROGRAM_PITCH → push precall omitido`);
     return null;
+  }
+
+  // Push del viernes (2026-10-09): recordatorio de las llamadas del LUNES, solo para los programas
+  // de Retia que lo pidieron. Copy dictado por el jefe, uno por programa (no comparten plantilla).
+  // Programa sin copy acá → null → el digest degrada a "mándalo manual": nunca el texto de otro.
+  if (pushN === 'viernes') {
+    const copy = FRIDAY_COPY[programKey];
+    if (!copy) return null;
+    return copy({ lead, closer, fecha, hora, links: MATERIAL_LINKS[programKey] || {} });
   }
 
   if (pushN === 1) {
@@ -590,6 +627,7 @@ export function buildDigestMessage({ pushLabel, whenLabel, items, pushN, closer,
       closer,
       hora: formatLeadTime(it.startIso, tz),
       dia: pushN === 1 ? formatLeadDay(it.startIso, tz, base) : '',
+      fecha: pushN === 'viernes' ? formatLeadDate(it.startIso, tz) : '',
     });
     const link = buildLeadLink(it.phone, text);
     if (!link) return `${head} (mándalo manual)`;

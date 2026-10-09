@@ -30,6 +30,7 @@ import {
   prospectPhoneOf,
   buildPush3Message,
   buildDigestMessage,
+  FRIDAY_PROGRAMS,
   programKeyOf,
   programLabelOf,
   eventJoinUrl,
@@ -259,6 +260,14 @@ const PUSH1_TANDAS_DIAS = () => {
   const raw = process.env.CALENDLY_PUSH1_TANDAS_DIAS ?? '';
   return new Set(raw.split(',').map((s) => s.trim()).filter(Boolean).map(Number));
 };
+// ─── Push del viernes (2026-10-09) ───────────────────────────────────────────────────────────
+// Los viernes a las 4pm, un digest ADICIONAL con la llamada de los LUNES de Método Comunicarte y
+// Tactical Investor (FRIDAY_PROGRAMS, con su copy propio en calendly/index.js). Es adicional: el
+// Push 1 del domingo en la noche sale igual, y por eso este NO marca `prefired`. Apagable sin
+// redeploy con CALENDLY_PUSH_VIERNES_ENABLED=false; la hora con CALENDLY_PUSH_VIERNES_CRON.
+const PUSH_VIERNES_CRON = () => process.env.CALENDLY_PUSH_VIERNES_CRON || '0 16 * * 5'; // viernes 4pm
+const PUSH_VIERNES_ENABLED = () => process.env.CALENDLY_PUSH_VIERNES_ENABLED !== 'false';
+const PUSH_VIERNES_OFFSET = 3; // viernes + 3 = lunes
 const PUSH1_TANDAS_CONEXION = () => process.env.CALENDLY_PUSH1_TANDAS_CONEXION || '30x';
 const PUSH1_TANDAS_OFFSETS = [1, 2]; // cada tanda cubre mañana y pasado mañana
 const weekdayInTz = (tz, base) =>
@@ -2005,8 +2014,8 @@ async function runDigest(
 
   // El Push 1 de 30X sale a las 8am (2026-10-06): a esa hora "la noche anterior" sería falso.
   const push1Desc = horaLocal(nowMs) < 14 ? 'el día anterior' : 'la noche anterior';
-  const desc = adelantado ? 'adelantado' : pushN === 1 ? push1Desc : 'en la mañana';
-  const label = `Push ${pushN} (${desc})`;
+  const desc = adelantado ? 'adelantado' : pushN === 'viernes' ? 'recordatorio del lunes' : pushN === 1 ? push1Desc : 'en la mañana';
+  const label = pushN === 'viernes' ? 'Push Viernes (recordatorio del lunes)' : `Push ${pushN} (${desc})`;
   const when = whenLabel(offsetDays, nowMs);
   for (const [phone, { name, email, items }] of byCloser) {
     const msg = buildDigestMessage({
@@ -2080,6 +2089,16 @@ export async function runPush1TurnoTemprano() {
   return runPush1Early();
 }
 export const runPush2 = () => runDigest(2, 0); // hoy
+// El push del viernes. Guarda de día: el cron ya lo limita a viernes, pero un disparo manual en otro
+// día con offset 3 listaría el martes/miércoles… bajo un copy que dice "el lunes". Mejor no mandar.
+export async function runPushViernes() {
+  const d = await deps();
+  if (weekdayInTz(TZ(), new Date(d.now())) !== 5) {
+    console.warn('[Calendly] push viernes: hoy no es viernes — no se envía');
+    return 0;
+  }
+  return runDigest('viernes', PUSH_VIERNES_OFFSET, { incluyePrograma: (p) => FRIDAY_PROGRAMS.includes(p) });
+}
 
 // ─── Agenda diaria a la admin de la marca (7am) ────────────────────────────────
 // Pedido de Alejandro (2026-08-25) para Mariana: cuántas llamadas tiene HOY cada closer de IA
@@ -2438,6 +2457,7 @@ export function startCalendlyJobs() {
   if (PUSH1_EARLY_PROGRAMS().size || PUSH1_TANDAS_DIAS().size)
     job(PUSH1_EARLY_CRON(), runPush1TurnoTemprano, 'push1-early');
   job(PUSH2_CRON(), runPush2, 'push2');
+  if (PUSH_VIERNES_ENABLED()) job(PUSH_VIERNES_CRON(), runPushViernes, 'push-viernes');
   if (PUSH4_ENABLED()) job(OUTCOME_CRON(), runOutcomeReminders, 'outcomes');
   if (PUSH4_ENABLED() && RESCHEDULE_ENABLED())
     job(RESCHEDULE_PROMPT_CRON(), runReschedulePrompts, 'reagendas');
@@ -2459,6 +2479,7 @@ export function startCalendlyJobs() {
       // qué hora. Un turno mal configurado no da error: el digest simplemente sale sin esas
       // citas, que es el modo de fallo mudo de siempre.
       `, push1: ${PUSH1_CRON()} — salvo ${PUSH1_EARLY_PROGRAMS().size ? `${[...PUSH1_EARLY_PROGRAMS()].join('/')} a las ${PUSH1_EARLY_CRON()}` : 'nadie (turno único)'}` +
+      `, push viernes: ${PUSH_VIERNES_ENABLED() ? PUSH_VIERNES_CRON() : 'off'}` +
       `, tandas push1: ${PUSH1_TANDAS_DIAS().size ? `${PUSH1_TANDAS_CONEXION()} los días ${[...PUSH1_TANDAS_DIAS()].join(',')} (0=dom) a las ${PUSH1_EARLY_CRON()}` : 'off'}) — cuentas: ` +
       accounts.map((a) => `${a.key}[dry-run:${a.dryRun()}, push4:${a.push4()}]`).join(' · ')
   );

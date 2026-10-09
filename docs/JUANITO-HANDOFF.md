@@ -7109,6 +7109,33 @@ llevan materiales. Un solo cambio de datos en `materials.comunicarte.video`; no 
 **Live:** desplegado el 2026-10-08 con `alcance: todo` (run 37852343203, commit `28e397f`). El
 contenedor `juanito-agent` tiene el link nuevo y Baileys reconectó a la primera.
 
+### 18.CJ 🔵 Push del viernes (llamadas del lunes) + video nuevo de Tactical Investor (2026-10-09)
+
+Pedido del jefe, tres cambios:
+
+1. **Video de Tactical Investor** → `https://youtu.be/SYt-wv6V9Mw` ("De 0 a Tactical Investor", canal
+   RETIA GROWTH). Reemplaza a `YQwmGRCBlF0` (canal de Alejandro) en `materials.tactical_investor.video`.
+   Sigue yendo ANTES del brochure (`order`). Lo leen el Push 1 y el push nuevo.
+2. **Push del viernes** (`runPushViernes`, `scheduler/calendly.js`): viernes **4pm** (`0 16 * * 5`), un
+   digest ADICIONAL por closer con las llamadas del **lunes** de **Método Comunicarte** y **De Cero a
+   Tactical Investor** (`FRIDAY_PROGRAMS` = las claves de `FRIDAY_COPY` en `calendly/index.js`). Copy
+   dictado por el jefe, uno por programa, con fecha ("lunes 12 de octubre"), hora, video y brochure
+   tomados de `PROGRAMS` (cambiar un link allá lo cambia acá). Reglas:
+   - **Adicional**: el Push 1 del domingo 7pm sigue saliendo; el viernes NO marca `prefired`.
+   - Guarda de día: fuera de viernes no manda nada (un disparo manual listaría el martes bajo un
+     texto que dice "el lunes").
+   - Programa sin copy de viernes → `buildPrecallText` devuelve null → "mándalo manual".
+   - Env: `CALENDLY_PUSH_VIERNES_ENABLED=false` lo apaga sin redeploy; `CALENDLY_PUSH_VIERNES_CRON`
+     cambia la hora. El respeto a dry-run/opt-in por conexión es el de siempre (`deliver`).
+   - Etiqueta de envío en `wa_outbound`: `pushviernes`.
+3. **Pendiente (decisión del jefe)**: cambiar los links de brochure de Comunicarte y Tactical Investor
+   de la CARPETA de Drive al PDF directo. NO hecho: faltan los links del PDF. Ojo: la carpeta se
+   eligió a propósito (sirve el material vigente aunque Retia lo actualice; ver comentarios en
+   `programs.js`); apuntar al PDF pierde eso.
+
+Tests: `test/calendly.push-viernes.test.js` (6). En Mac el set de rojos de la suite es idéntico antes y
+después (los de `better-sqlite3`).
+
 ### Secretos (decididos, ver §13)
 
 - `CALENDLY_TOKEN`: **NO rotar** (decidido).

@@ -254,7 +254,9 @@ export const PROGRAMS = {
       // jefe (2026-08-21): los dos conviven en el push a propósito — el de YouTube abre en un clic
       // y el .mp4 de Drive viaja con el resto del material. Al que le sobre una línea acá: no
       // sobra, ya se preguntó.
-      video: 'https://youtu.be/YQwmGRCBlF0',
+      // 2026-10-09 (pedido del jefe): video oficial del canal RETIA GROWTH, reemplaza al
+      // anterior (youtu.be/YQwmGRCBlF0, canal de Alejandro). Lo usan el Push 1 y el push del viernes.
+      video: 'https://youtu.be/SYt-wv6V9Mw',
       // ⚠️ ÚNICO programa cuyo `brochure` es una CARPETA de Drive, no un archivo. Es el link
       // OFICIAL que mandó Retia (confirmado por el jefe 2026-08-21) y contiene el paquete
       // completo del programa: el brochure de la cohorte del 29-sep + el video en .mp4.
