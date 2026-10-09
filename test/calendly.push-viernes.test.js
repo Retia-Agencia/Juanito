@@ -46,6 +46,11 @@ test('el video de Tactical Investor es el de RETIA GROWTH', () => {
   assert.equal(MATERIAL_LINKS.tactical_investor.video, 'https://youtu.be/SYt-wv6V9Mw');
 });
 
+test('el brochure de ambos programas es el PDF directo de Drive', () => {
+  assert.equal(MATERIAL_LINKS.comunicarte.brochure, 'https://drive.google.com/file/d/1ugZOqhGXsIVMpF1Ym1quCKt1mHwQya4r/view?usp=sharing');
+  assert.equal(MATERIAL_LINKS.tactical_investor.brochure, 'https://drive.google.com/file/d/1XH1TlgAgnr8rJX2j_Mvo4wf4pppDYjsN/view?usp=sharing');
+});
+
 test('copy Comunicarte: fecha, hora, video y brochure', () => {
   const t = buildPrecallText({
     programKey: 'comunicarte', pushN: 'viernes', primerNombre: 'Ana', closer: 'Andrea', hora: '10:00 am', fecha: '12 de octubre',

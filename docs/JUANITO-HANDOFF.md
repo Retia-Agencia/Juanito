@@ -7128,10 +7128,12 @@ Pedido del jefe, tres cambios:
    - Env: `CALENDLY_PUSH_VIERNES_ENABLED=false` lo apaga sin redeploy; `CALENDLY_PUSH_VIERNES_CRON`
      cambia la hora. El respeto a dry-run/opt-in por conexión es el de siempre (`deliver`).
    - Etiqueta de envío en `wa_outbound`: `pushviernes`.
-3. **Pendiente (decisión del jefe)**: cambiar los links de brochure de Comunicarte y Tactical Investor
-   de la CARPETA de Drive al PDF directo. NO hecho: faltan los links del PDF. Ojo: la carpeta se
-   eligió a propósito (sirve el material vigente aunque Retia lo actualice; ver comentarios en
-   `programs.js`); apuntar al PDF pierde eso.
+3. **Brochure → PDF directo** (mismo día, segundo deploy): `materials.comunicarte.brochure` →
+   `drive.google.com/file/d/1ugZOqhG…` (Brochure_Comunicarte.pdf) y `materials.tactical_investor.brochure` →
+   `drive.google.com/file/d/1XH1TlgA…` (Brochure-De-Cero-a-Tactical-Investor-10nov.pdf), ambos verificados
+   200 sin autenticar. Aplica al Push 1 y al del viernes. ⚠️ Se pierde lo que justificaba la carpeta (servir el
+   material vigente sin tocar el repo): cuando Retia actualice un brochure hay que cambiar el link a mano. El de
+   Tactical Investor es de la cohorte del 10-nov.
 
 **Live:** desplegado el 2026-10-09 con `alcance: todo` (run 37988219262, commit `ba18c9d`). VPS verificado:
 `juanito-agent` y `juanito-dash` Up, Baileys reconectó, el log de arranque muestra `push viernes: 0 16 * * 5`.

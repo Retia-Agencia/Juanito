@@ -257,17 +257,13 @@ export const PROGRAMS = {
       // 2026-10-09 (pedido del jefe): video oficial del canal RETIA GROWTH, reemplaza al
       // anterior (youtu.be/YQwmGRCBlF0, canal de Alejandro). Lo usan el Push 1 y el push del viernes.
       video: 'https://youtu.be/SYt-wv6V9Mw',
-      // ⚠️ ÚNICO programa cuyo `brochure` es una CARPETA de Drive, no un archivo. Es el link
-      // OFICIAL que mandó Retia (confirmado por el jefe 2026-08-21) y contiene el paquete
-      // completo del programa: el brochure de la cohorte del 29-sep + el video en .mp4.
-      // NO reemplazar por el link del PDF de adentro: perdería el video, y Retia actualiza
-      // el contenido de la carpeta sin avisarnos — apuntar a la carpeta es lo que hace que
-      // el push siga sirviendo el material vigente sin tocar el repo.
-      // El file ID viejo (1ec7QyeXF95…) respondía 401 sin autenticar y ni siquiera es legible
-      // con nuestra cuenta (404 por API): vive en un Drive de Retia fuera de nuestro alcance,
-      // así que no aplicó el patrón "conservar el file ID" de §18.BK — no había qué conservar.
-      // Verificado 200 sin autenticar antes de cablearlo.
-      brochure: 'https://drive.google.com/drive/folders/18DJsMV8yLFRyov1iGhAyMo8nmHWUmgJ3?usp=sharing',
+      // 2026-10-09 (pedido del jefe): `brochure` pasa de la CARPETA de Drive (18DJsMV8…, el paquete
+      // oficial de Retia) al PDF directo, para que el link abra el brochure de una vez.
+      // Verificado 200 sin autenticar y descargable (Brochure-De-Cero-a-Tactical-Investor-10nov.pdf,
+      // 2 MB). ⚠️ Es el de la cohorte del 10-nov: cuando Retia saque el siguiente hay que cambiar
+      // este link a mano (la carpeta lo hacía sola). El .mp4 de la carpeta ya no se manda; el video
+      // va por YouTube.
+      brochure: 'https://drive.google.com/file/d/1XH1TlgAgnr8rJX2j_Mvo4wf4pppDYjsN/view?usp=sharing',
       order: ['video', 'brochure'],
     },
     active: true,
@@ -302,8 +298,8 @@ export const PROGRAMS = {
       from: 'de ComunicArte',
       program: 'programa Método Comunicarte',
     },
-    // ⚠️ SEGUNDO programa cuyo `brochure` es una CARPETA de Drive, no un archivo (el otro es
-    // tactical_investor). Decisión del jefe (2026-08-25): un solo link a la carpeta oficial, que
+    // HISTORIA (hasta 2026-10-09 el `brochure` fue una CARPETA de Drive; hoy es el PDF directo, ver
+    // abajo). Decisión del jefe (2026-08-25): un solo link a la carpeta oficial, que
     // contiene el paquete completo — "Brochure Comunicarte.pdf" (8 MB) y "Video comunicarte.mp4"
     // (3,2 GB). Se evaluó enlazar los dos archivos por separado, como los 6 programas de 30X, y
     // se descartó: apuntar a la carpeta es lo que hace que el push siga sirviendo el material
@@ -316,7 +312,10 @@ export const PROGRAMS = {
     // "duplicado" dentro de la carpeta es a propósito.
     // Carpeta verificada HTTP 200 sin autenticar, y sus archivos con `anyoneWithLink: reader`.
     materials: {
-      brochure: 'https://drive.google.com/drive/folders/1OPBf5UufbzREVSwVmNIVXYH_cfeuPVQq?usp=sharing',
+      // 2026-10-09 (pedido del jefe): `brochure` pasa de la carpeta (1OPBf5Uu…) al PDF directo
+      // (Brochure_Comunicarte.pdf, 8,7 MB), verificado 200 sin autenticar y descargable. Ya no hay
+      // "material vigente automático": si ComunicArte actualiza el brochure, cambiar este link.
+      brochure: 'https://drive.google.com/file/d/1ugZOqhGXsIVMpF1Ym1quCKt1mHwQya4r/view?usp=sharing',
       video: 'https://youtu.be/D4BkMf8hnZY',
     },
     active: true,
