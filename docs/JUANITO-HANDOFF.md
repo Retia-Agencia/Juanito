@@ -5,7 +5,8 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-10-10** (§18.CL — links wa.me partidos por un paréntesis: arreglado y
+Última actualización: **2026-10-11** (§18.CM — el Push 1 de IGTK llegaba cortado porque el link wa.me
+terminaba en punto: arreglado y desplegado). Anterior: **2026-10-10** (§18.CL — links wa.me partidos por un paréntesis: arreglado y
 reenviado a Andrea; espejo de Tactical Investor; ADR 0004 de links cortos en Cloudflare). Anterior: **2026-10-09** (§18.CK — el Push 0 trae el Push 1; prueba de una semana de
 Push 1 al agendar en 30X). Anterior: **2026-10-05** (§18.CD — tercer programa de Retia: PowerTalk · "Comunícate con
 Confianza", conexión `powertalk` en dry-run, Push 5 contra el CRM de Retia). Anterior: **2026-09-02** (§18.BR — Maru Marquez entra a "De Cero a Tactical
@@ -7232,6 +7233,48 @@ de una sola persona (Mani y Alejo en Cloudflare, todo por GitHub Actions):
 - Crear la cuenta de Cloudflare de la empresa con usuario para Mani y Alejo (manual: exige login).
 - Tickets de construcción. El primero son los golden tests de todos los pushes.
 - Decidir si se le reenvía a Maru el push del viernes (las llamadas son el lunes 12).
+
+### 18.CM 🔵 El Push 1 de IGTK llegaba cortado: el link terminaba en punto (2026-10-11)
+
+**Síntoma.** Alejandro pidió un push de IGTK de prueba a su número. En el celular (Android) el link
+del lead quedaba subrayado solo hasta `…Quer%C3%ADa%20personalmente` (~190 de 1762 caracteres) y
+luego WhatsApp marcaba como links sueltos `2Fdrive.google.com…` y `2F30x.com…`. El closer toca el
+pedazo y el lead recibe el push mutilado.
+
+**Causa: el punto FINAL del texto.** Si el `text=` del wa.me termina en `.`, el detector de links de
+WhatsApp lo resuelve mal. Solo el Push 1 de IGTK cierra con una oración (el párrafo "no actuamos
+como una agencia…", `daba0c2`, **2026-09-07**); los otros 19 links (10 programas × Push 1/2) cierran
+con un link de materiales. **IGTK estuvo así ~5 semanas.** El fix de §18.CL (`!'()*`, ya en
+producción durante las pruebas) no lo cubría.
+
+**Cómo se encontró (bisección en el teléfono, mensajes vía `reminders`).** Descartado el largo
+(links de 150 a 1000 chars salen completos), la negrilla del encabezado y el `👉` pegado al link. El
+mismo link de 1762 chars, byte por byte, salía completo con `FIN` o con `%2E` al final y se cortaba
+con `.` al final, incluso solo, sin digest. Ojo al repetir: cortar un link de prueba en medio de un
+`%XX` da un falso corte.
+
+**Arreglo (commit `cb45238`).** `buildLeadLink` codifica el `.` final como `%2E` (el texto que ve el
+lead es idéntico). Test nuevo en `calendly.helpers.test.js`. Suites de Calendly en Windows: helpers
+50/50, escenarios 35/35, reagenda 20/20; **la suite completa en Linux no se corrió**. **Live:** run
+38154079743, `alcance: todo`, 2026-10-11 16:07 UTC. Ambos contenedores arriba, `compose config`
+lista `agent` y `dash`, WA reconectó una vez sin 405/401, y dentro del contenedor el link de IGTK
+termina en `t%C3%BA%2E`. Drift previo medido: el VPS era idéntico a `main` salvo
+`src/stripe/count.js` e `index.js`, huérfanos (nada los importa; el rsync no los borra).
+
+**Hallazgos de paso.**
+- **`CALENDLY_DEV_MIRROR_JID` (`147313234280449@lid`) NO es Alejandro.** El LID de Alejandro es
+  `129446371655733@lid`. La primera prueba (reminder #127, con encabezado "🧪 PRUEBA") le llegó a
+  ese otro chat, inactivo desde el 26-ago.
+- **Juanito sin créditos de Anthropic** (2026-10-11 15:47 UTC): el DM de Alejandro dio
+  `400 credit balance is too low`. Pushes y recordatorios siguen (no usan Claude); DMs y grupos no.
+- Los recordatorios de prueba quedaron en `reminders` con `created_by='prueba-igtk'` (#127–#137).
+
+**Pendiente:**
+- Recargar créditos de Anthropic.
+- Avisar a los closers de IGTK que el Push 1 venía cortado desde el 7-sep (los leads pudieron
+  recibir el precall incompleto).
+- Averiguar de quién es `147313234280449@lid` y corregir `CALENDLY_DEV_MIRROR_JID` si debía ser un dev.
+- Al cambiar cualquier copy precall: mirar el **último carácter** del texto, no el largo.
 
 ### Secretos (decididos, ver §13)
 
