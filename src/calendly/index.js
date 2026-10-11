@@ -441,7 +441,10 @@ export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora
 export function buildLeadLink(phone, text) {
   const digits = String(phone || '').replace(/\D/g, '');
   if (!digits || !text) return null;
-  return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
+  // encodeURIComponent deja `!'()*` crudos, y el linkificador de WhatsApp corta el link en un
+  // paréntesis: el push del viernes ("(hora Colombia)") le llegó partido a Andrea (2026-10-09).
+  const encoded = encodeURIComponent(text).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `https://wa.me/${digits}?text=${encoded}`;
 }
 
 // ─── Mensajes que recibe el CLOSER (Juanito → closer) ─────────────────────────

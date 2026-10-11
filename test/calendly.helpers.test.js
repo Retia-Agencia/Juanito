@@ -437,6 +437,10 @@ test('buildLeadLink normaliza el teléfono a dígitos y url-encodea el texto', (
   assert.equal(link, 'https://wa.me/573123884238?text=Hola%20Ana%2C%20%C2%BFc%C3%B3mo%20va%3F');
   assert.equal(buildLeadLink(null, 'x'), null);
   assert.equal(buildLeadLink('', 'x'), null);
+  // `!'()*` también van codificados: un paréntesis crudo parte el link en WhatsApp (2026-10-09).
+  const conParen = buildLeadLink('57300', '¡Hola! a las 9 (hora Colombia) *ya*');
+  assert.ok(!/[!'()*]/.test(conParen.split('?')[1]), conParen);
+  assert.equal(decodeURIComponent(conParen.split('text=')[1]), '¡Hola! a las 9 (hora Colombia) *ya*');
 });
 
 // ─── Copy precall por producto × push ─────────────────────────────────────────
