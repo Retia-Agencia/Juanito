@@ -130,6 +130,14 @@ hardening) tiene default seguro.
   `src.bak-*`, `brain.sqlite.bak-*`). El rsync del deploy **no** usa `--delete` fuera de
   `dashboard/`, justamente para no barrerlos.
 
+## Cloudflare (links cortos de los pushes de Retia)
+
+Diseñado, **no construido** (ADR 0004). Un Worker + D1 que redirige links cortos al wa.me largo;
+fuera del VPS, solo para programas de Retia. Contrato de acceso y runbook (credenciales, quién
+entra, cómo revisar si se cayó, cómo extenderlo a 30X) en
+[docs/LINKS-CORTOS-OPERACION.md](docs/LINKS-CORTOS-OPERACION.md). Regla: nada se cambia a mano en
+el panel de Cloudflare ni se despliega desde un computador; todo sale del repo por GitHub Actions.
+
 ## Historia técnica importante
 
 **Softban anterior:** el proceso crasheaba y el supervisor lo reiniciaba cada ~15s sin backoff →
@@ -162,7 +170,7 @@ loop rápido de reconexiones desde datacenter → WhatsApp lo detectó.
   `dashboard/server/csrf.js`. Sin él, ese archivo da ERR_MODULE_NOT_FOUND y parece una regresión.)
   (En Git Bash, prefijar con `MSYS_NO_PATHCONV=1` y usar rutas `C:/…` o el volumen no monta y
   la suite reporta **0 tests** en verde, que es peor que fallar.)
-  Baseline al **2026-09-18: 1234 tests, 1232 verdes, 2 rojos conocidos** (`call con TODOS sus
+  Baseline al **2026-10-10: 1298 tests, 1296 verdes, 2 rojos conocidos** (`call con TODOS sus
   pushes skipped…` y `reagenda manual superseded…`; los números de test se corren al agregar
   archivos, así que se buscan por nombre, no por índice). El tercer rojo histórico —links de
   Retia— murió solo al mudarse el sheet de Comunicarte (§18.BN). En Windows ese mismo commit da
@@ -175,7 +183,7 @@ loop rápido de reconexiones desde datacenter → WhatsApp lo detectó.
   ⚠️ Dos formas de leer un verde que no existe: la suite sale en **TAP** (`# tests`, no `ℹ tests`),
   así que un grep por `ℹ` no encuentra nada y parece que no corrió; y `docker build … | tail` se
   queda con el **exit code de `tail`** → reporta 0 con el daemon caído. Verificar el `$?` del build
-  y que el conteo sea ~1141, no 0. Por eso la lógica pura vive en módulos propios sin deps nativas: es la
+  y que el conteo sea ~1298, no 0. Por eso la lógica pura vive en módulos propios sin deps nativas: es la
   parte que sí se puede iterar en Windows.
 
 ## Cómo retomar una sesión

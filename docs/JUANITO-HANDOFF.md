@@ -5,7 +5,8 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-10-09** (§18.CK — el Push 0 trae el Push 1; prueba de una semana de
+Última actualización: **2026-10-10** (§18.CL — links wa.me partidos por un paréntesis: arreglado y
+reenviado a Andrea; espejo de Tactical Investor; ADR 0004 de links cortos en Cloudflare). Anterior: **2026-10-09** (§18.CK — el Push 0 trae el Push 1; prueba de una semana de
 Push 1 al agendar en 30X). Anterior: **2026-10-05** (§18.CD — tercer programa de Retia: PowerTalk · "Comunícate con
 Confianza", conexión `powertalk` en dry-run, Push 5 contra el CRM de Retia). Anterior: **2026-09-02** (§18.BR — Maru Marquez entra a "De Cero a Tactical
 Investor" heredando el buzón-rol `equipo@ttrading.co`; Sebastian Salazar queda desvinculado del
@@ -7185,8 +7186,52 @@ víspera que se la salta, reserva vieja, prueba vencida, otra conexión, sin opt
 en `calendly.lead-form.test.js`. **Suite en Linux: 1298 / 1295**, los 3 rojos de la línea base
 (los 2 conocidos + "el mensaje lleva los links de Retia", que ya estaba rojo antes de este cambio).
 
-**Pendiente de operación:** desplegar con `alcance: todo` y verificar que el arranque diga
-`push1 al agendar: 30x hasta 2026-10-16 (21d)`.
+**Pendiente de operación:** ~~desplegar con `alcance: todo` y verificar que el arranque diga
+`push1 al agendar: 30x hasta 2026-10-16 (21d)`~~ ✅ hecho: run 38007507881 (2026-10-10 00:05 UTC,
+`alcance: todo`); el arranque lo dice (verificado en §18.CL).
+
+### 18.CL 🔵 Links wa.me partidos por un paréntesis + espejo de Tactical Investor + diseño de links cortos (2026-10-10)
+
+**Incidente.** Andrea Machado mostró que los links del push del viernes (§18.CJ) le llegaban
+partidos: un pedazo era link y el resto texto, así que el wa.me abría el chat sin el mensaje
+completo. **Causa:** `buildLeadLink` usaba `encodeURIComponent`, que deja `!'()*` sin codificar,
+y el linkificador de WhatsApp corta el link en un paréntesis. El copy del viernes es el único con
+"(hora Colombia)". Descartado que fuera el largo: el Push 1 del 08-oct a Andrea pesó 20.259
+caracteres con 17 links y abrió bien.
+
+**Reenvío (2026-10-10 20:24 local).** Los dos digests del viernes de Andrea (`registro@ttrading.co`,
+12 leads de Tactical Investor, y `info@eventoscomunicarte.com`, 5 de Comunicarte) se reenviaron con
+los paréntesis codificados. Salieron por la tabla `reminders` (ids 124 y 125, `created_by =
+'reenvio-push-viernes'`), así que pasaron por la cola anti-ban y llevan el prefijo "⏰
+Recordatorio:". **Maru (`equipo@ttrading.co`, 11 leads) recibió el mismo push partido y NO se le
+reenvió** (no se pidió).
+
+**Arreglo (commit `92416c9`).** `buildLeadLink` codifica también `!'()*` (`%21 %27 %28 %29 %2A`).
+El texto que recibe el lead es idéntico. Test nuevo en `calendly.helpers.test.js`. Suite en Linux
+sobre el código de §18.CK: **1298 tests, 1296 verdes**, los mismos 2 rojos conocidos antes y
+después (el de "links de Retia" que §18.CK reportaba rojo hoy pasa). **Live:** run 38106320911,
+`alcance: todo`, `DEPLOYED_SHA = 9c3b0e2`, 2026-10-11 02:48 UTC. Ambos contenedores arriba sin
+reinicios, Baileys reconectó una sola vez, arranque con `push viernes: 0 16 * * 5` y `push1 al
+agendar: 30x hasta 2026-10-16`. Ningún push programado en los 40 min alrededor del deploy.
+
+**Espejo.** Pedido de Mani: volver a espejar Tactical Investor para seguir cómo llegan los links.
+`settings.calendly_mirror_connections` pasó de `powertalk` a **`powertalk,retia`** en caliente
+(sin reinicio), y el fallback del `.env` del VPS quedó igual, con respaldo
+`.env.bak-20261010-mirror-retia`. Método Comunicarte sigue fuera. Revierte §18.CG solo en `retia`.
+
+**Links cortos (diseñado, no construido).** Para que el closer reciba `…/l/a8Kx2Qp` en vez de un
+wa.me de ~1.200 caracteres. Medido: ~273 links distintos por día hábil, y el 78% de lo que Juanito
+les manda a los closers son links. Decidido en [ADR 0004](adr/0004-links-cortos-en-cloudflare.md):
+Cloudflare Worker + D1, fuera del VPS, **solo programas de Retia** (regla de empresa en el código),
+interruptor por conexión en la DB, caída automática al link largo y golden tests antes de tocar
+nada. Análisis: [LINKS-CORTOS-PLAN.md](LINKS-CORTOS-PLAN.md). Contrato de acceso para que no dependa
+de una sola persona (Mani y Alejo en Cloudflare, todo por GitHub Actions):
+[LINKS-CORTOS-OPERACION.md](LINKS-CORTOS-OPERACION.md).
+
+**Pendiente:**
+- Crear la cuenta de Cloudflare de la empresa con usuario para Mani y Alejo (manual: exige login).
+- Tickets de construcción. El primero son los golden tests de todos los pushes.
+- Decidir si se le reenvía a Maru el push del viernes (las llamadas son el lunes 12).
 
 ### Secretos (decididos, ver §13)
 

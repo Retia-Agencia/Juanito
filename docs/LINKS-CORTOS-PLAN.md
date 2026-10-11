@@ -2,6 +2,8 @@
 
 > Estado: **análisis, sin código.** Este documento define qué hay que averiguar y probar ANTES de
 > construir. Sale de él un ADR (0004), una spec corta y los tickets. Abierto el 2026-10-10.
+> Decisión tomada: [ADR 0004](adr/0004-links-cortos-en-cloudflare.md). Acceso y operación:
+> [LINKS-CORTOS-OPERACION.md](LINKS-CORTOS-OPERACION.md).
 
 ## Qué queremos
 

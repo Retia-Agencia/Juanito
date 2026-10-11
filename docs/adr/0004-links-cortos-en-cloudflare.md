@@ -92,6 +92,11 @@ de Cloudflare guardado como secreto de GitHub. El secreto compartido llega al `.
 mismo camino del deploy. Lo único manual es crear la cuenta de Cloudflare y su token, porque eso
 exige iniciar sesión.
 
+El acceso no puede depender de una sola persona (pedido de Mani, 2026-10-10): cuenta de la empresa
+con un usuario propio para Mani y otro para Alejo, y deploy, health check y rollback desde GitHub
+Actions. Contrato completo (credenciales, quién tiene qué, runbook y cómo extenderlo a 30X) en
+[docs/LINKS-CORTOS-OPERACION.md](../LINKS-CORTOS-OPERACION.md).
+
 ### Rollout
 
 1. Desplegar el Worker y el código del bot con todo apagado. Los golden tests prueban que no cambió
