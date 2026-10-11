@@ -438,12 +438,18 @@ export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora
 // Normaliza el teléfono a dígitos E.164 sin `+`. Devuelve null si no hay teléfono
 // o si no hay texto (programa sin copy → buildPrecallText devuelve null; sin esta
 // guarda, encodeURIComponent(null) mandaba al lead un chat con la palabra "null").
+//
+// encodeURIComponent deja `!'()*` crudos y el linkificador de WhatsApp corta el link en un
+// paréntesis: el push del viernes ("(hora Colombia)") le llegó partido a Andrea (2026-10-09).
+// Y el punto FINAL también: si el texto cierra con `.`, WhatsApp subraya solo los primeros ~190
+// caracteres del link. Medido en Android el 2026-10-11 con el Push 1 de IGTK (roto así desde
+// daba0c2, 2026-09-07): el mismo link de 1762 chars con `.` final se cortaba; con `%2E` o con
+// otra letra al final salía completo. Un `.` en medio no molesta.
 export function buildLeadLink(phone, text) {
   const digits = String(phone || '').replace(/\D/g, '');
   if (!digits || !text) return null;
-  // encodeURIComponent deja `!'()*` crudos, y el linkificador de WhatsApp corta el link en un
-  // paréntesis: el push del viernes ("(hora Colombia)") le llegó partido a Andrea (2026-10-09).
-  const encoded = encodeURIComponent(text).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  const pct = (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`;
+  const encoded = encodeURIComponent(text).replace(/[!'()*]/g, pct).replace(/\.$/, pct);
   return `https://wa.me/${digits}?text=${encoded}`;
 }
 

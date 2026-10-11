@@ -443,6 +443,16 @@ test('buildLeadLink normaliza el teléfono a dígitos y url-encodea el texto', (
   assert.equal(decodeURIComponent(conParen.split('text=')[1]), '¡Hola! a las 9 (hora Colombia) *ya*');
 });
 
+// Un link que termina en `.` WhatsApp lo subraya solo hasta ~190 chars (medido en Android):
+// el closer toca y el lead recibe el push mutilado. Le pasó al Push 1 de IGTK desde 2026-09-07.
+test('buildLeadLink no deja el link terminando en punto', () => {
+  const link = buildLeadLink('+573001234567', 'Hola (Ana)! Nos vemos mañana.');
+  assert.match(link, /%2E$/);
+  assert.equal(decodeURIComponent(link.split('?text=')[1]), 'Hola (Ana)! Nos vemos mañana.');
+  // un punto en medio se queda como está
+  assert.match(buildLeadLink('+573001234567', 'a.b'), /text=a\.b$/);
+});
+
 // ─── Copy precall por producto × push ─────────────────────────────────────────
 
 test('buildPrecallText Push 1 distingue producto (intro + nombre del programa)', () => {
