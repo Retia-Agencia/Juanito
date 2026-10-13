@@ -57,6 +57,7 @@ import {
   sqliteUtcToMs,
 } from '../calendly/push-logic.js';
 import { push5DueUtc, buildPush5Message } from '../calendly/sheet-push.js';
+import { buildConfirmacionPregunta, ordenarPorHora } from '../calendly/confirmacion-logic.js';
 import { makeFormIndexCache, formPhonesFor, altPhonesFor } from '../calendly/lead-form.js';
 import { pickSupersededPushes, isManualUuid, planRescheduledPushes } from '../calendly/reschedule-logic.js';
 import { isCoveredProgram, decideFromAgenda } from '../hubspot/deals.js';
@@ -312,6 +313,16 @@ const whenOfCall = (startIso, base) =>
 const prefiredKeyOfRow = (p) =>
   String(p.event_uuid).startsWith('hubspot:') ? p.event_uuid : `https://api.calendly.com/scheduled_events/${p.event_uuid}`;
 
+// ─── Confirmación en el Push 2 (§18.CN, 2026-10-13) ─────────────────────────────────────────
+// En las conexiones listadas, justo después del Push 2 Juanito le pregunta al closer quiénes le
+// confirmaron. Lo alimenta el Dashboard de Closers (las citas salen de HubSpot, que no sabe de
+// cancelaciones). Vacío = apagada: el Push 2 sale exactamente como antes.
+const CONFIRMACION_PUSH2 = () =>
+  new Set((process.env.CALENDLY_CONFIRMACION_PUSH2 || '').split(',').map((s) => s.trim()).filter(Boolean));
+// El id que usa call_outcomes para la misma cita: el uuid de Calendly (la uri sin el prefijo) o
+// el uuid sintético hubspot:<id>.
+const eventUuidDeKey = (key) => String(key || '').split('/').pop() || null;
+
 // Agenda diaria a la ADMIN de EstadoX (7am). No es un push a closers: es el conteo de cuántas
 // llamadas tiene HOY cada closer de IA para Abogados, por DM a quien supervisa. Se autodesactiva
 // sin destinatarios, como todos los jobs del scheduler.
@@ -441,6 +452,8 @@ async function deps() {
     // Push 1 adelantado (2026-09-21): citas cuyo Push 1 ya salió antes de su noche.
     getPush1PrefiredKeys: db.getPush1PrefiredKeys,
     markPush1Prefired: db.markPush1Prefired,
+    // §18.CN: la pregunta de confirmación que sigue al Push 2.
+    guardarLoteConfirmacion: db.guardarLoteConfirmacion,
     // Anti-ban: la agenda a la admin es un DM a un tercero, no a un closer con opt-in.
     // Sin hilo previo NO se entrega (mismo gate que el reporte de las 8pm).
     hasDmThread: db.hasDmThread,
@@ -2031,6 +2044,31 @@ async function hubspotDigestItems(d, { calendlyCalls, minStartIso, maxStartIso, 
   }
 }
 
+// §18.CN: después de un Push 2 entregado, la pregunta "¿quiénes te confirmaron?". Se guardan las
+// filas ANTES de mandarla: si el closer contesta rápido, la captura ya tiene con qué cruzar. Va
+// como mensaje aparte (no dentro del digest) para que la respuesta sea corta y no se mezcle con
+// los links. Una cita sin id (ni uri de Calendly ni hubspot:) no se puede cruzar y no se numera.
+async function preguntarConfirmacion(d, { phone, name, email, items, nowMs }) {
+  if (!CONFIRMACION_PUSH2().has(accountOfCloser(email)) || !d.guardarLoteConfirmacion) return;
+  const lista = ordenarPorHora(items).filter((it) => eventUuidDeKey(it.prefiredKey));
+  if (!lista.length) return;
+  const lote = `${phone}:${fechaLocal(nowMs)}`;
+  d.guardarLoteConfirmacion(
+    lista.map((it, i) => ({
+      event_uuid: eventUuidDeKey(it.prefiredKey),
+      lote,
+      posicion: i + 1,
+      program: it.programKey || null,
+      closer_email: email,
+      closer_phone: phone,
+      closer_name: name || null,
+      lead_name: it.name || it.firstName || null,
+      call_start: toSqliteUtc(new Date(it.startIso)),
+    }))
+  );
+  await deliver(d, phone, buildConfirmacionPregunta({ items: lista, tz: TZ() }), 'confirmacion', email);
+}
+
 // `incluyePrograma(programKey)` decide qué citas entran a ESTE digest. Default: todas — así el
 // Push 2 y cualquier caller viejo se comportan exactamente igual que antes. Solo el Push 1 la
 // usa hoy, para partirse en dos corridas (5:30pm los programas tempranos / 7pm el resto).
@@ -2180,6 +2218,7 @@ async function runDigest(
     if (marcarPrefired && outcome === 'sent' && d.markPush1Prefired) {
       d.markPush1Prefired(items.map((it) => it.prefiredKey).filter(Boolean));
     }
+    if (pushN === 2 && outcome === 'sent') await preguntarConfirmacion(d, { phone, name, email, items, nowMs });
   }
   if (saltadas) console.log(`[Calendly] Digest push${pushN}: ${saltadas} cita(s) omitidas, su Push 1 ya salió adelantado`);
 

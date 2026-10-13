@@ -15,6 +15,10 @@
 // Destino: la función RPC `ingest_juanito` de Supabase, con la llave PUBLICABLE + un secreto
 // compartido. Juanito no tiene la service role de ese proyecto.
 //
+// §18.CN: también manda `call_confirmaciones` (la respuesta del closer a "¿quiénes te
+// confirmaron?" del Push 2) a `ingest_juanito_confirmaciones`, con el mismo secreto. Allá las
+// citas salen de HubSpot, y esto es lo que dice si una cita se canceló.
+//
 // Se autodesactiva si falta CLOSERS_SYNC_URL, CLOSERS_SYNC_KEY o CLOSERS_SYNC_SECRET.
 
 import { fetchConDeadline } from '../../src/common/http.js';
@@ -50,13 +54,26 @@ export function filaParaDashboard(r) {
   };
 }
 
+export function filaConfirmacionParaDashboard(r) {
+  return {
+    event_uuid: r.event_uuid,
+    program: r.program,
+    closer_email: r.closer_email,
+    lead_name: r.lead_name,
+    call_start: utcIso(r.call_start),
+    estado: r.estado,
+    preguntada_at: utcIso(r.preguntada_at),
+    answered_at: utcIso(r.answered_at),
+  };
+}
+
 export function syncConfigurado() {
   return Boolean(process.env.CLOSERS_SYNC_URL && process.env.CLOSERS_SYNC_KEY && process.env.CLOSERS_SYNC_SECRET);
 }
 
 // Manda en lotes. Devuelve cuántas filas aceptó el dashboard; lanza si una respuesta no es 2xx.
-export async function enviar(filas) {
-  const url = `${process.env.CLOSERS_SYNC_URL.replace(/\/$/, '')}/rest/v1/rpc/ingest_juanito`;
+export async function enviar(filas, rpc = 'ingest_juanito') {
+  const url = `${process.env.CLOSERS_SYNC_URL.replace(/\/$/, '')}/rest/v1/rpc/${rpc}`;
   let total = 0;
   for (let i = 0; i < filas.length; i += LOTE) {
     const res = await fetchConDeadline(url, {
@@ -67,7 +84,7 @@ export async function enviar(filas) {
       },
       body: JSON.stringify({ secreto: process.env.CLOSERS_SYNC_SECRET, filas: filas.slice(i, i + LOTE) }),
     });
-    if (!res.ok) throw new Error(`ingest_juanito → ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    if (!res.ok) throw new Error(`${rpc} → ${res.status}: ${(await res.text()).slice(0, 200)}`);
     total += Number(await res.json()) || 0;
   }
   return total;
@@ -94,10 +111,33 @@ async function leer({ completo }) {
     .map(filaParaDashboard);
 }
 
+async function leerConfirmaciones({ completo }) {
+  const { default: db } = await import('../../src/db/index.js');
+  const progs = programas30x();
+  const ventana = completo
+    ? ''
+    : `AND (call_start >= datetime('now', '-${DIAS_INCREMENTAL} days')
+            OR answered_at >= datetime('now', '-${DIAS_INCREMENTAL} days'))`;
+  return db
+    .prepare(
+      `SELECT event_uuid, program, closer_email, lead_name, call_start, estado, preguntada_at, answered_at
+         FROM call_confirmaciones
+        WHERE program IN (${progs.map(() => '?').join(',')}) ${ventana}`
+    )
+    .all(...progs)
+    .map(filaConfirmacionParaDashboard);
+}
+
 async function sincronizar(completo) {
   const filas = await leer({ completo });
   const n = await enviar(filas);
   console.log(`[Dash] sync dashboard-closers: ${n}/${filas.length} outcomes${completo ? ' (histórico completo)' : ''}`);
+  // Aparte y después: una falla acá (por ejemplo, el dashboard sin la migración 0012) no
+  // puede frenar los outcomes, que ya salieron.
+  const conf = await leerConfirmaciones({ completo });
+  if (!conf.length) return;
+  const m = await enviar(conf, 'ingest_juanito_confirmaciones');
+  console.log(`[Dash] sync dashboard-closers: ${m}/${conf.length} confirmaciones`);
 }
 
 export function start() {

@@ -140,6 +140,28 @@ db.exec(`
     created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
+  -- Confirmación de las llamadas del día, preguntada justo después del Push 2 (§18.CN). Una fila
+  -- por call; las del mismo mensaje comparten lote (closer + día) y posicion es su número en la
+  -- lista. La lee el Dashboard de Closers: ahí las citas salen de HubSpot, que no se entera de
+  -- las cancelaciones.
+  CREATE TABLE IF NOT EXISTS call_confirmaciones (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_uuid    TEXT NOT NULL UNIQUE,      -- uuid de Calendly o hubspot:<meetingId> (como call_outcomes)
+    lote          TEXT NOT NULL,             -- '<closer_phone>:<YYYY-MM-DD local>'
+    posicion      INTEGER NOT NULL,          -- 1..n, el número que ve el closer
+    program       TEXT,
+    closer_email  TEXT,
+    closer_phone  TEXT NOT NULL,
+    closer_name   TEXT,
+    lead_name     TEXT,
+    call_start    TEXT NOT NULL,             -- 'YYYY-MM-DD HH:MM:SS' UTC
+    estado        TEXT NOT NULL DEFAULT 'pendiente', -- pendiente | confirmada | no_confirmada | cancelada
+    raw_reply     TEXT,
+    reprompted    INTEGER NOT NULL DEFAULT 0,
+    preguntada_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    answered_at   DATETIME
+  );
+
   -- Setteo REPORTADO por el closer (§18.AZ). Complementa —no reemplaza— el conteo que
   -- sale de HubSpot (hubspot/setteo.js): ese solo ve lo que el closer REGISTRÓ en el CRM,
   -- y el setteo por WhatsApp que nunca llega allá es invisible para todos. Esta tabla es
@@ -610,6 +632,9 @@ db.exec(`
   -- §18.AB: outcomes pendientes por closer (captura de respuesta) + insistencia por asked_at.
   CREATE INDEX IF NOT EXISTS idx_call_outcomes_pending ON call_outcomes(status, closer_phone, asked_at);
   CREATE INDEX IF NOT EXISTS idx_call_outcomes_program ON call_outcomes(program, call_start);
+  -- §18.CN: el lote abierto de un closer (captura) y la ventana del sync al dashboard.
+  CREATE INDEX IF NOT EXISTS idx_call_confirmaciones_lote ON call_confirmaciones(closer_phone, preguntada_at);
+  CREATE INDEX IF NOT EXISTS idx_call_confirmaciones_program ON call_confirmaciones(program, call_start);
   -- §18.AZ: el query caliente del setteo es siempre "los de ESTE closer en ESTA ventana"
   -- (/missetteos y el bloque del jefe). El UNIQUE ya cubre (closer, lead, fecha), pero
   -- arranca por lead_norm → no sirve para filtrar por rango de fechas.

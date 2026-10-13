@@ -7,6 +7,7 @@ import { handleBossMessage, handleGroupMessage, handlePublicDm, handleApprovalCo
 import { handleCommand, isReportCommand, wantsMetrics } from './bot/commands.js';
 import { handleCloserOptin } from './calendly/optin.js';
 import { captureOutcomeReply } from './calendly/outcome-capture.js';
+import { captureConfirmacionReply } from './calendly/confirmacion-capture.js';
 import { captureSetteoReply, guardarSetteos, isSetteoCaptureOn } from './setteo/capture.js';
 import { buildMisSetteos } from './setteo/metricas.js';
 import { parseSetteoWithAi } from './setteo/setteo-ai.js';
@@ -265,6 +266,14 @@ async function onMessage({ chatId, isGroup, text, sender, groupName, messageId, 
     if (!sender?.endsWith('@s.whatsapp.net') && !sender?.endsWith('@lid')) {
       return;
     }
+
+    // Respuesta a la confirmación del Push 2 (§18.CN). Va antes del Push 4: "1 3" responde las
+    // dos preguntas, y el módulo cede si el Push 4 abierto se preguntó después.
+    const confirmacionCaptured = await captureConfirmacionReply({ from: sender, pushName, text, messageId }).catch((e) => {
+      console.error('[Main] captureConfirmacionReply:', e.message);
+      return false;
+    });
+    if (confirmacionCaptured) return;
 
     // Respuesta de un closer a un Push 4 (registro de outcome §18.AB) → captúrala
     // ANTES del opt-in (que se tragaría cualquier mensaje de un closer conocido).
