@@ -29,6 +29,23 @@ export function programPipelines() {
   return out;
 }
 
+// Pipeline → programa, SOLO para clasificar una reunión cuyo título no dice el programa (§18.CO).
+// No toca el modelo nudge: `isCoveredProgram` sigue leyendo `programPipelines()`. Los cuatro
+// pipelines de 30X van fijos porque el default de arriba solo trae los del nudge.
+const PIPELINES_30X = {
+  '887379064': 'developers',
+  '904247681': 'second_brain',
+  '887379063': 'operaciones',
+  '916500025': 'instagram',
+};
+
+export function programForPipeline(pipelineId) {
+  if (!pipelineId) return null;
+  const id = String(pipelineId);
+  const deEnv = Object.entries(programPipelines()).find(([, p]) => String(p) === id)?.[0];
+  return deEnv || PIPELINES_30X[id] || null;
+}
+
 // pipelineId del programa, o null si el programa no está cubierto (→ Push 4 clásico).
 export function pipelineForProgram(programKey) {
   return programPipelines()[programKey] || null;

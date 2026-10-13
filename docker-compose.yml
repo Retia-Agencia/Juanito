@@ -219,6 +219,9 @@ services:
       - HUBSPOT_PAT=${HUBSPOT_PAT:-}
       - HUBSPOT_ENABLED=${HUBSPOT_ENABLED:-}
       - HUBSPOT_PORTAL_ID=${HUBSPOT_PORTAL_ID:-50929115}
+      # HubSpot como fuente única de las citas (§18.CO): en estas conexiones Juanito no lee Calendly
+      # (30X lo cambió por el assigner, que agenda directo en HubSpot). Vacío = off.
+      - HUBSPOT_FUENTE_CONEXIONES=${HUBSPOT_FUENTE_CONEXIONES-}
       - HUBSPOT_NUDGE_ENABLED=${HUBSPOT_NUDGE_ENABLED:-false}
       # Cosecha por agenda_status (§18.AG) — evolución del nudge: en vez de picar al closer
       # por la etapa del deal, deriva el outcome directo de agenda_status. Off por default,

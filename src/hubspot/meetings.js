@@ -106,7 +106,9 @@ const dedupKey = (email, dbUtc) => `${String(email).toLowerCase().trim()}|${dbUt
 // saliera con el email de HubSpot (pablosuarez+hubspot@) no deduplicaría contra su gemela de
 // Calendly (pablosuarez@) y la call aparecería DOS VECES en la agenda del jefe.
 // Devuelve [{ event_uuid, program, closer_email, prospect_name, call_start, source:'hubspot' }].
-export function meetingsToCalls(meetings = [], { ownerEmailById = {}, ownerToCloser = {} } = {}) {
+// `programaPorMeeting` = { meetingId: programKey } desde el pipeline de su deal (§18.CO): el
+// respaldo cuando el título no dice el programa ("Admisiones", "30X Sales"). El título manda.
+export function meetingsToCalls(meetings = [], { ownerEmailById = {}, ownerToCloser = {}, programaPorMeeting = {} } = {}) {
   const out = [];
   for (const m of meetings) {
     const props = m?.properties || {};
@@ -114,8 +116,8 @@ export function meetingsToCalls(meetings = [], { ownerEmailById = {}, ownerToClo
     const email = owner ? ownerToCloser[owner] : null;
     if (!email) continue; // no es de un closer (o es un owner que no gestionamos)
 
-    const program = programFromTitle(props.hs_meeting_title);
-    if (!program) continue; // interna / sin naming de programa → no es call de venta
+    const program = programFromTitle(props.hs_meeting_title) || programaPorMeeting[String(m.id)] || null;
+    if (!program) continue; // interna / sin naming de programa ni deal → no es call de venta
 
     const ms = meetingStartMs(props.hs_meeting_start_time);
     if (!Number.isFinite(ms)) continue; // sin hora no entra en ninguna agenda
@@ -130,7 +132,9 @@ export function meetingsToCalls(meetings = [], { ownerEmailById = {}, ownerToClo
       // Extras que solo consume el poll de pushes (agenda-poll.js). El reporte los ignora.
       meeting_id: m.id,
       created_at: props.hs_createdate || null,
-      join_url: conferencingUrl(props.hs_meeting_external_url, props.hs_meeting_location),
+      // hs_video_conference_url es donde HubSpot guarda el Meet de las citas sincronizadas del
+      // calendario (40 de 40 medidas el 2026-10-13); external_url ahí es el evento del calendario.
+      join_url: conferencingUrl(props.hs_video_conference_url, props.hs_meeting_external_url, props.hs_meeting_location),
     });
   }
   return out;
@@ -156,4 +160,16 @@ export function mergeAgendaSources(calendlyCalls = [], hubspotCalls = []) {
 
   calls.sort((a, b) => String(a.call_start).localeCompare(String(b.call_start)));
   return { calls, added: calls.length - calendlyCalls.length, duplicates };
+}
+
+// ¿La reunión dice que se canceló? Título "Canceled: …" / "Cancelado: …" (lo que dejan Calendly y
+// el assigner) u outcome CANCELED. Una reunión borrada no llega hasta acá: eso lo ve quien la pidió.
+export function esReunionCancelada(meeting) {
+  const props = meeting?.properties || {};
+  const titulo = String(props.hs_meeting_title || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+  return /^(canceled|cancelled|cancelad[oa])\b/.test(titulo) || props.hs_meeting_outcome === 'CANCELED';
 }
