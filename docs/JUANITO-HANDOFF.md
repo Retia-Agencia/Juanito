@@ -7334,6 +7334,51 @@ de `main`** (better-sqlite3 sin compilar). **La suite en Linux no se corrió.**
    siguiente: tras el Push 2 de las 6:30 sale la pregunta, una respuesta real queda en
    `call_confirmaciones`, y `docker logs juanito-dash` dice `N/N confirmaciones`.
 
+### 18.CO 🟡 HubSpot como fuente única de las citas en 30X (2026-10-13, en rama, sin desplegar)
+
+**Por qué.** 30X cambió Calendly por el **assigner**, que agenda directo en HubSpot. Medido con el
+Dashboard de Closers, la parte de las citas de 30X que Calendly no ve: **9 %** (semana del 14-sep)
+→ 29 % (21-sep) → 33 % (5-oct) → **44 %** (12-oct). Juanito ya las cubría como complemento
+(§18.AN/AU), pero con un hueco grave: **al entregar el Push 3/4 de una cita `hubspot:<id>`, la
+"validación" consultaba Calendly con ese id, fallaba siempre y el push salía igual.** Para esas
+citas Juanito nunca se enteraba de una cancelación o de un cambio de hora.
+
+**Qué hace, con `HUBSPOT_FUENTE_CONEXIONES=30x`** (vacío = todo como antes):
+- **Sin Calendly:** `listEventsAllAccounts` se salta esas conexiones, así que el poll, los digests
+  (Push 1/2) y el barrido del Push 1 al agendar no leen su Calendly. Un Calendly caído de OTRA
+  conexión ya no deja sin digest a las que salen de HubSpot.
+- **Poll de HubSpot** corre aunque `HUBSPOT_AGENDA_POLL` esté apagado. La búsqueda (poll y digest)
+  se filtra por los owners que son closers: sin filtro trae toda la empresa con tope de 1000.
+- **Validación al entregar** (Push 0/3/4/6 de citas `hubspot:<id>`), con `getMeetingStrict`
+  (404 = borrada; cualquier otro error lanza):
+  - título "Canceled/Cancelado…" u outcome `CANCELED` → no sale (Push 4: outcome auto `cancelado`);
+  - cambió de hora → no sale (el poll agenda la nueva hora);
+  - borrada → busca otra reunión del mismo closer al mismo minuto (la app y el calendario crean
+    dos para la misma cita): si hay gemela viva sale, si no, cancelada;
+  - HubSpot caído → sale con lo guardado (perder el aviso de una call real es peor).
+- **Programa:** los títulos del assigner ("Agendamiento — second-brain — Pablo", "Ana | Instagram…")
+  se reconocen (guion y barra = espacio en `normalizeTitle`). Sin título útil ("Admisiones",
+  "30X Sales"), el programa sale del pipeline del deal (`getDealProgramsOfMeetings` +
+  `programForPipeline`; no toca el modelo nudge). Medido en octubre: 38 de 1380 reuniones de
+  closers solo tenían programa por el deal.
+- **Link de la llamada:** `hs_video_conference_url` (donde HubSpot guarda el Meet de las citas
+  sincronizadas; 40 de 40 medidas). Antes el Push 3 de esas citas salía sin link.
+
+**Lo que no cubre todavía:** el Push 1 al agendar para citas de HubSpot a más de 48 h (la prueba
+vence el 16-oct); las citas a más de 48 h reciben su Push 1 en la víspera, como antes.
+
+**Archivos:** `src/scheduler/calendly.js`, `src/hubspot/{client,meetings,deals}.js`,
+`src/calendly/programs.js`, `docker-compose.yml`, `.env.example`, `test/hubspot.fuente-unica.test.js`
+(13: puros + harness de poll, digest y entrega).
+
+**Tests:** suite en Windows 1309, los mismos 113 rojos de `main`. **Falta la suite en Linux.**
+
+**Para desplegar** (va encima de §18.CN, PR #23):
+1. Desplegar con `alcance: todo` y la bandera vacía (no cambia nada).
+2. `HUBSPOT_FUENTE_CONEXIONES=30x` en el `.env` del VPS y recrear. Verificar en los logs:
+   `[HubSpot] Poll de agenda: …` con citas de 30X, ningún `[Calendly] … [30x]`, y el Push 2 de la
+   mañana con el total de citas del día (contrastar con el Dashboard de Closers).
+
 ### Secretos (decididos, ver §13)
 
 - `CALENDLY_TOKEN`: **NO rotar** (decidido).

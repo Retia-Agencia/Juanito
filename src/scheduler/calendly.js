@@ -62,8 +62,8 @@ import { makeFormIndexCache, formPhonesFor, altPhonesFor } from '../calendly/lea
 import { pickSupersededPushes, isManualUuid, planRescheduledPushes } from '../calendly/reschedule-logic.js';
 import { isCoveredProgram, decideFromAgenda } from '../hubspot/deals.js';
 import { decideNudgeAction, buildDealNudgeMessage, buildCreateDealNudgeMessage, buildTwinReviewMessage, dealUrl } from '../hubspot/nudge.js';
-import { meetingsToCalls, hubspotMeetingIdOf } from '../hubspot/meetings.js';
-import { pickMeetingsToSchedule, callStartToIso, programLivesInThisHubspot } from '../hubspot/agenda-poll.js';
+import { meetingsToCalls, hubspotMeetingIdOf, esReunionCancelada, meetingStartMs, toDbUtc } from '../hubspot/meetings.js';
+import { pickMeetingsToSchedule, callStartToIso, programLivesInThisHubspot, callKey } from '../hubspot/agenda-poll.js';
 import { pickRescheduledAway } from '../hubspot/reschedule-detect.js';
 import { resolveCloser, isIgnoredCloser, accountOfCloser, extraJidsForCloser, HUBSPOT_OWNER_TO_CLOSER } from '../calendly/closers.js';
 import { CLOSERS } from '../calendly/closers.js';
@@ -72,7 +72,7 @@ import { accountOf, activeAccounts, DEFAULT_ACCOUNT } from '../calendly/accounts
 import { mirrorConnections } from '../calendly/mirror.js';
 import { SKIP_SLUGS, SKIP_ALERTABLES, ETIQUETA_SKIP } from '../calendly/skip-reasons.js';
 import { isBlockedPhone, anyBlockedPhone, mentionsBlockedPhone } from '../calendly/blocklist.js';
-import { PROGRAMS } from '../calendly/programs.js';
+import { PROGRAMS, programFromTitle } from '../calendly/programs.js';
 import {
   recordPollOk,
   recordPollError,
@@ -323,6 +323,74 @@ const CONFIRMACION_PUSH2 = () =>
 // el uuid sintético hubspot:<id>.
 const eventUuidDeKey = (key) => String(key || '').split('/').pop() || null;
 
+// ─── HubSpot como fuente única (§18.CO, 2026-10-13) ────────────────────────────────────────────
+// 30X cambió Calendly por el assigner, que agenda directo en HubSpot: la parte de las citas que
+// Calendly no ve pasó de 9 % (14-sep) a 44 % (12-oct). En las conexiones listadas Juanito ya no lee
+// su Calendly: las citas salen solo de las reuniones de HubSpot (poll, digests, barrido) y cada
+// push se valida contra HubSpot al entregarse. Vacío = todo como antes.
+const HUBSPOT_FUENTE = () =>
+  new Set((process.env.HUBSPOT_FUENTE_CONEXIONES || '').split(',').map((s) => s.trim()).filter(Boolean));
+const hubspotEsFuenteDe = (closerEmail) => HUBSPOT_FUENTE().has(accountOfCloser(closerEmail));
+
+// Owners de HubSpot que son closers nuestros: filtrar la búsqueda por ellos baja el volumen a ~1/4
+// (la búsqueda sin filtro trae toda la empresa y tiene tope de 1000).
+const ownerIdsDeClosers = (ownerEmailById = {}) =>
+  Object.entries(ownerEmailById)
+    .filter(([, email]) => HUBSPOT_OWNER_TO_CLOSER[String(email || '').toLowerCase()])
+    .map(([id]) => id);
+
+// Reuniones de closers con un título que no dice el programa ("Admisiones", "30X Sales"): el
+// programa sale del pipeline de su deal. Solo con la fuente única prendida (cuesta 1-2 requests).
+async function programasPorDeal(d, meetings, ownerEmailById) {
+  if (!HUBSPOT_FUENTE().size || !d.getDealProgramsOfMeetings) return {};
+  const ids = meetings
+    .filter((m) => HUBSPOT_OWNER_TO_CLOSER[String(ownerEmailById[String(m.properties?.hubspot_owner_id)] || '').toLowerCase()])
+    .filter((m) => !programFromTitle(m.properties?.hs_meeting_title))
+    .map((m) => m.id);
+  if (!ids.length) return {};
+  try {
+    return (await d.getDealProgramsOfMeetings(ids)) || {};
+  } catch {
+    return {};
+  }
+}
+
+// Estado de la cita de un push `hubspot:<id>` justo antes de entregarlo:
+//   { estado: 'viva' | 'cancelada' | 'movida', motivo } — o null si no se pudo saber (HubSpot caído):
+//   entonces se entrega como antes, porque perder el aviso de una call real es peor.
+// Borrada: si queda otra reunión del mismo closer al mismo minuto (la app y el calendario crean
+// dos para la misma cita), la cita sigue viva.
+async function estadoCitaHubspot(d, p) {
+  const id = hubspotMeetingIdOf(p.event_uuid);
+  if (!id || !d.getMeetingStrict) return null;
+  try {
+    const r = await d.getMeetingStrict(id);
+    if (r.found) {
+      if (esReunionCancelada(r.meeting)) return { estado: 'cancelada', motivo: 'cancelada en HubSpot' };
+      const ms = meetingStartMs(r.meeting.properties?.hs_meeting_start_time);
+      if (Number.isFinite(ms) && toDbUtc(ms).slice(0, 16) !== String(p.call_start).slice(0, 16))
+        return { estado: 'movida', motivo: `ahora a las ${toDbUtc(ms)} UTC` };
+      return { estado: 'viva' };
+    }
+    if (!d.searchMeetingsStrict || !d.getOwnerEmailMap) return { estado: 'cancelada', motivo: 'borrada en HubSpot' };
+    const startMs = sqliteUtcToMs(p.call_start);
+    const ownerEmailById = await d.getOwnerEmailMap();
+    const vecinas = await d.searchMeetingsStrict({
+      fromIso: new Date(startMs - 60000).toISOString(),
+      untilIso: new Date(startMs + 60000).toISOString(),
+      ownerIds: ownerIdsDeClosers(ownerEmailById),
+    });
+    const clave = callKey(p.closer_email, p.call_start);
+    const gemela = meetingsToCalls(vecinas, { ownerEmailById, ownerToCloser: HUBSPOT_OWNER_TO_CLOSER }).find(
+      (c) => callKey(c.closer_email, c.call_start) === clave && !esReunionCancelada(vecinas.find((m) => String(m.id) === String(c.meeting_id)))
+    );
+    return gemela ? { estado: 'viva' } : { estado: 'cancelada', motivo: 'borrada en HubSpot' };
+  } catch (e) {
+    console.warn(`[HubSpot] no pude validar ${p.event_uuid} antes de entregar (${e.message}) — entrego con lo guardado`);
+    return null;
+  }
+}
+
 // Agenda diaria a la ADMIN de EstadoX (7am). No es un push a closers: es el conteo de cuántas
 // llamadas tiene HOY cada closer de IA para Abogados, por DM a quien supervisa. Se autodesactiva
 // sin destinatarios, como todos los jobs del scheduler.
@@ -396,6 +464,10 @@ async function deps() {
     searchMeetingsInWindow: hubspot.searchMeetingsInWindow,
     getOwnerEmailMap: hubspot.getOwnerEmailMap,
     getMeetingContact: hubspot.getMeetingContact,
+    // §18.CO: HubSpot como fuente única — programa por deal y validación estricta al entregar.
+    getDealProgramsOfMeetings: hubspot.getDealProgramsOfMeetings,
+    getMeetingStrict: hubspot.getMeetingStrict,
+    searchMeetingsStrict: hubspot.searchMeetingsStrict,
     getScheduledCallsInWindow: db.getScheduledCallsInWindow,
     getCallsWithAnyPushInWindow: db.getCallsWithAnyPushInWindow,
     supersedeHubspotPushes: db.supersedeHubspotPushes,
@@ -649,7 +721,10 @@ function isAuthError(msg) {
 async function listEventsAllAccounts(d, { minStartIso, maxStartIso, tag }) {
   const out = [];
   let failed = false;
+  const fuenteHubspot = HUBSPOT_FUENTE();
   for (const account of d.accounts ? d.accounts() : activeAccounts()) {
+    // §18.CO: sus citas salen de HubSpot. Ni poll, ni digest, ni barrido de Push 1 leen su Calendly.
+    if (fuenteHubspot.has(account.key)) continue;
     try {
       const evs = await d.listProgramEvents({ minStartIso, maxStartIso, account });
       for (const ev of evs) out.push({ ev, account });
@@ -1273,7 +1348,7 @@ async function barridoPush1AlAgendar(d, nowMs) {
 // closers, así que se estrena mirando primero qué haría (`previewHubspotAgendaPoll`).
 export async function runHubspotAgendaPoll({ preview = false } = {}) {
   const d = await deps();
-  if (!preview && !HUBSPOT_POLL_ENABLED()) return 0;
+  if (!preview && !HUBSPOT_POLL_ENABLED() && !HUBSPOT_FUENTE().size) return 0;
   if (!d.hubspotEnabled?.() || !d.searchMeetingsInWindow || !d.getScheduledCallsInWindow) return 0;
 
   const nowMs = d.now();
@@ -1281,11 +1356,18 @@ export async function runHubspotAgendaPoll({ preview = false } = {}) {
   const maxStartIso = new Date(nowMs + 48 * 3600 * 1000).toISOString();
   const toDb = (iso) => iso.slice(0, 19).replace('T', ' ');
 
-  const [meetings, ownerEmailById] = await Promise.all([
-    d.searchMeetingsInWindow({ fromIso: minStartIso, untilIso: maxStartIso }),
-    d.getOwnerEmailMap(),
-  ]);
-  const hubspotCalls = meetingsToCalls(meetings, { ownerEmailById, ownerToCloser: HUBSPOT_OWNER_TO_CLOSER });
+  const ownerEmailById = await d.getOwnerEmailMap();
+  const ownerIds = ownerIdsDeClosers(ownerEmailById);
+  const meetings = await d.searchMeetingsInWindow({
+    fromIso: minStartIso,
+    untilIso: maxStartIso,
+    ...(ownerIds.length ? { ownerIds } : {}),
+  });
+  const hubspotCalls = meetingsToCalls(meetings, {
+    ownerEmailById,
+    ownerToCloser: HUBSPOT_OWNER_TO_CLOSER,
+    programaPorMeeting: await programasPorDeal(d, meetings, ownerEmailById),
+  });
   // Dedup contra CUALQUIER fila de push, no solo las vivas: una call cuyo push se canceló por
   // reagenda (§18.AO) tiene que seguir contando como "ya decidida", o el poll se la crearía de
   // nuevo bajo otro event_uuid en el ciclo siguiente. Fallback a la consulta vieja para no
@@ -1581,9 +1663,23 @@ export async function runCalendlyDelivery() {
         // (due = start + duración + gracia), así que NO se salta por "ya pasó".
         if (p.push_n === 4) {
           let ev4 = null;
+          // §18.CO: con HubSpot como fuente, una cita hubspot:<id> se valida contra HubSpot (no
+          // existe en Calendly, y esa consulta fallaba siempre: el push salía sin validar).
+          const hs4 = hubspotMeetingIdOf(p.event_uuid) && hubspotEsFuenteDe(p.closer_email) ? await estadoCitaHubspot(d, p) : null;
+          if (hs4?.estado === 'cancelada') {
+            if (d.recordAutoOutcome) d.recordAutoOutcome(pendingOutcomeFrom(p, { asistencia: 'cancelado' }));
+            d.markCalendlyPushSent(p.id);
+            console.log(`[HubSpot] Push 4 #${p.id}: ${hs4.motivo} → outcome auto 'cancelado' (no se pregunta)`);
+            continue;
+          }
+          if (hs4?.estado === 'movida') {
+            d.markCalendlyPushSkipped(p.id, `reagendada en HubSpot (${hs4.motivo})`, SKIP_SLUGS.REAGENDADA);
+            console.log(`[HubSpot] Push 4 #${p.id} omitido: reagendada en HubSpot (${hs4.motivo})`);
+            continue;
+          }
           // Los uuids sintéticos de reagenda (§18.AC) no existen en Calendly — es una call
           // que nos dictó el closer. Ni se consulta la API: se pregunta con lo guardado.
-          if (!isManualUuid(p.event_uuid)) {
+          if (!isManualUuid(p.event_uuid) && !hs4) {
             const uri4 = `https://api.calendly.com/scheduled_events/${p.event_uuid}`;
             try {
               ev4 = await d.getEvent(uri4, { token: tokenForCloser(p.closer_email) });
@@ -1809,13 +1905,27 @@ export async function runCalendlyDelivery() {
           console.log(`[Calendly] Push ${p.push_n} #${p.id} omitido: llamada ya pasó (${p.call_start} UTC)`);
           continue;
         }
+        // §18.CO: una cita hubspot:<id> con HubSpot como fuente se re-valida contra HubSpot.
+        const hsEst = hubspotMeetingIdOf(p.event_uuid) && hubspotEsFuenteDe(p.closer_email) ? await estadoCitaHubspot(d, p) : null;
+        if (hsEst?.estado === 'cancelada') {
+          d.markCalendlyPushSkipped(p.id, hsEst.motivo, SKIP_SLUGS.CANCELADA);
+          console.log(`[HubSpot] Push ${p.push_n} #${p.id} omitido: ${hsEst.motivo}`);
+          continue;
+        }
+        if (hsEst?.estado === 'movida') {
+          d.markCalendlyPushSkipped(p.id, `reagendada en HubSpot (${hsEst.motivo})`, SKIP_SLUGS.REAGENDADA);
+          console.log(`[HubSpot] Push ${p.push_n} #${p.id} omitido: reagendada en HubSpot (el poll agendará la nueva hora)`);
+          continue;
+        }
         // Re-validar: la cita pudo cancelarse o reagendarse después de agendar el push.
         const uri = `https://api.calendly.com/scheduled_events/${p.event_uuid}`;
         let ev = null;
-        try {
-          ev = await d.getEvent(uri, { token: tokenForCloser(p.closer_email) });
-        } catch {
-          /* si la verificación falla, entregamos igual para no perder el push */
+        if (!hsEst) {
+          try {
+            ev = await d.getEvent(uri, { token: tokenForCloser(p.closer_email) });
+          } catch {
+            /* si la verificación falla, entregamos igual para no perder el push */
+          }
         }
         if (ev) {
           if (ev.status !== 'active') {
@@ -1991,13 +2101,17 @@ async function hubspotDigestItems(d, { calendlyCalls, minStartIso, maxStartIso, 
   if (!d.searchMeetingsInWindow || !d.getOwnerEmailMap) return [];
   if (d.hubspotEnabled && !d.hubspotEnabled()) return [];
   try {
-    const [meetings, ownerEmailById] = await Promise.all([
-      d.searchMeetingsInWindow({ fromIso: minStartIso, untilIso: maxStartIso }),
-      d.getOwnerEmailMap(),
-    ]);
+    const ownerEmailById = await d.getOwnerEmailMap();
+    const ownerIds = ownerIdsDeClosers(ownerEmailById);
+    const meetings = await d.searchMeetingsInWindow({
+      fromIso: minStartIso,
+      untilIso: maxStartIso,
+      ...(ownerIds.length ? { ownerIds } : {}),
+    });
     const hubspotCalls = meetingsToCalls(meetings, {
       ownerEmailById,
       ownerToCloser: HUBSPOT_OWNER_TO_CLOSER,
+      programaPorMeeting: await programasPorDeal(d, meetings, ownerEmailById),
     });
     const { toSchedule } = pickMeetingsToSchedule({
       hubspotCalls,
@@ -2105,7 +2219,9 @@ async function runDigest(
   // Calendly caído entero → no se manda nada. Con HubSpot como segunda fuente la tentación es
   // mandar igual, pero ese digest diría "tienes 2 llamadas" a un closer que tiene 8: un conteo
   // incompleto que se lee como completo es peor que no mandar.
-  if (failed && !events.length) return 0;
+  // §18.CO: las conexiones con HubSpot como fuente no dependen de Calendly — que se caiga el de
+  // otra conexión no puede dejarlas sin digest.
+  if (failed && !events.length && !HUBSPOT_FUENTE().size) return 0;
 
   const byCloser = new Map(); // phone -> { name, email, items[] }
   // §18.CA: mismo índice del poll, memoizado para ESTA corrida del digest. Un digest es una

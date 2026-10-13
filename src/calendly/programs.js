@@ -413,6 +413,9 @@ const normalizeTitle = (s) =>
     .toLowerCase()
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '') // sin acentos: "postulación" ≡ "postulacion"
+    // El assigner (la herramienta de agendamiento que reemplaza a Calendly en 30X, §18.CO) titula
+    // "Agendamiento — second-brain — Pablo" o "Ana Pérez | Instagram…": guion y barra = espacio.
+    .replace(/[-_|]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 

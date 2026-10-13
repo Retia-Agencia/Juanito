@@ -15,7 +15,7 @@
 // API falla, devuelve null/[] y loguea —nunca tira, para no romper el flujo que lo llama
 // (ej. el push precall debe salir aunque HubSpot esté caído).
 
-import { pipelineForProgram, pickDealForPipeline, classifyDealStage, isWonStage } from './deals.js';
+import { pipelineForProgram, pickDealForPipeline, classifyDealStage, isWonStage, programForPipeline } from './deals.js';
 import { normalizePhone } from '../common/utils.js';
 import { fetchConDeadline } from '../common/http.js';
 // Solo el mapa de alias owner→closer (ownerIdForCloser). closers.js no importa nada de
@@ -521,14 +521,31 @@ const MEETING_PROPS = [
   'hs_createdate',
   'hs_meeting_external_url',
   'hs_meeting_location',
+  'hs_video_conference_url', // el Meet de las citas sincronizadas del calendario (§18.CO)
 ];
 const MEETINGS_HARD_CAP = 1000;
 
-export async function searchMeetingsInWindow({ fromIso, untilIso }) {
+// `ownerIds` (opcional): solo las reuniones de esos owners. Con HubSpot como fuente única de 30X
+// (§18.CO) la búsqueda sin filtro trae toda la empresa y el tope de 1000 queda cerca; filtrando por
+// los owners que son closers baja a ~1/4.
+export async function searchMeetingsInWindow({ fromIso, untilIso, ownerIds }) {
   if (!isEnabled() || !fromIso || !untilIso) return [];
   try {
+    return await searchMeetingsStrict({ fromIso, untilIso, ownerIds });
+  } catch (e) {
+    console.warn(`[HubSpot] searchMeetingsInWindow falló: ${e.message}`);
+    return []; // la agenda degrada a solo-Calendly, no se cae
+  }
+}
+
+// Igual que searchMeetingsInWindow pero LANZA si HubSpot falla: para decidir que una cita se
+// canceló hace falta distinguir "no hay reuniones" de "no pude preguntar".
+export async function searchMeetingsStrict({ fromIso, untilIso, ownerIds }) {
+  if (!isEnabled()) throw new Error('HubSpot no configurado (HUBSPOT_PAT vacío)');
+  {
     const out = [];
     let after = null;
+    const porOwner = ownerIds?.length ? [{ propertyName: 'hubspot_owner_id', operator: 'IN', values: ownerIds.map(String) }] : [];
     do {
       const data = await request('/crm/v3/objects/meetings/search', {
         method: 'POST',
@@ -542,6 +559,7 @@ export async function searchMeetingsInWindow({ fromIso, untilIso }) {
                   value: String(Date.parse(fromIso)),
                   highValue: String(Date.parse(untilIso)),
                 },
+                ...porOwner,
               ],
             },
           ],
@@ -565,9 +583,19 @@ export async function searchMeetingsInWindow({ fromIso, untilIso }) {
       );
     }
     return out;
+  }
+}
+
+// Una reunión por id, ESTRICTA: { found: false } si HubSpot dice 404 (borrada), lanza ante
+// cualquier otro error. getMeetingsByIds no sirve para esto: ante un error devuelve [] y una
+// caída de HubSpot se leería como "la borraron".
+export async function getMeetingStrict(meetingId) {
+  try {
+    const m = await request(`/crm/v3/objects/meetings/${encodeURIComponent(meetingId)}?properties=${MEETING_PROPS.join(',')}`);
+    return { found: true, meeting: m };
   } catch (e) {
-    console.warn(`[HubSpot] searchMeetingsInWindow falló: ${e.message}`);
-    return []; // la agenda degrada a solo-Calendly, no se cae
+    if (/HubSpot 404/.test(e.message)) return { found: false };
+    throw e;
   }
 }
 
@@ -628,6 +656,34 @@ async function batchAssoc(fromType, toType, ids) {
   } catch (e) {
     console.warn(`[HubSpot] batchAssoc ${fromType}→${toType} falló: ${e.message}`);
     return {}; // sin asociaciones no se detecta la reagenda; nada se cancela por error
+  }
+}
+
+// { meetingId: programKey } por el pipeline del primer deal asociado (§18.CO). Para las reuniones
+// cuyo título no dice el programa. Tolerante: ante un error devuelve {} y la reunión se queda sin
+// programa, como antes.
+export async function getDealProgramsOfMeetings(meetingIds = []) {
+  if (!isEnabled() || !meetingIds.length) return {};
+  try {
+    const dealsDe = await batchAssoc('meetings', 'deals', meetingIds);
+    const dealIds = [...new Set(Object.values(dealsDe).map((ds) => ds[0]).filter(Boolean))];
+    const pipelineDe = {};
+    for (let i = 0; i < dealIds.length; i += 100) {
+      const data = await request('/crm/v3/objects/deals/batch/read', {
+        method: 'POST',
+        body: { properties: ['pipeline'], inputs: dealIds.slice(i, i + 100).map((id) => ({ id: String(id) })) },
+      });
+      for (const r of data.results || []) pipelineDe[String(r.id)] = r.properties?.pipeline;
+    }
+    const out = {};
+    for (const [mid, ds] of Object.entries(dealsDe)) {
+      const prog = programForPipeline(pipelineDe[String(ds[0])]);
+      if (prog) out[mid] = prog;
+    }
+    return out;
+  } catch (e) {
+    console.warn(`[HubSpot] getDealProgramsOfMeetings falló: ${e.message}`);
+    return {};
   }
 }
 
