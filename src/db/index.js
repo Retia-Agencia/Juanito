@@ -729,6 +729,69 @@ export function expireUnansweredOutcomes(minMinutes = 30) {
     .run(`-${Number(minMinutes)} minutes`);
 }
 
+// ─── Confirmación del Push 2 (§18.CN) ─────────────────────────────────────────
+// Cuánto dura abierta la pregunta: el Push 2 sale 6:30am, así que cubre hasta la noche.
+const CONFIRMACION_ABIERTA_HORAS = Number(process.env.CALENDLY_CONFIRMACION_HORAS || 16);
+
+// Guarda las filas de UNA pregunta (un lote). Si la call ya estaba en otro lote (el Push 2 se
+// re-disparó), toma la posición nueva; si es el mismo lote, conserva lo que el closer ya dijo.
+export function guardarLoteConfirmacion(filas) {
+  const stmt = db.prepare(`
+    INSERT INTO call_confirmaciones
+      (event_uuid, lote, posicion, program, closer_email, closer_phone, closer_name, lead_name, call_start)
+    VALUES
+      (@event_uuid, @lote, @posicion, @program, @closer_email, @closer_phone, @closer_name, @lead_name, @call_start)
+    ON CONFLICT(event_uuid) DO UPDATE SET
+      estado        = CASE WHEN call_confirmaciones.lote = excluded.lote THEN call_confirmaciones.estado ELSE 'pendiente' END,
+      answered_at   = CASE WHEN call_confirmaciones.lote = excluded.lote THEN call_confirmaciones.answered_at ELSE NULL END,
+      lote          = excluded.lote,
+      posicion      = excluded.posicion,
+      program       = excluded.program,
+      closer_email  = excluded.closer_email,
+      closer_phone  = excluded.closer_phone,
+      closer_name   = excluded.closer_name,
+      lead_name     = excluded.lead_name,
+      call_start    = excluded.call_start,
+      preguntada_at = datetime('now')
+  `);
+  db.transaction((rows) => {
+    for (const r of rows) stmt.run({ ...r, closer_phone: normalizePhone(r.closer_phone) || r.closer_phone });
+  })(filas);
+}
+
+// El lote que el closer puede estar respondiendo: el último que se le preguntó, si sigue abierto.
+// Devuelve las filas ordenadas por posición, o [].
+export function getLoteConfirmacionAbierto(phone) {
+  const p = normalizePhone(phone);
+  if (!p) return [];
+  const ultimo = db
+    .prepare(`
+      SELECT lote FROM call_confirmaciones
+      WHERE closer_phone = ? AND preguntada_at >= datetime('now', ?)
+      ORDER BY preguntada_at DESC
+      LIMIT 1
+    `)
+    .get(p, `-${CONFIRMACION_ABIERTA_HORAS} hours`);
+  if (!ultimo) return [];
+  return db.prepare(`SELECT * FROM call_confirmaciones WHERE lote = ? ORDER BY posicion`).all(ultimo.lote);
+}
+
+// cambios: { [posicion]: estado }
+export function setConfirmacionEstados(lote, cambios, rawReply = null) {
+  const stmt = db.prepare(`
+    UPDATE call_confirmaciones
+    SET estado = ?, raw_reply = ?, answered_at = datetime('now')
+    WHERE lote = ? AND posicion = ?
+  `);
+  db.transaction(() => {
+    for (const [pos, estado] of Object.entries(cambios)) stmt.run(estado, rawReply, lote, Number(pos));
+  })();
+}
+
+export function markConfirmacionReprompt(lote) {
+  return db.prepare(`UPDATE call_confirmaciones SET reprompted = 1 WHERE lote = ?`).run(lote);
+}
+
 // ─── Barrido periódico de cosecha (§18.AH) ────────────────────────────────────
 // El harvest en planNudge es UNA sola foto en el momento del Push 4 (call_end + gracia):
 // si el closer todavía no había actualizado el deal en HubSpot en ese instante, la fila

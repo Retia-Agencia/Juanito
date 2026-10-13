@@ -101,6 +101,10 @@ services:
       - CALENDLY_PUSH1_AL_AGENDAR_HASTA=${CALENDLY_PUSH1_AL_AGENDAR_HASTA:-2026-10-16}
       - CALENDLY_PUSH1_AL_AGENDAR_DIAS=${CALENDLY_PUSH1_AL_AGENDAR_DIAS:-21}
       - CALENDLY_PUSH2_CRON=${CALENDLY_PUSH2_CRON:-30 6 * * *}
+      # Confirmación en el Push 2 (§18.CN): en estas conexiones, justo después del Push 2 Juanito
+      # pregunta "¿quiénes te confirmaron?" y la respuesta va al Dashboard de Closers. Vacío = off.
+      - CALENDLY_CONFIRMACION_PUSH2=${CALENDLY_CONFIRMACION_PUSH2-}
+      - CALENDLY_CONFIRMACION_HORAS=${CALENDLY_CONFIRMACION_HORAS:-16}
       - CALENDLY_SKIP_AUDIT_CRON=${CALENDLY_SKIP_AUDIT_CRON:-15 * * * *}
       - CALENDLY_SKIP_ALERT_MIN=${CALENDLY_SKIP_ALERT_MIN:-2}
       - CALENDLY_POLL_CRON=${CALENDLY_POLL_CRON:-*/5 * * * *}

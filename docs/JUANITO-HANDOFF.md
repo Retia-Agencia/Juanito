@@ -7276,6 +7276,64 @@ termina en `t%C3%BA%2E`. Drift previo medido: el VPS era idéntico a `main` salv
 - Averiguar de quién es `147313234280449@lid` y corregir `CALENDLY_DEV_MIRROR_JID` si debía ser un dev.
 - Al cambiar cualquier copy precall: mirar el **último carácter** del texto, no el largo.
 
+### 18.CN 🟡 Confirmación en el Push 2: "¿quiénes te confirmaron?" (2026-10-13, en rama, sin desplegar)
+
+**Pedido de Alejandro.** El Dashboard de Closers deja de leer Calendly: las citas salen de las
+reuniones de HubSpot (repo `dashboard-closers`, migraciones 0012–0014). Medido del 28-sep al 4-oct:
+las 168 citas activas de Calendly estaban todas en HubSpot (casi siempre dos veces: la app de
+Calendly y la sincronización del calendario), pero **de 92 canceladas, 48 seguían en HubSpot como
+cita normal** y 31 se habían borrado. HubSpot no se entera de las cancelaciones; el closer sí,
+porque el lead le contesta el Push 1. Así que Juanito le pregunta.
+
+**Qué hace.** Justo después de un Push 2 entregado ('sent'), en las conexiones de
+`CALENDLY_CONFIRMACION_PUSH2`, sale un mensaje aparte con las llamadas del día numeradas por hora:
+
+```
+✅ ¿Quiénes te confirmaron hoy?
+1. 9:00 a. m. — Ana Pérez
+2. 3:00 p. m. — Laura Ríos
+Respóndeme con los números de los que confirmaron (ej: 1 3). Si alguno canceló: 2 canceló. Si todos: todos.
+```
+
+- **Tabla nueva `call_confirmaciones`** (una fila por call, `event_uuid` igual que `call_outcomes`:
+  uuid de Calendly o `hubspot:<id>`). Las de un mismo mensaje comparten `lote` (closer + día) y
+  `posicion` es el número que ve el closer. Se guardan ANTES de mandar la pregunta.
+- **Respuesta libre** (`confirmacion-logic.js`, puro): `1 3` (el resto queda sin confirmar),
+  `todos`, `ninguno`, `todos menos el 2`, `2 canceló, 1 y 3 sí`, `el 2 no va` (cancelada),
+  `1 ✅ 2 ❌`. Estados: `confirmada | no_confirmada | cancelada`. Si no entiende, repregunta UNA vez;
+  la segunda vez el mensaje sigue a los demás flujos.
+- **Correcciones durante el día** (`CALENDLY_CONFIRMACION_HORAS`, 16 h): después de la primera
+  respuesta solo toma mensajes inequívocos (número + palabra de estado, "el 2 canceló"), para no
+  tragarse el resto de la conversación ni un reporte de setteo.
+- **Orden de captura** (`src/index.js`): va ANTES del Push 4, porque "1 3" responde las dos
+  preguntas. Cede si el closer tiene un Push 4 abierto preguntado DESPUÉS de la confirmación.
+- **Sync al dashboard**: `sync-closers.js` manda también `call_confirmaciones` a la RPC
+  `ingest_juanito_confirmaciones` (migración 0012 del dashboard), mismo secreto, después de los
+  outcomes y aparte (si falla, los outcomes ya salieron). Sin teléfonos ni texto crudo.
+
+**Qué NO hace (v1).** Una cita que el closer marca cancelada sigue recibiendo su Push 3 y su
+Push 4: apagarlos es el siguiente paso si el closer lo pide. No toca el Push 1 al agendar ni el
+copy del Push 2.
+
+**Archivos:** `src/calendly/confirmacion-logic.js` (nuevo, puro), `src/calendly/confirmacion-capture.js`
+(nuevo), `src/db/migrate.js` (tabla + 2 índices), `src/db/index.js` (`guardarLoteConfirmacion`,
+`getLoteConfirmacionAbierto`, `setConfirmacionEstados`, `markConfirmacionReprompt`),
+`src/scheduler/calendly.js` (`preguntarConfirmacion` tras el Push 2 + dep), `src/index.js` (captura),
+`dashboard/server/sync-closers.js`, `docker-compose.yml`, `.env.example`.
+
+**Tests:** `calendly.confirmacion-logic.test.js` (9, parser y mensajes), `calendly.confirmacion-push2.test.js`
+(3, harness: pregunta tras el Push 2, lote guardado antes, apagada sin bandera / otra conexión / sin
+entrega), `dashboard.sync-closers.test.js` (+1). Suite en Windows: 1309 tests, **los mismos 113 rojos
+de `main`** (better-sqlite3 sin compilar). **La suite en Linux no se corrió.**
+
+**Para desplegar:**
+1. En el dashboard, la migración 0012 ya está aplicada (la RPC existe).
+2. Desplegar con `alcance: todo` (toca el bot y `dash`) con la bandera VACÍA: el Push 2 sale igual
+   que hoy y la tabla se crea sola (`migrate.js`).
+3. Prender con `CALENDLY_CONFIRMACION_PUSH2=30x` en el `.env` del VPS y recrear. Verificar al día
+   siguiente: tras el Push 2 de las 6:30 sale la pregunta, una respuesta real queda en
+   `call_confirmaciones`, y `docker logs juanito-dash` dice `N/N confirmaciones`.
+
 ### Secretos (decididos, ver §13)
 
 - `CALENDLY_TOKEN`: **NO rotar** (decidido).

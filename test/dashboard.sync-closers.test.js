@@ -12,6 +12,7 @@ import {
   programas30x,
   utcIso,
   filaParaDashboard,
+  filaConfirmacionParaDashboard,
   syncConfigurado,
   enviar,
 } from '../dashboard/server/sync-closers.js';
@@ -79,4 +80,23 @@ test('envía en lotes de 500 a la RPC con llave y secreto', async () => {
 test('una respuesta no-2xx corta el envío con el error', async () => {
   globalThis.fetch = async () => new Response('{"message":"no autorizado"}', { status: 401 });
   await assert.rejects(enviar([{ event_uuid: 'u1' }]), /ingest_juanito → 401/);
+});
+
+test('confirmaciones: fila sin teléfonos ni texto crudo, a su propia RPC', async () => {
+  const f = filaConfirmacionParaDashboard({
+    event_uuid: 'hubspot:123', program: 'instagram', closer_email: 'a@30x.com', closer_phone: '573000000000',
+    lead_name: 'Lead', call_start: '2026-10-14 15:00:00', estado: 'cancelada',
+    preguntada_at: '2026-10-14 11:30:00', answered_at: '2026-10-14 11:40:00', raw_reply: '2 canceló',
+  });
+  assert.equal(f.call_start, '2026-10-14T15:00:00Z');
+  assert.equal(f.estado, 'cancelada');
+  for (const k of ['closer_phone', 'raw_reply', 'lote', 'posicion']) assert.ok(!(k in f), k);
+
+  let url;
+  globalThis.fetch = async (u, init) => {
+    url = u;
+    return new Response(String(JSON.parse(init.body).filas.length), { status: 200 });
+  };
+  assert.equal(await enviar([f], 'ingest_juanito_confirmaciones'), 1);
+  assert.equal(url, 'https://ejemplo.supabase.co/rest/v1/rpc/ingest_juanito_confirmaciones');
 });
