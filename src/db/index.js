@@ -1167,13 +1167,18 @@ export function getRescheduledAwayCalls(fromUtc, toUtc) {
 // call que había entrado por Calendly, esa call desaparece de `getScheduledCallsInWindow` y el
 // poll de HubSpot la ve "sin push" → le crearía uno nuevo bajo OTRO event_uuid ('hubspot:<id>'),
 // resucitando justo lo que se acababa de cancelar.
+//
+// `solo_push0` = la call solo tiene su Push 0 (§18.CP): se avisó al agendar, a días de distancia,
+// y todavía le faltan el Push 3 y el 4. El poll de HubSpot NO puede darla por "ya agendada" o
+// nunca se los crearía; el barrido del Push 1 al agendar SÍ, para no avisar dos veces la misma.
 export function getCallsWithAnyPushInWindow(fromUtc, toUtc) {
   return db
     .prepare(`
       SELECT event_uuid,
              MAX(program)       AS program,
              MAX(closer_email)  AS closer_email,
-             MIN(call_start)    AS call_start
+             MIN(call_start)    AS call_start,
+             CASE WHEN MAX(push_n <> 0) = 0 THEN 1 ELSE 0 END AS solo_push0
       FROM calendly_pushes
       WHERE call_start >= ? AND call_start < ?
       GROUP BY event_uuid
