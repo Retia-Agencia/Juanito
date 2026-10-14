@@ -5,8 +5,8 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-10-14** (§18.CP — Push 1 al agendar también para las reuniones de
-HubSpot del assigner; la prueba se extiende al 23-oct). Anterior: **2026-10-14** (§18.CN y §18.CO desplegados; la confirmación en el Push 2
+Última actualización: **2026-10-14** (§18.CP desplegado, HubSpot como fuente única PRENDIDA en 30X,
+arreglo del parser de la confirmación. ⛔ **Alejandro prohibió más deploys hasta que él lo levante**). Anterior: **2026-10-14** (§18.CN y §18.CO desplegados; la confirmación en el Push 2
 está prendida en 30X y HubSpot como fuente única sigue apagado). Anterior: **2026-10-11** (§18.CM — el Push 1 de IGTK llegaba cortado porque el link wa.me
 terminaba en punto: arreglado y desplegado). Anterior: **2026-10-10** (§18.CL — links wa.me partidos por un paréntesis: arreglado y
 reenviado a Andrea; espejo de Tactical Investor; ADR 0004 de links cortos en Cloudflare). Anterior: **2026-10-09** (§18.CK — el Push 0 trae el Push 1; prueba de una semana de
@@ -7278,7 +7278,7 @@ termina en `t%C3%BA%2E`. Drift previo medido: el VPS era idéntico a `main` salv
 - Averiguar de quién es `147313234280449@lid` y corregir `CALENDLY_DEV_MIRROR_JID` si debía ser un dev.
 - Al cambiar cualquier copy precall: mirar el **último carácter** del texto, no el largo.
 
-### 18.CN 🔵 Confirmación en el Push 2: "¿quiénes te confirmaron?" (2026-10-13, desplegado y prendido en 30X)
+### 18.CN 🟢 Confirmación en el Push 2: "¿quiénes te confirmaron?" (2026-10-13, desplegado y prendido en 30X; verificado el 14-oct)
 
 **Pedido de Alejandro.** El Dashboard de Closers deja de leer Calendly: las citas salen de las
 reuniones de HubSpot (repo `dashboard-closers`, migraciones 0012–0014). Medido del 28-sep al 4-oct:
@@ -7350,10 +7350,22 @@ medido contra `24bca83` (con `tr -d '\r'`): ninguno.
   bot), WA reconectado. Dentro del contenedor, `printenv` da `30x`.
 
 **Pendiente:**
-- Verificar el 14-oct después de las 6:30: la pregunta tras el Push 2, filas en
-  `call_confirmaciones` y `N/N confirmaciones` en `docker logs juanito-dash`.
+- ~~Verificar el 14-oct~~ → hecho, ver abajo.
 
-### 18.CO 🟡 HubSpot como fuente única de las citas en 30X (2026-10-13, desplegado, bandera apagada)
+**Verificado (2026-10-14).** La pregunta salió a las 6:32 a. m. a los 6 closers de 30X con Push 2
+(68 citas, guardadas antes de mandar), y `juanito-dash` sincronizó `68/68 confirmaciones`.
+
+**Bug del parser, arreglado (PR #26, `9ea5e11`).** Lucas respondió *"Ninguno, mándame el primer push
+de todas las llamadas de hoy"* y sus 9 citas quedaron **confirmadas**: `parseConfirmacion` se quedaba
+con el ÚLTIMO todos/ninguno, y el "todas" de "todas las llamadas" pisaba al "Ninguno". Ahora:
+"todos/todas" seguido de artículo o posesivo (`las|los|mis|de…`) es un cuantificador y no cuenta
+como respuesta, y "todos" + "ninguno" opuestos en el mismo mensaje repreguntan. Las 9 filas se
+corrigieron a mano en prod (`UPDATE … SET estado='no_confirmada'` sobre ese lote).
+Ojo: Lucas además pedía que le reenviaran "el primer push de todas las llamadas de hoy". 7 de esas 9
+habían recibido el Push 1 al agendar, entre el 10 y el 12-oct, y para el día de la llamada ya quedaron
+muy arriba en el chat. Hay que tenerlo en cuenta al medir la prueba §18.CK.
+
+### 18.CO 🟢 HubSpot como fuente única de las citas en 30X (2026-10-13; bandera PRENDIDA el 14-oct)
 
 **Por qué.** 30X cambió Calendly por el **assigner**, que agenda directo en HubSpot. Medido con el
 Dashboard de Closers, la parte de las citas de 30X que Calendly no ve: **9 %** (semana del 14-sep)
@@ -7405,10 +7417,17 @@ Push 2 funcione el 14-oct. Un cambio corre aunque la bandera esté apagada: la b
 reuniones de HubSpot (poll y digest) ya va filtrada por owners que son closers. El resultado debería
 ser el mismo, porque las reuniones de quien no es closer se descartaban después.
 
-**Pendiente:** prender `HUBSPOT_FUENTE_CONEXIONES=30x` (paso 2 de arriba) cuando §18.CN quede
-verificado.
+**Prendida (2026-10-14).** `HUBSPOT_FUENTE_CONEXIONES=30x` en el `.env` del VPS (respaldo
+`.env.bak-<ts>-fuente-hubspot`), recreado con el deploy run 38579499584. Primer ciclo: Calendly pasó
+de 160 a 69 citas (sin 30X) y el poll de HubSpot tomó 239 calls de closer: 235 deduplicadas contra
+las filas ya existentes y 4 nuevas, ninguna con gemela. Solo afecta a la conexión `30x`: EstadoX y
+Jurídico siguen leyendo su Calendly. Riesgo conocido, sin arreglar: si en un ciclo fallan TODOS los
+Calendly que quedan (Retia), `runCalendlyPoll` hace `return` antes de llegar al poll de HubSpot.
 
-### 18.CP 🟡 Push 1 al agendar para las reuniones de HubSpot (2026-10-14, en PR)
+~~**Pendiente:** prender `HUBSPOT_FUENTE_CONEXIONES=30x` (paso 2 de arriba) cuando §18.CN quede
+verificado.~~ → hecho.
+
+### 18.CP 🟢 Push 1 al agendar para las reuniones de HubSpot (2026-10-14, desplegado)
 
 **Por qué.** Lucas Mendoza reportó el 14-oct que le seguía llegando el digest de la víspera con
 citas del 15. Medido: una era de antes de la prueba (agendada el 6-oct) y la otra la había creado
@@ -7448,9 +7467,13 @@ reserva (antes y después del deploy).
 
 **Tests:** Linux 1334, 1331 verdes, los 3 rojos conocidos.
 
-**Para desplegar:** `alcance: todo`. Verificar en los logs `[HubSpot] Push 0 (nueva call …, con su
-Push 1 — prueba al agendar)` cuando entra una reserva lejana del assigner. Después, prender
-`HUBSPOT_FUENTE_CONEXIONES=30x` (§18.CO, paso 2).
+**Desplegado (2026-10-14).** PR #25, run 38573736856 (`2ec700a`). WA reconectó y el contenedor
+arrancó con `push1 al agendar: 30x hasta 2026-10-23`. Visto en prod: un Push 0 `hubspot:<id>` enviado
+a Pablo Suárez para una cita del 21-oct que creó el assigner.
+
+**Deploys del 14-oct (tres reinicios de Baileys):** run 38573736856 (§18.CP), run 38579499584 (la
+bandera de §18.CO; se disparó por error antes del merge del #26) y run 38580976267 (`9ea5e11`, #26).
+⛔ **Después del último, Alejandro prohibió desplegar hasta que él lo levante explícitamente.**
 
 ### Secretos (decididos, ver §13)
 
