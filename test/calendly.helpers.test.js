@@ -313,6 +313,27 @@ test('buildDigestMessage ordena por hora, lista nombre completo y muestra el con
   assert.match(msg, /https:\/\/wa\.me\/571\?text=/);
 });
 
+test('buildDigestMessage suma al conteo las citas que ya recibieron su push al agendar', () => {
+  const base = {
+    pushLabel: 'Push 1 (el día anterior)',
+    whenLabel: 'mañana (jue, 15 de oct)',
+    pushN: 1,
+    closer: 'Daniela',
+    items: [
+      { name: 'Giselle Gelves', firstName: 'Giselle', phone: '+57 1', startIso: '2026-10-15T19:30:00Z', programKey: 'second_brain' },
+      { name: 'Humberto Banarez', firstName: 'Humberto', phone: '+52 1', startIso: '2026-10-15T21:30:00Z', programKey: 'second_brain' },
+    ],
+  };
+  const msg = buildDigestMessage({ ...base, yaEnviadas: 8 });
+  assert.match(msg, /tienes 10 llamadas mañana/);
+  assert.match(msg, /8 ya tenían su link desde que el lead agendó/);
+  assert.match(msg, /Faltan estas 2:/);
+  // Sin prefired, el encabezado queda exactamente como antes.
+  const sin = buildDigestMessage(base);
+  assert.match(sin, /tienes 2 llamadas mañana/);
+  assert.doesNotMatch(sin, /ya tenía|Faltan/);
+});
+
 test('buildDigestMessage usa singular con una sola llamada', () => {
   const msg = buildDigestMessage({
     pushLabel: 'Push 2 (en la mañana)',

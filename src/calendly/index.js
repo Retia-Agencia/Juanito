@@ -674,7 +674,10 @@ export function buildPush0Message({
 // "del jueves 24"). Entra por parámetro por lo mismo que en el Push 0: con `Date.now()` adentro,
 // el Push 1 adelantado (citas de pasado mañana en adelante) diría "mañana" a todas.
 // `nota`: línea opcional bajo el encabezado (el Push 1 adelantado pide mandar con calma).
-export function buildDigestMessage({ pushLabel, whenLabel, items, pushN, closer, tz = TZ(), base = new Date(), nota = '' }) {
+// `yaEnviadas`: citas del mismo día cuyo Push 1 ya le llegó al closer al agendar (prefired). El
+// conteo del encabezado las suma: "tienes 2 llamadas" a un closer que tiene 10 se lee como que
+// faltan 8 (caso Daniela Camacho, 14-oct).
+export function buildDigestMessage({ pushLabel, whenLabel, items, pushN, closer, tz = TZ(), base = new Date(), nota = '', yaEnviadas = 0 }) {
   const sorted = [...items].sort((a, b) => new Date(a.startIso) - new Date(b.startIso));
   const renderLine = (it) => {
     const who = it.name || it.firstName || 'el prospecto';
@@ -732,10 +735,16 @@ export function buildDigestMessage({ pushLabel, whenLabel, items, pushN, closer,
     body = sorted.map(renderLine).join('\n');
   }
 
-  const n = sorted.length;
+  const faltan = sorted.length;
+  const n = faltan + yaEnviadas;
   const plural = n === 1 ? 'llamada' : 'llamadas';
+  const resumen = yaEnviadas
+    ? `✅ ${yaEnviadas === 1 ? '1 ya tenía su link' : `${yaEnviadas} ya tenían su link`} desde que el lead agendó (te llegó en ese momento, más arriba en este chat). ` +
+      (faltan === 1 ? 'Falta esta:\n' : `Faltan estas ${faltan}:\n`)
+    : '';
   return (
     `📋 *${pushLabel}* — tienes ${n} ${plural} ${whenLabel}.\n` +
+    resumen +
     (nota ? `${nota}\n` : '') +
     `Toca el link de cada lead para enviarle su push precall (se abre el chat con el mensaje listo, solo dale enviar):\n\n` +
     body

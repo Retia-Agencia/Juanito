@@ -131,6 +131,22 @@ test('reunión del assigner para dentro de 3 días → Push 1 en el acto, y la v
   assert.equal(h.wa.sent.length, 1, 'ningún digest repitió el Push 1');
 });
 
+test('digest de la víspera: las reuniones de HubSpot ya avisadas cuentan en el encabezado', async () => {
+  const h = installHarness(scheduler, { optins: [SALAZAR_PHONE], nowMs: Date.parse('2026-10-17T00:00:00Z'), accounts: ESTADOX });
+  const TARDE = '2026-10-17T20:00:00Z';
+  conHubspot(h, {
+    enVentana: [meeting({ id: 'm1' }), meeting({ id: 'm2', startIso: TARDE })],
+    marcadas: new Set(['hubspot:m1']),
+  });
+  await scheduler.runPush1Early();
+  await scheduler.runPush1();
+  assert.equal(h.wa.sent.length, 1);
+  const texto = h.wa.sent[0].text;
+  assert.match(texto, /tienes 2 llamadas mañana/, 'cuenta la ya avisada');
+  assert.match(texto, /1 ya tenía su link/);
+  assert.equal((texto.match(/https:\/\/wa\.me\//g) || []).length, 1, 'pero solo lista la que falta');
+});
+
 test('creada hace 2 horas → nada (no es una reserva nueva)', async () => {
   const h = installHarness(scheduler, { optins: [SALAZAR_PHONE], nowMs: NOW, accounts: ESTADOX });
   conHubspot(h, { creadas: [meeting({ createdMin: -120 })] });
