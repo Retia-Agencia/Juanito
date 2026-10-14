@@ -5,7 +5,8 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-10-14** (§18.CN y §18.CO desplegados; la confirmación en el Push 2
+Última actualización: **2026-10-14** (§18.CP — Push 1 al agendar también para las reuniones de
+HubSpot del assigner; la prueba se extiende al 23-oct). Anterior: **2026-10-14** (§18.CN y §18.CO desplegados; la confirmación en el Push 2
 está prendida en 30X y HubSpot como fuente única sigue apagado). Anterior: **2026-10-11** (§18.CM — el Push 1 de IGTK llegaba cortado porque el link wa.me
 terminaba en punto: arreglado y desplegado). Anterior: **2026-10-10** (§18.CL — links wa.me partidos por un paréntesis: arreglado y
 reenviado a Andrea; espejo de Tactical Investor; ADR 0004 de links cortos en Cloudflare). Anterior: **2026-10-09** (§18.CK — el Push 0 trae el Push 1; prueba de una semana de
@@ -7382,8 +7383,8 @@ citas Juanito nunca se enteraba de una cancelación o de un cambio de hora.
 - **Link de la llamada:** `hs_video_conference_url` (donde HubSpot guarda el Meet de las citas
   sincronizadas; 40 de 40 medidas). Antes el Push 3 de esas citas salía sin link.
 
-**Lo que no cubre todavía:** el Push 1 al agendar para citas de HubSpot a más de 48 h (la prueba
-vence el 16-oct); las citas a más de 48 h reciben su Push 1 en la víspera, como antes.
+**Lo que no cubre todavía:** ~~el Push 1 al agendar para citas de HubSpot a más de 48 h~~ →
+cubierto en §18.CP.
 
 **Archivos:** `src/scheduler/calendly.js`, `src/hubspot/{client,meetings,deals}.js`,
 `src/calendly/programs.js`, `docker-compose.yml`, `.env.example`, `test/hubspot.fuente-unica.test.js`
@@ -7406,6 +7407,50 @@ ser el mismo, porque las reuniones de quien no es closer se descartaban después
 
 **Pendiente:** prender `HUBSPOT_FUENTE_CONEXIONES=30x` (paso 2 de arriba) cuando §18.CN quede
 verificado.
+
+### 18.CP 🟡 Push 1 al agendar para las reuniones de HubSpot (2026-10-14, en PR)
+
+**Por qué.** Lucas Mendoza reportó el 14-oct que le seguía llegando el digest de la víspera con
+citas del 15. Medido: una era de antes de la prueba (agendada el 6-oct) y la otra la había creado
+el **assigner** directo en HubSpot el 12-oct; no existía en Calendly. El barrido de la prueba
+§18.CK solo leía Calendly, así que toda cita solo-HubSpot a más de 48 h (44 % de las de 30X al
+12-oct) recibía su Push 1 en la víspera. Y con `HUBSPOT_FUENTE_CONEXIONES=30x` prendida, la prueba
+quedaba muerta en 30X: el barrido de Calendly deja de ver esa conexión.
+
+**Qué hace.** `barridoPush1AlAgendarHubspot` corre en cada tick del poll, después del poll de
+HubSpot:
+- busca las reuniones **creadas** en los últimos `CALENDLY_PUSH0_RECENT_MIN` (1 request por ciclo,
+  `searchMeetingsCreatedSince`), de closers, a entre 48 h y `_DIAS` días, de una conexión en prueba;
+- dedup por closer + minuto contra toda fila de push, **Push 0 incluido** (la misma cita que llega
+  por Calendly ya la avisó su barrido en el mismo tick; dos registros de HubSpot del mismo minuto);
+- descarta las **reagendas** con la misma regla del scan (`pickRescheduledAway`, gap ≥ 10 min): una
+  mudanza recibe su Push 1 en la víspera, igual que en Calendly;
+- crea solo el **Push 0** (`hubspot:<id>`). Al entregarse marca prefired y el digest se la salta.
+- Corre solo si el poll de HubSpot corre (`HUBSPOT_AGENDA_POLL=true` o la fuente única): sin él
+  esas citas nunca tendrían Push 3.
+
+**El bug que había que evitar.** El poll de HubSpot deduplicaba contra **cualquier** fila
+(`getCallsWithAnyPushInWindow`). Una cita con solo su Push 0 habría quedado "ya agendada" y nunca
+habría recibido Push 3 ni 4. La consulta ahora devuelve `solo_push0` y el poll ignora esas
+citas; el barrido sí las cuenta. Se resolvió con una columna y no filtrando en el SQL porque el
+barrido necesita ver el Push 0 de Calendly.
+
+**Refactor:** `agendarPush0Hubspot` (el gemelo de `agendarPush0Calendly`) lo usan el poll y el
+barrido; `grafoDeReagendas` (contacto → hermanas) lo usan el scan de reagendas y el barrido.
+
+**Prueba extendida al 23-oct** (`CALENDLY_PUSH1_AL_AGENDAR_HASTA`, default en `docker-compose.yml`):
+la medición del 16 quedaba contaminada porque casi la mitad de las citas de 30X recibía el Push 1 en la víspera.
+Para medir el 24: separar el show rate por origen (`event_uuid LIKE 'hubspot:%'`) y por fecha de
+reserva (antes y después del deploy).
+
+**Archivos:** `src/scheduler/calendly.js`, `src/db/index.js`, `docker-compose.yml`, `.env.example`,
+`test/hubspot.push1-al-agendar.test.js` (9).
+
+**Tests:** Linux 1334, 1331 verdes, los 3 rojos conocidos.
+
+**Para desplegar:** `alcance: todo`. Verificar en los logs `[HubSpot] Push 0 (nueva call …, con su
+Push 1 — prueba al agendar)` cuando entra una reserva lejana del assigner. Después, prender
+`HUBSPOT_FUENTE_CONEXIONES=30x` (§18.CO, paso 2).
 
 ### Secretos (decididos, ver §13)
 

@@ -1268,6 +1268,13 @@ export async function runCalendlyPoll() {
     console.error('[HubSpot] poll de agenda falló (los pushes de Calendly no se ven afectados):', e.message)
   );
 
+  // El Push 1 al agendar de las reuniones de HubSpot lejanas (§18.CP). Después de los dos polls y
+  // del barrido de Calendly, por la misma razón que el poll de HubSpot va segundo: una cita que
+  // está en las dos fuentes ya tiene su Push 0 de Calendly y el dedup la salta.
+  await barridoPush1AlAgendarHubspot(d, nowMs).catch((e) =>
+    console.error('[HubSpot] barrido Push 1 al agendar falló (el poll normal no se ve afectado):', e.message)
+  );
+
   // Y al final del todo, las reagendas hechas dentro del CRM. DESPUÉS de los dos polls, no antes:
   // si cancelara primero, el poll de HubSpot vería la call vieja "sin push" y le crearía uno
   // nuevo en el mismo tick —bajo otro event_uuid si venía de Calendly— resucitando justo lo que
@@ -1337,6 +1344,124 @@ async function barridoPush1AlAgendar(d, nowMs) {
   return nuevos;
 }
 
+// Push 0 de una cita `hubspot:<id>`: el gemelo de `agendarPush0Calendly`. Lo usan el poll de
+// HubSpot (citas a <48h) y su barrido del Push 1 al agendar (las más lejanas).
+function agendarPush0Hubspot(d, { call, base, startIso, closer, name, firstName, phone, nowMs }) {
+  const now = new Date(nowMs);
+  const d0 = decidePush0({
+    startMs: Date.parse(startIso),
+    createdAtMs: call.created_at ? Date.parse(call.created_at) : NaN,
+    nowMs,
+    isToday: isSameDayInTz(startIso, TZ(), now),
+    push2HasRun: push2HasRunToday(PUSH2_CRON(), TZ(), now),
+    isTomorrow: isNextDayInTz(startIso, TZ(), now),
+    push1HasRun: dailyCronHasRunToday(push1CronFor(call.program), TZ(), now),
+    recentMs: PUSH0_RECENT_MIN() * 60000,
+    alAgendar: push1AlAgendarPara(accountOfCloser(call.closer_email), nowMs),
+  });
+  if (!d0.notify) return null;
+  return d.scheduleCalendlyPush({
+    ...base,
+    push_n: 0,
+    due_at: toSqliteUtc(now),
+    message: buildPush0Message({
+      name,
+      firstName,
+      phone,
+      startIso,
+      programKey: call.program,
+      when: whenOfCall(startIso, now),
+      closer: firstNameFrom(closer.name),
+      base: now,
+    }),
+  });
+}
+
+// El barrido del Push 1 al agendar para las reuniones de HubSpot (§18.CP). El de Calendly no ve
+// las citas del assigner, que agenda directo en el CRM (44 % de las de 30X al 12-oct), y con la
+// fuente única prendida no ve nada de 30X. Mismo contrato que el de Calendly: solo reuniones
+// CREADAS en los últimos minutos (1 request por ciclo), para más allá de las 48h del poll.
+//
+// Solo crea el Push 0. El Push 3 y el 4 se los crea el poll de HubSpot cuando la cita entra a
+// sus 48h (por eso `getCallsWithAnyPushInWindow` marca `solo_push0`), y la entrega la valida
+// contra HubSpot como a cualquier `hubspot:<id>`.
+async function barridoPush1AlAgendarHubspot(d, nowMs) {
+  if (!PUSH0_ENABLED()) return 0;
+  // Sin el poll de HubSpot esas citas nunca tendrían Push 3: avisar al agendar y después nada
+  // sería peor que la víspera.
+  if (!HUBSPOT_POLL_ENABLED() && !HUBSPOT_FUENTE().size) return 0;
+  if (![...PUSH1_AL_AGENDAR()].some((k) => push1AlAgendarPara(k, nowMs))) return 0;
+  if (!d.hubspotEnabled?.() || !d.searchMeetingsCreatedSince) return 0;
+
+  const raw = (await d.searchMeetingsCreatedSince({
+    sinceIso: new Date(nowMs - PUSH0_RECENT_MIN() * 60000).toISOString(),
+  })).filter((m) => !esReunionCancelada(m));
+  if (!raw.length) return 0;
+
+  const minMs = nowMs + 48 * 3600 * 1000; // lo de antes ya lo cubre el poll, con su propio Push 0
+  const maxMs = nowMs + PUSH1_AL_AGENDAR_DIAS() * 86400000;
+  const ownerEmailById = await d.getOwnerEmailMap();
+  const candidatas = meetingsToCalls(raw, {
+    ownerEmailById,
+    ownerToCloser: HUBSPOT_OWNER_TO_CLOSER,
+    programaPorMeeting: await programasPorDeal(d, raw, ownerEmailById),
+  }).filter((c) => {
+    const ms = Date.parse(callStartToIso(c.call_start) || '');
+    return ms >= minMs && ms <= maxMs && push1AlAgendarPara(accountOfCloser(c.closer_email), nowMs);
+  });
+  if (!candidatas.length) return 0;
+
+  // Dedup por closer + minuto contra TODA fila, Push 0 incluido: con la fuente única apagada, la
+  // misma cita llega por Calendly y su barrido ya la avisó en este mismo tick.
+  const toDb = (ms) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+  const existingCalls = (d.getCallsWithAnyPushInWindow || d.getScheduledCallsInWindow)(toDb(minMs - 60000), toDb(maxMs + 60000));
+  const { toSchedule } = pickMeetingsToSchedule({ hubspotCalls: candidatas, existingCalls, tz: TZ() });
+  if (!toSchedule.length) return 0;
+
+  // Una reagenda a una fecha lejana no es una reserva nueva: misma regla que el barrido de
+  // Calendly. Esa cita recibe su Push 1 en la víspera, como cualquier mudanza.
+  const reagendas = new Set();
+  if (d.getContactsOfMeetings && d.getMeetingsOfContacts && d.getMeetingsByIds) {
+    const { nuevas, siblingsByContact } = await grafoDeReagendas(d, toSchedule, ownerEmailById);
+    const { superseded } = pickRescheduledAway({ nuevas, siblingsByContact, nowMs });
+    for (const { nueva } of superseded) reagendas.add(String(nueva.meeting_id));
+  }
+
+  let nuevos = 0;
+  for (const call of toSchedule) {
+    if (reagendas.has(String(call.meeting_id))) continue;
+    try {
+      const startIso = callStartToIso(call.call_start);
+      const closer = resolveCloser(call.closer_email);
+      if (!startIso || !closer) continue;
+      const contacto = d.getMeetingContact ? await d.getMeetingContact(call.meeting_id) : null;
+      const name = fullNameFrom(contacto?.name) || null;
+      const firstName = firstNameFrom(contacto?.name) || '';
+      const phone = contacto?.phone || null;
+      const base = {
+        event_uuid: call.event_uuid,
+        program: call.program,
+        closer_email: call.closer_email,
+        closer_phone: closer.phone,
+        prospect_name: contacto?.name || call.prospect_name || null,
+        prospect_phone: phone,
+        call_start: call.call_start,
+      };
+      const r0 = agendarPush0Hubspot(d, { call, base, startIso, closer, name, firstName, phone, nowMs });
+      if (r0 === 'new') {
+        nuevos++;
+        console.log(
+          `[HubSpot] Push 0 (nueva call ${formatLeadDay(startIso, TZ(), new Date(nowMs))}, con su Push 1 — prueba al agendar) → ` +
+            `${closer.name} | ${firstName || '?'} | ${formatCallTime(startIso)}`
+        );
+      }
+    } catch (e) {
+      console.error(`[HubSpot] barrido Push 1 al agendar: error en ${call.event_uuid}:`, e.message);
+    }
+  }
+  return nuevos;
+}
+
 // ─── Poll de las citas que SOLO viven en HubSpot (§18.AN) ─────────────────────
 // El closer (o un setter) agenda dentro del CRM y esa cita nunca pasa por Calendly: medido,
 // ~11 al día. Salían en la agenda del jefe pero NADIE avisaba al closer. Acá se les crean los
@@ -1372,10 +1497,12 @@ export async function runHubspotAgendaPoll({ preview = false } = {}) {
   // reagenda (§18.AO) tiene que seguir contando como "ya decidida", o el poll se la crearía de
   // nuevo bajo otro event_uuid en el ciclo siguiente. Fallback a la consulta vieja para no
   // romper los tests/mocks que solo inyectan `getScheduledCallsInWindow`.
+  // Una call que solo tiene su Push 0 (avisada al agendar, §18.CP) NO está decidida: le faltan el
+  // Push 3 y el 4, y este es el único lugar que se los crea a una cita de HubSpot.
   const existingCalls = (d.getCallsWithAnyPushInWindow || d.getScheduledCallsInWindow)(
     toDb(minStartIso),
     toDb(maxStartIso)
-  );
+  ).filter((c) => !c.solo_push0);
   const { toSchedule, skipped, fueraDeHorario } = pickMeetingsToSchedule({
     hubspotCalls,
     existingCalls,
@@ -1465,36 +1592,7 @@ export async function runHubspotAgendaPoll({ preview = false } = {}) {
         });
       }
 
-      if (PUSH0_ENABLED()) {
-        const d0 = decidePush0({
-          startMs: Date.parse(startIso),
-          createdAtMs: call.created_at ? Date.parse(call.created_at) : NaN,
-          nowMs,
-          isToday: isSameDayInTz(startIso, TZ(), new Date(nowMs)),
-          push2HasRun: push2HasRunToday(PUSH2_CRON(), TZ(), new Date(nowMs)),
-          isTomorrow: isNextDayInTz(startIso, TZ(), new Date(nowMs)),
-          push1HasRun: dailyCronHasRunToday(push1CronFor(call.program), TZ(), new Date(nowMs)),
-          recentMs: PUSH0_RECENT_MIN() * 60000,
-          alAgendar: push1AlAgendarPara(accountOfCloser(email), nowMs),
-        });
-        if (d0.notify) {
-          d.scheduleCalendlyPush({
-            ...base,
-            push_n: 0,
-            due_at: toSqliteUtc(new Date(nowMs)),
-            message: buildPush0Message({
-              name,
-              firstName,
-              phone,
-              startIso,
-              programKey: call.program,
-              when: whenOfCall(startIso, new Date(nowMs)),
-              closer: firstNameFrom(closer.name),
-              base: new Date(nowMs),
-            }),
-          });
-        }
-      }
+      if (PUSH0_ENABLED()) agendarPush0Hubspot(d, { call, base, startIso, closer, name, firstName, phone, nowMs });
     } catch (e) {
       console.error(`[HubSpot] poll: error en ${call.event_uuid}:`, e.message);
     }
@@ -1522,6 +1620,38 @@ export async function runHubspotAgendaPoll({ preview = false } = {}) {
 // `hs_createdate` en vez de rastrear la agenda futura entera.
 const RESCHEDULE_SIBLING_CAP = 300;
 
+// Citas recién creadas → { nuevas (con su contact_id), siblingsByContact }: la entrada de
+// `pickRescheduledAway`. La usan el scan de reagendas y el barrido del Push 1 al agendar (§18.CP),
+// que necesita saber si una reunión nueva es una reserva o la mudanza de otra.
+async function grafoDeReagendas(d, recientes, ownerEmailById) {
+  // cita nueva → su lead
+  const contactOf = await d.getContactsOfMeetings(recientes.map((c) => c.meeting_id));
+  const nuevas = recientes
+    .map((c) => ({ ...c, contact_id: contactOf[String(c.meeting_id)] }))
+    .filter((c) => c.contact_id);
+  if (!nuevas.length) return { nuevas, siblingsByContact: {} };
+
+  // lead → TODAS sus citas (ahí está la que quedó vieja, que puede caer fuera de cualquier
+  // ventana de agenda: por eso se llega a ella por el lead y no por rango de fechas)
+  const porContacto = await d.getMeetingsOfContacts([...new Set(nuevas.map((c) => c.contact_id))]);
+  const conocidas = new Map(nuevas.map((c) => [String(c.meeting_id), c]));
+  const faltantes = [...new Set(Object.values(porContacto).flat())].filter((id) => !conocidas.has(String(id)));
+  const hermanasRaw = faltantes.length ? await d.getMeetingsByIds(faltantes.slice(0, RESCHEDULE_SIBLING_CAP)) : [];
+  const hermanas = new Map(
+    meetingsToCalls(hermanasRaw, { ownerEmailById, ownerToCloser: HUBSPOT_OWNER_TO_CLOSER })
+      .filter((c) => programLivesInThisHubspot(c.program))
+      .map((c) => [String(c.meeting_id), c])
+  );
+
+  const siblingsByContact = {};
+  for (const [cid, ids] of Object.entries(porContacto)) {
+    siblingsByContact[cid] = ids
+      .map((id) => hermanas.get(String(id)) || conocidas.get(String(id)))
+      .filter(Boolean);
+  }
+  return { nuevas, siblingsByContact };
+}
+
 export async function runHubspotRescheduleScan({ preview = false } = {}) {
   const d = await deps();
   if (!preview && !HUBSPOT_RESCHEDULE_SCAN()) return 0;
@@ -1544,31 +1674,8 @@ export async function runHubspotRescheduleScan({ preview = false } = {}) {
     .filter(esFutura);
   if (!recientes.length) return 0;
 
-  // cita nueva → su lead
-  const contactOf = await d.getContactsOfMeetings(recientes.map((c) => c.meeting_id));
-  const nuevas = recientes
-    .map((c) => ({ ...c, contact_id: contactOf[String(c.meeting_id)] }))
-    .filter((c) => c.contact_id);
+  const { nuevas, siblingsByContact } = await grafoDeReagendas(d, recientes, ownerEmailById);
   if (!nuevas.length) return 0;
-
-  // lead → TODAS sus citas (ahí está la que quedó vieja, que puede caer fuera de cualquier
-  // ventana de agenda: por eso se llega a ella por el lead y no por rango de fechas)
-  const porContacto = await d.getMeetingsOfContacts([...new Set(nuevas.map((c) => c.contact_id))]);
-  const conocidas = new Map(nuevas.map((c) => [String(c.meeting_id), c]));
-  const faltantes = [...new Set(Object.values(porContacto).flat())].filter((id) => !conocidas.has(String(id)));
-  const hermanasRaw = faltantes.length ? await d.getMeetingsByIds(faltantes.slice(0, RESCHEDULE_SIBLING_CAP)) : [];
-  const hermanas = new Map(
-    meetingsToCalls(hermanasRaw, { ownerEmailById, ownerToCloser: HUBSPOT_OWNER_TO_CLOSER })
-      .filter(deEsteCrm)
-      .map((c) => [String(c.meeting_id), c])
-  );
-
-  const siblingsByContact = {};
-  for (const [cid, ids] of Object.entries(porContacto)) {
-    siblingsByContact[cid] = ids
-      .map((id) => hermanas.get(String(id)) || conocidas.get(String(id)))
-      .filter(Boolean);
-  }
 
   const { superseded, skipped } = pickRescheduledAway({ nuevas, siblingsByContact, nowMs });
 
