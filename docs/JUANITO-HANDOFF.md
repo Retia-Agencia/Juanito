@@ -5,7 +5,8 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-10-14** (§18.CP desplegado, HubSpot como fuente única PRENDIDA en 30X,
+Última actualización: **2026-10-14** (§18.CQ — el digest de la víspera ahora cuenta también las
+citas que ya recibieron su push al agendar; mergeado en #28, **sin desplegar**). Anterior: **2026-10-14** (§18.CP desplegado, HubSpot como fuente única PRENDIDA en 30X,
 arreglo del parser de la confirmación. ⛔ **Alejandro prohibió más deploys hasta que él lo levante**). Anterior: **2026-10-14** (§18.CN y §18.CO desplegados; la confirmación en el Push 2
 está prendida en 30X y HubSpot como fuente única sigue apagado). Anterior: **2026-10-11** (§18.CM — el Push 1 de IGTK llegaba cortado porque el link wa.me
 terminaba en punto: arreglado y desplegado). Anterior: **2026-10-10** (§18.CL — links wa.me partidos por un paréntesis: arreglado y
@@ -7474,6 +7475,45 @@ a Pablo Suárez para una cita del 21-oct que creó el assigner.
 **Deploys del 14-oct (tres reinicios de Baileys):** run 38573736856 (§18.CP), run 38579499584 (la
 bandera de §18.CO; se disparó por error antes del merge del #26) y run 38580976267 (`9ea5e11`, #26).
 ⛔ **Después del último, Alejandro prohibió desplegar hasta que él lo levante explícitamente.**
+
+### 18.CQ 🟡 El digest contaba solo las citas listadas: "tienes 2 llamadas" a quien tenía 10 (2026-10-14, mergeado, SIN desplegar)
+
+**Por qué.** Daniela Camacho reportó el 14-oct que su Push 1 de la víspera solo traía 2 llamadas
+para el jueves 15 y preguntó por los demás pushes. Medido en la DB de prod: tenía **10**. Las
+otras 8 eran citas de Calendly que recibieron su Push 1 al agendar (Push 0 `sent` entre el 11 y
+el 13-oct, todas con marca `push1_prefired:`), así que el digest se las saltó como corresponde.
+Las 2 listadas (Giselle Gelves y Humberto Banarez) eran `hubspot:<id>` del assigner, creadas el
+10 y el 11-oct: antes de §18.CP, cuando el barrido todavía no leía HubSpot. **No faltó ningún
+push.** Las 10 tienen Push 3 y 4 `scheduled`.
+
+El bug era de copy: `buildDigestMessage` contaba `items.length` y el encabezado decía "tienes 2
+llamadas mañana". El closer lo lee como su agenda completa. Mientras dure la prueba (hasta el
+23-oct) les pasa a todos los closers de 30X.
+
+**Qué cambia.**
+- `runDigest` cuenta por closer (`yaEnviadas`, keyeado por teléfono) las citas saltadas por
+  prefired: las de Calendly en el loop y las de HubSpot con un callback `onPrefired` en
+  `hubspotDigestItems`, que respeta `soloConexion`. `saltadas` (el log) ahora incluye las de
+  HubSpot.
+- `buildDigestMessage({ yaEnviadas })` las suma al total:
+  > 📋 *Push 1 (el día anterior)* — tienes 10 llamadas mañana (jue, 15 de oct).
+  > ✅ 8 ya tenían su link desde que el lead agendó (te llegó en ese momento, más arriba en este chat). Faltan estas 2:
+- Sin prefired, el mensaje queda idéntico al de antes.
+- **No cubierto:** un closer con TODAS sus citas del día prefired sigue sin recibir digest (no
+  hay entrada en `byCloser`). Se dejó así a propósito: un digest sin links es ruido.
+
+**A Daniela** se le explicó por WhatsApp (desde el número de Alejandro) que tiene 10 y que los
+links de las otras 8 están más arriba en su chat con Juanito.
+
+**Archivos:** `src/calendly/index.js`, `src/scheduler/calendly.js`, tests en
+`test/calendly.helpers.test.js`, `test/calendly.push1-adelantado.test.js` y
+`test/hubspot.push1-al-agendar.test.js` (3 nuevos).
+
+**Tests:** Linux 1337, 1334 verdes, los 3 rojos conocidos.
+
+**Estado:** PR #28 mergeado (`6272c81`). ⛔ **No desplegado** por la regla de no desplegar.
+Entra con el próximo deploy (`alcance: todo`, porque toca el bot). Hasta entonces, si otro closer de
+30X pregunta por qué el digest trae menos citas, la respuesta es la misma.
 
 ### Secretos (decididos, ver §13)
 
