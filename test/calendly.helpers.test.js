@@ -597,3 +597,12 @@ test('AI Second Brain Jurídico: copy de 30X con EstadoX y su propio brochure', 
   assert.equal(programFromTitle('Postulacion Second Brain Juridico | EstadoX'), 'second_brain_juridico');
   assert.equal(programFromTitle('Entrevista de Postulación Programa de Implementación AI Second Brain'), 'second_brain');
 });
+
+test('programFromTitle: las clases de las cohortes no son calls de venta', () => {
+  for (const t of ['Second Brain C3', 'AI Second Brain C2', 'Clase 2: Data y análisis comercial', 'Liquidación cohorte', 'Sesión 4 Operaciones']) {
+    assert.equal(programFromTitle(t), null, t);
+  }
+  // Las de venta siguen igual, incluidas las del assigner
+  assert.equal(programFromTitle('Agendamiento — second-brain — Pablo Lozano'), 'second_brain');
+  assert.equal(programFromTitle('Entrevista de Postulación Programa de Implementación AI Second Brain 3'), 'second_brain');
+});
