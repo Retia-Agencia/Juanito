@@ -2204,7 +2204,7 @@ function whenLabel(offsetDays, nowMs = Date.now()) {
 // DESPUÉS de `pickMeetingsToSchedule` y no antes: la dedup contra Calendly tiene que ver la lista
 // COMPLETA de citas de Calendly, o una call que este turno no lista reaparecería como "solo en
 // HubSpot" en el otro turno.
-async function hubspotDigestItems(d, { calendlyCalls, minStartIso, maxStartIso, pushN, incluyePrograma = () => true, prefired = null }) {
+async function hubspotDigestItems(d, { calendlyCalls, minStartIso, maxStartIso, pushN, incluyePrograma = () => true, prefired = null, onPrefired = () => {} }) {
   if (!d.searchMeetingsInWindow || !d.getOwnerEmailMap) return [];
   if (d.hubspotEnabled && !d.hubspotEnabled()) return [];
   try {
@@ -2234,7 +2234,10 @@ async function hubspotDigestItems(d, { calendlyCalls, minStartIso, maxStartIso, 
       // a HubSpot.
       if (!incluyePrograma(call.program)) continue;
       const prefiredKey = `hubspot:${call.meeting_id}`;
-      if (prefired?.has(prefiredKey)) continue; // su Push 1 ya salió adelantado
+      if (prefired?.has(prefiredKey)) {
+        onPrefired(call.closer_email); // su Push 1 ya salió adelantado; igual cuenta en el encabezado
+        continue;
+      }
       // El lead sale del contacto asociado, no del título ("Entrevista de Postulación…"), que
       // como nombre de prospecto no sirve y dejaría la línea del digest sin número.
       let contacto = null;
@@ -2331,6 +2334,9 @@ async function runDigest(
   if (failed && !events.length && !HUBSPOT_FUENTE().size) return 0;
 
   const byCloser = new Map(); // phone -> { name, email, items[] }
+  // phone -> cuántas citas del día se saltaron por prefired. Van al encabezado del digest: sin
+  // ellas, "tienes 2 llamadas" a quien tiene 10 se lee como que faltan las otras 8.
+  const yaEnviadas = new Map();
   // §18.CA: mismo índice del poll, memoizado para ESTA corrida del digest. Un digest es una
   // pasada sobre las citas del día, así que la hoja de cada conexión se lee una sola vez.
   const formIndexFor = makeFormIndexCache({ fetchSheetValues: d.fetchSheetValues });
@@ -2362,6 +2368,7 @@ async function runDigest(
     if (soloConexion && accountOfCloser(email) !== soloConexion) continue;
     if (prefired?.has(ev.uri)) {
       saltadas++;
+      yaEnviadas.set(closer.phone, (yaEnviadas.get(closer.phone) || 0) + 1);
       continue;
     }
 
@@ -2407,6 +2414,12 @@ async function runDigest(
     pushN,
     incluyePrograma,
     prefired,
+    onPrefired: (closerEmail) => {
+      const closer = resolveCloser(closerEmail);
+      if (!closer || (soloConexion && accountOfCloser(closerEmail) !== soloConexion)) return;
+      saltadas++;
+      yaEnviadas.set(closer.phone, (yaEnviadas.get(closer.phone) || 0) + 1);
+    },
   })) {
     const closer = resolveCloser(closerEmail);
     if (!closer) continue; // HUBSPOT_OWNER_TO_CLOSER ya lo garantiza; defensivo
@@ -2436,6 +2449,7 @@ async function runDigest(
       // Las tandas adelantadas le piden al closer unos ~40 envíos en una tarde desde su propio
       // teléfono: ese es el patrón que quema números, no el digest de Juanito.
       nota: adelantado ? '🐢 Mándalos con calma, uno por minuto más o menos, para no quemar tu número.' : '',
+      yaEnviadas: yaEnviadas.get(phone) || 0,
     });
     const outcome = await deliver(d, phone, msg, `push${pushN}`, email);
     if (marcarPrefired && outcome === 'sent' && d.markPush1Prefired) {

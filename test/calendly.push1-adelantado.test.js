@@ -114,6 +114,10 @@ test('Push 1 de la noche se salta lo que ya salió adelantado y lista lo nuevo',
   const texto = h.wa.sent[0].text;
   assert.doesNotMatch(texto, /Ana Gómez/, 'la que ya salió no se repite');
   assert.match(texto, /Beto Ruiz/, 'la nueva sí recibe su Push 1');
+  // El conteo es del día completo, no solo de lo listado (caso Daniela, 14-oct: "tienes 2" con 10).
+  assert.match(texto, /tienes 2 llamadas mañana/);
+  assert.match(texto, /1 ya tenía su link desde que el lead agendó/);
+  assert.match(texto, /Falta esta:/);
   assert.match(leadTexts(texto)[0], /tu llamada de mañana miércoles a las/);
 });
 
