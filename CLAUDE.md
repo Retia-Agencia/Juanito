@@ -170,10 +170,11 @@ loop rápido de reconexiones desde datacenter → WhatsApp lo detectó.
   `dashboard/server/csrf.js`. Sin él, ese archivo da ERR_MODULE_NOT_FOUND y parece una regresión.)
   (En Git Bash, prefijar con `MSYS_NO_PATHCONV=1` y usar rutas `C:/…` o el volumen no monta y
   la suite reporta **0 tests** en verde, que es peor que fallar.)
-  Baseline al **2026-10-10: 1298 tests, 1296 verdes, 2 rojos conocidos** (`call con TODOS sus
-  pushes skipped…` y `reagenda manual superseded…`; los números de test se corren al agregar
-  archivos, así que se buscan por nombre, no por índice). El tercer rojo histórico —links de
-  Retia— murió solo al mudarse el sheet de Comunicarte (§18.BN). En Windows ese mismo commit da
+  Baseline al **2026-10-14: 1325 tests, 1322 verdes, 3 rojos conocidos** (`call con TODOS sus
+  pushes skipped…`, `reagenda manual superseded…` y `el mensaje lleva los links de Retia…`; los
+  números de test se corren al agregar archivos, así que se buscan por nombre, no por índice). El
+  de links de Retia había muerto al mudarse el sheet de Comunicarte (§18.BN) y volvió a estar rojo
+  en `main` antes de §18.CN. En Windows ese mismo commit da
   ~98 rojos — medir SIEMPRE la línea base con `git stash` antes de tocar nada y comparar contra
   ella, no contra cero.
   **Sin daemon de Docker local** (pasa seguido en el Mac) la suite igual se puede correr en Linux

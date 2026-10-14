@@ -5,7 +5,8 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-10-11** (§18.CM — el Push 1 de IGTK llegaba cortado porque el link wa.me
+Última actualización: **2026-10-14** (§18.CN y §18.CO desplegados; la confirmación en el Push 2
+está prendida en 30X y HubSpot como fuente única sigue apagado). Anterior: **2026-10-11** (§18.CM — el Push 1 de IGTK llegaba cortado porque el link wa.me
 terminaba en punto: arreglado y desplegado). Anterior: **2026-10-10** (§18.CL — links wa.me partidos por un paréntesis: arreglado y
 reenviado a Andrea; espejo de Tactical Investor; ADR 0004 de links cortos en Cloudflare). Anterior: **2026-10-09** (§18.CK — el Push 0 trae el Push 1; prueba de una semana de
 Push 1 al agendar en 30X). Anterior: **2026-10-05** (§18.CD — tercer programa de Retia: PowerTalk · "Comunícate con
@@ -7276,7 +7277,7 @@ termina en `t%C3%BA%2E`. Drift previo medido: el VPS era idéntico a `main` salv
 - Averiguar de quién es `147313234280449@lid` y corregir `CALENDLY_DEV_MIRROR_JID` si debía ser un dev.
 - Al cambiar cualquier copy precall: mirar el **último carácter** del texto, no el largo.
 
-### 18.CN 🟡 Confirmación en el Push 2: "¿quiénes te confirmaron?" (2026-10-13, en rama, sin desplegar)
+### 18.CN 🔵 Confirmación en el Push 2: "¿quiénes te confirmaron?" (2026-10-13, desplegado y prendido en 30X)
 
 **Pedido de Alejandro.** El Dashboard de Closers deja de leer Calendly: las citas salen de las
 reuniones de HubSpot (repo `dashboard-closers`, migraciones 0012–0014). Medido del 28-sep al 4-oct:
@@ -7334,7 +7335,24 @@ de `main`** (better-sqlite3 sin compilar). **La suite en Linux no se corrió.**
    siguiente: tras el Push 2 de las 6:30 sale la pregunta, una respuesta real queda en
    `call_confirmaciones`, y `docker logs juanito-dash` dice `N/N confirmaciones`.
 
-### 18.CO 🟡 HubSpot como fuente única de las citas en 30X (2026-10-13, en rama, sin desplegar)
+**Desplegado (2026-10-14).** PR #23 mergeado (`659664b`) junto con el #24 (§18.CO); `main` =
+`b7dac07`. Antes del merge se corrió la suite en Linux sobre los dos PRs juntos: **1325 tests, 1322
+verdes**, y los 3 rojos son los mismos que en `main` (1299 tests): `el mensaje lleva los links de
+Retia…`, `call con TODOS sus pushes skipped…` y `reagenda manual superseded…`. El de los links de
+Retia, verde desde §18.BN, volvió a estar rojo en `main` y no lo causan estos PRs. Drift del VPS
+medido contra `24bca83` (con `tr -d '\r'`): ninguno.
+- **Deploy:** run 38503386928, `alcance: todo`, 02:53 UTC. `DEPLOYED_SHA = b7dac07`. Los dos
+  contenedores arriba, `compose config --services` lista `agent` y `dash`, WA reconectó sin
+  405/401, la tabla `call_confirmaciones` quedó creada y las dos banderas llegaron vacías.
+- **Prendida:** `CALENDLY_CONFIRMACION_PUSH2=30x` en el `.env` del VPS (respaldo
+  `.env.bak-<ts>-confirmacion`, comentario en línea aparte), `docker compose up -d agent` (solo el
+  bot), WA reconectado. Dentro del contenedor, `printenv` da `30x`.
+
+**Pendiente:**
+- Verificar el 14-oct después de las 6:30: la pregunta tras el Push 2, filas en
+  `call_confirmaciones` y `N/N confirmaciones` en `docker logs juanito-dash`.
+
+### 18.CO 🟡 HubSpot como fuente única de las citas en 30X (2026-10-13, desplegado, bandera apagada)
 
 **Por qué.** 30X cambió Calendly por el **assigner**, que agenda directo en HubSpot. Medido con el
 Dashboard de Closers, la parte de las citas de 30X que Calendly no ve: **9 %** (semana del 14-sep)
@@ -7378,6 +7396,16 @@ vence el 16-oct); las citas a más de 48 h reciben su Push 1 en la víspera, com
 2. `HUBSPOT_FUENTE_CONEXIONES=30x` en el `.env` del VPS y recrear. Verificar en los logs:
    `[HubSpot] Poll de agenda: …` con citas de 30X, ningún `[Calendly] … [30x]`, y el Push 2 de la
    mañana con el total de citas del día (contrastar con el Dashboard de Closers).
+
+**Desplegado (2026-10-14), con la bandera APAGADA.** PR #24 mergeado (`b7dac07`) en el mismo deploy
+que §18.CN (run 38503386928; la suite en Linux está ahí). `HUBSPOT_FUENTE_CONEXIONES` llega vacío al
+contenedor: las banderas se prenden de a una, y esta va después de revisar que la confirmación del
+Push 2 funcione el 14-oct. Un cambio corre aunque la bandera esté apagada: la búsqueda de
+reuniones de HubSpot (poll y digest) ya va filtrada por owners que son closers. El resultado debería
+ser el mismo, porque las reuniones de quien no es closer se descartaban después.
+
+**Pendiente:** prender `HUBSPOT_FUENTE_CONEXIONES=30x` (paso 2 de arriba) cuando §18.CN quede
+verificado.
 
 ### Secretos (decididos, ver §13)
 
