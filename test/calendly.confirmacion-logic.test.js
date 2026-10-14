@@ -30,6 +30,16 @@ test('todos / ninguno', () => {
   assert.deepEqual(final('no todos'), { 1: 'no_confirmada', 2: 'no_confirmada', 3: 'no_confirmada' });
 });
 
+test('"todas las llamadas" no es un "todas": no pisa al "ninguno" (caso real 14-oct)', () => {
+  const NO = { 1: 'no_confirmada', 2: 'no_confirmada', 3: 'no_confirmada' };
+  assert.deepEqual(final('Ninguno, mándame el primer push de todas las llamadas de hoy'), NO);
+  assert.deepEqual(final('ninguno de todos mis leads'), NO);
+  // Las dos respuestas, opuestas, en el mismo mensaje: se repregunta en vez de adivinar.
+  assert.deepEqual(parseConfirmacion('ninguno... ah espera, todos', 3), { kind: 'unknown' });
+  // Sin una respuesta real, un "todas las …" suelto no se entiende como "todas".
+  assert.deepEqual(parseConfirmacion('mándame todas las llamadas de hoy', 3), { kind: 'unknown' });
+});
+
 test('todos menos uno', () => {
   assert.deepEqual(final('todos menos el 2'), { 1: 'confirmada', 2: 'no_confirmada', 3: 'confirmada' });
   assert.deepEqual(final('todos menos el 2 que canceló'), { 1: 'confirmada', 2: 'cancelada', 3: 'confirmada' });
