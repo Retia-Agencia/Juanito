@@ -48,6 +48,7 @@ const esNegativaSiguiente = (t) =>
 const TODOS = new Set(['todos', 'todas', 'todo']);
 const NINGUNO = new Set(['ninguno', 'ninguna', 'nadie']);
 const MENOS = new Set(['menos', 'excepto', 'salvo', 'sino']);
+const CUANTIFICADO = /^(las|los|mis|tus|sus|de|del|estas|estos|esas|esos|el|la|lo)$/;
 const PENDIENTE = /^(pendiente|pendientes|esperando)$/;
 
 // Devuelve { kind: 'ok', todos, explicitos } o { kind: 'unknown' }.
@@ -64,6 +65,13 @@ export function parseConfirmacion(text, n) {
   let ultimo = null;
   let hubo = false; // algún número en rango o un "todos"/"ninguno"
 
+  // "todos" y "ninguno" en el mismo mensaje con sentidos opuestos: se repregunta en vez de
+  // quedarse con el último, que fue justo el error que marcó 9 llamadas al revés.
+  const fijarTodos = (estado) => {
+    if (todos && todos !== estado) return false;
+    todos = estado;
+    return true;
+  };
   const asignar = (estado) => {
     for (const p of pendientes) explicitos[p] = estado;
     pendientes = [];
@@ -81,12 +89,16 @@ export function parseConfirmacion(text, n) {
       continue;
     }
     if (TODOS.has(t)) {
-      todos = tokens[i - 1] === 'no' ? 'no_confirmada' : 'confirmada';
+      // "todas LAS llamadas", "todos MIS leads": cuantificador de otra frase, no la respuesta.
+      // Caso real (14-oct): "Ninguno, mándame el primer push de todas las llamadas de hoy" quedó
+      // como 9 confirmadas porque este "todas" pisaba al "Ninguno".
+      if (CUANTIFICADO.test(tokens[i + 1] || '')) continue;
+      if (!fijarTodos(tokens[i - 1] === 'no' ? 'no_confirmada' : 'confirmada')) return { kind: 'unknown' };
       hubo = true;
       continue;
     }
     if (NINGUNO.has(t)) {
-      todos = 'no_confirmada';
+      if (!fijarTodos('no_confirmada')) return { kind: 'unknown' };
       hubo = true;
       continue;
     }
