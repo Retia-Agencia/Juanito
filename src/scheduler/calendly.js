@@ -46,9 +46,20 @@ import {
   dailyCronHasRunToday,
   push4DueUtc,
   buildPush4Message,
+  buildPush7Message,
   buildOutcomeReminder,
   buildReschedulePromptMessage,
 } from '../calendly/index.js';
+import {
+  PLAYBOOK_CONEXIONES,
+  playbookActivoPara,
+  PLAYBOOK_LEAD_MIN,
+  PLAYBOOK_NO_CONECTA_MIN,
+  PLAYBOOK_NO_CONECTA_VIGENCIA_MIN,
+  PLAYBOOK_48H_RECIENTE_HORAS,
+  frenaPorCorte,
+  due7Utc,
+} from '../calendly/playbook.js';
 import {
   computePush3Schedule,
   decidePush0,
@@ -84,6 +95,9 @@ const TZ = () => process.env.TZ || 'America/Bogota';
 const DRY_RUN = () => process.env.CALENDLY_DRY_RUN !== 'false'; // default true
 const REQUIRE_OPTIN = () => process.env.CALENDLY_REQUIRE_OPTIN !== 'false'; // default true
 const LEAD_MIN = () => Number(process.env.CALENDLY_PUSH3_LEAD_MIN || 25);
+// Toque 4 del playbook (§18.CR): en sus conexiones el Push 3 sale 1 h antes. La conexión que decide
+// es la del closer, igual que en la entrega.
+const leadMinFor = (closerEmail) => (playbookActivoPara(accountOfCloser(closerEmail)) ? PLAYBOOK_LEAD_MIN() : LEAD_MIN());
 
 // Push 0 (§18.C): aviso de "nueva call HOY". Activo por default (gateado igual que
 // todo por opt-in/contact_jid/pausa/DRY_RUN). `RECENT_MIN` = qué tan reciente debe
@@ -206,6 +220,9 @@ const POLL_CRON = () => process.env.CALENDLY_POLL_CRON || '*/5 * * * *';
 const DELIVER_CRON = () => process.env.CALENDLY_DELIVER_CRON || '* * * * *';
 const PUSH1_CRON = () => process.env.CALENDLY_PUSH1_CRON || '0 19 * * *'; // 7:00pm
 const PUSH2_CRON = () => process.env.CALENDLY_PUSH2_CRON || '30 6 * * *'; // 6:30am
+// Playbook (§18.CR): toque 2 (dos días antes) y corte (la víspera), a la hora del Push 1 de 30X.
+const PLAYBOOK_48H_CRON = () => process.env.CALENDLY_PLAYBOOK_48H_CRON || '0 8 * * *';
+const PLAYBOOK_CORTE_CRON = () => process.env.CALENDLY_PLAYBOOK_CORTE_CRON || '0 8 * * *';
 
 // ─── Push 1 más temprano para ALGUNOS programas (2026-09-08; ampliado 2026-09-16) ────────────
 // Instagram & TikTok (2026-09-08) y Operaciones Escalables con IA (2026-09-16) mandan su digest
@@ -300,7 +317,9 @@ const PUSH1_AL_AGENDAR_HASTA = () => (process.env.CALENDLY_PUSH1_AL_AGENDAR_HAST
 const PUSH1_AL_AGENDAR_DIAS = () => Number(process.env.CALENDLY_PUSH1_AL_AGENDAR_DIAS || 21);
 const fechaLocal = (nowMs) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: TZ(), year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(nowMs));
+// Con el playbook (§18.CR) el Push 0 al agendar es el toque 1: deja de ser una prueba y no vence.
 const push1AlAgendarPara = (conexion, nowMs) => {
+  if (playbookActivoPara(conexion)) return true;
   if (!conexion || !PUSH1_AL_AGENDAR().has(conexion)) return false;
   const hasta = PUSH1_AL_AGENDAR_HASTA();
   return !hasta || fechaLocal(nowMs) <= hasta;
@@ -526,6 +545,7 @@ async function deps() {
     markPush1Prefired: db.markPush1Prefired,
     // §18.CN: la pregunta de confirmación que sigue al Push 2.
     guardarLoteConfirmacion: db.guardarLoteConfirmacion,
+    getConfirmacionDeCita: db.getConfirmacionDeCita,
     // Anti-ban: la agenda a la admin es un DM a un tercero, no a un closer con opt-in.
     // Sin hilo previo NO se entrega (mismo gate que el reporte de las 8pm).
     hasDmThread: db.hasDmThread,
@@ -994,7 +1014,7 @@ export async function runCalendlyPoll() {
 
       // Decisión 4b: agendar incluso si los triggers normales ya pasaron (catch-up),
       // mientras la llamada siga en el futuro.
-      const sched = computePush3Schedule({ startIso: ev.start_time, leadMin: LEAD_MIN(), nowMs });
+      const sched = computePush3Schedule({ startIso: ev.start_time, leadMin: leadMinFor(closerEmailOf(ev)), nowMs });
       if (!sched.shouldSchedule) continue;
       const due = new Date(sched.dueMs);
 
@@ -1167,6 +1187,25 @@ export async function runCalendlyPoll() {
           );
         }
       }
+
+      // ─── Push 7: "si no se conecta" (§18.CR, playbook) ───────────────────────
+      agendarPush7(d, {
+        base: {
+          event_uuid: uuid,
+          program: programKey,
+          closer_email: email,
+          closer_phone: closer.phone,
+          prospect_name: invitee?.name || null,
+          prospect_phone: phone,
+          call_start: toSqliteUtc(new Date(ev.start_time)),
+        },
+        startIso: ev.start_time,
+        name,
+        firstName,
+        phone,
+        closer,
+        linkLlamada: eventJoinUrl(ev),
+      });
 
       // ─── Push 4: registro de outcome post-call (§18.AB) ──────────────────────
       // Se agenda para start + duración + gracia (default 30+5). Mismo dedup
@@ -1344,6 +1383,39 @@ async function barridoPush1AlAgendar(d, nowMs) {
   return nuevos;
 }
 
+// §18.CR: ¿el corte de la víspera apagó este push? Solo en las conexiones con el playbook y solo
+// por un lote del corte (una respuesta al Push 2 de otra conexión no frena nada). Si lo frena, lo
+// marca 'skipped' con su slug: una corrección posterior ("el 2 confirmó") lo reactiva.
+function frenaDelCorte(d, p) {
+  if (!playbookActivoPara(accountOfCloser(p.closer_email)) || !d.getConfirmacionDeCita) return false;
+  const c = d.getConfirmacionDeCita(String(p.event_uuid));
+  if (c?.tipo !== 'corte' || !frenaPorCorte(c.estado)) return false;
+  d.markCalendlyPushSkipped(p.id, `${c.estado === 'cancelada' ? 'cancelada' : 'sin confirmar'} en el corte de la víspera`, SKIP_SLUGS.SIN_CONFIRMAR);
+  console.log(`[Calendly] Push ${p.push_n} #${p.id} omitido: ${c.estado} en el corte (playbook)`);
+  return true;
+}
+
+// Push 7 (§18.CR): "si no se conecta", 10 min después del inicio, solo en las conexiones con el
+// playbook. Lo comparten el poll de Calendly y el de HubSpot. Una fila más de `calendly_pushes`:
+// sale por `deliver()` con todos los gates y el UNIQUE(event_uuid, push_n) lo deja en uno por cita.
+function agendarPush7(d, { base, startIso, name, firstName, phone, closer, linkLlamada = '' }) {
+  if (!playbookActivoPara(accountOfCloser(base.closer_email))) return null;
+  return d.scheduleCalendlyPush({
+    ...base,
+    push_n: 7,
+    due_at: toSqliteUtc(due7Utc(startIso)),
+    message: buildPush7Message({
+      name,
+      firstName,
+      phone,
+      startIso,
+      programKey: base.program,
+      closer: firstNameFrom(closer.name),
+      linkLlamada,
+    }),
+  });
+}
+
 // Push 0 de una cita `hubspot:<id>`: el gemelo de `agendarPush0Calendly`. Lo usan el poll de
 // HubSpot (citas a <48h) y su barrido del Push 1 al agendar (las más lejanas).
 function agendarPush0Hubspot(d, { call, base, startIso, closer, name, firstName, phone, nowMs }) {
@@ -1390,7 +1462,7 @@ async function barridoPush1AlAgendarHubspot(d, nowMs) {
   // Sin el poll de HubSpot esas citas nunca tendrían Push 3: avisar al agendar y después nada
   // sería peor que la víspera.
   if (!HUBSPOT_POLL_ENABLED() && !HUBSPOT_FUENTE().size) return 0;
-  if (![...PUSH1_AL_AGENDAR()].some((k) => push1AlAgendarPara(k, nowMs))) return 0;
+  if (![...PUSH1_AL_AGENDAR(), ...PLAYBOOK_CONEXIONES()].some((k) => push1AlAgendarPara(k, nowMs))) return 0;
   if (!d.hubspotEnabled?.() || !d.searchMeetingsCreatedSince) return 0;
 
   const raw = (await d.searchMeetingsCreatedSince({
@@ -1536,7 +1608,7 @@ export async function runHubspotAgendaPoll({ preview = false } = {}) {
     try {
       const startIso = callStartToIso(call.call_start);
       if (!startIso) continue;
-      const sched = computePush3Schedule({ startIso, leadMin: LEAD_MIN(), nowMs });
+      const sched = computePush3Schedule({ startIso, leadMin: leadMinFor(call.closer_email), nowMs });
       if (!sched.shouldSchedule) continue;
 
       const email = call.closer_email;
@@ -1581,6 +1653,8 @@ export async function runHubspotAgendaPoll({ preview = false } = {}) {
           `[HubSpot] Push 3 ${r3} (cita solo en HubSpot) → ${closer.name} | ${firstName || '?'} | ${formatCallTime(startIso)}`
         );
       }
+
+      agendarPush7(d, { base, startIso, name, firstName, phone, closer, linkLlamada: call.join_url || '' });
 
       const acct = accountOf(accountOfCloser(email));
       if (acct?.push4?.() && push4AllowedFor(email)) {
@@ -2002,6 +2076,68 @@ export async function runCalendlyDelivery() {
           continue;
         }
 
+        // ─── Push 7: "si no se conecta" (§18.CR, playbook) ───────────────────
+        // Como el 4 y el 5, sale DESPUÉS del inicio, así que no pasa por el guard de obsolescencia
+        // de abajo: tiene el suyo, una vigencia corta (pasada media hora ya no hay a quién esperar).
+        if (p.push_n === 7) {
+          const startMs7 = sqliteUtcToMs(p.call_start);
+          if (d.now() > startMs7 + PLAYBOOK_NO_CONECTA_VIGENCIA_MIN * 60000) {
+            d.markCalendlyPushSkipped(p.id, 'venció sin entregarse (la llamada ya iba avanzada)', SKIP_SLUGS.OBSOLETO);
+            console.log(`[Calendly] Push 7 #${p.id} omitido: vencido`);
+            continue;
+          }
+          if (frenaDelCorte(d, p)) continue;
+          const hs7 = hubspotMeetingIdOf(p.event_uuid) && hubspotEsFuenteDe(p.closer_email) ? await estadoCitaHubspot(d, p) : null;
+          if (hs7?.estado === 'cancelada' || hs7?.estado === 'movida') {
+            const slug7 = hs7.estado === 'cancelada' ? SKIP_SLUGS.CANCELADA : SKIP_SLUGS.REAGENDADA;
+            d.markCalendlyPushSkipped(p.id, hs7.motivo, slug7);
+            console.log(`[HubSpot] Push 7 #${p.id} omitido: ${hs7.motivo}`);
+            continue;
+          }
+          let ev7 = null;
+          if (!hs7 && !isManualUuid(p.event_uuid) && !hubspotMeetingIdOf(p.event_uuid)) {
+            try {
+              ev7 = await d.getEvent(`https://api.calendly.com/scheduled_events/${p.event_uuid}`, {
+                token: tokenForCloser(p.closer_email),
+              });
+            } catch {
+              /* si la verificación falla, mandamos igual con lo guardado */
+            }
+          }
+          if (ev7 && ev7.status !== 'active') {
+            d.markCalendlyPushSkipped(p.id, `cita ${ev7.status}`, SKIP_SLUGS.CANCELADA);
+            console.log(`[Calendly] Push 7 #${p.id} omitido: cita ${ev7.status}`);
+            continue;
+          }
+          if (ev7 && toSqliteUtc(new Date(ev7.start_time)) !== p.call_start) {
+            d.markCalendlyPushSkipped(p.id, 'reagendada', SKIP_SLUGS.REAGENDADA);
+            console.log(`[Calendly] Push 7 #${p.id} omitido: reagendada`);
+            continue;
+          }
+          const closer7 = resolveCloser(p.closer_email);
+          const msg7 = ev7
+            ? buildPush7Message({
+                name: fullNameFrom(p.prospect_name),
+                firstName: firstNameFrom(p.prospect_name),
+                phone: p.prospect_phone,
+                startIso: ev7.start_time,
+                programKey: programKeyOf(ev7.event_type),
+                closer: closer7 ? firstNameFrom(closer7.name) : '',
+                linkLlamada: eventJoinUrl(ev7),
+              })
+            : p.message;
+          const r7 = await deliver(d, p.closer_phone, msg7, 'push7', p.closer_email);
+          if (r7 === 'sent' || r7 === 'dry-run') d.markCalendlyPushSent(p.id);
+          else if (['paused', 'paused-closer', 'skipped-optin', 'skipped-no-thread'].includes(r7)) {
+            // Reintento acotado por la vigencia de arriba, igual que el 0/3 por la obsolescencia.
+            if (d.revertCalendlyPush) d.revertCalendlyPush(p.id);
+          } else {
+            d.markCalendlyPushSkipped(p.id, `resultado inesperado: ${r7}`, SKIP_SLUGS.INESPERADO);
+          }
+          procesados++;
+          continue;
+        }
+
         // Guard de obsolescencia: si la llamada YA empezó, el recordatorio no sirve.
         // Cubre pushes que quedaron 'scheduled' por una pausa (botón de pánico) o una
         // caída de WhatsApp y se vaciarían en lote al reanudar. Comparación lexical de
@@ -2012,6 +2148,8 @@ export async function runCalendlyDelivery() {
           console.log(`[Calendly] Push ${p.push_n} #${p.id} omitido: llamada ya pasó (${p.call_start} UTC)`);
           continue;
         }
+        // §18.CR: el closer la dejó sin confirmar (o cancelada) en el corte → sin link de 1 h antes.
+        if (p.push_n === 3 && frenaDelCorte(d, p)) continue;
         // §18.CO: una cita hubspot:<id> con HubSpot como fuente se re-valida contra HubSpot.
         const hsEst = hubspotMeetingIdOf(p.event_uuid) && hubspotEsFuenteDe(p.closer_email) ? await estadoCitaHubspot(d, p) : null;
         if (hsEst?.estado === 'cancelada') {
@@ -2255,6 +2393,7 @@ async function hubspotDigestItems(d, { calendlyCalls, minStartIso, maxStartIso, 
           startIso,
           programKey: call.program,
           prefiredKey,
+          createdAt: call.created_at || null,
         },
       });
     }
@@ -2272,11 +2411,16 @@ async function hubspotDigestItems(d, { calendlyCalls, minStartIso, maxStartIso, 
 // filas ANTES de mandarla: si el closer contesta rápido, la captura ya tiene con qué cruzar. Va
 // como mensaje aparte (no dentro del digest) para que la respuesta sea corta y no se mezcle con
 // los links. Una cita sin id (ni uri de Calendly ni hubspot:) no se puede cruzar y no se numera.
-async function preguntarConfirmacion(d, { phone, name, email, items, nowMs }) {
-  if (!CONFIRMACION_PUSH2().has(accountOfCloser(email)) || !d.guardarLoteConfirmacion) return;
+// `corte` (§18.CR): la misma pregunta, la víspera y sobre las llamadas de mañana, para las
+// conexiones con el playbook. Guarda el teléfono del lead: con la respuesta, Juanito le arma al
+// closer el link de refuerzo o de "voy a liberar el espacio" de cada uno. Devuelve el resultado de
+// la entrega (o null si no preguntó).
+async function preguntarConfirmacion(d, { phone, name, email, items, nowMs, corte = false }) {
+  const habilitada = corte ? playbookActivoPara(accountOfCloser(email)) : CONFIRMACION_PUSH2().has(accountOfCloser(email));
+  if (!habilitada || !d.guardarLoteConfirmacion) return null;
   const lista = ordenarPorHora(items).filter((it) => eventUuidDeKey(it.prefiredKey));
-  if (!lista.length) return;
-  const lote = `${phone}:${fechaLocal(nowMs)}`;
+  if (!lista.length) return null;
+  const lote = `${phone}:${fechaLocal(nowMs)}${corte ? ':corte' : ''}`;
   d.guardarLoteConfirmacion(
     lista.map((it, i) => ({
       event_uuid: eventUuidDeKey(it.prefiredKey),
@@ -2288,9 +2432,11 @@ async function preguntarConfirmacion(d, { phone, name, email, items, nowMs }) {
       closer_name: name || null,
       lead_name: it.name || it.firstName || null,
       call_start: toSqliteUtc(new Date(it.startIso)),
+      tipo: corte ? 'corte' : 'push2',
+      lead_phone: it.phone || null,
     }))
   );
-  await deliver(d, phone, buildConfirmacionPregunta({ items: lista, tz: TZ() }), 'confirmacion', email);
+  return deliver(d, phone, buildConfirmacionPregunta({ items: lista, tz: TZ(), corte }), corte ? 'corte' : 'confirmacion', email);
 }
 
 // `incluyePrograma(programKey)` decide qué citas entran a ESTE digest. Default: todas — así el
@@ -2309,7 +2455,20 @@ async function preguntarConfirmacion(d, { phone, name, email, items, nowMs }) {
 async function runDigest(
   pushN,
   offsetDays,
-  { incluyePrograma = () => true, excluirPrefired = false, marcarPrefired = false, soloConexion = null, adelantado = false } = {}
+  {
+    incluyePrograma = () => true,
+    excluirPrefired = false,
+    marcarPrefired = false,
+    soloConexion = null,
+    adelantado = false,
+    // §18.CR: las conexiones con el playbook no reciben el Push 1 ni el Push 2 de siempre.
+    excluirConexiones = null,
+    // §18.CR, toque 2: una cita reservada hace menos de esto ya recibió el toque 1 (que también
+    // pide confirmar) y no entra a este digest.
+    recienteMs = 0,
+    // §18.CR, toque 3: en vez del digest de links, la pregunta de quién confirmó.
+    corte = false,
+  } = {}
 ) {
   const d0 = await deps();
   const d = soloConexion
@@ -2366,6 +2525,8 @@ async function runDigest(
     // corridas no puede duplicar el gasto de red del digest.
     if (!incluyePrograma(programKey)) continue;
     if (soloConexion && accountOfCloser(email) !== soloConexion) continue;
+    if (excluirConexiones?.has(accountOfCloser(email))) continue;
+    if (recienteMs && nowMs - Date.parse(ev.created_at || '') < recienteMs) continue;
     if (prefired?.has(ev.uri)) {
       saltadas++;
       yaEnviadas.set(closer.phone, (yaEnviadas.get(closer.phone) || 0) + 1);
@@ -2400,6 +2561,7 @@ async function runDigest(
       startIso: ev.start_time,
       programKey,
       prefiredKey: ev.uri,
+      createdAt: ev.created_at || null,
     });
     deCalendly++;
   }
@@ -2417,6 +2579,7 @@ async function runDigest(
     onPrefired: (closerEmail) => {
       const closer = resolveCloser(closerEmail);
       if (!closer || (soloConexion && accountOfCloser(closerEmail) !== soloConexion)) return;
+      if (excluirConexiones?.has(accountOfCloser(closerEmail))) return;
       saltadas++;
       yaEnviadas.set(closer.phone, (yaEnviadas.get(closer.phone) || 0) + 1);
     },
@@ -2424,6 +2587,8 @@ async function runDigest(
     const closer = resolveCloser(closerEmail);
     if (!closer) continue; // HUBSPOT_OWNER_TO_CLOSER ya lo garantiza; defensivo
     if (soloConexion && accountOfCloser(closerEmail) !== soloConexion) continue;
+    if (excluirConexiones?.has(accountOfCloser(closerEmail))) continue;
+    if (recienteMs && item.createdAt && nowMs - Date.parse(item.createdAt) < recienteMs) continue;
     if (isBlockedPhone(item.phone)) {
       console.log(`[HubSpot] digest push${pushN}: omito cita de lead en lista negra (${item.phone})`);
       continue;
@@ -2436,9 +2601,20 @@ async function runDigest(
   // El Push 1 de 30X sale a las 8am (2026-10-06): a esa hora "la noche anterior" sería falso.
   const push1Desc = horaLocal(nowMs) < 14 ? 'el día anterior' : 'la noche anterior';
   const desc = adelantado ? 'adelantado' : pushN === 'viernes' ? 'recordatorio del lunes' : pushN === 1 ? push1Desc : 'en la mañana';
-  const label = pushN === 'viernes' ? 'Push Viernes (recordatorio del lunes)' : `Push ${pushN} (${desc})`;
+  const label =
+    pushN === 'viernes'
+      ? 'Push Viernes (recordatorio del lunes)'
+      : pushN === 48
+        ? 'Toque 2 · 48 h antes'
+        : corte
+          ? 'Corte de la víspera'
+          : `Push ${pushN} (${desc})`;
   const when = whenLabel(offsetDays, nowMs);
   for (const [phone, { name, email, items }] of byCloser) {
+    if (corte) {
+      await preguntarConfirmacion(d, { phone, name, email, items, nowMs, corte: true });
+      continue;
+    }
     const msg = buildDigestMessage({
       pushLabel: label,
       whenLabel: when,
@@ -2448,7 +2624,11 @@ async function runDigest(
       base: new Date(nowMs),
       // Las tandas adelantadas le piden al closer unos ~40 envíos en una tarde desde su propio
       // teléfono: ese es el patrón que quema números, no el digest de Juanito.
-      nota: adelantado ? '🐢 Mándalos con calma, uno por minuto más o menos, para no quemar tu número.' : '',
+      nota: adelantado
+        ? '🐢 Mándalos con calma, uno por minuto más o menos, para no quemar tu número.'
+        : pushN === 48
+          ? 'Cada mensaje le pide al lead que responda *SÍ* para dejar su espacio y le pregunta qué quiere resolver con el programa. Mañana te pregunto quiénes confirmaron.'
+          : '',
       yaEnviadas: yaEnviadas.get(phone) || 0,
     });
     const outcome = await deliver(d, phone, msg, `push${pushN}`, email);
@@ -2478,8 +2658,11 @@ async function runDigest(
 // Las dos mitades del Push 1. Son COMPLEMENTARIAS por construcción —una es la negación de la
 // otra sobre el mismo predicado—, así que toda cita cae en exactamente una: sumar un programa a
 // CALENDLY_PUSH1_EARLY_PROGRAMS lo mueve de turno, nunca lo duplica ni lo deja sin digest.
-export const runPush1Early = () => runDigest(1, 1, { incluyePrograma: isEarlyPush1Program, excluirPrefired: true }); // 8am (30X)
-export const runPush1 = () => runDigest(1, 1, { incluyePrograma: (p) => !isEarlyPush1Program(p), excluirPrefired: true }); // 7pm
+// Las conexiones con el playbook (§18.CR) salen de los dos: su víspera es el corte.
+export const runPush1Early = () =>
+  runDigest(1, 1, { incluyePrograma: isEarlyPush1Program, excluirPrefired: true, excluirConexiones: PLAYBOOK_CONEXIONES() }); // 8am (30X)
+export const runPush1 = () =>
+  runDigest(1, 1, { incluyePrograma: (p) => !isEarlyPush1Program(p), excluirPrefired: true, excluirConexiones: PLAYBOOK_CONEXIONES() }); // 7pm
 // Push 1 adelantado: el de las citas de dentro de `offsetDays` días, las dos mitades juntas (un
 // digest por closer). Lo corre a mano scripts/refire-digest.js; no tiene cron.
 export const runPush1Adelantado = ({ offsetDays, conexion = null, marcar = false }) =>
@@ -2511,7 +2694,23 @@ export async function runPush1TurnoTemprano() {
   if (PUSH1_TANDAS_DIAS().size && esDiaDeTanda(d.now())) await runPush1Tanda();
   return runPush1Early();
 }
-export const runPush2 = () => runDigest(2, 0); // hoy
+export const runPush2 = () => runDigest(2, 0, { excluirConexiones: PLAYBOOK_CONEXIONES() }); // hoy
+
+// ─── Playbook de confirmación de agendas (§18.CR) ─────────────────────────────────────────────
+// Un digest por conexión con el playbook (`soloConexion` ya sabe filtrar una sola).
+async function porConexionDelPlaybook(fn) {
+  let closers = 0;
+  for (const conexion of PLAYBOOK_CONEXIONES()) closers += await fn(conexion);
+  return closers;
+}
+// Toque 2: las llamadas de pasado mañana. No marca prefired (el corte de mañana las lista todas).
+export const runPlaybook48h = () =>
+  porConexionDelPlaybook((conexion) =>
+    runDigest(48, 2, { soloConexion: conexion, recienteMs: PLAYBOOK_48H_RECIENTE_HORAS * 3600000 })
+  );
+// Toque 3: el corte de la víspera, sobre TODAS las llamadas de mañana (también las que recibieron
+// su toque 1 al agendar).
+export const runPlaybookCorte = () => porConexionDelPlaybook((conexion) => runDigest(1, 1, { soloConexion: conexion, corte: true }));
 // El push del viernes. Guarda de día: el cron ya lo limita a viernes, pero un disparo manual en otro
 // día con offset 3 listaría el martes/miércoles… bajo un copy que dice "el lunes". Mejor no mandar.
 export async function runPushViernes() {
@@ -2881,6 +3080,10 @@ export function startCalendlyJobs() {
     job(PUSH1_EARLY_CRON(), runPush1TurnoTemprano, 'push1-early');
   job(PUSH2_CRON(), runPush2, 'push2');
   if (PUSH_VIERNES_ENABLED()) job(PUSH_VIERNES_CRON(), runPushViernes, 'push-viernes');
+  if (PLAYBOOK_CONEXIONES().size) {
+    job(PLAYBOOK_48H_CRON(), runPlaybook48h, 'playbook-48h');
+    job(PLAYBOOK_CORTE_CRON(), runPlaybookCorte, 'playbook-corte');
+  }
   if (PUSH4_ENABLED()) job(OUTCOME_CRON(), runOutcomeReminders, 'outcomes');
   if (PUSH4_ENABLED() && RESCHEDULE_ENABLED())
     job(RESCHEDULE_PROMPT_CRON(), runReschedulePrompts, 'reagendas');
@@ -2904,6 +3107,7 @@ export function startCalendlyJobs() {
       `, push1: ${PUSH1_CRON()} — salvo ${PUSH1_EARLY_PROGRAMS().size ? `${[...PUSH1_EARLY_PROGRAMS()].join('/')} a las ${PUSH1_EARLY_CRON()}` : 'nadie (turno único)'}` +
       `, push viernes: ${PUSH_VIERNES_ENABLED() ? PUSH_VIERNES_CRON() : 'off'}` +
       `, tandas push1: ${PUSH1_TANDAS_DIAS().size ? `${PUSH1_TANDAS_CONEXION()} los días ${[...PUSH1_TANDAS_DIAS()].join(',')} (0=dom) a las ${PUSH1_EARLY_CRON()}` : 'off'}` +
+      `, playbook: ${PLAYBOOK_CONEXIONES().size ? `${[...PLAYBOOK_CONEXIONES()].join('/')} (48h ${PLAYBOOK_48H_CRON()}, corte ${PLAYBOOK_CORTE_CRON()}, push3 −${PLAYBOOK_LEAD_MIN()}m, push7 +${PLAYBOOK_NO_CONECTA_MIN()}m)` : 'off'}` +
       `, push1 al agendar: ${PUSH1_AL_AGENDAR().size ? `${[...PUSH1_AL_AGENDAR()].join('/')} hasta ${PUSH1_AL_AGENDAR_HASTA() || 'sin fecha'} (${PUSH1_AL_AGENDAR_DIAS()}d)` : 'off'}) — cuentas: ` +
       accounts.map((a) => `${a.key}[dry-run:${a.dryRun()}, push4:${a.push4()}]`).join(' · ')
   );

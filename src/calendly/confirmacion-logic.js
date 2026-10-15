@@ -10,7 +10,7 @@
 // La respuesta es libre y corta: "1 3", "todos", "todos menos el 2", "2 canceló, 1 y 3 sí".
 // Los números son los de la lista de la pregunta, en el mismo orden (por hora).
 
-import { formatCallTime } from './index.js';
+import { formatCallTime, formatLeadWhen, firstNameFrom, buildPrecallText, buildLeadLink } from './index.js';
 
 export const ESTADOS_CONFIRMACION = ['confirmada', 'no_confirmada', 'cancelada'];
 
@@ -27,8 +27,19 @@ const sinTildes = (s) =>
     .replace(/[̀-ͯ]/g, '');
 
 // items: [{ name, startIso }] ya en el orden en que se numeran.
-export function buildConfirmacionPregunta({ items, tz }) {
+// `corte` (§18.CR, playbook): la pregunta sale la VÍSPERA, sobre las llamadas de mañana, y es el
+// punto de corte — lo que el closer conteste decide qué le mando a cada lead.
+export function buildConfirmacionPregunta({ items, tz, corte = false }) {
   const lineas = items.map((it, i) => `${i + 1}. ${formatCallTime(it.startIso, tz)} — ${it.name || 'el prospecto'}`);
+  if (corte) {
+    return (
+      `✂️ *Corte de la víspera — ¿quiénes te confirmaron para mañana?*\n` +
+      `${lineas.join('\n')}\n\n` +
+      `Respóndeme con los números de los que confirmaron (ej: *1 3*). Si alguno canceló: *2 canceló*. ` +
+      `Si confirmaron todos: *todos*.\n` +
+      `Con tu respuesta te armo el refuerzo para los que confirmaron y el mensaje de "voy a liberar el espacio" para los que no.`
+    );
+  }
   return (
     `✅ *¿Quiénes te confirmaron hoy?*\n` +
     `${lineas.join('\n')}\n\n` +
@@ -165,3 +176,54 @@ export function buildConfirmacionResumen({ items, estados }) {
 
 export const CONFIRMACION_REPROMPT =
   '🙈 No te entendí. Respóndeme con los números de los que confirmaron (ej: *1 3*), *todos*, o *2 canceló*.';
+
+// ─── Corte de la víspera (§18.CR, playbook) ───────────────────────────────────────────────────
+// Lo que Juanito le contesta al closer después de su respuesta al corte: un link por lead con el
+// mensaje que le toca según el playbook. `filas` = las de call_confirmaciones del lote (con
+// lead_phone y program); `estados` = { [posicion]: estado }; `soloPosiciones` = en una corrección,
+// solo las que cambiaron. `closer` = primer nombre del closer (firma el "voy a liberar").
+// `base` = el reloj de la respuesta: "mañana a las…" el día del corte, "hoy a las…" si corrige el
+// mismo día de la llamada.
+export function buildCorteAcciones({ filas, estados, closer, tz, base = new Date(), soloPosiciones = null }) {
+  const startIso = (f) => `${String(f.call_start).replace(' ', 'T')}Z`;
+  const incluidas = filas.filter((f) => !soloPosiciones || soloPosiciones.includes(Number(f.posicion)));
+  const linea = (f, pushN) => {
+    const who = f.lead_name || 'el prospecto';
+    const head = `• ${f.posicion}. ${formatCallTime(startIso(f), tz)} — ${who}`;
+    if (!pushN) return head;
+    const text = buildPrecallText({
+      programKey: f.program,
+      pushN,
+      primerNombre: firstNameFrom(f.lead_name),
+      closer,
+      cuando: formatLeadWhen(startIso(f), tz, base),
+    });
+    const link = buildLeadLink(f.lead_phone, text);
+    if (!link) return `${head} — ${f.lead_phone ? 'sin copy para este programa' : 'sin teléfono'}, escríbele a mano`;
+    return `${head} — 📞 ${f.lead_phone}\n  👉 ${link}`;
+  };
+  const grupo = (estado) => incluidas.filter((f) => (estados[f.posicion] || f.estado) === estado);
+  const bloques = [];
+  const confirmadas = grupo('confirmada');
+  if (confirmadas.length) {
+    bloques.push(`✅ *Confirmaron* — mándales un refuerzo corto con la hora:\n${confirmadas.map((f) => linea(f, 'refuerzo')).join('\n')}`);
+  }
+  const sinConfirmar = grupo('no_confirmada');
+  if (sinConfirmar.length) {
+    bloques.push(
+      `⏳ *Sin confirmar* — llámalos UNA vez. Si no contestan, déjales este mensaje:\n` +
+        `${sinConfirmar.map((f) => linea(f, 'liberar')).join('\n')}\n` +
+        `Sin confirmación la reunión se cancela: en HubSpot, Estado de agenda = *Cancelada* y próximo contacto con fecha. ` +
+        `Ya no te mando el link de 1 h antes. Si alguno te confirma después, escríbeme *2 confirmó* y lo reactivo.`
+    );
+  }
+  const canceladas = grupo('cancelada');
+  if (canceladas.length) {
+    bloques.push(
+      `❌ *Cancelaron* — en HubSpot, Estado de agenda = *Cancelada* y próximo contacto con fecha:\n` +
+        canceladas.map((f) => linea(f, null)).join('\n')
+    );
+  }
+  if (!bloques.length) return null;
+  return `📝 Anotado. Ahora el corte:\n\n${bloques.join('\n\n')}`;
+}

@@ -14,6 +14,7 @@ export const SKIP_SLUGS = {
   RESCHEDULED: 'rescheduled', // reagenda detectada en HubSpot (histórico: ya se escribía así)
   SUPERSEDED: 'superseded',   // fila duplicada que perdió contra la real (HubSpot vs Calendly)
   BLOQUEADO: 'bloqueado',     // el teléfono del lead está en la lista negra (calendly/blocklist.js)
+  SIN_CONFIRMAR: 'sin-confirmar', // el closer la dejó sin confirmar o cancelada en el corte (§18.CR)
 
   // ─── Pushes REALMENTE perdidos: un lead se quedó sin su precall ────────────
   SIN_OPTIN: 'sin-optin',     // el closer nunca le escribió a Juanito
@@ -45,6 +46,7 @@ export const ETIQUETA_SKIP = {
   [SKIP_SLUGS.RESCHEDULED]: 'reagendada en HubSpot',
   [SKIP_SLUGS.SUPERSEDED]: 'duplicado descartado',
   [SKIP_SLUGS.BLOQUEADO]: 'lead en lista negra',
+  [SKIP_SLUGS.SIN_CONFIRMAR]: 'sin confirmación en el corte de la víspera',
   [SKIP_SLUGS.SIN_OPTIN]: 'el closer no ha escrito a Juanito (sin opt-in)',
   [SKIP_SLUGS.SIN_HILO]: 'opt-in sin hilo (contact_jid)',
   [SKIP_SLUGS.OBSOLETO]: 'venció sin entregarse (la llamada ya había empezado)',

@@ -14,6 +14,7 @@ import {
   getLoteConfirmacionAbierto,
   setConfirmacionEstados,
   markConfirmacionReprompt,
+  reactivarPushesDelCorte,
   markIfNew,
 } from '../db/index.js';
 import {
@@ -21,9 +22,13 @@ import {
   resolverConfirmacion,
   esCorreccionClara,
   buildConfirmacionResumen,
+  buildCorteAcciones,
   CONFIRMACION_REPROMPT,
 } from './confirmacion-logic.js';
+import { firstNameFrom } from './index.js';
 import { sendMessage } from '../whatsapp/index.js';
+
+const TZ = () => process.env.TZ || 'America/Bogota';
 
 function resolveCloser(from, pushName) {
   return (
@@ -73,6 +78,27 @@ export async function captureConfirmacionReply({ from, pushName, text, messageId
       Object.entries(estados).map(([p, e]) => `${p}=${e}`).join(' ') +
       (primera ? '' : ' (corrección)')
   );
+  // §18.CR: el corte del playbook no termina en un "anotado": cada lead tiene su mensaje (refuerzo
+  // o "voy a liberar el espacio"). En una corrección, solo los que cambiaron, y los que pasan a
+  // confirmada recuperan el link de 1 h antes que el corte les había frenado.
+  if (filas[0].tipo === 'corte') {
+    const cambiadas = Object.keys(cambios)
+      .map(Number)
+      .filter((pos) => primera || filas.find((f) => f.posicion === pos)?.estado !== cambios[pos]);
+    for (const f of filas) {
+      if (cambios[f.posicion] === 'confirmada' && !primera) reactivarPushesDelCorte(f.event_uuid);
+    }
+    const acciones = buildCorteAcciones({
+      filas,
+      estados,
+      closer: firstNameFrom(closer.name),
+      tz: TZ(),
+      base: new Date(),
+      soloPosiciones: primera ? null : cambiadas,
+    });
+    await sendMessage(from, acciones || buildConfirmacionResumen({ items: filas.map((f) => ({ name: f.lead_name })), estados }));
+    return true;
+  }
   await sendMessage(from, buildConfirmacionResumen({ items: filas.map((f) => ({ name: f.lead_name })), estados }));
   return true;
 }

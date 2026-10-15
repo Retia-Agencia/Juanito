@@ -738,10 +738,12 @@ const CONFIRMACION_ABIERTA_HORAS = Number(process.env.CALENDLY_CONFIRMACION_HORA
 export function guardarLoteConfirmacion(filas) {
   const stmt = db.prepare(`
     INSERT INTO call_confirmaciones
-      (event_uuid, lote, posicion, program, closer_email, closer_phone, closer_name, lead_name, call_start)
+      (event_uuid, lote, posicion, program, closer_email, closer_phone, closer_name, lead_name, call_start, tipo, lead_phone)
     VALUES
-      (@event_uuid, @lote, @posicion, @program, @closer_email, @closer_phone, @closer_name, @lead_name, @call_start)
+      (@event_uuid, @lote, @posicion, @program, @closer_email, @closer_phone, @closer_name, @lead_name, @call_start, @tipo, @lead_phone)
     ON CONFLICT(event_uuid) DO UPDATE SET
+      tipo          = excluded.tipo,
+      lead_phone    = excluded.lead_phone,
       estado        = CASE WHEN call_confirmaciones.lote = excluded.lote THEN call_confirmaciones.estado ELSE 'pendiente' END,
       answered_at   = CASE WHEN call_confirmaciones.lote = excluded.lote THEN call_confirmaciones.answered_at ELSE NULL END,
       lote          = excluded.lote,
@@ -755,19 +757,23 @@ export function guardarLoteConfirmacion(filas) {
       preguntada_at = datetime('now')
   `);
   db.transaction((rows) => {
-    for (const r of rows) stmt.run({ ...r, closer_phone: normalizePhone(r.closer_phone) || r.closer_phone });
+    for (const r of rows)
+      stmt.run({ tipo: 'push2', lead_phone: null, ...r, closer_phone: normalizePhone(r.closer_phone) || r.closer_phone });
   })(filas);
 }
 
 // El lote que el closer puede estar respondiendo: el último que se le preguntó, si sigue abierto.
 // Devuelve las filas ordenadas por posición, o [].
+// Un lote del corte (§18.CR) se pregunta la víspera, así que sigue abierto mientras le quede alguna
+// llamada por empezar: "el 2 confirmó" a la mañana siguiente tiene que reactivar su push de 1 h.
 export function getLoteConfirmacionAbierto(phone) {
   const p = normalizePhone(phone);
   if (!p) return [];
   const ultimo = db
     .prepare(`
       SELECT lote FROM call_confirmaciones
-      WHERE closer_phone = ? AND preguntada_at >= datetime('now', ?)
+      WHERE closer_phone = ?
+        AND (preguntada_at >= datetime('now', ?) OR (tipo = 'corte' AND call_start > datetime('now')))
       ORDER BY preguntada_at DESC
       LIMIT 1
     `)
@@ -786,6 +792,31 @@ export function setConfirmacionEstados(lote, cambios, rawReply = null) {
   db.transaction(() => {
     for (const [pos, estado] of Object.entries(cambios)) stmt.run(estado, rawReply, lote, Number(pos));
   })();
+}
+
+// Lo que el corte dijo de una cita (§18.CR): { estado, tipo } o null si nunca se preguntó. La
+// entrega lo consulta antes del Push 3 y del Push 7.
+export function getConfirmacionDeCita(eventUuid) {
+  return db.prepare(`SELECT estado, tipo FROM call_confirmaciones WHERE event_uuid = ?`).get(String(eventUuid)) || null;
+}
+
+// El closer corrigió el corte ("el 2 confirmó"): los pushes que el corte había frenado (Push 3 y
+// 7, slug 'sin-confirmar') vuelven a 'scheduled' si la llamada sigue por delante. El sufijo
+// " | skip: …" que dejó markCalendlyPushSkipped se recorta: las citas de HubSpot se entregan con
+// el `message` guardado.
+export function reactivarPushesDelCorte(eventUuid) {
+  return db
+    .prepare(
+      `UPDATE calendly_pushes
+          SET status = 'scheduled',
+              skip_reason = NULL,
+              message = CASE WHEN instr(message, ' | skip: ') > 0
+                             THEN substr(message, 1, instr(message, ' | skip: ') - 1)
+                             ELSE message END
+        WHERE event_uuid = ? AND push_n IN (3, 7) AND status = 'skipped'
+          AND skip_reason = 'sin-confirmar' AND call_start > datetime('now', '-30 minutes')`
+    )
+    .run(String(eventUuid)).changes;
 }
 
 export function markConfirmacionReprompt(lote) {

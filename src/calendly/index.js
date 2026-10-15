@@ -26,6 +26,7 @@ import { eventTypeToProgram, accountOf, DEFAULT_ACCOUNT } from './accounts.js';
 // (programs.js), del que se derivan. Se importan acá para armar los mensajes y se re-exportan
 // más abajo para no romper importadores del surface viejo.
 import { PROGRAM_LABELS, PROGRAM_PITCH, MATERIAL_LINKS } from './programs.js';
+import { programaEnPlaybook } from './playbook.js';
 
 // Organización de la cuenta por default. Se conserva para callers viejos (scripts);
 // el poll usa la org de cada cuenta del registro.
@@ -396,27 +397,78 @@ export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora
     return copy({ lead, closer, fecha, hora, links: MATERIAL_LINKS[programKey] || {} });
   }
 
+  // Lo que el Push 1 le pide al lead para la llamada, más los materiales y los avisos propios de
+  // cada programa. Lo comparten el Push 1 de siempre y la bienvenida del playbook (§18.CR).
+  const requisitos =
+    `Muy importante que:\n` +
+    `* Puedas prender la cámara\n` +
+    `* Estés en un espacio dispuesto para conversar\n` +
+    `* Si debes tomar la decisión con alguien más de ingresar al programa, que esa persona esté contigo en la llamada.\n\n` +
+    `Si todo sale bien, ahí mismo formalizaremos tu ingreso al programa.` +
+    // Solo los AI Second Brain (30X y Jurídico de EstadoX): pedimos confirmar que puede
+    // instalar Claude en su compu de trabajo.
+    (programKey === 'second_brain' || programKey === 'second_brain_juridico'
+      ? `\n\nUna última cosa: confírmame porfa si en el computador que usas en el día a día puedes instalar la herramienta de inteligencia artificial Claude o si tienes alguna restricción de tu compañía.`
+      : '') +
+    materialsBlock(programKey) +
+    // Solo Instagram & TikTok: aclaración de expectativas (formación, no agencia). Va DESPUÉS
+    // del bloque de materiales — a propósito, es lo último que lee el lead (jefe, 2026-09-07).
+    (programKey === 'instagram'
+      ? `\n\nPara que tengas en cuenta: nosotros te vamos a enseñar el método con el que se han escalado decenas de marcas personales a cientos de miles de seguidores, y lo podrás aplicar a tu caso específico sin problema, pero no actuamos como una agencia que hace el contenido por ti.\n\n` +
+        `La razón es que para delegar un proceso que será tan relevante para tu negocio creemos que es importante que primero lo aprendas tu equipo o tú.`
+      : '');
+
+  // ─── Playbook de confirmación de agendas (§18.CR, ver playbook.js) ──────────────────────────
+  // Toque 1, al agendar: bienvenida + confirmar asistencia + fecha, hora y país. `cuando` sale de
+  // `formatLeadWhen` ("mañana a las 3:00 p. m.", "el jueves 17 de octubre a las …").
+  if (pushN === 'bienvenida') {
+    return (
+      `Hola ${lead}, cómo estás? Por acá ${closer} ${pitch.from}.\n\n` +
+      `Ya quedó agendada tu llamada para tu postulación al ${pitch.program}: ${cuando || `${dia} a las ${hora}`}, hora Colombia.\n\n` +
+      `¿Me confirmas que vas a poder asistir? Y cuéntame desde qué país te conectas, para asegurarnos de que la hora te quede bien.\n\n` +
+      requisitos
+    );
+  }
+  // Toque 2, 48 horas antes: confirmación explícita + pregunta de diagnóstico.
+  if (pushN === 48) {
+    return (
+      `Hola ${lead}, cómo vas? Te escribe ${closer} ${pitch.from}.\n\n` +
+      `Te recuerdo tu llamada ${dia} a las ${hora}, hora Colombia, para tu postulación al ${pitch.program}.\n\n` +
+      `Respóndeme *SÍ* para dejar tu espacio reservado.\n\n` +
+      `Y para que la llamada arranque con contexto: ¿qué quieres resolver con el programa?`
+    );
+  }
+  // Toque 3, el corte de la víspera. `cuando` = "mañana a las 3:00 p. m." (o "hoy a las …" si el
+  // closer corrige el mismo día).
+  if (pushN === 'refuerzo') {
+    return `Perfecto ${lead}, gracias por confirmar! Te espero ${cuando}, hora Colombia. Cualquier cosa me escribes por acá`;
+  }
+  if (pushN === 'liberar') {
+    return (
+      `Hola ${lead}, te escribe ${closer} ${pitch.from}. Te estuve buscando para confirmar tu llamada ${cuando.startsWith('el ') ? `del ${cuando.slice(3)}` : `de ${cuando}`}, hora Colombia.\n\n` +
+      `Como no tuve tu confirmación, voy a liberar el espacio. Escríbeme y la reprogramamos`
+    );
+  }
+  // "Si no se conecta": a los 10 minutos del inicio.
+  if (pushN === 'no_conecta') {
+    return (
+      `Hola ${lead}, te estoy esperando en nuestra llamada de las ${hora}, hora Colombia. ¿Te conectas?` +
+      (linkLlamada ? `\n${linkLlamada}` : '') +
+      `\n\nSi se te complicó, dime y la reagendamos de una vez`
+    );
+  }
+  // Toque 4, una hora antes: el link y "te espero a las __".
+  if (pushN === 3 && programaEnPlaybook(programKey)) {
+    return linkLlamada
+      ? `Hola ${lead}, te dejo a la mano el link de nuestra llamada:\n${linkLlamada}\n\nTe espero a las ${hora}, hora Colombia`
+      : `Hola ${lead}, nos conectamos por el link que ya te compartí. Te espero a las ${hora}, hora Colombia`;
+  }
+
   if (pushN === 1) {
     return (
       `Hola ${lead}, cómo va todo? Por acá ${closer} ${pitch.from}.\n\n` +
       `Quería personalmente recordarte tu llamada ${dia || 'de mañana'} a las ${hora}, hora Colombia, para tu postulación al ${pitch.program}.\n\n` +
-      `Muy importante que:\n` +
-      `* Puedas prender la cámara\n` +
-      `* Estés en un espacio dispuesto para conversar\n` +
-      `* Si debes tomar la decisión con alguien más de ingresar al programa, que esa persona esté contigo en la llamada.\n\n` +
-      `Si todo sale bien, ahí mismo formalizaremos tu ingreso al programa.` +
-      // Solo los AI Second Brain (30X y Jurídico de EstadoX): pedimos confirmar que puede
-      // instalar Claude en su compu de trabajo.
-      (programKey === 'second_brain' || programKey === 'second_brain_juridico'
-        ? `\n\nUna última cosa: confírmame porfa si en el computador que usas en el día a día puedes instalar la herramienta de inteligencia artificial Claude o si tienes alguna restricción de tu compañía.`
-        : '') +
-      materialsBlock(programKey) +
-      // Solo Instagram & TikTok: aclaración de expectativas (formación, no agencia). Va DESPUÉS
-      // del bloque de materiales — a propósito, es lo último que lee el lead (jefe, 2026-09-07).
-      (programKey === 'instagram'
-        ? `\n\nPara que tengas en cuenta: nosotros te vamos a enseñar el método con el que se han escalado decenas de marcas personales a cientos de miles de seguidores, y lo podrás aplicar a tu caso específico sin problema, pero no actuamos como una agencia que hace el contenido por ti.\n\n` +
-          `La razón es que para delegar un proceso que será tan relevante para tu negocio creemos que es importante que primero lo aprendas tu equipo o tú.`
-        : '')
+      requisitos
     );
   }
 
@@ -491,6 +543,33 @@ export function buildPush3Message({ name, firstName, phone, startIso, programKey
     `Escribió uno al agendar en Calendly y dejó otro en el formulario; lo más probable es que se haya equivocado al agendar. *Confirma en la hoja cuál es el bueno antes de escribirle.*`,
     ...bloqueDosNumeros({ firstName: firstName || firstNameFrom(name), phone, alternos, text }),
   ].join('\n');
+}
+
+// Push 7 (§18.CR, playbook): "si no se conecta". Sale 10 minutos después de la hora de inicio y
+// el closer lo ignora si el lead ya entró: Juanito no sabe quién está en el Meet. Lleva el registro
+// que pide el playbook, porque es justo el momento en que el closer tiene que hacerlo.
+export function buildPush7Message({ name, firstName, phone, startIso, programKey, closer, linkLlamada = '' }) {
+  const who = name || firstName || 'el prospecto';
+  const time = formatCallTime(startIso);
+  const label = programLabelOf(programKey);
+  const prog = label ? ` — 📦 *${label}*` : '';
+  const head =
+    `⏱️ *¿${who} se conectó?*${prog} — llamada de las ${time}\n` +
+    `Si todavía no entra: llámalo y escríbele. Si responde, reagenda ahí mismo.`;
+  const registro = `Si no aparece: en HubSpot, Estado de agenda = *No-show* y próximo contacto con fecha.\n(Si ya está en la llamada, ignora este mensaje.)`;
+  const text = phone
+    ? buildPrecallText({
+        programKey,
+        pushN: 'no_conecta',
+        primerNombre: firstName || firstNameFrom(name),
+        closer,
+        hora: formatLeadTime(startIso),
+        linkLlamada,
+      })
+    : null;
+  const link = buildLeadLink(phone, text);
+  if (!link) return `${head}\n${phone ? `📞 ${phone}` : '📵 sin teléfono'} (escríbele a mano)\n\n${registro}`;
+  return `${head}\n📞 ${phone}\n👉 Enviar mensaje: ${link}\n\n${registro}`;
 }
 
 // ─── Bloque de DOS NÚMEROS, para los pushes de UN SOLO lead (§18.CA) ──────────
@@ -617,8 +696,12 @@ export function buildPush0Message({
   // "el jueves 15" sale de formatLeadDay ("del jueves 15") sin la preposición.
   const diaCall = when === 'otro' ? formatLeadDay(startIso, tz, base).replace(/^del /, 'el ') : when;
   const titulo = `Nueva call ${diaCall.toUpperCase()}`;
-  const cola =
-    when === 'mañana'
+  // §18.CR: con el playbook, este Push 0 es el toque 1 (bienvenida) y lo que sigue es otro.
+  const playbook = programaEnPlaybook(programKey);
+  const cola = playbook
+    ? 'Este es el *toque 1* del playbook (bienvenida): pídele que confirme y que te diga desde qué país se conecta. ' +
+      'Antes de la llamada te llegan el toque de 48 h, la pregunta de quién confirmó la víspera y el link 1 h antes.'
+    : when === 'mañana'
       ? 'Mañana te llega el resumen del día y el push con el link ~25 min antes.'
       : when === 'otro'
         ? 'Ya no te va a salir en el resumen de la víspera: este es su Push 1. El día de la call te llega el resumen y el push con el link ~25 min antes.'
@@ -628,11 +711,12 @@ export function buildPush0Message({
   const text = closer
     ? buildPrecallText({
         programKey,
-        pushN: 1,
+        pushN: playbook ? 'bienvenida' : 1,
         primerNombre: quien,
         closer,
         hora: formatLeadTime(startIso, tz),
         dia: formatLeadDay(startIso, tz, base),
+        cuando: formatLeadWhen(startIso, tz, base),
       })
     : null;
   const link = buildLeadLink(phone, text);
@@ -645,7 +729,7 @@ export function buildPush0Message({
       accion += `\n⚠️ *${who} dejó DOS números distintos*: arriba está el de Calendly, y en el formulario dejó ${alternos.join(' / ')}. Confirma en la hoja cuál es el bueno.`;
     }
   } else if (!alternos.length) {
-    accion = `Toca el link para enviarle su recordatorio con los materiales (se abre el chat con el mensaje listo, solo dale enviar):\n👉 ${link}`;
+    accion = `Toca el link para enviarle ${playbook ? 'su bienvenida' : 'su recordatorio'} con los materiales (se abre el chat con el mensaje listo, solo dale enviar):\n👉 ${link}`;
   } else {
     // §18.CA: con dos números, un link por número y rotulado por lead y por fuente, igual que
     // en el digest. El número de Calendly ya está arriba, pero acá se repite junto a SU link:
