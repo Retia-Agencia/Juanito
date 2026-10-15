@@ -3,7 +3,6 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { armarMensaje } = await import('../src/semaforo/mensaje.js');
 const { runSemaforoRetia, semaforoRetiaHabilitado } = await import(
   '../src/scheduler/semaforo-retia.js'
 );
@@ -44,6 +43,7 @@ function envio(programa = 'Alpha', destino = 'alpha@g.us') {
     enlaceHub: 'https://hub.test/alpha',
     error: null,
     metricas: [METRICA],
+    texto: `🚦 Semáforo de pauta · ${programa} · 09:00\n🔴 Costo por agenda: $304.930 COP\nVer en el Hub: https://hub.test/alpha`,
   };
 }
 
@@ -137,19 +137,26 @@ test('status 401 se trata como CRM caído', async () => {
   assert.equal(result.enviados, 1);
 });
 
-test('un envío con error muestra el error y el otro sale normal', async () => {
-  const conError = { ...envio(), error: 'No pude calcular la cohorte' };
+test('manda el texto del CRM tal cual', async () => {
+  const h = harness({
+    respuesta: { sincronizacion: null, envios: [envio()], configuracion: CONFIG },
+  });
+  await runSemaforoRetia({ deps: h.deps });
+  assert.equal(h.sent[0].text, envio().texto);
+});
+
+test('un envío sin texto no se inventa y el otro sale normal', async () => {
+  const { texto, ...sinTexto } = envio();
   const h = harness({
     respuesta: {
       sincronizacion: null,
-      envios: [conError, envio('Beta', 'beta@g.us')],
+      envios: [sinTexto, envio('Beta', 'beta@g.us')],
       configuracion: CONFIG,
     },
   });
-  await runSemaforoRetia({ deps: h.deps });
-  assert.match(h.sent[0].text, /⚠️ No pude calcular la cohorte/);
-  assert.doesNotMatch(h.sent[0].text, /Costo por agenda/);
-  assert.match(h.sent[1].text, /Costo por agenda/);
+  const result = await runSemaforoRetia({ deps: h.deps });
+  assert.deepEqual(result, { enviados: 1, modo: 'ok' });
+  assert.deepEqual(h.sent.map((x) => x.to), ['beta@g.us']);
 });
 
 test('un sendMessage que falla no corta el siguiente', async () => {
@@ -164,42 +171,6 @@ test('un sendMessage que falla no corta el siguiente', async () => {
   const result = await runSemaforoRetia({ deps: h.deps });
   assert.deepEqual(result, { enviados: 1, modo: 'ok' });
   assert.deepEqual(h.sent.map((x) => x.to), ['beta@g.us']);
-});
-
-test('mensaje de día incluye umbral, gasto, ayer, rojo y Hub', () => {
-  const msg = armarMensaje(envio(), null);
-  assert.match(msg, /^🚦 Semáforo de pauta · Alpha · 09:00/);
-  assert.match(msg, /🔴 Costo por agenda: \$304\.930 COP/);
-  assert.match(msg, /Meta \$200\.000 COP · aceptable \$250\.000 COP/);
-  assert.match(msg, /Gasto \$609\.860 COP · 2 agendas/);
-  assert.match(msg, /Ayer a esta hora: \$100\.000 COP \(3 agendas\)/);
-  assert.match(msg, /🔴 3 días seguidos en rojo/);
-  assert.match(msg, /• ⚠️ Creativo agotado/);
-  assert.match(msg, /Ver en el Hub: https:\/\/hub\.test\/alpha$/);
-});
-
-test('mensaje de cierre incluye la trayectoria completa', () => {
-  const msg = armarMensaje({ ...envio(), tipo: 'cierre', hora: '18:00' }, null);
-  assert.match(msg, /^🚦 Cierre del día · Alpha · 18:00/);
-  assert.match(
-    msg,
-    /Trayectoria: 09:00 \$0 COP · 0 ag \| 11:00 \$120\.000 COP · 1 ag/
-  );
-});
-
-test('sin dato explica que falta cargar el umbral', () => {
-  const metrica = { ...METRICA, color: 'sin_dato', costo: null, umbral: null, motivo: 'sin_umbral' };
-  const msg = armarMensaje({ ...envio(), metricas: [metrica] }, null);
-  assert.match(msg, /⚪ Costo por agenda: sin dato/);
-  assert.match(msg, /Falta cargar la meta en el CRM/);
-});
-
-test('error de sincronización muestra la hora de la última foto en Bogotá', () => {
-  const msg = armarMensaje(envio(), {
-    estado: 'error',
-    ultimaFoto: '2026-07-14T15:27:00Z',
-  });
-  assert.match(msg, /⚠️ No se pudo leer Meta; cifras de la última foto \(10:27\)/);
 });
 
 test('sin URL o sin secreto el semáforo queda deshabilitado', () => {

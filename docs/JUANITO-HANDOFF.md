@@ -5,7 +5,7 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-10-15** (§18.CR — semáforo de pauta de Retia: Juanito pregunta al CRM qué mandar cada hora hábil; PR abierto, **sin desplegar**). Anterior: **2026-10-14** (§18.CQ — el digest de la víspera ahora cuenta también las
+Última actualización: **2026-10-15** (§18.CS — el texto del semáforo de Retia lo arma el CRM; Juanito lo manda tal cual). Anterior: **2026-10-15** (§18.CR — semáforo de pauta de Retia, desplegado). Antes: **2026-10-14** (§18.CQ — el digest de la víspera ahora cuenta también las
 citas que ya recibieron su push al agendar; mergeado en #28, **sin desplegar**). Anterior: **2026-10-14** (§18.CP desplegado, HubSpot como fuente única PRENDIDA en 30X,
 arreglo del parser de la confirmación. ⛔ **Alejandro prohibió más deploys hasta que él lo levante**). Anterior: **2026-10-14** (§18.CN y §18.CO desplegados; la confirmación en el Push 2
 está prendida en 30X y HubSpot como fuente única sigue apagado). Anterior: **2026-10-11** (§18.CM — el Push 1 de IGTK llegaba cortado porque el link wa.me
@@ -7532,7 +7532,7 @@ esa hora (programa, destino `@g.us`, día o cierre, métricas ya con su color) y
 guarda esa configuración en `settings` (`semaforo_retia_config`) y manda un mensaje por envío por la cola anti-ban;
 los destinos son grupos donde ya está, así que no aplica el gate de `hasDmThread`. **Si el CRM no responde**
 (excepción, status ≠ 200 o JSON incompleto), avisa solo a los destinos que según la última configuración tocaban
-a esa hora; sin configuración guardada, solo lo loguea. El texto lo arma `src/semaforo/mensaje.js` (puro).
+a esa hora; sin configuración guardada, solo lo loguea. El texto lo armaba `src/semaforo/mensaje.js`; desde §18.CS lo arma el CRM.
 
 **Quién decide qué.** Programas, grupo, horas y métricas se configuran en el CRM (Programa › General); Juanito no
 tiene nada de eso en su `.env`. Sin URL o sin secreto el job se autodesactiva.
@@ -7550,3 +7550,17 @@ título diga lo contrario).
 variables estaban en el `.env` del VPS pero **no en `environment:` del `docker-compose.yml`** (gotcha §12: lo que
 no está listado no entra al contenedor). Agregadas las tres en el compose y redesplegado. Lección para el próximo
 job con variables nuevas: el `.env.example` no basta, también va la línea del compose.
+
+### 18.CS 🟢 El texto del semáforo de Retia lo arma el CRM (2026-10-15)
+
+**Por qué.** Mani pidió que la ficha del programa en el CRM muestre el mensaje exacto que llega al grupo (ticket 267
+de `retia-metrics`, ADR 0089 enmendado). Para que la vista previa y el WhatsApp no diverjan, el texto sale de una sola
+función, `armarMensaje` del CRM (portada de `src/semaforo/mensaje.js`), y viaja como `texto` en cada envío.
+
+**Qué cambió.** `src/scheduler/semaforo-retia.js` manda `envio.texto` tal cual; un envío sin texto se loguea y se
+salta (no se inventa). `src/semaforo/mensaje.js` se borró: un solo dueño del texto. El aviso de "el CRM no respondió"
+se queda aquí, porque justamente no hay CRM que lo arme. Orden de despliegue: primero el CRM (el campo ya existe),
+después Juanito.
+
+**Tests.** `test/semaforo-retia.test.js` (9): los 4 casos del mensaje se mudaron al CRM
+(`tests/reporte-whatsapp-mensaje.test.ts`); aquí quedan "manda el texto tal cual" y "sin texto no manda".
