@@ -7520,7 +7520,7 @@ Entra con el próximo deploy (`alcance: todo`, porque toca el bot). Hasta entonc
 - `CALENDLY_TOKEN`: **NO rotar** (decidido).
 - Contraseña del VPS: **rotación DIFERIDA** (pendiente para cuando se quiera cerrar ese riesgo).
 
-### 18.CR 🟡 Semáforo de pauta de Retia: Juanito pregunta al CRM qué mandar cada hora (2026-10-15, PR abierto, SIN desplegar)
+### 18.CR 🟢 Semáforo de pauta de Retia: Juanito pregunta al CRM qué mandar cada hora (2026-10-15, desplegado)
 
 **Por qué.** Retia quiere el semáforo del costo por agenda por WhatsApp, como el de 30X, pero **calculado en el
 CRM de Retia** (`retia-metrics`, ADR 0089 de ese repo): el CRM tiene las agendas, el gasto de Meta y las metas;
@@ -7545,3 +7545,8 @@ manual superseded…`); el tercero de la línea base hoy pasa.
 `.env.bak-<fecha>` primero) y `alcance: todo`. Medido el 15-oct: lo único del bot que cambia contra el VPS son los
 tres archivos de este cambio, y la imagen que corre coincide con el disco (§18.CQ ya estaba desplegado, aunque su
 título diga lo contrario).
+
+**Despliegue (15-oct).** El primer deploy (`77712ab`) levantó el bot con `[SemaforoRetia] sin URL o secreto`: las
+variables estaban en el `.env` del VPS pero **no en `environment:` del `docker-compose.yml`** (gotcha §12: lo que
+no está listado no entra al contenedor). Agregadas las tres en el compose y redesplegado. Lección para el próximo
+job con variables nuevas: el `.env.example` no basta, también va la línea del compose.
