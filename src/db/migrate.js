@@ -452,7 +452,7 @@ addColumnIfMissing('pending_replies', 'kind', "TEXT NOT NULL DEFAULT 'group'");
 // reloj de 30 min arranca recién ahí). Filas viejas quedan held=0 (comportamiento de siempre).
 addColumnIfMissing('pending_replies', 'held', 'INTEGER NOT NULL DEFAULT 0');
 
-// Playbook de confirmación (§18.CR): el corte de la víspera es un lote de confirmación más, pero
+// Playbook de confirmación (§18.CU): el corte de la víspera es un lote de confirmación más, pero
 // la respuesta del closer dispara un mensaje por lead (refuerzo / "voy a liberar el espacio") y
 // frena los pushes de las no confirmadas. `tipo` distingue el lote ('push2' | 'corte') y
 // `lead_phone` es el número al que va ese mensaje. El sync al dashboard NO lo lee (elige sus

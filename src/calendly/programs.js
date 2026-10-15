@@ -259,11 +259,11 @@ export const PROGRAMS = {
       video: 'https://youtu.be/SYt-wv6V9Mw',
       // 2026-10-09 (pedido del jefe): `brochure` pasa de la CARPETA de Drive (18DJsMV8…, el paquete
       // oficial de Retia) al PDF directo, para que el link abra el brochure de una vez.
-      // Verificado 200 sin autenticar y descargable (Brochure-De-Cero-a-Tactical-Investor-10nov.pdf,
-      // 2 MB). ⚠️ Es el de la cohorte del 10-nov: cuando Retia saque el siguiente hay que cambiar
-      // este link a mano (la carpeta lo hacía sola). El .mp4 de la carpeta ya no se manda; el video
+      // 2026-10-14: se cambia al PDF nuevo (Brochure-De-Cero-a-Tactical-Investor-9nov.pdf, antes
+      // 10nov), verificado 200 sin autenticar. ⚠️ Es el de una cohorte puntual: cuando Retia saque
+      // el siguiente hay que cambiar este link a mano (la carpeta lo hacía sola). El .mp4 de la carpeta ya no se manda; el video
       // va por YouTube.
-      brochure: 'https://drive.google.com/file/d/1XH1TlgAgnr8rJX2j_Mvo4wf4pppDYjsN/view?usp=sharing',
+      brochure: 'https://drive.google.com/file/d/1iGdNs0Bv9tg8eGghEEjw0DuVgBGSgucK/view?usp=sharing',
       order: ['video', 'brochure'],
     },
     active: true,

@@ -1,5 +1,5 @@
 // test/data.playbook-corte.test.js
-// §18.CR — el SQL del corte de la víspera. REQUIERE better-sqlite3 nativo → corre en
+// §18.CU — el SQL del corte de la víspera. REQUIERE better-sqlite3 nativo → corre en
 // Docker/VPS, no en Windows. El resto del playbook está en calendly.playbook.test.js (harness).
 //
 // Lo que se fija:

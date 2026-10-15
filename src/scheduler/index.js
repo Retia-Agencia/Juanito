@@ -13,6 +13,7 @@ import { startOutcomeReportJob } from './outcome-report.js';
 import { startBossReportJob } from './boss-report.js';
 import { startDailyReportsJob } from './daily-reports.js';
 import { startStripeAlertsJob } from './stripe-alerts.js';
+import { startSemaforoRetiaJob } from './semaforo-retia.js';
 import { startGroupMessagesJob } from './group-messages.js';
 import { startGroupRepliesJob } from './group-replies.js';
 import { startOutreachJob } from './outreach.js';
@@ -76,6 +77,13 @@ export async function startAllJobs() {
     startStripeAlertsJob();
   } catch (err) {
     console.warn('[Scheduler] Avisos de pago no disponibles:', err.message);
+  }
+
+  // Semáforo horario de pauta de Retia; se autodesactiva sin URL o secreto.
+  try {
+    startSemaforoRetiaJob();
+  } catch (err) {
+    console.warn('[Scheduler] Semáforo de Retia no disponible:', err.message);
   }
 
   // Reporte diario de métricas de desempeño por DM (se autodesactiva si falta

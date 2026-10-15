@@ -105,7 +105,7 @@ services:
       # pregunta "¿quiénes te confirmaron?" y la respuesta va al Dashboard de Closers. Vacío = off.
       - CALENDLY_CONFIRMACION_PUSH2=${CALENDLY_CONFIRMACION_PUSH2-}
       - CALENDLY_CONFIRMACION_HORAS=${CALENDLY_CONFIRMACION_HORAS:-16}
-      # Playbook de confirmación de agendas (§18.CR): en estas conexiones los pushes siguen los 4
+      # Playbook de confirmación de agendas (§18.CU): en estas conexiones los pushes siguen los 4
       # toques del playbook de 30X (bienvenida al agendar, 48 h, corte de la víspera, link 1 h antes)
       # más el "si no se conecta" a los 10 min. Apaga su Push 1 y su Push 2 de siempre. Vacío = off.
       - CALENDLY_PLAYBOOK=${CALENDLY_PLAYBOOK-}
@@ -209,6 +209,11 @@ services:
       - STRIPE_ALERT_JIDS=${STRIPE_ALERT_JIDS:-}
       - STRIPE_ALERT_CRON=${STRIPE_ALERT_CRON:-*/5 * * * *}
       - STRIPE_ALERT_LOOKBACK_MIN=${STRIPE_ALERT_LOOKBACK_MIN:-120}
+      # Semáforo de pauta de Retia (§18.CR, §18.CS): sin URL, secreto o grupo el job se autodesactiva.
+      - RETIA_SEMAFORO_URL=${RETIA_SEMAFORO_URL:-}
+      - RETIA_SEMAFORO_SECRETO=${RETIA_SEMAFORO_SECRETO:-}
+      - RETIA_SEMAFORO_GRUPO=${RETIA_SEMAFORO_GRUPO:-}
+      - SEMAFORO_RETIA_CRON=${SEMAFORO_RETIA_CRON:-0 * * * 1-5}
       # Reporte diario de MÉTRICAS de desempeño por DM (§18.N) — sin ID/TAB/recipients el job se autodesactiva.
       - SHEETS_METRICS_ID=${SHEETS_METRICS_ID:-}
       - SHEETS_METRICS_TAB=${SHEETS_METRICS_TAB:-}

@@ -398,7 +398,7 @@ export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora
   }
 
   // Lo que el Push 1 le pide al lead para la llamada, más los materiales y los avisos propios de
-  // cada programa. Lo comparten el Push 1 de siempre y la bienvenida del playbook (§18.CR).
+  // cada programa. Lo comparten el Push 1 de siempre y la bienvenida del playbook (§18.CU).
   const requisitos =
     `Muy importante que:\n` +
     `* Puedas prender la cámara\n` +
@@ -418,7 +418,7 @@ export function buildPrecallText({ programKey, pushN, primerNombre, closer, hora
         `La razón es que para delegar un proceso que será tan relevante para tu negocio creemos que es importante que primero lo aprendas tu equipo o tú.`
       : '');
 
-  // ─── Playbook de confirmación de agendas (§18.CR, ver playbook.js) ──────────────────────────
+  // ─── Playbook de confirmación de agendas (§18.CU, ver playbook.js) ──────────────────────────
   // Toque 1, al agendar: bienvenida + confirmar asistencia + fecha, hora y país. `cuando` sale de
   // `formatLeadWhen` ("mañana a las 3:00 p. m.", "el jueves 17 de octubre a las …").
   if (pushN === 'bienvenida') {
@@ -545,7 +545,7 @@ export function buildPush3Message({ name, firstName, phone, startIso, programKey
   ].join('\n');
 }
 
-// Push 7 (§18.CR, playbook): "si no se conecta". Sale 10 minutos después de la hora de inicio y
+// Push 7 (§18.CU, playbook): "si no se conecta". Sale 10 minutos después de la hora de inicio y
 // el closer lo ignora si el lead ya entró: Juanito no sabe quién está en el Meet. Lleva el registro
 // que pide el playbook, porque es justo el momento en que el closer tiene que hacerlo.
 export function buildPush7Message({ name, firstName, phone, startIso, programKey, closer, linkLlamada = '' }) {
@@ -696,7 +696,7 @@ export function buildPush0Message({
   // "el jueves 15" sale de formatLeadDay ("del jueves 15") sin la preposición.
   const diaCall = when === 'otro' ? formatLeadDay(startIso, tz, base).replace(/^del /, 'el ') : when;
   const titulo = `Nueva call ${diaCall.toUpperCase()}`;
-  // §18.CR: con el playbook, este Push 0 es el toque 1 (bienvenida) y lo que sigue es otro.
+  // §18.CU: con el playbook, este Push 0 es el toque 1 (bienvenida) y lo que sigue es otro.
   const playbook = programaEnPlaybook(programKey);
   const cola = playbook
     ? 'Este es el *toque 1* del playbook (bienvenida): pídele que confirme y que te diga desde qué país se conecta. ' +

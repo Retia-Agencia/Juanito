@@ -764,7 +764,7 @@ export function guardarLoteConfirmacion(filas) {
 
 // El lote que el closer puede estar respondiendo: el último que se le preguntó, si sigue abierto.
 // Devuelve las filas ordenadas por posición, o [].
-// Un lote del corte (§18.CR) se pregunta la víspera, así que sigue abierto mientras le quede alguna
+// Un lote del corte (§18.CU) se pregunta la víspera, así que sigue abierto mientras le quede alguna
 // llamada por empezar: "el 2 confirmó" a la mañana siguiente tiene que reactivar su push de 1 h.
 export function getLoteConfirmacionAbierto(phone) {
   const p = normalizePhone(phone);
@@ -794,7 +794,7 @@ export function setConfirmacionEstados(lote, cambios, rawReply = null) {
   })();
 }
 
-// Lo que el corte dijo de una cita (§18.CR): { estado, tipo } o null si nunca se preguntó. La
+// Lo que el corte dijo de una cita (§18.CU): { estado, tipo } o null si nunca se preguntó. La
 // entrega lo consulta antes del Push 3 y del Push 7.
 export function getConfirmacionDeCita(eventUuid) {
   return db.prepare(`SELECT estado, tipo FROM call_confirmaciones WHERE event_uuid = ?`).get(String(eventUuid)) || null;

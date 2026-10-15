@@ -1,6 +1,6 @@
 // src/calendly/playbook.js
 // PURO (sin DB ni red → testeable en Windows). El "Playbook · confirmación de agendas" de 30X
-// (WBR 28-sep → 4-oct, diapositiva 11) aplicado a los pushes precall (§18.CR).
+// (WBR 28-sep → 4-oct, diapositiva 11) aplicado a los pushes precall (§18.CU).
 //
 // El playbook le pide al closer 4 toques por agenda y un corte:
 //   1. Al agendar   → bienvenida, pide confirmar asistencia, material del programa, confirma

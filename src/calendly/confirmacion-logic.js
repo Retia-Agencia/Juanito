@@ -27,7 +27,7 @@ const sinTildes = (s) =>
     .replace(/[̀-ͯ]/g, '');
 
 // items: [{ name, startIso }] ya en el orden en que se numeran.
-// `corte` (§18.CR, playbook): la pregunta sale la VÍSPERA, sobre las llamadas de mañana, y es el
+// `corte` (§18.CU, playbook): la pregunta sale la VÍSPERA, sobre las llamadas de mañana, y es el
 // punto de corte — lo que el closer conteste decide qué le mando a cada lead.
 export function buildConfirmacionPregunta({ items, tz, corte = false }) {
   const lineas = items.map((it, i) => `${i + 1}. ${formatCallTime(it.startIso, tz)} — ${it.name || 'el prospecto'}`);
@@ -177,7 +177,7 @@ export function buildConfirmacionResumen({ items, estados }) {
 export const CONFIRMACION_REPROMPT =
   '🙈 No te entendí. Respóndeme con los números de los que confirmaron (ej: *1 3*), *todos*, o *2 canceló*.';
 
-// ─── Corte de la víspera (§18.CR, playbook) ───────────────────────────────────────────────────
+// ─── Corte de la víspera (§18.CU, playbook) ───────────────────────────────────────────────────
 // Lo que Juanito le contesta al closer después de su respuesta al corte: un link por lead con el
 // mensaje que le toca según el playbook. `filas` = las de call_confirmaciones del lote (con
 // lead_phone y program); `estados` = { [posicion]: estado }; `soloPosiciones` = en una corrección,

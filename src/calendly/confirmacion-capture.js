@@ -78,7 +78,7 @@ export async function captureConfirmacionReply({ from, pushName, text, messageId
       Object.entries(estados).map(([p, e]) => `${p}=${e}`).join(' ') +
       (primera ? '' : ' (corrección)')
   );
-  // §18.CR: el corte del playbook no termina en un "anotado": cada lead tiene su mensaje (refuerzo
+  // §18.CU: el corte del playbook no termina en un "anotado": cada lead tiene su mensaje (refuerzo
   // o "voy a liberar el espacio"). En una corrección, solo los que cambiaron, y los que pasan a
   // confirmada recuperan el link de 1 h antes que el corte les había frenado.
   if (filas[0].tipo === 'corte') {

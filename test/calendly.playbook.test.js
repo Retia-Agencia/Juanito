@@ -1,5 +1,5 @@
 // test/calendly.playbook.test.js
-// §18.CR — Playbook de confirmación de agendas de 30X aplicado a los pushes precall.
+// §18.CU — Playbook de confirmación de agendas de 30X aplicado a los pushes precall.
 //
 // Tier 1: puro + harness (sin DB nativa, sin red, sin WhatsApp real). Lo que se fija:
 //   · el copy de cada toque (bienvenida, 48 h, refuerzo, liberar, 1 h antes, no se conecta);

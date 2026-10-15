@@ -5,9 +5,9 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-10-15** (§18.CR — el playbook de confirmación de agendas de 30X
-llevado a los pushes, detrás de la bandera `CALENDLY_PLAYBOOK`; **sin mergear ni desplegar**, y la
-bandera va apagada). Anterior: **2026-10-14** (§18.CQ — el digest de la víspera ahora cuenta también las
+Última actualización: **2026-10-15** (§18.CU — el playbook de confirmación de agendas de 30X
+llevado a los pushes, detrás de la bandera `CALENDLY_PLAYBOOK`; **sin desplegar**, y la
+bandera va apagada). Anterior: **2026-10-15** (§18.CT — semáforo de Retia: cron cada hora y un solo grupo en `RETIA_SEMAFORO_GRUPO`). Anterior: **2026-10-15** (§18.CS — el texto del semáforo de Retia lo arma el CRM; Juanito lo manda tal cual). Anterior: **2026-10-15** (§18.CR — semáforo de pauta de Retia, desplegado). Antes: **2026-10-14** (§18.CQ — el digest de la víspera ahora cuenta también las
 citas que ya recibieron su push al agendar; mergeado en #28, **sin desplegar**). Anterior: **2026-10-14** (§18.CP desplegado, HubSpot como fuente única PRENDIDA en 30X,
 arreglo del parser de la confirmación. ⛔ **Alejandro prohibió más deploys hasta que él lo levante**). Anterior: **2026-10-14** (§18.CN y §18.CO desplegados; la confirmación en el Push 2
 está prendida en 30X y HubSpot como fuente única sigue apagado). Anterior: **2026-10-11** (§18.CM — el Push 1 de IGTK llegaba cortado porque el link wa.me
@@ -7517,7 +7517,83 @@ links de las otras 8 están más arriba en su chat con Juanito.
 Entra con el próximo deploy (`alcance: todo`, porque toca el bot). Hasta entonces, si otro closer de
 30X pregunta por qué el digest trae menos citas, la respuesta es la misma.
 
-### 18.CR 🟡 Playbook de confirmación de agendas en los pushes de 30X (2026-10-15, rama `feat/playbook-30x`, SIN desplegar)
+### Secretos (decididos, ver §13)
+
+- `CALENDLY_TOKEN`: **NO rotar** (decidido).
+- Contraseña del VPS: **rotación DIFERIDA** (pendiente para cuando se quiera cerrar ese riesgo).
+
+### 18.CR 🟢 Semáforo de pauta de Retia: Juanito pregunta al CRM qué mandar cada hora (2026-10-15, desplegado)
+
+**Por qué.** Retia quiere el semáforo del costo por agenda por WhatsApp, como el de 30X, pero **calculado en el
+CRM de Retia** (`retia-metrics`, ADR 0089 de ese repo): el CRM tiene las agendas, el gasto de Meta y las metas;
+Juanito es reloj y mensajero. Ticket 260 del CRM; el endpoint es el 259, ya en producción.
+
+**Qué hace.** `src/scheduler/semaforo-retia.js`, cron `0 6-19 * * 1-5` (Bogotá): `POST` a `RETIA_SEMAFORO_URL`
+con `x-semaforo-secreto: RETIA_SEMAFORO_SECRETO` y cuerpo `{}`. El CRM responde la lista de envíos que tocan a
+esa hora (programa, destino `@g.us`, día o cierre, métricas ya con su color) y la configuración vigente. Juanito
+guarda esa configuración en `settings` (`semaforo_retia_config`) y manda un mensaje por envío por la cola anti-ban;
+los destinos son grupos donde ya está, así que no aplica el gate de `hasDmThread`. **Si el CRM no responde**
+(excepción, status ≠ 200 o JSON incompleto), avisa solo a los destinos que según la última configuración tocaban
+a esa hora; sin configuración guardada, solo lo loguea. El texto lo armaba `src/semaforo/mensaje.js`; desde §18.CS lo arma el CRM.
+
+**Quién decide qué.** Programas, grupo, horas y métricas se configuran en el CRM (Programa › General); Juanito no
+tiene nada de eso en su `.env`. Sin URL o sin secreto el job se autodesactiva.
+
+**Tests.** `test/semaforo-retia.test.js` (12, deps inyectadas). Suite en Linux (método del VPS sin tocar el bot):
+**1349, 1347 verdes**, los 2 rojos conocidos de la línea base (`call con TODOS sus pushes skipped…`, `reagenda
+manual superseded…`); el tercero de la línea base hoy pasa.
+
+**Antes de desplegar.** Agregar `RETIA_SEMAFORO_URL` y `RETIA_SEMAFORO_SECRETO` al `.env` del VPS (respaldo
+`.env.bak-<fecha>` primero) y `alcance: todo`. Medido el 15-oct: lo único del bot que cambia contra el VPS son los
+tres archivos de este cambio, y la imagen que corre coincide con el disco (§18.CQ ya estaba desplegado, aunque su
+título diga lo contrario).
+
+**Despliegue (15-oct).** El primer deploy (`77712ab`) levantó el bot con `[SemaforoRetia] sin URL o secreto`: las
+variables estaban en el `.env` del VPS pero **no en `environment:` del `docker-compose.yml`** (gotcha §12: lo que
+no está listado no entra al contenedor). Agregadas las tres en el compose y redesplegado. Lección para el próximo
+job con variables nuevas: el `.env.example` no basta, también va la línea del compose.
+
+### 18.CS 🟢 El texto del semáforo de Retia lo arma el CRM (2026-10-15)
+
+**Por qué.** Mani pidió que la ficha del programa en el CRM muestre el mensaje exacto que llega al grupo (ticket 267
+de `retia-metrics`, ADR 0089 enmendado). Para que la vista previa y el WhatsApp no diverjan, el texto sale de una sola
+función, `armarMensaje` del CRM (portada de `src/semaforo/mensaje.js`), y viaja como `texto` en cada envío.
+
+**Qué cambió.** `src/scheduler/semaforo-retia.js` manda `envio.texto` tal cual; un envío sin texto se loguea y se
+salta (no se inventa). `src/semaforo/mensaje.js` se borró: un solo dueño del texto. El aviso de "el CRM no respondió"
+se queda aquí, porque justamente no hay CRM que lo arme. Orden de despliegue: primero el CRM (el campo ya existe),
+después Juanito.
+
+**Tests.** `test/semaforo-retia.test.js` (9): los 4 casos del mensaje se mudaron al CRM
+(`tests/reporte-whatsapp-mensaje.test.ts`); aquí quedan "manda el texto tal cual" y "sin texto no manda".
+
+### 18.CT 🟢 Semáforo de Retia: cron cada hora y un solo grupo (2026-10-15)
+
+**Por qué.** Dani Tovar (Gerencia de Retia) pidió el reporte a las 8, 11, 14, 17 y el cierre a las 20 h; el cron
+`0 6-19 * * 1-5` nunca habría preguntado a las 20 h, sin ningún error. Y Mani decidió que **un solo grupo recibe
+todos los programas** ("Alertas Paid Media - Retia"). Ticket 268 de `retia-metrics`.
+
+**Qué cambió.** El cron por defecto es `0 * * * 1-5`: Juanito pregunta cada hora en punto y el CRM decide si a esa
+hora toca algo, así una hora nueva no exige tocar Juanito. Todo envío y todo aviso de "el CRM no respondió" van a
+`RETIA_SEMAFORO_GRUPO` (id `@g.us`); el `destino` que mande el CRM se ignora. Sin URL, secreto **o grupo** el job se
+autodesactiva. La variable está en `.env.example`, en `environment:` del compose (gotcha §12) y en el `.env` del VPS.
+
+**Orden de despliegue.** Primero Juanito (ignora `destino`), después el CRM quita el campo del contrato.
+
+**Tests.** `test/semaforo-retia.test.js` (10): los envíos van al grupo del `.env`, un `destino` viejo se ignora, el
+aviso de caída va al grupo solo por el programa que tocaba, y sin grupo el job queda apagado.
+
+**Desplegado (15-oct, 15:50 UTC, `8234864`, `alcance: todo`).** Respaldo `.env.bak-20261015-pre268` en el VPS.
+Disparado justo después del Push 3 de las 15:50 y antes de los 6 de las 16:05: todos salieron a tiempo. WhatsApp
+reconectó sin QR y el log dice `[SemaforoRetia] Semáforo activo ✅ (cron "0 * * * 1-5")`. Suite en Linux: 1347,
+1345 verdes (los 2 rojos de la línea base).
+
+**Después, en el CRM (ticket 269 de `retia-metrics`):** el endpoint devuelve a lo sumo **un envío por hora** con los
+bloques de todos los programas (`{ hora, texto, bloques }`). Juanito no cambió: manda `texto` al grupo. Lo único
+que quedó viejo es el log de "envío sin texto", que nombra `envio.programa` (ya no viene: saldría `undefined`).
+Los tres programas de Retia quedaron encendidos en el CRM a las 8, 11, 14 y 17 h, con el cierre a las 20 h.
+
+### 18.CU 🟡 Playbook de confirmación de agendas en los pushes de 30X (2026-10-15, rama `feat/playbook-30x`, SIN desplegar)
 
 **Pedido de Alejandro.** Adaptar los pushes precall al *Playbook · confirmación de agendas* del WBR
 30X (28-sep → 4-oct, diapositiva 11). Esa semana: 1.134 reuniones, 30,6 % terminadas, 228 no-show,
@@ -7591,8 +7667,3 @@ conocidos. Con la bandera vacía, la suite de calendly/hubspot en Windows da los
 3. Verificar al día siguiente a las 8am: un digest "Toque 2 · 48 h antes" y una pregunta de corte
    por closer, ningún "Push 1 (el día anterior)" ni "Push 2" de 30X. Con la primera respuesta real,
    que llegue el mensaje de acciones y que `call_confirmaciones` tenga `tipo='corte'`.
-
-### Secretos (decididos, ver §13)
-
-- `CALENDLY_TOKEN`: **NO rotar** (decidido).
-- Contraseña del VPS: **rotación DIFERIDA** (pendiente para cuando se quiera cerrar ese riesgo).

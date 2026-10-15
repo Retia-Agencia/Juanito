@@ -95,7 +95,7 @@ const TZ = () => process.env.TZ || 'America/Bogota';
 const DRY_RUN = () => process.env.CALENDLY_DRY_RUN !== 'false'; // default true
 const REQUIRE_OPTIN = () => process.env.CALENDLY_REQUIRE_OPTIN !== 'false'; // default true
 const LEAD_MIN = () => Number(process.env.CALENDLY_PUSH3_LEAD_MIN || 25);
-// Toque 4 del playbook (§18.CR): en sus conexiones el Push 3 sale 1 h antes. La conexión que decide
+// Toque 4 del playbook (§18.CU): en sus conexiones el Push 3 sale 1 h antes. La conexión que decide
 // es la del closer, igual que en la entrega.
 const leadMinFor = (closerEmail) => (playbookActivoPara(accountOfCloser(closerEmail)) ? PLAYBOOK_LEAD_MIN() : LEAD_MIN());
 
@@ -220,7 +220,7 @@ const POLL_CRON = () => process.env.CALENDLY_POLL_CRON || '*/5 * * * *';
 const DELIVER_CRON = () => process.env.CALENDLY_DELIVER_CRON || '* * * * *';
 const PUSH1_CRON = () => process.env.CALENDLY_PUSH1_CRON || '0 19 * * *'; // 7:00pm
 const PUSH2_CRON = () => process.env.CALENDLY_PUSH2_CRON || '30 6 * * *'; // 6:30am
-// Playbook (§18.CR): toque 2 (dos días antes) y corte (la víspera), a la hora del Push 1 de 30X.
+// Playbook (§18.CU): toque 2 (dos días antes) y corte (la víspera), a la hora del Push 1 de 30X.
 const PLAYBOOK_48H_CRON = () => process.env.CALENDLY_PLAYBOOK_48H_CRON || '0 8 * * *';
 const PLAYBOOK_CORTE_CRON = () => process.env.CALENDLY_PLAYBOOK_CORTE_CRON || '0 8 * * *';
 
@@ -317,7 +317,7 @@ const PUSH1_AL_AGENDAR_HASTA = () => (process.env.CALENDLY_PUSH1_AL_AGENDAR_HAST
 const PUSH1_AL_AGENDAR_DIAS = () => Number(process.env.CALENDLY_PUSH1_AL_AGENDAR_DIAS || 21);
 const fechaLocal = (nowMs) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: TZ(), year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(nowMs));
-// Con el playbook (§18.CR) el Push 0 al agendar es el toque 1: deja de ser una prueba y no vence.
+// Con el playbook (§18.CU) el Push 0 al agendar es el toque 1: deja de ser una prueba y no vence.
 const push1AlAgendarPara = (conexion, nowMs) => {
   if (playbookActivoPara(conexion)) return true;
   if (!conexion || !PUSH1_AL_AGENDAR().has(conexion)) return false;
@@ -1188,7 +1188,7 @@ export async function runCalendlyPoll() {
         }
       }
 
-      // ─── Push 7: "si no se conecta" (§18.CR, playbook) ───────────────────────
+      // ─── Push 7: "si no se conecta" (§18.CU, playbook) ───────────────────────
       agendarPush7(d, {
         base: {
           event_uuid: uuid,
@@ -1383,7 +1383,7 @@ async function barridoPush1AlAgendar(d, nowMs) {
   return nuevos;
 }
 
-// §18.CR: ¿el corte de la víspera apagó este push? Solo en las conexiones con el playbook y solo
+// §18.CU: ¿el corte de la víspera apagó este push? Solo en las conexiones con el playbook y solo
 // por un lote del corte (una respuesta al Push 2 de otra conexión no frena nada). Si lo frena, lo
 // marca 'skipped' con su slug: una corrección posterior ("el 2 confirmó") lo reactiva.
 function frenaDelCorte(d, p) {
@@ -1395,7 +1395,7 @@ function frenaDelCorte(d, p) {
   return true;
 }
 
-// Push 7 (§18.CR): "si no se conecta", 10 min después del inicio, solo en las conexiones con el
+// Push 7 (§18.CU): "si no se conecta", 10 min después del inicio, solo en las conexiones con el
 // playbook. Lo comparten el poll de Calendly y el de HubSpot. Una fila más de `calendly_pushes`:
 // sale por `deliver()` con todos los gates y el UNIQUE(event_uuid, push_n) lo deja en uno por cita.
 function agendarPush7(d, { base, startIso, name, firstName, phone, closer, linkLlamada = '' }) {
@@ -2076,7 +2076,7 @@ export async function runCalendlyDelivery() {
           continue;
         }
 
-        // ─── Push 7: "si no se conecta" (§18.CR, playbook) ───────────────────
+        // ─── Push 7: "si no se conecta" (§18.CU, playbook) ───────────────────
         // Como el 4 y el 5, sale DESPUÉS del inicio, así que no pasa por el guard de obsolescencia
         // de abajo: tiene el suyo, una vigencia corta (pasada media hora ya no hay a quién esperar).
         if (p.push_n === 7) {
@@ -2148,7 +2148,7 @@ export async function runCalendlyDelivery() {
           console.log(`[Calendly] Push ${p.push_n} #${p.id} omitido: llamada ya pasó (${p.call_start} UTC)`);
           continue;
         }
-        // §18.CR: el closer la dejó sin confirmar (o cancelada) en el corte → sin link de 1 h antes.
+        // §18.CU: el closer la dejó sin confirmar (o cancelada) en el corte → sin link de 1 h antes.
         if (p.push_n === 3 && frenaDelCorte(d, p)) continue;
         // §18.CO: una cita hubspot:<id> con HubSpot como fuente se re-valida contra HubSpot.
         const hsEst = hubspotMeetingIdOf(p.event_uuid) && hubspotEsFuenteDe(p.closer_email) ? await estadoCitaHubspot(d, p) : null;
@@ -2411,7 +2411,7 @@ async function hubspotDigestItems(d, { calendlyCalls, minStartIso, maxStartIso, 
 // filas ANTES de mandarla: si el closer contesta rápido, la captura ya tiene con qué cruzar. Va
 // como mensaje aparte (no dentro del digest) para que la respuesta sea corta y no se mezcle con
 // los links. Una cita sin id (ni uri de Calendly ni hubspot:) no se puede cruzar y no se numera.
-// `corte` (§18.CR): la misma pregunta, la víspera y sobre las llamadas de mañana, para las
+// `corte` (§18.CU): la misma pregunta, la víspera y sobre las llamadas de mañana, para las
 // conexiones con el playbook. Guarda el teléfono del lead: con la respuesta, Juanito le arma al
 // closer el link de refuerzo o de "voy a liberar el espacio" de cada uno. Devuelve el resultado de
 // la entrega (o null si no preguntó).
@@ -2461,12 +2461,12 @@ async function runDigest(
     marcarPrefired = false,
     soloConexion = null,
     adelantado = false,
-    // §18.CR: las conexiones con el playbook no reciben el Push 1 ni el Push 2 de siempre.
+    // §18.CU: las conexiones con el playbook no reciben el Push 1 ni el Push 2 de siempre.
     excluirConexiones = null,
-    // §18.CR, toque 2: una cita reservada hace menos de esto ya recibió el toque 1 (que también
+    // §18.CU, toque 2: una cita reservada hace menos de esto ya recibió el toque 1 (que también
     // pide confirmar) y no entra a este digest.
     recienteMs = 0,
-    // §18.CR, toque 3: en vez del digest de links, la pregunta de quién confirmó.
+    // §18.CU, toque 3: en vez del digest de links, la pregunta de quién confirmó.
     corte = false,
   } = {}
 ) {
@@ -2658,7 +2658,7 @@ async function runDigest(
 // Las dos mitades del Push 1. Son COMPLEMENTARIAS por construcción —una es la negación de la
 // otra sobre el mismo predicado—, así que toda cita cae en exactamente una: sumar un programa a
 // CALENDLY_PUSH1_EARLY_PROGRAMS lo mueve de turno, nunca lo duplica ni lo deja sin digest.
-// Las conexiones con el playbook (§18.CR) salen de los dos: su víspera es el corte.
+// Las conexiones con el playbook (§18.CU) salen de los dos: su víspera es el corte.
 export const runPush1Early = () =>
   runDigest(1, 1, { incluyePrograma: isEarlyPush1Program, excluirPrefired: true, excluirConexiones: PLAYBOOK_CONEXIONES() }); // 8am (30X)
 export const runPush1 = () =>
@@ -2696,7 +2696,7 @@ export async function runPush1TurnoTemprano() {
 }
 export const runPush2 = () => runDigest(2, 0, { excluirConexiones: PLAYBOOK_CONEXIONES() }); // hoy
 
-// ─── Playbook de confirmación de agendas (§18.CR) ─────────────────────────────────────────────
+// ─── Playbook de confirmación de agendas (§18.CU) ─────────────────────────────────────────────
 // Un digest por conexión con el playbook (`soloConexion` ya sabe filtrar una sola).
 async function porConexionDelPlaybook(fn) {
   let closers = 0;
