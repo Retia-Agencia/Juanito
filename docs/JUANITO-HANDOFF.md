@@ -7580,3 +7580,14 @@ autodesactiva. La variable está en `.env.example`, en `environment:` del compos
 
 **Tests.** `test/semaforo-retia.test.js` (10): los envíos van al grupo del `.env`, un `destino` viejo se ignora, el
 aviso de caída va al grupo solo por el programa que tocaba, y sin grupo el job queda apagado.
+
+**Desplegado (15-oct, 15:50 UTC, `8234864`, `alcance: todo`).** Respaldo `.env.bak-20261015-pre268` en el VPS.
+Disparado justo después del Push 3 de las 15:50 y antes de los 6 de las 16:05: todos salieron a tiempo. WhatsApp
+reconectó sin QR y el log dice `[SemaforoRetia] Semáforo activo ✅ (cron "0 * * * 1-5")`. Suite en Linux: 1347,
+1345 verdes (los 2 rojos de la línea base).
+
+**Después, en el CRM (ticket 269 de `retia-metrics`):** el endpoint devuelve a lo sumo **un envío por hora** con los
+bloques de todos los programas (`{ hora, texto, bloques }`). Juanito no cambió: manda `texto` al grupo. Lo único
+que quedó viejo es el log de "envío sin texto", que nombra `envio.programa` (ya no viene: saldría `undefined`).
+Los tres programas de Retia quedaron encendidos en el CRM a las 8, 11, 14 y 17 h, con el cierre a las 20 h.
+
