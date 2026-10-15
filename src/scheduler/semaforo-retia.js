@@ -3,7 +3,6 @@
 // el CRM cae, sin inventar cifras ni escribirle a grupos que no correspondían a esa hora.
 
 import { CronJob } from 'cron';
-import { armarMensaje } from '../semaforo/mensaje.js';
 import { zonedNowParts } from './recurring-logic.js';
 
 // DB (nativa), red y WhatsApp se resuelven perezosamente para que el núcleo se pruebe con
@@ -80,9 +79,15 @@ export async function runSemaforoRetia({ now = new Date(), deps = null } = {}) {
 
   d.setSetting(CONFIG_KEY, JSON.stringify(respuesta.configuracion));
   let enviados = 0;
+  // El texto lo arma el CRM (ticket 267 de retia-metrics): la vista previa de Programa › General y este
+  // mensaje salen de la misma función. Un envío sin texto no se inventa: se loguea y se salta.
   for (const envio of respuesta.envios) {
+    if (typeof envio.texto !== 'string' || envio.texto.trim() === '') {
+      console.error('[SemaforoRetia] envío sin texto del CRM:', envio.programa);
+      continue;
+    }
     try {
-      await d.sendMessage(envio.destino, armarMensaje(envio, respuesta.sincronizacion));
+      await d.sendMessage(envio.destino, envio.texto);
       enviados++;
     } catch (err) {
       console.error('[SemaforoRetia] fallo enviando un semáforo:', err.message);
