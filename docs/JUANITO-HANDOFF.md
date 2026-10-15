@@ -5,7 +5,7 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-10-14** (§18.CQ — el digest de la víspera ahora cuenta también las
+Última actualización: **2026-10-15** (§18.CR — semáforo de pauta de Retia: Juanito pregunta al CRM qué mandar cada hora hábil; PR abierto, **sin desplegar**). Anterior: **2026-10-14** (§18.CQ — el digest de la víspera ahora cuenta también las
 citas que ya recibieron su push al agendar; mergeado en #28, **sin desplegar**). Anterior: **2026-10-14** (§18.CP desplegado, HubSpot como fuente única PRENDIDA en 30X,
 arreglo del parser de la confirmación. ⛔ **Alejandro prohibió más deploys hasta que él lo levante**). Anterior: **2026-10-14** (§18.CN y §18.CO desplegados; la confirmación en el Push 2
 está prendida en 30X y HubSpot como fuente única sigue apagado). Anterior: **2026-10-11** (§18.CM — el Push 1 de IGTK llegaba cortado porque el link wa.me
@@ -7519,3 +7519,29 @@ Entra con el próximo deploy (`alcance: todo`, porque toca el bot). Hasta entonc
 
 - `CALENDLY_TOKEN`: **NO rotar** (decidido).
 - Contraseña del VPS: **rotación DIFERIDA** (pendiente para cuando se quiera cerrar ese riesgo).
+
+### 18.CR 🟡 Semáforo de pauta de Retia: Juanito pregunta al CRM qué mandar cada hora (2026-10-15, PR abierto, SIN desplegar)
+
+**Por qué.** Retia quiere el semáforo del costo por agenda por WhatsApp, como el de 30X, pero **calculado en el
+CRM de Retia** (`retia-metrics`, ADR 0089 de ese repo): el CRM tiene las agendas, el gasto de Meta y las metas;
+Juanito es reloj y mensajero. Ticket 260 del CRM; el endpoint es el 259, ya en producción.
+
+**Qué hace.** `src/scheduler/semaforo-retia.js`, cron `0 6-19 * * 1-5` (Bogotá): `POST` a `RETIA_SEMAFORO_URL`
+con `x-semaforo-secreto: RETIA_SEMAFORO_SECRETO` y cuerpo `{}`. El CRM responde la lista de envíos que tocan a
+esa hora (programa, destino `@g.us`, día o cierre, métricas ya con su color) y la configuración vigente. Juanito
+guarda esa configuración en `settings` (`semaforo_retia_config`) y manda un mensaje por envío por la cola anti-ban;
+los destinos son grupos donde ya está, así que no aplica el gate de `hasDmThread`. **Si el CRM no responde**
+(excepción, status ≠ 200 o JSON incompleto), avisa solo a los destinos que según la última configuración tocaban
+a esa hora; sin configuración guardada, solo lo loguea. El texto lo arma `src/semaforo/mensaje.js` (puro).
+
+**Quién decide qué.** Programas, grupo, horas y métricas se configuran en el CRM (Programa › General); Juanito no
+tiene nada de eso en su `.env`. Sin URL o sin secreto el job se autodesactiva.
+
+**Tests.** `test/semaforo-retia.test.js` (12, deps inyectadas). Suite en Linux (método del VPS sin tocar el bot):
+**1349, 1347 verdes**, los 2 rojos conocidos de la línea base (`call con TODOS sus pushes skipped…`, `reagenda
+manual superseded…`); el tercero de la línea base hoy pasa.
+
+**Antes de desplegar.** Agregar `RETIA_SEMAFORO_URL` y `RETIA_SEMAFORO_SECRETO` al `.env` del VPS (respaldo
+`.env.bak-<fecha>` primero) y `alcance: todo`. Medido el 15-oct: lo único del bot que cambia contra el VPS son los
+tres archivos de este cambio, y la imagen que corre coincide con el disco (§18.CQ ya estaba desplegado, aunque su
+título diga lo contrario).
