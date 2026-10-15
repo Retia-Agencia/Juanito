@@ -5,7 +5,7 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-10-15** (§18.CS — el texto del semáforo de Retia lo arma el CRM; Juanito lo manda tal cual). Anterior: **2026-10-15** (§18.CR — semáforo de pauta de Retia, desplegado). Antes: **2026-10-14** (§18.CQ — el digest de la víspera ahora cuenta también las
+Última actualización: **2026-10-15** (§18.CT — semáforo de Retia: cron cada hora y un solo grupo en `RETIA_SEMAFORO_GRUPO`). Anterior: **2026-10-15** (§18.CS — el texto del semáforo de Retia lo arma el CRM; Juanito lo manda tal cual). Anterior: **2026-10-15** (§18.CR — semáforo de pauta de Retia, desplegado). Antes: **2026-10-14** (§18.CQ — el digest de la víspera ahora cuenta también las
 citas que ya recibieron su push al agendar; mergeado en #28, **sin desplegar**). Anterior: **2026-10-14** (§18.CP desplegado, HubSpot como fuente única PRENDIDA en 30X,
 arreglo del parser de la confirmación. ⛔ **Alejandro prohibió más deploys hasta que él lo levante**). Anterior: **2026-10-14** (§18.CN y §18.CO desplegados; la confirmación en el Push 2
 está prendida en 30X y HubSpot como fuente única sigue apagado). Anterior: **2026-10-11** (§18.CM — el Push 1 de IGTK llegaba cortado porque el link wa.me
@@ -7564,3 +7564,19 @@ después Juanito.
 
 **Tests.** `test/semaforo-retia.test.js` (9): los 4 casos del mensaje se mudaron al CRM
 (`tests/reporte-whatsapp-mensaje.test.ts`); aquí quedan "manda el texto tal cual" y "sin texto no manda".
+
+### 18.CT 🟢 Semáforo de Retia: cron cada hora y un solo grupo (2026-10-15)
+
+**Por qué.** Dani Tovar (Gerencia de Retia) pidió el reporte a las 8, 11, 14, 17 y el cierre a las 20 h; el cron
+`0 6-19 * * 1-5` nunca habría preguntado a las 20 h, sin ningún error. Y Mani decidió que **un solo grupo recibe
+todos los programas** ("Alertas Paid Media - Retia"). Ticket 268 de `retia-metrics`.
+
+**Qué cambió.** El cron por defecto es `0 * * * 1-5`: Juanito pregunta cada hora en punto y el CRM decide si a esa
+hora toca algo, así una hora nueva no exige tocar Juanito. Todo envío y todo aviso de "el CRM no respondió" van a
+`RETIA_SEMAFORO_GRUPO` (id `@g.us`); el `destino` que mande el CRM se ignora. Sin URL, secreto **o grupo** el job se
+autodesactiva. La variable está en `.env.example`, en `environment:` del compose (gotcha §12) y en el `.env` del VPS.
+
+**Orden de despliegue.** Primero Juanito (ignora `destino`), después el CRM quita el campo del contrato.
+
+**Tests.** `test/semaforo-retia.test.js` (10): los envíos van al grupo del `.env`, un `destino` viejo se ignora, el
+aviso de caída va al grupo solo por el programa que tocaba, y sin grupo el job queda apagado.
