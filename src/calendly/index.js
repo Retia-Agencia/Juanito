@@ -761,11 +761,13 @@ export function buildPush0Message({
 // `yaEnviadas`: citas del mismo día cuyo Push 1 ya le llegó al closer al agendar (prefired). El
 // conteo del encabezado las suma: "tienes 2 llamadas" a un closer que tiene 10 se lee como que
 // faltan 8 (caso Daniela Camacho, 14-oct).
-export function buildDigestMessage({ pushLabel, whenLabel, items, pushN, closer, tz = TZ(), base = new Date(), nota = '', yaEnviadas = 0 }) {
+// `conFecha` (§18.CV): la lista abarca varios días (el catcher del playbook), así que cada línea
+// lleva la fecha además de la hora.
+export function buildDigestMessage({ pushLabel, whenLabel, items, pushN, closer, tz = TZ(), base = new Date(), nota = '', yaEnviadas = 0, conFecha = false }) {
   const sorted = [...items].sort((a, b) => new Date(a.startIso) - new Date(b.startIso));
   const renderLine = (it) => {
     const who = it.name || it.firstName || 'el prospecto';
-    const time = formatCallTime(it.startIso, tz);
+    const time = conFecha ? formatCallDateTime(it.startIso, tz) : formatCallTime(it.startIso, tz);
     const tel = it.phone ? `📞 ${it.phone}` : '📵 sin teléfono';
     const head = `• ${time} — ${who} — ${tel}`;
     if (!it.phone) return `${head} (mándalo manual)`;
@@ -775,7 +777,8 @@ export function buildDigestMessage({ pushLabel, whenLabel, items, pushN, closer,
       primerNombre: it.firstName || firstNameFrom(it.name),
       closer,
       hora: formatLeadTime(it.startIso, tz),
-      dia: pushN === 1 ? formatLeadDay(it.startIso, tz, base) : '',
+      dia: pushN === 1 || pushN === 48 ? formatLeadDay(it.startIso, tz, base) : '',
+      cuando: pushN === 'bienvenida' ? formatLeadWhen(it.startIso, tz, base) : '',
       fecha: pushN === 'viernes' ? formatLeadDate(it.startIso, tz) : '',
     });
     const link = buildLeadLink(it.phone, text);
