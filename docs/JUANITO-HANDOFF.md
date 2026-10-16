@@ -7719,3 +7719,14 @@ bienvenida a las citas sin toque 1 antes de la pregunta. Está pendiente.
 
 **Tests:** 5 nuevos en `calendly.playbook.test.js` (rescate + prefired + apagado, sin opt-in, Push 7,
 duplicado por minuto, día del 48 h). Linux: 1371 tests, 1368 verdes, los 3 rojos conocidos.
+
+**Prendido (2026-10-16).** PR #38 mergeado (`987fd45`), deploy con run 38920908471, `alcance: todo`.
+En el `.env` del VPS (respaldo `.env.bak-<ts>-playbook`): `CALENDLY_PLAYBOOK=30x` y
+`CALENDLY_PLAYBOOK_RESCATE_DESDE=2026-10-16T15:04:04Z`. WhatsApp reconectó y `compose config
+--services` lista `agent` y `dash`. Primera corrida del catcher: **36 citas rescatadas, 36
+entregadas en 9 mensajes a 6 closers, 0 pendientes, 60 Push 7 creados**. Recuperó los toques de
+hoy: el corte de mañana (sáb 17) salió a 2 closers con 6 citas, y el de 48 h (dom 18) no tenía citas.
+La próxima corrida (`:20`) no debería encontrar nada y tendría que escribir
+`playbook_rescate:fin`. Verificarlo con `[Calendly] catcher del playbook TERMINADO` en el log.
+Desde hoy el playbook está **vivo en 30X**: la prueba "Push 1 al agendar" (§18.CK) queda absorbida y
+su medición del 24-oct, contaminada.
