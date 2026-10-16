@@ -7578,7 +7578,7 @@ todos los programas** ("Alertas Paid Media - Retia"). Ticket 268 de `retia-metri
 
 **Qué cambió.** El cron por defecto es `0 * * * 1-5`: Juanito pregunta cada hora en punto y el CRM decide si a esa
 hora toca algo, así una hora nueva no exige tocar Juanito. Todo envío y todo aviso de "el CRM no respondió" van a
-`RETIA_SEMAFORO_GRUPO` (id `@g.us`); el `destino` que mande el CRM se ignora. Sin URL, secreto **o grupo** el job se
+`RETIA_SEMAFORO_GRUPO` (id `@g.us`); desde el ticket 274 del CRM, un envío con `destino` va a ese grupo y uno sin él a este. Sin URL, secreto **o grupo** el job se
 autodesactiva. La variable está en `.env.example`, en `environment:` del compose (gotcha §12) y en el `.env` del VPS.
 
 **Orden de despliegue.** Primero Juanito (ignora `destino`), después el CRM quita el campo del contrato.
