@@ -5,7 +5,9 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-10-15** (§18.CU — el playbook de confirmación de agendas de 30X
+Última actualización: **2026-10-16** (§18.CW — red permanente del corte del playbook: la víspera
+manda la bienvenida de las citas de mañana que no recibieron su toque 1; **sin desplegar**).
+Anterior: **2026-10-16** (§18.CV — catcher de la transición al playbook). Anterior: **2026-10-15** (§18.CU — el playbook de confirmación de agendas de 30X
 llevado a los pushes, detrás de la bandera `CALENDLY_PLAYBOOK`; **sin desplegar**, y la
 bandera va apagada). Anterior: **2026-10-15** (§18.CT — semáforo de Retia: cron cada hora y un solo grupo en `RETIA_SEMAFORO_GRUPO`). Anterior: **2026-10-15** (§18.CS — el texto del semáforo de Retia lo arma el CRM; Juanito lo manda tal cual). Anterior: **2026-10-15** (§18.CR — semáforo de pauta de Retia, desplegado). Antes: **2026-10-14** (§18.CQ — el digest de la víspera ahora cuenta también las
 citas que ya recibieron su push al agendar; mergeado en #28, **sin desplegar**). Anterior: **2026-10-14** (§18.CP desplegado, HubSpot como fuente única PRENDIDA en 30X,
@@ -7700,7 +7702,57 @@ se calculaba para el Push 1. No llegó a salir: el playbook estaba apagado.
 **Lo que sigue sin cubrir (estructural, no de la transición):** después de la activación, una cita
 cuyo toque 1 no sale (closer sin opt-in a más de 48 h, Juanito caído más de 10 min, reagendas) ya no
 tiene la víspera como red. La propuesta es una red permanente dentro del corte, que mande la
-bienvenida a las citas sin toque 1 antes de la pregunta. Está pendiente.
+bienvenida a las citas sin toque 1 antes de la pregunta. **Hecha en §18.CW.**
 
 **Tests:** 5 nuevos en `calendly.playbook.test.js` (rescate + prefired + apagado, sin opt-in, Push 7,
 duplicado por minuto, día del 48 h). Linux: 1371 tests, 1368 verdes, los 3 rojos conocidos.
+
+### 18.CW 🟢 Red permanente del corte: la víspera manda la bienvenida que no salió (2026-10-16, SIN desplegar)
+
+**Por qué.** Con el playbook (§18.CU) prendido en 30X desde el 16-oct, el corte de la víspera
+solo pregunta "¿quiénes te confirmaron para mañana?" y ya no lleva links. Antes, una cita cuyo
+Push 1 no salía al agendar lo recibía en el digest de la víspera. Ahora se quedaba sin materiales.
+El catcher (§18.CV) cubrió solo las citas que ya existían al prenderlo. Esta es la red para las que
+se escapan después. Casos:
+- un closer **sin opt-in al agendar**: el Push 0 de una cita a más de 48 h se abandona;
+- **Juanito caído más de 10 min**: el barrido de reservas solo mira los últimos 10 min;
+- **reagendas**: el barrido se las salta.
+
+**Qué hace.** `runPlaybookCorte` (8am) le manda a cada closer, **antes de la pregunta**, un digest
+"Bienvenida pendiente" con las citas de mañana que no recibieron su toque 1. Lleva la bienvenida del
+playbook (`pushN: 'bienvenida'`, "Ya quedó agendada tu llamada… mañana a las…"), la misma del
+catcher. El criterio de "sin toque 1" también es el del catcher: **ni marca de prefired ni un Push 0
+enviado al mismo closer en el mismo minuto** (`getPush0EnviadosPorMinuto`). El helper
+`avisadaPorPush0` ahora lo comparten los dos. Va en tandas de 8 links (`BIENVENIDAS_POR_MENSAJE`,
+la constante que antes era `RESCATE_POR_MENSAJE`). Lo entregado se marca prefired, así que un
+segundo corte a mano no lo repite. Si la entrega no sale (sin opt-in, pausa, dry-run), no marca
+nada y corta. En ese caso la pregunta tampoco sale.
+
+La pregunta del corte **sigue listando todas** las citas de mañana, también las que acaban de
+recibir su bienvenida.
+
+**El catcher la apaga** (`runPlaybookCorte({ red: false })`) en el corte que recupera el día de la
+activación. Esas citas de mañana ya habían recibido el Push 1 de las 8am del régimen viejo, que
+no deja marca de prefired. En prod no cambia nada: el catchup del 16-oct ya corrió y no se repite.
+
+**Lo que no cubre / ojo:**
+- Solo mira **mañana**. Una cita reservada para pasado mañana o más lejos, cuyo toque 1 no salió,
+  espera a su víspera. El toque 2 (48 h) la lista igual, pero sin materiales.
+- Una cita reservada después de las 8am de la víspera no entra al corte. Si su toque 1 no sale,
+  sigue sin red, igual que antes de §18.CW.
+- Un Push 0 de una cita a menos de 48 h con el closer sin opt-in **se reintenta cada minuto**
+  (no se abandona). Si el closer da el opt-in justo alrededor de las 8am, el Push 0 y la red pueden
+  salir los dos. La ventana es de un minuto: no vale la complejidad de cruzar las filas `scheduled`.
+
+**Archivos:** `src/scheduler/calendly.js` (`redDelCorte`, `avisadaPorPush0`, `runDigest` con `red`,
+`runPlaybookCorte({ red })`, el catchup del catcher con `red: false`).
+
+**Tests:** 6 nuevos en `calendly.playbook.test.js`: bienvenida antes de la pregunta + prefired + no
+repite, Push 0 por minuto, sin opt-in, tandas de 8, reunión del assigner (HubSpot), y el catchup
+del catcher sin red (confirmado que falla si se le saca el `red: false`). Los dos tests viejos del
+corte marcan sus citas como prefired para seguir probando solo la pregunta. Linux: 1378 tests, 1375 verdes, los 3 rojos conocidos.
+
+**Para desplegar** (⛔ esperar a que Alejandro levante la regla de no desplegar): `alcance: todo`,
+sin bandera nueva. Verificar al día siguiente a las 8am en el log: la línea `Corte de la víspera:
+N cita(s) de mañana sin toque 1 recibieron su bienvenida (red §18.CW)` cuando haya alguna, y que
+ningún closer reciba una bienvenida de una cita que ya tuvo su Push 0.
