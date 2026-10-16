@@ -7704,3 +7704,18 @@ bienvenida a las citas sin toque 1 antes de la pregunta. Está pendiente.
 
 **Tests:** 5 nuevos en `calendly.playbook.test.js` (rescate + prefired + apagado, sin opt-in, Push 7,
 duplicado por minuto, día del 48 h). Linux: 1371 tests, 1368 verdes, los 3 rojos conocidos.
+
+### 18.CW 🟢 Semáforo de Retia: todos los días, también sábado y domingo (2026-10-16)
+
+**Por qué.** El 16-oct el CRM cambió la regla del semáforo (ADR 0089 del CRM, enmienda 16-oct): el color va contra la
+meta a cualquier hora, el cierre de un día sale a las 00:00 del siguiente y el semáforo corre los siete días, porque la
+pauta gasta los siete días. Con `1-5`, el cierre del viernes (00:00 del sábado) y todo el fin de semana no salían.
+
+**Qué cambió.** El cron por defecto pasa de `0 * * * 1-5` a `0 * * * *` en `src/scheduler/semaforo-retia.js`,
+`docker-compose.yml` y `.env.example`. Las horas que tocan las sigue decidiendo el CRM (Programa › General): hoy 8, 11,
+14, 17 y 20, y el cierre a las 0.
+
+**Desplegado.** En el VPS ya corría así desde el 16-oct a las 10:25 (Bogotá): `SEMAFORO_RETIA_CRON=0 * * * *` en
+`/root/juanito/.env` (respaldo `.env.bak-*-semaforo-todos-los-dias`), `docker compose up -d agent`, reconectó sin QR y el
+log dice `[SemaforoRetia] Semáforo activo ✅ (cron "0 * * * *")`. Este cambio alinea el default del repo para que un
+`.env` reconstruido desde el ejemplo no vuelva a apagar el fin de semana.
