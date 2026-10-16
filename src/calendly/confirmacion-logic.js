@@ -48,7 +48,7 @@ export function buildConfirmacionPregunta({ items, tz, corte = false }) {
   );
 }
 
-// §18.CW: el recordatorio de las 2pm a quien no contestó el corte. `filas` son las de la DB
+// §18.CX: el recordatorio de las 2pm a quien no contestó el corte. `filas` son las de la DB
 // (posicion, lead_name, call_start UTC 'YYYY-MM-DD HH:MM:SS'): los números tienen que ser los MISMOS
 // de la pregunta de la mañana, porque la respuesta se cruza contra ese lote.
 export function buildCorteRecordatorio({ filas, tz }) {

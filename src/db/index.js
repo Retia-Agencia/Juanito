@@ -846,7 +846,7 @@ export function getPush3SinPush7() {
     .all();
 }
 
-// §18.CW: los cortes de `fecha` (YYYY-MM-DD local, la del lote) que el closer no contestó, no se
+// §18.CX: los cortes de `fecha` (YYYY-MM-DD local, la del lote) que el closer no contestó, no se
 // le recordaron y todavía tienen una llamada por delante. Una fila por cita, por lote y posición.
 export function getCortesSinRespuesta(fecha) {
   return db

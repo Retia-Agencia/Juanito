@@ -219,7 +219,7 @@ services:
       - RETIA_SEMAFORO_URL=${RETIA_SEMAFORO_URL:-}
       - RETIA_SEMAFORO_SECRETO=${RETIA_SEMAFORO_SECRETO:-}
       - RETIA_SEMAFORO_GRUPO=${RETIA_SEMAFORO_GRUPO:-}
-      - SEMAFORO_RETIA_CRON=${SEMAFORO_RETIA_CRON:-0 * * * 1-5}
+      - SEMAFORO_RETIA_CRON=${SEMAFORO_RETIA_CRON:-0 * * * *}
       # Reporte diario de MÉTRICAS de desempeño por DM (§18.N) — sin ID/TAB/recipients el job se autodesactiva.
       - SHEETS_METRICS_ID=${SHEETS_METRICS_ID:-}
       - SHEETS_METRICS_TAB=${SHEETS_METRICS_TAB:-}

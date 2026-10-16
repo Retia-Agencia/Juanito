@@ -223,7 +223,7 @@ const PUSH2_CRON = () => process.env.CALENDLY_PUSH2_CRON || '30 6 * * *'; // 6:3
 // Playbook (§18.CU): toque 2 (dos días antes) y corte (la víspera), a la hora del Push 1 de 30X.
 const PLAYBOOK_48H_CRON = () => process.env.CALENDLY_PLAYBOOK_48H_CRON || '0 8 * * *';
 const PLAYBOOK_CORTE_CRON = () => process.env.CALENDLY_PLAYBOOK_CORTE_CRON || '0 8 * * *';
-// §18.CW: recordatorio del corte a quien no lo contestó. Vacío = sin recordatorio.
+// §18.CX: recordatorio del corte a quien no lo contestó. Vacío = sin recordatorio.
 const PLAYBOOK_RECORDATORIO_CRON = () => (process.env.CALENDLY_PLAYBOOK_RECORDATORIO_CRON ?? '0 14 * * *').trim();
 
 // ─── Push 1 más temprano para ALGUNOS programas (2026-09-08; ampliado 2026-09-16) ────────────
@@ -2447,7 +2447,7 @@ async function preguntarConfirmacion(d, { phone, name, email, items, nowMs, cort
   return deliver(d, phone, buildConfirmacionPregunta({ items: lista, tz: TZ(), corte }), corte ? 'corte' : 'confirmacion', email);
 }
 
-// §18.CW / §18.CV: ¿esta cita ya recibió su toque 1? La marca de prefired no alcanza: una cita
+// §18.CX / §18.CV: ¿esta cita ya recibió su toque 1? La marca de prefired no alcanza: una cita
 // reservada por Calendly antes de la fuente única (§18.CO) quedó marcada con la uri de Calendly y
 // hoy el digest la ve como hubspot:<id>. Por eso también cuenta un Push 0 enviado al mismo closer
 // en el mismo minuto (`getPush0EnviadosPorMinuto`).
@@ -2455,7 +2455,7 @@ const minutoUtc = (iso) => new Date(iso).toISOString().slice(0, 16).replace('T',
 const avisadaPorPush0 = (yaAvisadas, email, startIso) => yaAvisadas.has(`${String(email).toLowerCase()}|${minutoUtc(startIso)}`);
 const BIENVENIDAS_POR_MENSAJE = 8; // un wa.me con materiales pesa ~2-3 mil caracteres
 
-// §18.CW: la red permanente del corte. Con el playbook la víspera ya no lleva links, así que una
+// §18.CX: la red permanente del corte. Con el playbook la víspera ya no lleva links, así que una
 // cita de mañana cuyo toque 1 no salió (closer sin opt-in al agendar, Juanito caído más de 10 min,
 // una reagenda) se quedaría sin materiales. Antes de la pregunta, le manda al closer la bienvenida
 // de esas citas y marca prefired lo entregado. Devuelve cuántas entregó.
@@ -2515,7 +2515,7 @@ async function runDigest(
     recienteMs = 0,
     // §18.CU, toque 3: en vez del digest de links, la pregunta de quién confirmó.
     corte = false,
-    // §18.CW: con `corte`, antes de la pregunta, la bienvenida de las citas sin toque 1.
+    // §18.CX: con `corte`, antes de la pregunta, la bienvenida de las citas sin toque 1.
     red = false,
     // §18.CV, catcher de la transición: solo las citas reservadas ANTES de este instante (ms).
     creadasAntesMs = null,
@@ -2532,7 +2532,7 @@ async function runDigest(
   const nowMs = d.now();
   const { minStartIso, maxStartIso } = dayRangeUtc(TZ(), offsetDays, new Date(nowMs));
   const prefired = excluirPrefired && d.getPush1PrefiredKeys ? d.getPush1PrefiredKeys() : null;
-  // §18.CW: el corte lista TODAS las citas de mañana; la red necesita saber cuáles ya tuvieron toque 1.
+  // §18.CX: el corte lista TODAS las citas de mañana; la red necesita saber cuáles ya tuvieron toque 1.
   const conRed = corte && red && !recolectar;
   const redPrefired = conRed && d.getPush1PrefiredKeys ? d.getPush1PrefiredKeys() : new Set();
   const redAvisadas = conRed && d.getPush0EnviadosPorMinuto ? d.getPush0EnviadosPorMinuto() : new Set();
@@ -2707,7 +2707,7 @@ async function runDigest(
     if (pushN === 2 && outcome === 'sent') await preguntarConfirmacion(d, { phone, name, email, items, nowMs });
   }
   if (saltadas) console.log(`[Calendly] Digest push${pushN}: ${saltadas} cita(s) omitidas, su Push 1 ya salió adelantado`);
-  if (bienvenidas) console.log(`[Calendly] ${label}: ${bienvenidas} cita(s) de mañana sin toque 1 recibieron su bienvenida (red §18.CW)`);
+  if (bienvenidas) console.log(`[Calendly] ${label}: ${bienvenidas} cita(s) de mañana sin toque 1 recibieron su bienvenida (red §18.CX)`);
 
   // Se loguea el total REAL enviado y, aparte, cuántas vinieron del CRM: el log viejo decía
   // `events.length` (solo Calendly) y por eso el hueco de las citas de HubSpot era invisible
@@ -2779,13 +2779,13 @@ export const runPlaybook48h = ({ excluirKeys = null } = {}) =>
     runDigest(48, 2, { soloConexion: conexion, recienteMs: PLAYBOOK_48H_RECIENTE_HORAS * 3600000, excluirKeys })
   );
 // Toque 3: el corte de la víspera, sobre TODAS las llamadas de mañana (también las que recibieron
-// su toque 1 al agendar). Con `red` (§18.CW), antes de la pregunta, la bienvenida de las que no lo
+// su toque 1 al agendar). Con `red` (§18.CX), antes de la pregunta, la bienvenida de las que no lo
 // recibieron. El catcher la apaga el día de la activación: esas citas ya tuvieron el Push 1 de las
 // 8am del régimen viejo, sin marca de prefired.
 export const runPlaybookCorte = ({ red = true } = {}) =>
   porConexionDelPlaybook((conexion) => runDigest(1, 1, { soloConexion: conexion, corte: true, red }));
 
-// §18.CW: a las 2pm, a cada closer que no contestó el corte de la mañana, la misma lista con los
+// §18.CX: a las 2pm, a cada closer que no contestó el corte de la mañana, la misma lista con los
 // mismos números. Una vez por lote (`recordada_at`), y solo si le queda alguna llamada por delante.
 export async function runPlaybookRecordatorioCorte() {
   if (!PLAYBOOK_CONEXIONES().size) return 0;

@@ -5,10 +5,10 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-10-16** (§18.CW — red permanente del corte del playbook: la víspera
+Última actualización: **2026-10-16** (§18.CX — red permanente del corte del playbook: la víspera
 manda la bienvenida de las citas de mañana que no recibieron su toque 1, y recordatorio a las 2pm
 a quien no contestó el corte; **sin desplegar**).
-Anterior: **2026-10-16** (§18.CV — catcher de la transición al playbook). Anterior: **2026-10-15** (§18.CU — el playbook de confirmación de agendas de 30X
+Anterior: **2026-10-16** (§18.CW — semáforo de Retia todos los días, también sábado y domingo). Anterior: **2026-10-16** (§18.CV — catcher de la transición al playbook). Anterior: **2026-10-15** (§18.CU — el playbook de confirmación de agendas de 30X
 llevado a los pushes, detrás de la bandera `CALENDLY_PLAYBOOK`; **sin desplegar**, y la
 bandera va apagada). Anterior: **2026-10-15** (§18.CT — semáforo de Retia: cron cada hora y un solo grupo en `RETIA_SEMAFORO_GRUPO`). Anterior: **2026-10-15** (§18.CS — el texto del semáforo de Retia lo arma el CRM; Juanito lo manda tal cual). Anterior: **2026-10-15** (§18.CR — semáforo de pauta de Retia, desplegado). Antes: **2026-10-14** (§18.CQ — el digest de la víspera ahora cuenta también las
 citas que ya recibieron su push al agendar; mergeado en #28, **sin desplegar**). Anterior: **2026-10-14** (§18.CP desplegado, HubSpot como fuente única PRENDIDA en 30X,
@@ -7703,12 +7703,27 @@ se calculaba para el Push 1. No llegó a salir: el playbook estaba apagado.
 **Lo que sigue sin cubrir (estructural, no de la transición):** después de la activación, una cita
 cuyo toque 1 no sale (closer sin opt-in a más de 48 h, Juanito caído más de 10 min, reagendas) ya no
 tiene la víspera como red. La propuesta es una red permanente dentro del corte, que mande la
-bienvenida a las citas sin toque 1 antes de la pregunta. **Hecha en §18.CW.**
+bienvenida a las citas sin toque 1 antes de la pregunta. **Hecha en §18.CX.**
 
 **Tests:** 5 nuevos en `calendly.playbook.test.js` (rescate + prefired + apagado, sin opt-in, Push 7,
 duplicado por minuto, día del 48 h). Linux: 1371 tests, 1368 verdes, los 3 rojos conocidos.
 
-### 18.CW 🟢 Red permanente del corte: la víspera manda la bienvenida que no salió (2026-10-16, SIN desplegar)
+### 18.CW 🟢 Semáforo de Retia: todos los días, también sábado y domingo (2026-10-16)
+
+**Por qué.** El 16-oct el CRM cambió la regla del semáforo (ADR 0089 del CRM, enmienda 16-oct): el color va contra la
+meta a cualquier hora, el cierre de un día sale a las 00:00 del siguiente y el semáforo corre los siete días, porque la
+pauta gasta los siete días. Con `1-5`, el cierre del viernes (00:00 del sábado) y todo el fin de semana no salían.
+
+**Qué cambió.** El cron por defecto pasa de `0 * * * 1-5` a `0 * * * *` en `src/scheduler/semaforo-retia.js`,
+`docker-compose.yml` y `.env.example`. Las horas que tocan las sigue decidiendo el CRM (Programa › General): hoy 8, 11,
+14, 17 y 20, y el cierre a las 0.
+
+**Desplegado.** En el VPS ya corría así desde el 16-oct a las 10:25 (Bogotá): `SEMAFORO_RETIA_CRON=0 * * * *` en
+`/root/juanito/.env` (respaldo `.env.bak-*-semaforo-todos-los-dias`), `docker compose up -d agent`, reconectó sin QR y el
+log dice `[SemaforoRetia] Semáforo activo ✅ (cron "0 * * * *")`. Este cambio alinea el default del repo para que un
+`.env` reconstruido desde el ejemplo no vuelva a apagar el fin de semana.
+
+### 18.CX 🟢 Red permanente del corte: la víspera manda la bienvenida que no salió (2026-10-16, SIN desplegar)
 
 **Por qué.** Con el playbook (§18.CU) prendido en 30X desde el 16-oct, el corte de la víspera
 solo pregunta "¿quiénes te confirmaron para mañana?" y ya no lleva links. Antes, una cita cuyo
@@ -7740,7 +7755,7 @@ no deja marca de prefired. En prod no cambia nada: el catchup del 16-oct ya corr
 - Solo mira **mañana**. Una cita reservada para pasado mañana o más lejos, cuyo toque 1 no salió,
   espera a su víspera. El toque 2 (48 h) la lista igual, pero sin materiales.
 - Una cita reservada después de las 8am de la víspera no entra al corte. Si su toque 1 no sale,
-  sigue sin red, igual que antes de §18.CW.
+  sigue sin red, igual que antes de §18.CX.
 - Un Push 0 de una cita a menos de 48 h con el closer sin opt-in **se reintenta cada minuto**
   (no se abandona). Si el closer da el opt-in justo alrededor de las 8am, el Push 0 y la red pueden
   salir los dos. La ventana es de un minuto: no vale la complejidad de cruzar las filas `scheduled`.
@@ -7777,6 +7792,6 @@ real en `data.playbook-corte.test.js`. Linux: 1382 tests, 1379 verdes, los 3 roj
 La migración crea `recordada_at`; no hay bandera nueva (el recordatorio sale con el cron por default
 en cuanto `CALENDLY_PLAYBOOK` esté prendida). El arranque tiene que decir
 `playbook: 30x (… corte 0 8 * * *, recordatorio 0 14 * * *, …)`. Verificar al día siguiente a las 8am en el log: la línea `Corte de la víspera:
-N cita(s) de mañana sin toque 1 recibieron su bienvenida (red §18.CW)` cuando haya alguna, y que
+N cita(s) de mañana sin toque 1 recibieron su bienvenida (red §18.CX)` cuando haya alguna, y que
 ningún closer reciba una bienvenida de una cita que ya tuvo su Push 0. A las 2pm:
 `recordatorio del corte: N closer(s) sin respuesta, M recordado(s)`.

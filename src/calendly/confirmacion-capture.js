@@ -51,7 +51,7 @@ export async function captureConfirmacionReply({ from, pushName, text, messageId
 
   // Un Push 4 preguntado después de la confirmación es lo que el closer está contestando.
   const outcome = getActiveOutcomeForCloser(closer.phone);
-  // §18.CW: el recordatorio de las 2pm cuenta como pregunta nueva. Sin esto, un Push 4 preguntado
+  // §18.CX: el recordatorio de las 2pm cuenta como pregunta nueva. Sin esto, un Push 4 preguntado
   // entre el corte de las 8am y el recordatorio se quedaría con la respuesta.
   const recordada = ms(filas[0].recordada_at);
   const preguntada = Math.max(ms(filas[0].preguntada_at), Number.isFinite(recordada) ? recordada : -Infinity);

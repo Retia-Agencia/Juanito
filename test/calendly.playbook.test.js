@@ -149,7 +149,7 @@ test('Push 7: "¿se conectó?" con link al lead y el registro de No-show', () =>
 // ─── Scheduler (harness) ──────────────────────────────────────────────────────
 
 // `prefired`: claves (uri / hubspot:<id>) cuyo toque 1 ya salió. Se comparte por referencia, así
-// el test ve lo que marca la red del corte (§18.CW).
+// el test ve lo que marca la red del corte (§18.CX).
 function montar({ events, nowMs = NOW, lotes = [], confirmaciones = {}, prefired = new Set(), push0Enviados = [], optins = [LUCAS_PHONE] } = {}) {
   const h = installHarness(scheduler, { events, optins, nowMs });
   scheduler.__setDeps({
@@ -174,7 +174,7 @@ const citasManana = () => [
 test('víspera con la bandera: pregunta de corte, sin digest de links, lote tipo corte con teléfono', async () => {
   process.env.CALENDLY_PLAYBOOK = PLAYBOOK;
   const lotes = [];
-  // Las dos ya recibieron su toque 1 al agendar: la red del corte (§18.CW) no tiene nada que hacer.
+  // Las dos ya recibieron su toque 1 al agendar: la red del corte (§18.CX) no tiene nada que hacer.
   const h = montar({ events: citasManana(), lotes, prefired: new Set([uriDe('m-tarde'), uriDe('m-temprano')]) });
 
   await scheduler.runPush1Early();
@@ -485,7 +485,7 @@ test('catcher: no repite una cita cuyo Push 0 ya salió con otra clave (reservad
   assert.equal(h.wa.sent.filter((m) => /Rescate/.test(m.text)).length, 0);
 });
 
-// ─── Red permanente del corte (§18.CW) ────────────────────────────────────────
+// ─── Red permanente del corte (§18.CX) ────────────────────────────────────────
 
 const bienvenidas = (h) => h.wa.sent.filter((m) => /Bienvenida pendiente/.test(m.text));
 const PREGUNTA = /¿quiénes te confirmaron para mañana\?/;
@@ -580,7 +580,7 @@ test('red del corte: el corte que recupera el catcher el día de la activación 
   delete process.env.HUBSPOT_FUENTE_CONEXIONES;
 });
 
-// ─── Recordatorio del corte a las 2pm (§18.CW) ────────────────────────────────
+// ─── Recordatorio del corte a las 2pm (§18.CX) ────────────────────────────────
 
 test('recordatorio del corte: copy con los mismos números de la mañana', () => {
   const msg = buildCorteRecordatorio({

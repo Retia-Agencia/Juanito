@@ -97,7 +97,7 @@ test('una corrección reactiva el Push 3 y el 7 frenados por el corte, y nada m�
   assert.equal(raw.prepare(`SELECT status FROM calendly_pushes WHERE id = ?`).get(id('otra', 3)).status, 'skipped');
 });
 
-test('recordatorio (§18.CW): solo el corte de hoy, sin respuesta, sin recordar y con llamadas por delante', () => {
+test('recordatorio (§18.CX): solo el corte de hoy, sin respuesta, sin recordar y con llamadas por delante', () => {
   const lote = (p, fecha = '2026-07-01') => `${p}:${fecha}:corte`;
   const corte = (p, uuid, over = {}) => ({
     ...fila({ event_uuid: uuid, posicion: 1, lead_name: 'X', call_start: enHoras(20), tipo: 'corte', lead_phone: '+573000000000' }),
