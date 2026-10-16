@@ -7749,7 +7749,7 @@ pauta gasta los siete días. Con `1-5`, el cierre del viernes (00:00 del sábado
 log dice `[SemaforoRetia] Semáforo activo ✅ (cron "0 * * * *")`. Este cambio alinea el default del repo para que un
 `.env` reconstruido desde el ejemplo no vuelva a apagar el fin de semana.
 
-### 18.CX 🟢 Red permanente del corte: la víspera manda la bienvenida que no salió (2026-10-16, SIN desplegar)
+### 18.CX 🟢 Red permanente del corte: la víspera manda la bienvenida que no salió (2026-10-16, desplegado)
 
 **Por qué.** Con el playbook (§18.CU) prendido en 30X desde el 16-oct, el corte de la víspera
 solo pregunta "¿quiénes te confirmaron para mañana?" y ya no lleva links. Antes, una cita cuyo
@@ -7821,3 +7821,9 @@ en cuanto `CALENDLY_PLAYBOOK` esté prendida). El arranque tiene que decir
 N cita(s) de mañana sin toque 1 recibieron su bienvenida (red §18.CX)` cuando haya alguna, y que
 ningún closer reciba una bienvenida de una cita que ya tuvo su Push 0. A las 2pm:
 `recordatorio del corte: N closer(s) sin respuesta, M recordado(s)`.
+
+**Desplegado (2026-10-16).** Con #37 (docs) y #39/#41 (semáforo de Retia), run 38958464232,
+`alcance: todo`, `DEPLOYED_SHA = 7b489e0`. WhatsApp reconectó y `compose config --services` lista
+`agent` y `dash`. El arranque dice `playbook: 30x (48h 0 8 * * *, corte 0 8 * * *, recordatorio
+0 14 * * *, push3 −60m, push7 +10m, …)`. El catcher de §18.CV **ya se apagó solo**: `settings`
+`playbook_rescate:fin = 2026-10-16T15:20`, en su segunda corrida, sin pendientes.
