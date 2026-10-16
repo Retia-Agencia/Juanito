@@ -113,6 +113,11 @@ services:
       - CALENDLY_PLAYBOOK_CORTE_CRON=${CALENDLY_PLAYBOOK_CORTE_CRON:-0 8 * * *}
       - CALENDLY_PLAYBOOK_LEAD_MIN=${CALENDLY_PLAYBOOK_LEAD_MIN:-60}
       - CALENDLY_PLAYBOOK_NO_CONECTA_MIN=${CALENDLY_PLAYBOOK_NO_CONECTA_MIN:-10}
+      # Catcher de la transición (§18.CV): con una fecha ISO (el momento en que se prendió el
+      # playbook), manda la bienvenida a las citas reservadas antes que no la recibieron, crea los
+      # Push 7 que faltan y se apaga solo cuando no queda nada. Vacío = off.
+      - CALENDLY_PLAYBOOK_RESCATE_DESDE=${CALENDLY_PLAYBOOK_RESCATE_DESDE-}
+      - CALENDLY_PLAYBOOK_RESCATE_CRON=${CALENDLY_PLAYBOOK_RESCATE_CRON:-20 * * * *}
       - CALENDLY_SKIP_AUDIT_CRON=${CALENDLY_SKIP_AUDIT_CRON:-15 * * * *}
       - CALENDLY_SKIP_ALERT_MIN=${CALENDLY_SKIP_ALERT_MIN:-2}
       - CALENDLY_POLL_CRON=${CALENDLY_POLL_CRON:-*/5 * * * *}
