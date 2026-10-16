@@ -25,7 +25,7 @@ async function realDeps() {
 const CONFIG_KEY = 'semaforo_retia_config';
 const TZ = () => process.env.TZ || 'America/Bogota';
 const GRUPO = () => process.env.RETIA_SEMAFORO_GRUPO;
-const CRON = () => process.env.SEMAFORO_RETIA_CRON || '0 * * * 1-5';
+const CRON = () => process.env.SEMAFORO_RETIA_CRON || '0 * * * *';
 
 export function semaforoRetiaHabilitado(env = process.env) {
   return Boolean(env.RETIA_SEMAFORO_URL && env.RETIA_SEMAFORO_SECRETO && env.RETIA_SEMAFORO_GRUPO);

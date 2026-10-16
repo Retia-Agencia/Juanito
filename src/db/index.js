@@ -746,6 +746,7 @@ export function guardarLoteConfirmacion(filas) {
       lead_phone    = excluded.lead_phone,
       estado        = CASE WHEN call_confirmaciones.lote = excluded.lote THEN call_confirmaciones.estado ELSE 'pendiente' END,
       answered_at   = CASE WHEN call_confirmaciones.lote = excluded.lote THEN call_confirmaciones.answered_at ELSE NULL END,
+      recordada_at  = CASE WHEN call_confirmaciones.lote = excluded.lote THEN call_confirmaciones.recordada_at ELSE NULL END,
       lote          = excluded.lote,
       posicion      = excluded.posicion,
       program       = excluded.program,
@@ -817,6 +818,50 @@ export function reactivarPushesDelCorte(eventUuid) {
           AND skip_reason = 'sin-confirmar' AND call_start > datetime('now', '-30 minutes')`
     )
     .run(String(eventUuid)).changes;
+}
+
+// Catcher del playbook (§18.CV): Push 3 de citas por venir que no tienen Push 7. El poll de HubSpot
+// no vuelve a mirar una cita que ya tiene filas, así que las agendadas antes de prender el playbook
+// se quedarían sin su "¿se conectó?".
+// Catcher del playbook (§18.CV): las citas que YA recibieron su Push 1 al agendar, como
+// closer|minuto. La marca de prefired no alcanza: una cita reservada por Calendly antes de la fuente
+// única (§18.CO) quedó marcada con la uri de Calendly, y hoy el digest la ve como hubspot:<id>.
+export function getPush0EnviadosPorMinuto() {
+  return new Set(
+    db
+      .prepare(`SELECT closer_email, substr(call_start, 1, 16) AS m FROM calendly_pushes WHERE push_n = 0 AND status = 'sent' AND call_start > datetime('now')`)
+      .all()
+      .map((r) => `${String(r.closer_email).toLowerCase()}|${r.m}`)
+  );
+}
+
+export function getPush3SinPush7() {
+  return db
+    .prepare(
+      `SELECT p3.* FROM calendly_pushes p3
+        WHERE p3.push_n = 3 AND p3.status IN ('scheduled', 'sending', 'sent')
+          AND p3.call_start > datetime('now', '-10 minutes')
+          AND NOT EXISTS (SELECT 1 FROM calendly_pushes p7 WHERE p7.event_uuid = p3.event_uuid AND p7.push_n = 7)`
+    )
+    .all();
+}
+
+// §18.CX: los cortes de `fecha` (YYYY-MM-DD local, la del lote) que el closer no contestó, no se
+// le recordaron y todavía tienen una llamada por delante. Una fila por cita, por lote y posición.
+export function getCortesSinRespuesta(fecha) {
+  return db
+    .prepare(
+      `SELECT c.* FROM call_confirmaciones c
+        WHERE c.tipo = 'corte' AND c.lote LIKE ? AND c.recordada_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM call_confirmaciones x WHERE x.lote = c.lote AND x.answered_at IS NOT NULL)
+          AND EXISTS (SELECT 1 FROM call_confirmaciones y WHERE y.lote = c.lote AND y.call_start > datetime('now'))
+        ORDER BY c.lote, c.posicion`
+    )
+    .all(`%:${fecha}:corte`);
+}
+
+export function markCorteRecordado(lote) {
+  return db.prepare(`UPDATE call_confirmaciones SET recordada_at = datetime('now') WHERE lote = ?`).run(lote);
 }
 
 export function markConfirmacionReprompt(lote) {

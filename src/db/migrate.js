@@ -459,6 +459,9 @@ addColumnIfMissing('pending_replies', 'held', 'INTEGER NOT NULL DEFAULT 0');
 // columnas a mano), así que ningún teléfono sale de esta base por ahí.
 addColumnIfMissing('call_confirmaciones', 'tipo', "TEXT NOT NULL DEFAULT 'push2'");
 addColumnIfMissing('call_confirmaciones', 'lead_phone', 'TEXT');
+// §18.CX: cuándo se le recordó al closer el corte que no contestó (2pm de la víspera). Una vez por
+// lote; la captura lo usa además para decidir qué está contestando el closer.
+addColumnIfMissing('call_confirmaciones', 'recordada_at', 'DATETIME');
 
 // Tope anti-ráfaga: cuántas respuestas AUTÓNOMAS publicó el bot en cada grupo, por hora.
 // hour_bucket = 'YYYY-MM-DD-HH' en hora local. Se limpia con el resto en la limpieza diaria.

@@ -16,7 +16,7 @@ process.env.TZ = 'America/Bogota';
 import * as scheduler from '../src/scheduler/calendly.js';
 import { __resetHealth } from '../src/calendly/health.js';
 import { buildPrecallText, buildPush0Message, buildPush7Message } from '../src/calendly/index.js';
-import { buildConfirmacionPregunta, buildCorteAcciones } from '../src/calendly/confirmacion-logic.js';
+import { buildConfirmacionPregunta, buildCorteAcciones, buildCorteRecordatorio } from '../src/calendly/confirmacion-logic.js';
 import { installHarness, makeEvent } from './helpers/calendly-harness.js';
 
 // Closer de fixture de la conexión '30x', igual que el event type por default del harness (AI
@@ -50,6 +50,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   delete process.env.CALENDLY_PLAYBOOK;
+  delete process.env.CALENDLY_PLAYBOOK_RESCATE_DESDE;
+  delete process.env.HUBSPOT_FUENTE_CONEXIONES;
 });
 
 // ─── Copy (puro) ──────────────────────────────────────────────────────────────
@@ -146,17 +148,23 @@ test('Push 7: "¿se conectó?" con link al lead y el registro de No-show', () =>
 
 // ─── Scheduler (harness) ──────────────────────────────────────────────────────
 
-function montar({ events, nowMs = NOW, lotes = [], confirmaciones = {} } = {}) {
-  const h = installHarness(scheduler, { events, optins: [LUCAS_PHONE], nowMs });
+// `prefired`: claves (uri / hubspot:<id>) cuyo toque 1 ya salió. Se comparte por referencia, así
+// el test ve lo que marca la red del corte (§18.CX).
+function montar({ events, nowMs = NOW, lotes = [], confirmaciones = {}, prefired = new Set(), push0Enviados = [], optins = [LUCAS_PHONE] } = {}) {
+  const h = installHarness(scheduler, { events, optins, nowMs });
   scheduler.__setDeps({
     ...h.deps,
     guardarLoteConfirmacion(filas) {
       lotes.push({ filas, enviadosAntes: h.wa.sent.length });
     },
     getConfirmacionDeCita: (uuid) => confirmaciones[uuid] || null,
+    getPush1PrefiredKeys: () => new Set(prefired),
+    markPush1Prefired: (keys) => keys.forEach((k) => prefired.add(k)),
+    getPush0EnviadosPorMinuto: () => new Set(push0Enviados),
   });
   return h;
 }
+const uriDe = (uuid) => `https://api.calendly.com/scheduled_events/${uuid}`;
 
 const citasManana = () => [
   makeEvent({ uuid: 'm-tarde', startIso: MANANA_3PM, closerEmail: LUCAS, prospectName: 'Laura Ríos', nowMs: NOW }),
@@ -166,7 +174,8 @@ const citasManana = () => [
 test('víspera con la bandera: pregunta de corte, sin digest de links, lote tipo corte con teléfono', async () => {
   process.env.CALENDLY_PLAYBOOK = PLAYBOOK;
   const lotes = [];
-  const h = montar({ events: citasManana(), lotes });
+  // Las dos ya recibieron su toque 1 al agendar: la red del corte (§18.CX) no tiene nada que hacer.
+  const h = montar({ events: citasManana(), lotes, prefired: new Set([uriDe('m-tarde'), uriDe('m-temprano')]) });
 
   await scheduler.runPush1Early();
   await scheduler.runPush1();
@@ -293,7 +302,7 @@ const reunion = ({ id = 'm1', startIso }) => ({
   },
 });
 
-function montarHubspot({ meetings, lotes = [], nowMs = NOW }) {
+function montarHubspot({ meetings, lotes = [], nowMs = NOW, prefired = null }) {
   process.env.HUBSPOT_FUENTE_CONEXIONES = '30x';
   const h = installHarness(scheduler, { events: [], optins: [LUCAS_PHONE], nowMs });
   scheduler.__setDeps({
@@ -319,6 +328,10 @@ function montarHubspot({ meetings, lotes = [], nowMs = NOW }) {
       lotes.push({ filas });
     },
     getConfirmacionDeCita: () => null,
+    ...(prefired && {
+      getPush1PrefiredKeys: () => new Set(prefired),
+      markPush1Prefired: (keys) => keys.forEach((k) => prefired.add(k)),
+    }),
   });
   return h;
 }
@@ -326,7 +339,7 @@ function montarHubspot({ meetings, lotes = [], nowMs = NOW }) {
 test('HubSpot: el corte lista la reunión del assigner con el teléfono del contacto', async () => {
   process.env.CALENDLY_PLAYBOOK = PLAYBOOK;
   const lotes = [];
-  const h = montarHubspot({ meetings: [reunion({ startIso: MANANA_3PM })], lotes });
+  const h = montarHubspot({ meetings: [reunion({ startIso: MANANA_3PM })], lotes, prefired: new Set(['hubspot:m1']) });
   await scheduler.runPlaybookCorte();
   assert.equal(h.wa.sent.length, 1);
   assert.match(h.wa.sent[0].text, /1\. 03:00\sp\.\sm\. — Beto Ruiz/);
@@ -354,4 +367,277 @@ test('HubSpot: el poll agenda el Push 3 a 1 h y el Push 7, que sale con el link 
   assert.match(h.wa.sent[0].text, /¿Beto Ruiz se conectó\?/);
   assert.match(texto(links(h.wa.sent[0].text)[0]), /https:\/\/meet\.google\.com\/hub-spot-aaa/);
   delete process.env.HUBSPOT_FUENTE_CONEXIONES;
+});
+
+// ─── Catcher de la transición (§18.CV) ────────────────────────────────────────
+
+test('toque 2: el digest de 48 h dice el día de la llamada', async () => {
+  process.env.CALENDLY_PLAYBOOK = PLAYBOOK;
+  const ev = makeEvent({ uuid: 'p1', startIso: PASADO_3PM, closerEmail: LUCAS, prospectName: 'Ana Gómez', nowMs: NOW });
+  const h = montar({ events: [ev] });
+  await scheduler.runPlaybook48h();
+  assert.match(texto(links(h.wa.sent[0].text)[0]), /tu llamada del miércoles 17 a las 3:00 pm, hora Colombia/);
+});
+
+// Activación a las 9:40 de hoy (después de los toques de las 8am).
+const DESDE = '2026-06-15T14:40:00.000Z';
+
+function montarCatcher({ meetings, optins = [LUCAS_PHONE], prefiredIniciales = [], push3SinPush7 = [], push0Enviados = [] }) {
+  process.env.CALENDLY_PLAYBOOK = PLAYBOOK;
+  process.env.CALENDLY_PLAYBOOK_RESCATE_DESDE = DESDE;
+  process.env.HUBSPOT_FUENTE_CONEXIONES = '30x';
+  const h = installHarness(scheduler, { events: [], optins, nowMs: Date.parse('2026-06-15T15:00:00.000Z') });
+  const settings = new Map();
+  const prefired = new Set(prefiredIniciales);
+  const lotes = [];
+  scheduler.__setDeps({
+    ...h.deps,
+    hubspotEnabled: () => true,
+    async getOwnerEmailMap() {
+      return { [OWNER_ID]: LUCAS };
+    },
+    async searchMeetingsInWindow({ fromIso, untilIso }) {
+      return meetings.filter((m) => {
+        const t = Number(m.properties.hs_meeting_start_time);
+        return t >= Date.parse(fromIso) && t < Date.parse(untilIso);
+      });
+    },
+    async getMeetingContact(id) {
+      return { name: id === 'm2' ? 'Caro Díaz' : 'Beto Ruiz', phone: '+573001112222' };
+    },
+    getScheduledCallsInWindow: () => [],
+    getPush1PrefiredKeys: () => new Set(prefired),
+    markPush1Prefired: (keys) => keys.forEach((k) => prefired.add(k)),
+    getSetting: (k) => settings.get(k) || null,
+    setSetting: (k, v) => settings.set(k, v),
+    getPush3SinPush7: () => push3SinPush7.splice(0),
+    getPush0EnviadosPorMinuto: () => new Set(push0Enviados),
+    guardarLoteConfirmacion: (filas) => lotes.push(filas),
+    getConfirmacionDeCita: () => null,
+  });
+  return { h, settings, prefired, lotes };
+}
+const reunionCreada = ({ id, startIso, creada }) => {
+  const m = reunion({ id, startIso });
+  m.properties.hs_createdate = creada;
+  return m;
+};
+
+test('catcher: manda la bienvenida de las citas viejas sin toque 1, marca prefired y se apaga solo', async () => {
+  const meetings = [
+    reunionCreada({ id: 'm1', startIso: '2026-06-20T20:00:00.000Z', creada: '2026-06-01T12:00:00.000Z' }),
+    // reservada DESPUÉS de prender el playbook: su toque 1 ya salió al agendar
+    reunionCreada({ id: 'm2', startIso: '2026-06-21T20:00:00.000Z', creada: '2026-06-15T14:50:00.000Z' }),
+    // ya recibió su Push 1 al agendar (prueba §18.CK)
+    reunionCreada({ id: 'm3', startIso: '2026-06-22T20:00:00.000Z', creada: '2026-06-02T12:00:00.000Z' }),
+  ];
+  const { h, settings, prefired } = montarCatcher({ meetings, prefiredIniciales: ['hubspot:m3'] });
+  const r = await scheduler.runPlaybookRescate();
+  const rescate = h.wa.sent.filter((m) => /Rescate del playbook/.test(m.text));
+  assert.equal(rescate.length, 1);
+  assert.equal(links(rescate[0].text).length, 1, 'solo la cita vieja sin toque 1');
+  assert.match(rescate[0].text, /sáb, 20 de jun/);
+  assert.match(texto(links(rescate[0].text)[0]), /Ya quedó agendada tu llamada[^]*el sábado 20 de junio a las 3:00 pm/);
+  assert.ok(prefired.has('hubspot:m1'));
+  assert.equal(r.encontradas, 1);
+  assert.ok(settings.get('playbook_rescate:catchup'), 'corrió los toques de hoy');
+  assert.equal(settings.get('playbook_rescate:fin'), undefined, 'todavía no termina en la corrida que manda');
+
+  const antes = h.wa.sent.length;
+  await scheduler.runPlaybookRescate();
+  assert.equal(h.wa.sent.length, antes, 'la segunda corrida no manda nada');
+  assert.ok(settings.get('playbook_rescate:fin'), 'sin pendientes se apaga');
+  assert.deepEqual(await scheduler.runPlaybookRescate(), { activo: false, terminado: true });
+});
+
+test('catcher: un closer sin opt-in queda pendiente y no se apaga', async () => {
+  const meetings = [reunionCreada({ id: 'm1', startIso: '2026-06-20T20:00:00.000Z', creada: '2026-06-01T12:00:00.000Z' })];
+  const { settings, prefired } = montarCatcher({ meetings, optins: [] });
+  const r = await scheduler.runPlaybookRescate();
+  assert.equal(r.pendientes, 1);
+  assert.ok(!prefired.has('hubspot:m1'));
+  await scheduler.runPlaybookRescate();
+  assert.equal(settings.get('playbook_rescate:fin'), undefined);
+});
+
+test('catcher: crea el Push 7 de las citas que ya tenían Push 3; sin la fecha de activación no hace nada', async () => {
+  const fila = {
+    event_uuid: 'hubspot:m9', push_n: 3, program: 'second_brain', closer_email: LUCAS, closer_phone: LUCAS_PHONE,
+    prospect_name: 'Beto Ruiz', prospect_phone: '+573001112222', call_start: '2026-06-16 15:00:00',
+  };
+  const { h } = montarCatcher({ meetings: [], push3SinPush7: [fila] });
+  const r = await scheduler.runPlaybookRescate();
+  assert.equal(r.push7, 1);
+  const p7 = h.store._rows.find((x) => x.push_n === 7);
+  assert.equal(p7.due_at, '2026-06-16 15:10:00');
+  assert.match(p7.message, /¿Beto Ruiz se conectó\?/);
+
+  delete process.env.CALENDLY_PLAYBOOK_RESCATE_DESDE;
+  assert.deepEqual(await scheduler.runPlaybookRescate(), { activo: false });
+  delete process.env.HUBSPOT_FUENTE_CONEXIONES;
+});
+
+test('catcher: no repite una cita cuyo Push 0 ya salió con otra clave (reservada por Calendly)', async () => {
+  const meetings = [reunionCreada({ id: 'm1', startIso: '2026-06-20T20:00:00.000Z', creada: '2026-06-01T12:00:00.000Z' })];
+  const { h } = montarCatcher({ meetings, push0Enviados: [`${LUCAS}|2026-06-20 20:00`] });
+  const r = await scheduler.runPlaybookRescate();
+  assert.equal(r.encontradas, 0);
+  assert.equal(h.wa.sent.filter((m) => /Rescate/.test(m.text)).length, 0);
+});
+
+// ─── Red permanente del corte (§18.CX) ────────────────────────────────────────
+
+const bienvenidas = (h) => h.wa.sent.filter((m) => /Bienvenida pendiente/.test(m.text));
+const PREGUNTA = /¿quiénes te confirmaron para mañana\?/;
+
+test('red del corte: la cita de mañana sin toque 1 recibe su bienvenida antes de la pregunta y queda prefired', async () => {
+  process.env.CALENDLY_PLAYBOOK = PLAYBOOK;
+  const prefired = new Set([uriDe('m-tarde')]); // Laura recibió su toque 1 al agendar; Ana no
+  const lotes = [];
+  const h = montar({ events: citasManana(), lotes, prefired });
+
+  await scheduler.runPlaybookCorte();
+  assert.equal(h.wa.sent.length, 2);
+  const [bienvenida, pregunta] = h.wa.sent;
+  assert.match(bienvenida.text, /Bienvenida pendiente/);
+  assert.match(bienvenida.text, /Ana Gómez/);
+  assert.doesNotMatch(bienvenida.text, /Laura Ríos/);
+  assert.equal(links(bienvenida.text).length, 1);
+  assert.match(texto(links(bienvenida.text)[0]), /Ya quedó agendada tu llamada[^]*mañana a las 10:00 am/);
+  assert.match(pregunta.text, PREGUNTA);
+  assert.deepEqual(lotes[0].filas.map((f) => f.event_uuid), ['m-temprano', 'm-tarde'], 'la pregunta sigue listando todas');
+  assert.ok(prefired.has(uriDe('m-temprano')), 'lo entregado queda marcado');
+
+  // Un segundo corte (reintento a mano) no la repite.
+  await scheduler.runPlaybookCorte();
+  assert.equal(bienvenidas(h).length, 1);
+});
+
+test('red del corte: un Push 0 ya enviado al mismo closer en el mismo minuto cuenta como toque 1', async () => {
+  process.env.CALENDLY_PLAYBOOK = PLAYBOOK;
+  const h = montar({
+    events: citasManana(),
+    prefired: new Set([uriDe('m-tarde')]),
+    push0Enviados: [`${LUCAS}|2026-06-16 15:00`],
+  });
+  await scheduler.runPlaybookCorte();
+  assert.equal(bienvenidas(h).length, 0);
+  assert.equal(h.wa.sent.length, 1);
+});
+
+test('red del corte: sin opt-in no sale nada ni se marca prefired', async () => {
+  process.env.CALENDLY_PLAYBOOK = PLAYBOOK;
+  const prefired = new Set();
+  const h = montar({ events: citasManana(), prefired, optins: [] });
+  await scheduler.runPlaybookCorte();
+  assert.equal(h.wa.sent.length, 0);
+  assert.equal(prefired.size, 0);
+});
+
+test('red del corte: más de 8 citas sin toque 1 van en tandas, todas antes de la pregunta', async () => {
+  process.env.CALENDLY_PLAYBOOK = PLAYBOOK;
+  const events = Array.from({ length: 10 }, (_, i) =>
+    makeEvent({
+      uuid: `t${i}`,
+      startIso: new Date(Date.parse(MANANA_10AM) + i * 1800000).toISOString(),
+      closerEmail: LUCAS,
+      prospectName: `Lead ${i}`,
+      nowMs: NOW,
+    })
+  );
+  const prefired = new Set();
+  const h = montar({ events, prefired });
+  await scheduler.runPlaybookCorte();
+  assert.equal(h.wa.sent.length, 3);
+  assert.match(h.wa.sent[0].text, /Bienvenida pendiente \(1\/2\)/);
+  assert.equal(links(h.wa.sent[0].text).length, 8);
+  assert.match(h.wa.sent[1].text, /Bienvenida pendiente \(2\/2\)/);
+  assert.equal(links(h.wa.sent[1].text).length, 2);
+  assert.match(h.wa.sent[2].text, PREGUNTA);
+  assert.equal(prefired.size, 10);
+});
+
+test('red del corte: la reunión del assigner (HubSpot) sin toque 1 también la recibe', async () => {
+  process.env.CALENDLY_PLAYBOOK = PLAYBOOK;
+  const prefired = new Set();
+  const h = montarHubspot({ meetings: [reunion({ startIso: MANANA_3PM })], prefired });
+  await scheduler.runPlaybookCorte();
+  assert.equal(h.wa.sent.length, 2);
+  assert.match(h.wa.sent[0].text, /Bienvenida pendiente[^]*Beto Ruiz/);
+  assert.match(h.wa.sent[1].text, PREGUNTA);
+  assert.ok(prefired.has('hubspot:m1'));
+  delete process.env.HUBSPOT_FUENTE_CONEXIONES;
+});
+
+test('red del corte: el corte que recupera el catcher el día de la activación no la manda', async () => {
+  // Esas citas de mañana ya tuvieron el Push 1 de las 8am del régimen viejo, sin marca de prefired.
+  const meetings = [reunionCreada({ id: 'm1', startIso: MANANA_3PM, creada: '2026-06-01T12:00:00.000Z' })];
+  const { h, lotes } = montarCatcher({ meetings });
+  await scheduler.runPlaybookRescate();
+  assert.equal(bienvenidas(h).length, 0);
+  assert.equal(h.wa.sent.filter((m) => PREGUNTA.test(m.text)).length, 1);
+  assert.equal(lotes.length, 1);
+  delete process.env.HUBSPOT_FUENTE_CONEXIONES;
+});
+
+// ─── Recordatorio del corte a las 2pm (§18.CX) ────────────────────────────────
+
+test('recordatorio del corte: copy con los mismos números de la mañana', () => {
+  const msg = buildCorteRecordatorio({
+    filas: [
+      { posicion: 1, lead_name: 'Ana Gómez', call_start: '2026-06-16 15:00:00' },
+      { posicion: 2, lead_name: null, call_start: '2026-06-16 20:00:00' },
+    ],
+    tz: 'America/Bogota',
+  });
+  assert.match(msg, /Te falta el corte de mañana/);
+  assert.match(msg, /1\. 10:00\sa\.\sm\. — Ana Gómez/);
+  assert.match(msg, /2\. 03:00\sp\.\sm\. — el prospecto/);
+  assert.match(msg, /\*todos\*/);
+});
+
+function montarRecordatorio({ cortes, optins = [LUCAS_PHONE] }) {
+  const h = installHarness(scheduler, { events: [], optins, nowMs: Date.parse('2026-06-15T19:00:00.000Z') });
+  const recordados = [];
+  const fechas = [];
+  scheduler.__setDeps({
+    ...h.deps,
+    getCortesSinRespuesta: (fecha) => {
+      fechas.push(fecha);
+      return cortes;
+    },
+    markCorteRecordado: (lote) => recordados.push(lote),
+  });
+  return { h, recordados, fechas };
+}
+const filaCorte = (over) => ({
+  lote: `${LUCAS_PHONE}:2026-06-15:corte`,
+  closer_email: LUCAS,
+  closer_phone: LUCAS_PHONE,
+  lead_name: 'Ana Gómez',
+  call_start: '2026-06-16 15:00:00',
+  posicion: 1,
+  ...over,
+});
+
+test('recordatorio del corte: un mensaje por lote sin respuesta, con la fecha de hoy, y lo marca', async () => {
+  process.env.CALENDLY_PLAYBOOK = PLAYBOOK;
+  const cortes = [filaCorte({}), filaCorte({ posicion: 2, lead_name: 'Laura Ríos', call_start: '2026-06-16 20:00:00' })];
+  const { h, recordados, fechas } = montarRecordatorio({ cortes });
+  assert.equal(await scheduler.runPlaybookRecordatorioCorte(), 1);
+  assert.deepEqual(fechas, ['2026-06-15']);
+  assert.equal(h.wa.sent.length, 1);
+  assert.match(h.wa.sent[0].text, /1\. 10:00\sa\.\sm\. — Ana Gómez\n2\. 03:00\sp\.\sm\. — Laura Ríos/);
+  assert.deepEqual(recordados, [`${LUCAS_PHONE}:2026-06-15:corte`]);
+});
+
+test('recordatorio del corte: sin opt-in no se marca; sin la bandera no hace nada', async () => {
+  process.env.CALENDLY_PLAYBOOK = PLAYBOOK;
+  const { h, recordados } = montarRecordatorio({ cortes: [filaCorte({})], optins: [] });
+  assert.equal(await scheduler.runPlaybookRecordatorioCorte(), 0);
+  assert.equal(recordados.length, 0);
+
+  delete process.env.CALENDLY_PLAYBOOK;
+  assert.equal(await scheduler.runPlaybookRecordatorioCorte(), 0);
+  assert.equal(h.wa.sent.length, 0);
 });

@@ -48,6 +48,21 @@ export function buildConfirmacionPregunta({ items, tz, corte = false }) {
   );
 }
 
+// §18.CX: el recordatorio de las 2pm a quien no contestó el corte. `filas` son las de la DB
+// (posicion, lead_name, call_start UTC 'YYYY-MM-DD HH:MM:SS'): los números tienen que ser los MISMOS
+// de la pregunta de la mañana, porque la respuesta se cruza contra ese lote.
+export function buildCorteRecordatorio({ filas, tz }) {
+  const lineas = filas.map(
+    (f) => `${f.posicion}. ${formatCallTime(`${String(f.call_start).replace(' ', 'T')}Z`, tz)} — ${f.lead_name || 'el prospecto'}`
+  );
+  return (
+    `⏰ *Te falta el corte de mañana — ¿quiénes te confirmaron?*\n` +
+    `${lineas.join('\n')}\n\n` +
+    `Respóndeme con los números de los que confirmaron (ej: *1 3*), *2 canceló* si alguno canceló, o *todos*.\n` +
+    `Sin tu respuesta no te armo el refuerzo ni el mensaje de "voy a liberar el espacio", y el recordatorio de 1 hora antes sale para todos.`
+  );
+}
+
 // Orden de las listas: el mismo del digest (por hora). Se exporta para que el scheduler numere
 // la pregunta y guarde las posiciones con la MISMA función.
 export const ordenarPorHora = (items) => [...items].sort((a, b) => new Date(a.startIso) - new Date(b.startIso));
