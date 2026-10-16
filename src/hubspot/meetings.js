@@ -28,7 +28,7 @@
 //   2. título → programa (programFromTitle) → saca las internas de los propios closers.
 //   3. dedup contra Calendly por closer + hora de inicio.
 
-import { programFromTitle } from '../calendly/programs.js';
+import { esClase, programFromTitle } from '../calendly/programs.js';
 
 // `hs_meeting_start_time` llega como epoch ms (string) o como ISO según cómo se creó el
 // registro. Devuelve ms o NaN.
@@ -116,6 +116,7 @@ export function meetingsToCalls(meetings = [], { ownerEmailById = {}, ownerToClo
     const email = owner ? ownerToCloser[owner] : null;
     if (!email) continue; // no es de un closer (o es un owner que no gestionamos)
 
+    if (esClase(props.hs_meeting_title)) continue; // clase de una cohorte: ni el deal la vuelve call de venta
     const program = programFromTitle(props.hs_meeting_title) || programaPorMeeting[String(m.id)] || null;
     if (!program) continue; // interna / sin naming de programa ni deal → no es call de venta
 

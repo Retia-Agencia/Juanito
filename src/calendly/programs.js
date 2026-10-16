@@ -436,7 +436,16 @@ export function pickProgramByHints(title, programs) {
   return mejor?.key || null;
 }
 
+// Las clases de las cohortes no son calls de venta. "Second Brain C3" (la clase de la cohorte 3
+// que Pablo Lozano tiene en su calendario) matcheaba la pista "second brain" y entraba al Push 2
+// del 14-oct. Regla: el título termina en "C<n>", o dice "clase", "cohorte" o "sesión <n>"
+// (medido en el Dashboard de Closers: solo atrapa clases, ninguna call de venta).
+export function esClase(title) {
+  return /(\bc\d{1,2}\s*$|\bclase\b|\bcohorte\b|\bsesion \d)/.test(normalizeTitle(title));
+}
+
 export function programFromTitle(title) {
+  if (esClase(title)) return null;
   return pickProgramByHints(title, PROGRAMS);
 }
 

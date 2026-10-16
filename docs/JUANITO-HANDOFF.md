@@ -7827,3 +7827,18 @@ ningún closer reciba una bienvenida de una cita que ya tuvo su Push 0. A las 2p
 `agent` y `dash`. El arranque dice `playbook: 30x (48h 0 8 * * *, corte 0 8 * * *, recordatorio
 0 14 * * *, push3 −60m, push7 +10m, …)`. El catcher de §18.CV **ya se apagó solo**: `settings`
 `playbook_rescate:fin = 2026-10-16T15:20`, en su segunda corrida, sin pendientes.
+
+### 18.CY 🟡 Las clases de las cohortes no son calls de venta (2026-10-14, PR #29; era §18.CQ en la rama, número ya usado)
+
+**Por qué.** En el Push 2 del 14-oct Juanito le preguntó a Pablo Lozano por "Second Brain C3", que es
+la clase de la cohorte 3 (lunes y miércoles 7:30 a. m.) y no una cita. El título matcheaba la pista
+"second brain". El Dashboard de Closers la contaba también (y como no-show): arreglado allá en la 0017.
+
+**Qué hace.** `esClase(title)` en `src/calendly/programs.js`: el título termina en `C<n>`, o dice
+`clase`, `cohorte` o `sesión <n>`. `programFromTitle` devuelve null para esas y `meetingsToCalls`
+las salta antes del respaldo por deal. Medido en el dashboard sobre las reuniones de closers: solo
+atrapa clases (6 "Second Brain C3", 4 "Clase N…", 1 "Liquidación cohorte").
+
+**Tests:** `calendly.helpers.test.js` (+1) y los `hubspot.*` pasan en Windows.
+
+**Para desplegar:** `alcance: todo` cuando Alejandro levante la pausa de deploys.
