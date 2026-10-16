@@ -7667,3 +7667,40 @@ conocidos. Con la bandera vacía, la suite de calendly/hubspot en Windows da los
 3. Verificar al día siguiente a las 8am: un digest "Toque 2 · 48 h antes" y una pregunta de corte
    por closer, ningún "Push 1 (el día anterior)" ni "Push 2" de 30X. Con la primera respuesta real,
    que llegue el mensaje de acciones y que `call_confirmaciones` tenga `tipo='corte'`.
+
+### 18.CV 🟢 Catcher de la transición al playbook: ningún lead se queda sin su bienvenida (2026-10-16)
+
+**Por qué.** Alejandro pidió prender el playbook (§18.CU) ya, no el 24-oct, con un catcher. Antes,
+toda cita que no recibía su Push 1 al agendar lo recibía en el digest de la víspera. Con el
+playbook, la víspera es el corte y no lleva links. Las citas que ya estaban reservadas al prenderlo
+se quedaban sin materiales. Medido en preview contra prod el 16-oct: **36 citas en 6 closers**, más
+**60 citas con Push 3 sin Push 7**, porque el poll de HubSpot no vuelve a mirar una cita que ya tiene filas.
+
+**Qué hace** `runPlaybookRescate` (con `CALENDLY_PLAYBOOK_RESCATE_DESDE` = el instante de la
+activación). Corre 90 s después del arranque y cada hora (`:20`):
+1. **Toque 1 de rescate:** las citas de la conexión con playbook, de pasado mañana a 21 días,
+   **reservadas antes de `_DESDE`** y sin toque 1, reciben un digest por closer ("Rescate del
+   playbook"). Va en tandas de 8 links, con fecha en cada línea, la bienvenida del playbook y la
+   nota de mandarlos con calma. Lo entregado se marca prefired. "Sin toque 1" = ni marca de prefired
+   ni un **Push 0 enviado al mismo closer en el mismo minuto** (`getPush0EnviadosPorMinuto`). Ese
+   segundo chequeo es necesario porque las citas reservadas por Calendly antes de la fuente única
+   (§18.CO) quedaron marcadas con la uri de Calendly, y hoy se ven como `hubspot:<id>`. Sin él, en
+   prod salían 2 duplicadas. Un closer sin opt-in queda pendiente y se reintenta cada hora.
+2. **Los toques de las 8am del día de la activación**, si ya pasaron: el de 48 h (salteando lo que
+   acaba de rescatar) y el corte de mañana. Una sola vez (`settings` `playbook_rescate:catchup`).
+3. **Push 7** para toda cita con Push 3 y sin Push 7 (`getPush3SinPush7`).
+
+**Se apaga solo:** cuando una corrida no encuentra nada (ni citas sin bienvenida, ni pendientes, ni
+Push 7 por crear), escribe `settings` `playbook_rescate:fin` y no vuelve a correr. Tope duro: 22 días
+desde `_DESDE`. El preview (`runPlaybookRescate({ preview: true })`) no manda ni escribe nada.
+
+**Arreglado de paso:** el digest de 48 h salía sin el día ("tu llamada  a las…"), porque `dia` solo
+se calculaba para el Push 1. No llegó a salir: el playbook estaba apagado.
+
+**Lo que sigue sin cubrir (estructural, no de la transición):** después de la activación, una cita
+cuyo toque 1 no sale (closer sin opt-in a más de 48 h, Juanito caído más de 10 min, reagendas) ya no
+tiene la víspera como red. La propuesta es una red permanente dentro del corte, que mande la
+bienvenida a las citas sin toque 1 antes de la pregunta. Está pendiente.
+
+**Tests:** 5 nuevos en `calendly.playbook.test.js` (rescate + prefired + apagado, sin opt-in, Push 7,
+duplicado por minuto, día del 48 h). Linux: 1371 tests, 1368 verdes, los 3 rojos conocidos.

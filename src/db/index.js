@@ -819,6 +819,32 @@ export function reactivarPushesDelCorte(eventUuid) {
     .run(String(eventUuid)).changes;
 }
 
+// Catcher del playbook (§18.CV): Push 3 de citas por venir que no tienen Push 7. El poll de HubSpot
+// no vuelve a mirar una cita que ya tiene filas, así que las agendadas antes de prender el playbook
+// se quedarían sin su "¿se conectó?".
+// Catcher del playbook (§18.CV): las citas que YA recibieron su Push 1 al agendar, como
+// closer|minuto. La marca de prefired no alcanza: una cita reservada por Calendly antes de la fuente
+// única (§18.CO) quedó marcada con la uri de Calendly, y hoy el digest la ve como hubspot:<id>.
+export function getPush0EnviadosPorMinuto() {
+  return new Set(
+    db
+      .prepare(`SELECT closer_email, substr(call_start, 1, 16) AS m FROM calendly_pushes WHERE push_n = 0 AND status = 'sent' AND call_start > datetime('now')`)
+      .all()
+      .map((r) => `${String(r.closer_email).toLowerCase()}|${r.m}`)
+  );
+}
+
+export function getPush3SinPush7() {
+  return db
+    .prepare(
+      `SELECT p3.* FROM calendly_pushes p3
+        WHERE p3.push_n = 3 AND p3.status IN ('scheduled', 'sending', 'sent')
+          AND p3.call_start > datetime('now', '-10 minutes')
+          AND NOT EXISTS (SELECT 1 FROM calendly_pushes p7 WHERE p7.event_uuid = p3.event_uuid AND p7.push_n = 7)`
+    )
+    .all();
+}
+
 export function markConfirmacionReprompt(lote) {
   return db.prepare(`UPDATE call_confirmaciones SET reprompted = 1 WHERE lote = ?`).run(lote);
 }
