@@ -7828,7 +7828,7 @@ ningún closer reciba una bienvenida de una cita que ya tuvo su Push 0. A las 2p
 0 14 * * *, push3 −60m, push7 +10m, …)`. El catcher de §18.CV **ya se apagó solo**: `settings`
 `playbook_rescate:fin = 2026-10-16T15:20`, en su segunda corrida, sin pendientes.
 
-### 18.CY 🟡 Las clases de las cohortes no son calls de venta (2026-10-14, PR #29; era §18.CQ en la rama, número ya usado)
+### 18.CY 🟢 Las clases de las cohortes no son calls de venta (2026-10-14, PR #29; era §18.CQ en la rama, número ya usado; desplegado el 16-oct)
 
 **Por qué.** En el Push 2 del 14-oct Juanito le preguntó a Pablo Lozano por "Second Brain C3", que es
 la clase de la cohorte 3 (lunes y miércoles 7:30 a. m.) y no una cita. El título matcheaba la pista
@@ -7842,3 +7842,9 @@ atrapa clases (6 "Second Brain C3", 4 "Clase N…", 1 "Liquidación cohorte").
 **Tests:** `calendly.helpers.test.js` (+1) y los `hubspot.*` pasan en Windows.
 
 **Para desplegar:** `alcance: todo` cuando Alejandro levante la pausa de deploys.
+
+**Desplegado (2026-10-16).** PR #29 mergeado (`06425a6`), run 38959491309, `alcance: todo`. WhatsApp
+reconectó y dentro del contenedor `esClase('Second Brain C3')` da `true`. En prod el bug sí había
+pasado: la clase del miércoles 14-oct a las 7:30 a. m. (Pablo Lozano, contacto Daniel Barrera) recibió
+Push 3, Push 4 y la pregunta de confirmación, y el catcher de §18.CV le mandó a Pablo una bienvenida
+para la clase del lunes 19-oct. Que la ignore.
