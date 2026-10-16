@@ -105,6 +105,14 @@ services:
       # pregunta "¿quiénes te confirmaron?" y la respuesta va al Dashboard de Closers. Vacío = off.
       - CALENDLY_CONFIRMACION_PUSH2=${CALENDLY_CONFIRMACION_PUSH2-}
       - CALENDLY_CONFIRMACION_HORAS=${CALENDLY_CONFIRMACION_HORAS:-16}
+      # Playbook de confirmación de agendas (§18.CU): en estas conexiones los pushes siguen los 4
+      # toques del playbook de 30X (bienvenida al agendar, 48 h, corte de la víspera, link 1 h antes)
+      # más el "si no se conecta" a los 10 min. Apaga su Push 1 y su Push 2 de siempre. Vacío = off.
+      - CALENDLY_PLAYBOOK=${CALENDLY_PLAYBOOK-}
+      - CALENDLY_PLAYBOOK_48H_CRON=${CALENDLY_PLAYBOOK_48H_CRON:-0 8 * * *}
+      - CALENDLY_PLAYBOOK_CORTE_CRON=${CALENDLY_PLAYBOOK_CORTE_CRON:-0 8 * * *}
+      - CALENDLY_PLAYBOOK_LEAD_MIN=${CALENDLY_PLAYBOOK_LEAD_MIN:-60}
+      - CALENDLY_PLAYBOOK_NO_CONECTA_MIN=${CALENDLY_PLAYBOOK_NO_CONECTA_MIN:-10}
       - CALENDLY_SKIP_AUDIT_CRON=${CALENDLY_SKIP_AUDIT_CRON:-15 * * * *}
       - CALENDLY_SKIP_ALERT_MIN=${CALENDLY_SKIP_ALERT_MIN:-2}
       - CALENDLY_POLL_CRON=${CALENDLY_POLL_CRON:-*/5 * * * *}

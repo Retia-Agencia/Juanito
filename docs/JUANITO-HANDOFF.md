@@ -5,7 +5,9 @@ continuar el desarrollo de Juanito. Funde lo que antes estaba repartido en tres 
 (`JUANITO-HANDOFF`, `LID-ADMIN-HANDOFF`, `CALENDLY-HANDOFF`). Actualizar cada vez que haya
 un cambio relevante.
 
-Última actualización: **2026-10-15** (§18.CT — semáforo de Retia: cron cada hora y un solo grupo en `RETIA_SEMAFORO_GRUPO`). Anterior: **2026-10-15** (§18.CS — el texto del semáforo de Retia lo arma el CRM; Juanito lo manda tal cual). Anterior: **2026-10-15** (§18.CR — semáforo de pauta de Retia, desplegado). Antes: **2026-10-14** (§18.CQ — el digest de la víspera ahora cuenta también las
+Última actualización: **2026-10-15** (§18.CU — el playbook de confirmación de agendas de 30X
+llevado a los pushes, detrás de la bandera `CALENDLY_PLAYBOOK`; **sin desplegar**, y la
+bandera va apagada). Anterior: **2026-10-15** (§18.CT — semáforo de Retia: cron cada hora y un solo grupo en `RETIA_SEMAFORO_GRUPO`). Anterior: **2026-10-15** (§18.CS — el texto del semáforo de Retia lo arma el CRM; Juanito lo manda tal cual). Anterior: **2026-10-15** (§18.CR — semáforo de pauta de Retia, desplegado). Antes: **2026-10-14** (§18.CQ — el digest de la víspera ahora cuenta también las
 citas que ya recibieron su push al agendar; mergeado en #28, **sin desplegar**). Anterior: **2026-10-14** (§18.CP desplegado, HubSpot como fuente única PRENDIDA en 30X,
 arreglo del parser de la confirmación. ⛔ **Alejandro prohibió más deploys hasta que él lo levante**). Anterior: **2026-10-14** (§18.CN y §18.CO desplegados; la confirmación en el Push 2
 está prendida en 30X y HubSpot como fuente única sigue apagado). Anterior: **2026-10-11** (§18.CM — el Push 1 de IGTK llegaba cortado porque el link wa.me
@@ -7591,3 +7593,77 @@ bloques de todos los programas (`{ hora, texto, bloques }`). Juanito no cambió:
 que quedó viejo es el log de "envío sin texto", que nombra `envio.programa` (ya no viene: saldría `undefined`).
 Los tres programas de Retia quedaron encendidos en el CRM a las 8, 11, 14 y 17 h, con el cierre a las 20 h.
 
+### 18.CU 🟡 Playbook de confirmación de agendas en los pushes de 30X (2026-10-15, rama `feat/playbook-30x`, SIN desplegar)
+
+**Pedido de Alejandro.** Adaptar los pushes precall al *Playbook · confirmación de agendas* del WBR
+30X (28-sep → 4-oct, diapositiva 11). Esa semana: 1.134 reuniones, 30,6 % terminadas, 228 no-show,
+152 canceladas y 384 sin resolver. El playbook pide 4 toques por agenda, un corte la víspera y
+qué hacer si el lead no se conecta. Decisiones de Alejandro: los toques de 48 h y 24 h salen como
+**digests diarios** (no un push por cita), en el corte **Juanito pregunta y bifurca**, y **se apaga
+el Push 2** de 30X y se frenan los pushes de las citas que el closer deja sin confirmar.
+
+**Cómo queda, con `CALENDLY_PLAYBOOK=30x`** (vacío = todo como antes; ver `src/calendly/playbook.js`):
+
+| Playbook | Juanito |
+|---|---|
+| 1 · Al agendar: bienvenida, pedir confirmación, material, fecha/hora/**país** | Push 0 al agendar, **permanente** para la conexión (no vence como la prueba §18.CK). Copy nuevo (`pushN: 'bienvenida'`): "Ya quedó agendada tu llamada… ¿Me confirmas que vas a poder asistir? Y cuéntame desde qué país te conectas", más los requisitos y materiales de siempre |
+| 2 · −48 h: "respóndeme SÍ" + "¿qué quieres resolver con el programa?" | Digest nuevo `runPlaybook48h` (8am, `CALENDLY_PLAYBOOK_48H_CRON`) con las citas de **pasado mañana**. Se salta las reservadas hace < 12 h: su toque 1 ya pidió confirmar |
+| 3 · −24 h, corte | La víspera (`runPlaybookCorte`, 8am) ya **no manda el Push 1 de links**: pregunta "¿quiénes te confirmaron para mañana?". Con la respuesta, Juanito le devuelve al closer un wa.me por lead: **refuerzo** a las confirmadas, **"voy a liberar el espacio"** a las sin confirmar (con "llámalo una vez" y el registro en HubSpot) y el registro de las canceladas |
+| 4 · −1 h: link + "te espero a las __" | Push 3 a **60 min** (`CALENDLY_PLAYBOOK_LEAD_MIN`) con copy nuevo |
+| Si no se conecta (+10 min) | **Push 7** nuevo, uno por cita, a la hora de inicio + 10 min: "¿X se conectó?", wa.me al lead con el link de la llamada y el registro de No-show. Vence a los 30 min del inicio |
+| (no está en el playbook) | El Push 2 de las 6:30am no sale para la conexión |
+
+- **El corte usa la tabla de §18.CN.** Las columnas nuevas son `call_confirmaciones.tipo` (`'push2'|'corte'`)
+  y `lead_phone`. El sync al dashboard elige sus columnas a mano, así que el teléfono no sale de la
+  base. Un lote del corte **sigue abierto mientras le quede una llamada por empezar**, y no solo las
+  16 h de siempre: "el 2 confirmó" a la mañana siguiente tiene que funcionar.
+- **Frenar:** al entregar el Push 3 y el 7, si la conexión tiene el playbook y el corte dejó la cita
+  `no_confirmada` o `cancelada`, el push se marca `skipped` con el slug nuevo **`sin-confirmar`**
+  (no es alertable). Si el closer corrige ("2 confirmó"), `reactivarPushesDelCorte` los vuelve a
+  `scheduled` y les quita el sufijo `| skip:` del mensaje, porque las citas de HubSpot se entregan con
+  el mensaje guardado. Recibe además el refuerzo de ese lead. El Push 4 **no** se frena: si el
+  lead aparece igual, el closer lo reporta.
+- Juanito **no escribe en HubSpot** (decisión 2026-07-20). El registro que pide el playbook
+  (Cancelada / No-show + próximo contacto con fecha) va como recordatorio en el mensaje del corte y
+  en el del Push 7.
+
+**Lo que no cubre / ojo al prender:**
+- **Choca con la medición de la prueba §18.CK** (Push 1 al agendar, hasta el 23-oct, se mide el 24).
+  Prender el playbook antes contamina esa medición. Lo sano es prenderlo después del 24-oct.
+- `CALENDLY_CONFIRMACION_PUSH2=30x` queda inerte para 30X, porque ya no hay Push 2 que la dispare.
+  El corte la reemplaza.
+- Si el closer **no contesta** el corte, no pasa nada: el Push 3 y el 7 salen igual.
+- Una cita reservada después del corte (la víspera después de las 8am, o el mismo día) no entra a
+  ninguna pregunta. Recibe su toque 1 al agendar, que pide confirmar, y sigue con el Push 3 y el 7.
+- Las reagendas por fuera del calendario (`reschedule.js`, §18.AC) siguen con su Push 3 a 25 min.
+- El copy pregunta el país, pero la hora sigue diciendo "hora Colombia". Juanito no convierte zonas
+  horarias.
+- "En la primera hora hábil" no se modela: el Push 0 le llega al closer en el momento de la reserva,
+  aunque sea de noche, y el closer lo manda cuando puede.
+- La ventana larga del corte abierto agranda un riesgo que ya existía en §18.CN: durante el día de la
+  llamada, un mensaje del closer con número + palabra de estado ("hoy setee 3 confirmados") se lee
+  como corrección.
+- `confirmacion-capture.js` (la respuesta al corte) importa la DB y WhatsApp sin seam, así que no
+  tiene test end-to-end. Lo fijan sus piezas: `buildCorteAcciones` (puro), el SQL (test en Linux) y
+  el harness del scheduler. Confirmarlo con el primer corte real.
+
+**Archivos:** `src/calendly/playbook.js` (nuevo, puro), `src/calendly/index.js` (copy de los toques,
+`buildPush7Message`, Push 0 como toque 1), `src/calendly/confirmacion-logic.js` (pregunta del corte,
+`buildCorteAcciones`), `src/calendly/confirmacion-capture.js` (bifurcación + reactivación),
+`src/scheduler/calendly.js` (lead por closer, `agendarPush7`, entrega del 7, `frenaDelCorte`,
+`runDigest` con `excluirConexiones`/`recienteMs`/`corte`, crons), `src/db/{migrate,index}.js`,
+`src/calendly/skip-reasons.js`, `docker-compose.yml`, `.env.example`.
+
+**Tests:** `calendly.playbook.test.js` (17: copy de cada toque, víspera/Push 1/Push 2 con y sin bandera,
+48 h, Push 3 a 1 h + Push 7, frenado por el corte, vigencia del 7, y el camino de HubSpot como fuente
+única) y `data.playbook-corte.test.js` (3, SQL real). **Linux: 1357 tests, 1354 verdes**, los 3 rojos
+conocidos. Con la bandera vacía, la suite de calendly/hubspot en Windows da los mismos 5 rojos antes y después.
+
+**Para desplegar** (⛔ con la regla de no desplegar vigente, esperar a que Alejandro la levante):
+1. Mergear y desplegar con `alcance: todo` y la bandera **vacía**. La migración crea las dos
+   columnas y nada cambia.
+2. Prender con `CALENDLY_PLAYBOOK=30x` en el `.env` del VPS (idealmente desde el 24-oct) y recrear.
+   El arranque tiene que decir `playbook: 30x (48h 0 8 * * *, corte 0 8 * * *, push3 −60m, push7 +10m)`.
+3. Verificar al día siguiente a las 8am: un digest "Toque 2 · 48 h antes" y una pregunta de corte
+   por closer, ningún "Push 1 (el día anterior)" ni "Push 2" de 30X. Con la primera respuesta real,
+   que llegue el mensaje de acciones y que `call_confirmaciones` tenga `tipo='corte'`.

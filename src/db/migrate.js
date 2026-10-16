@@ -452,6 +452,14 @@ addColumnIfMissing('pending_replies', 'kind', "TEXT NOT NULL DEFAULT 'group'");
 // reloj de 30 min arranca recién ahí). Filas viejas quedan held=0 (comportamiento de siempre).
 addColumnIfMissing('pending_replies', 'held', 'INTEGER NOT NULL DEFAULT 0');
 
+// Playbook de confirmación (§18.CU): el corte de la víspera es un lote de confirmación más, pero
+// la respuesta del closer dispara un mensaje por lead (refuerzo / "voy a liberar el espacio") y
+// frena los pushes de las no confirmadas. `tipo` distingue el lote ('push2' | 'corte') y
+// `lead_phone` es el número al que va ese mensaje. El sync al dashboard NO lo lee (elige sus
+// columnas a mano), así que ningún teléfono sale de esta base por ahí.
+addColumnIfMissing('call_confirmaciones', 'tipo', "TEXT NOT NULL DEFAULT 'push2'");
+addColumnIfMissing('call_confirmaciones', 'lead_phone', 'TEXT');
+
 // Tope anti-ráfaga: cuántas respuestas AUTÓNOMAS publicó el bot en cada grupo, por hora.
 // hour_bucket = 'YYYY-MM-DD-HH' en hora local. Se limpia con el resto en la limpieza diaria.
 db.exec(`
