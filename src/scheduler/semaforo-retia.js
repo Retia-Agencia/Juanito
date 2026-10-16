@@ -1,6 +1,6 @@
 // Poll horario al CRM de Retia. El CRM decide programas, horas y métricas; Juanito solo
-// entrega esa respuesta al grupo de RETIA_SEMAFORO_GRUPO, uno solo para todos los programas
-// (ticket 268 de retia-metrics). Juanito pregunta cada hora en punto y el CRM dice si a esa hora toca algo. La última configuración buena permite avisar cuando
+// entrega cada envío a su `destino`, o al grupo de RETIA_SEMAFORO_GRUPO si viene nulo (ticket 274 de
+// retia-metrics: un programa como SBJ puede tener su propio grupo; los de Retia comparten el de por defecto). Juanito pregunta cada hora en punto y el CRM dice si a esa hora toca algo. La última configuración buena permite avisar cuando
 // el CRM cae, sin inventar cifras ni escribirle a grupos que no correspondían a esa hora.
 
 import { CronJob } from 'cron';
@@ -25,7 +25,7 @@ async function realDeps() {
 const CONFIG_KEY = 'semaforo_retia_config';
 const TZ = () => process.env.TZ || 'America/Bogota';
 const GRUPO = () => process.env.RETIA_SEMAFORO_GRUPO;
-const CRON = () => process.env.SEMAFORO_RETIA_CRON || '0 * * * 1-5';
+const CRON = () => process.env.SEMAFORO_RETIA_CRON || '0 * * * *';
 
 export function semaforoRetiaHabilitado(env = process.env) {
   return Boolean(env.RETIA_SEMAFORO_URL && env.RETIA_SEMAFORO_SECRETO && env.RETIA_SEMAFORO_GRUPO);
@@ -47,7 +47,7 @@ async function avisarCaida({ now, deps }) {
     if (!item.horas?.includes(hora) && item.horaCierre !== hora) continue;
     const mensaje = `⚠️ Semáforo de pauta · ${item.programa} · ${hora}\nEl CRM no respondió, así que esta hora no hay datos. Lo reviso y vuelvo a intentar a la próxima hora.`;
     try {
-      await deps.sendMessage(GRUPO(), mensaje);
+      await deps.sendMessage(item.destino || GRUPO(), mensaje);
       enviados++;
     } catch (err) {
       console.error('[SemaforoRetia] fallo enviando un aviso de caída:', err.message);
@@ -89,7 +89,7 @@ export async function runSemaforoRetia({ now = new Date(), deps = null } = {}) {
       continue;
     }
     try {
-      await d.sendMessage(GRUPO(), envio.texto);
+      await d.sendMessage(envio.destino || GRUPO(), envio.texto);
       enviados++;
     } catch (err) {
       console.error('[SemaforoRetia] fallo enviando un semáforo:', err.message);

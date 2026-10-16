@@ -36,7 +36,7 @@ const METRICA = {
 
 const GRUPO = 'retia@g.us';
 
-// `destino` es el campo que el CRM mandaba antes del ticket 268; se ignora si llega.
+// `destino` es el grupo propio del programa (ticket 274); nulo o ausente = el grupo del .env.
 function envio(programa = 'Alpha', destino = undefined) {
   return {
     programa,
@@ -112,12 +112,24 @@ test('envíos vacíos: no manda y sí guarda la configuración', async () => {
   assert.equal(h.settings.semaforo_retia_config, JSON.stringify(CONFIG));
 });
 
-test('un destino que todavía mande el CRM se ignora: va al grupo del .env', async () => {
+test('cada envío va a su destino; sin destino, al grupo del .env', async () => {
   const h = harness({
-    respuesta: { sincronizacion: null, envios: [envio('Alpha', 'viejo@g.us')], configuracion: CONFIG },
+    respuesta: {
+      sincronizacion: null,
+      envios: [envio('Alpha', null), envio('SBJ', '120363000000000000@g.us')],
+      configuracion: CONFIG,
+    },
   });
   await runSemaforoRetia({ deps: h.deps });
-  assert.deepEqual(h.sent.map((x) => x.to), [GRUPO]);
+  assert.deepEqual(h.sent.map((x) => x.to), [GRUPO, '120363000000000000@g.us']);
+});
+
+test('fetch caído: el aviso va al destino guardado del programa', async () => {
+  const config = CONFIG.map((item) => ({ ...item, destino: '120363000000000000@g.us' }));
+  const h = harness({ fetchError: new Error('timeout'), configGuardada: JSON.stringify(config) });
+  const result = await runSemaforoRetia({ now: NOW, deps: h.deps });
+  assert.deepEqual(result, { enviados: 1, modo: 'caido' });
+  assert.deepEqual(h.sent.map((x) => x.to), ['120363000000000000@g.us']);
 });
 
 test('fetch caído: avisa al grupo solo por el programa que tocaba a esta hora', async () => {

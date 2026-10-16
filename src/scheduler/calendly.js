@@ -68,7 +68,7 @@ import {
   sqliteUtcToMs,
 } from '../calendly/push-logic.js';
 import { push5DueUtc, buildPush5Message } from '../calendly/sheet-push.js';
-import { buildConfirmacionPregunta, ordenarPorHora } from '../calendly/confirmacion-logic.js';
+import { buildConfirmacionPregunta, buildCorteRecordatorio, ordenarPorHora } from '../calendly/confirmacion-logic.js';
 import { makeFormIndexCache, formPhonesFor, altPhonesFor } from '../calendly/lead-form.js';
 import { pickSupersededPushes, isManualUuid, planRescheduledPushes } from '../calendly/reschedule-logic.js';
 import { isCoveredProgram, decideFromAgenda } from '../hubspot/deals.js';
@@ -223,6 +223,8 @@ const PUSH2_CRON = () => process.env.CALENDLY_PUSH2_CRON || '30 6 * * *'; // 6:3
 // Playbook (§18.CU): toque 2 (dos días antes) y corte (la víspera), a la hora del Push 1 de 30X.
 const PLAYBOOK_48H_CRON = () => process.env.CALENDLY_PLAYBOOK_48H_CRON || '0 8 * * *';
 const PLAYBOOK_CORTE_CRON = () => process.env.CALENDLY_PLAYBOOK_CORTE_CRON || '0 8 * * *';
+// §18.CX: recordatorio del corte a quien no lo contestó. Vacío = sin recordatorio.
+const PLAYBOOK_RECORDATORIO_CRON = () => (process.env.CALENDLY_PLAYBOOK_RECORDATORIO_CRON ?? '0 14 * * *').trim();
 
 // ─── Push 1 más temprano para ALGUNOS programas (2026-09-08; ampliado 2026-09-16) ────────────
 // Instagram & TikTok (2026-09-08) y Operaciones Escalables con IA (2026-09-16) mandan su digest
@@ -548,6 +550,8 @@ async function deps() {
     getConfirmacionDeCita: db.getConfirmacionDeCita,
     getPush3SinPush7: db.getPush3SinPush7,
     getPush0EnviadosPorMinuto: db.getPush0EnviadosPorMinuto,
+    getCortesSinRespuesta: db.getCortesSinRespuesta,
+    markCorteRecordado: db.markCorteRecordado,
     getSetting: db.getSetting,
     setSetting: db.setSetting,
     // Anti-ban: la agenda a la admin es un DM a un tercero, no a un closer con opt-in.
@@ -2443,6 +2447,45 @@ async function preguntarConfirmacion(d, { phone, name, email, items, nowMs, cort
   return deliver(d, phone, buildConfirmacionPregunta({ items: lista, tz: TZ(), corte }), corte ? 'corte' : 'confirmacion', email);
 }
 
+// §18.CX / §18.CV: ¿esta cita ya recibió su toque 1? La marca de prefired no alcanza: una cita
+// reservada por Calendly antes de la fuente única (§18.CO) quedó marcada con la uri de Calendly y
+// hoy el digest la ve como hubspot:<id>. Por eso también cuenta un Push 0 enviado al mismo closer
+// en el mismo minuto (`getPush0EnviadosPorMinuto`).
+const minutoUtc = (iso) => new Date(iso).toISOString().slice(0, 16).replace('T', ' ');
+const avisadaPorPush0 = (yaAvisadas, email, startIso) => yaAvisadas.has(`${String(email).toLowerCase()}|${minutoUtc(startIso)}`);
+const BIENVENIDAS_POR_MENSAJE = 8; // un wa.me con materiales pesa ~2-3 mil caracteres
+
+// §18.CX: la red permanente del corte. Con el playbook la víspera ya no lleva links, así que una
+// cita de mañana cuyo toque 1 no salió (closer sin opt-in al agendar, Juanito caído más de 10 min,
+// una reagenda) se quedaría sin materiales. Antes de la pregunta, le manda al closer la bienvenida
+// de esas citas y marca prefired lo entregado. Devuelve cuántas entregó.
+async function redDelCorte(d, { phone, name, email, items, nowMs, prefired, yaAvisadas }) {
+  const sinToque1 = ordenarPorHora(items).filter(
+    (it) => !(it.prefiredKey && prefired.has(it.prefiredKey)) && !avisadaPorPush0(yaAvisadas, email, it.startIso)
+  );
+  let entregadas = 0;
+  for (let i = 0; i < sinToque1.length; i += BIENVENIDAS_POR_MENSAJE) {
+    const tanda = sinToque1.slice(i, i + BIENVENIDAS_POR_MENSAJE);
+    const n = Math.ceil(sinToque1.length / BIENVENIDAS_POR_MENSAJE);
+    const msg = buildDigestMessage({
+      pushLabel: `Bienvenida pendiente${n > 1 ? ` (${i / BIENVENIDAS_POR_MENSAJE + 1}/${n})` : ''}`,
+      whenLabel: 'mañana que no recibieron su bienvenida',
+      items: tanda,
+      pushN: 'bienvenida',
+      closer: firstNameFrom(name),
+      base: new Date(nowMs),
+      nota: 'A estos leads no les llegó el mensaje de bienvenida con los materiales cuando agendaron. Mándaselo ahora; enseguida te pregunto quiénes te confirmaron.',
+    });
+    const outcome = await deliver(d, phone, msg, 'bienvenida', email);
+    if (outcome !== 'sent') break; // sin opt-in, pausa, dry-run: la pregunta tampoco va a salir
+    const keys = tanda.map((it) => it.prefiredKey).filter(Boolean);
+    d.markPush1Prefired?.(keys);
+    for (const k of keys) prefired.add(k);
+    entregadas += tanda.length;
+  }
+  return entregadas;
+}
+
 // `incluyePrograma(programKey)` decide qué citas entran a ESTE digest. Default: todas — así el
 // Push 2 y cualquier caller viejo se comportan exactamente igual que antes. Solo el Push 1 la
 // usa hoy, para partirse en dos corridas (5:30pm los programas tempranos / 7pm el resto).
@@ -2472,6 +2515,8 @@ async function runDigest(
     recienteMs = 0,
     // §18.CU, toque 3: en vez del digest de links, la pregunta de quién confirmó.
     corte = false,
+    // §18.CX: con `corte`, antes de la pregunta, la bienvenida de las citas sin toque 1.
+    red = false,
     // §18.CV, catcher de la transición: solo las citas reservadas ANTES de este instante (ms).
     creadasAntesMs = null,
     // §18.CV: claves (uri / hubspot:<id>) que este digest se salta.
@@ -2487,6 +2532,11 @@ async function runDigest(
   const nowMs = d.now();
   const { minStartIso, maxStartIso } = dayRangeUtc(TZ(), offsetDays, new Date(nowMs));
   const prefired = excluirPrefired && d.getPush1PrefiredKeys ? d.getPush1PrefiredKeys() : null;
+  // §18.CX: el corte lista TODAS las citas de mañana; la red necesita saber cuáles ya tuvieron toque 1.
+  const conRed = corte && red && !recolectar;
+  const redPrefired = conRed && d.getPush1PrefiredKeys ? d.getPush1PrefiredKeys() : new Set();
+  const redAvisadas = conRed && d.getPush0EnviadosPorMinuto ? d.getPush0EnviadosPorMinuto() : new Set();
+  let bienvenidas = 0;
   let saltadas = 0;
 
   // Una cuenta caída no puede dejar sin digest a la otra → se listan por separado.
@@ -2630,6 +2680,7 @@ async function runDigest(
       continue;
     }
     if (corte) {
+      if (conRed) bienvenidas += await redDelCorte(d, { phone, name, email, items, nowMs, prefired: redPrefired, yaAvisadas: redAvisadas });
       await preguntarConfirmacion(d, { phone, name, email, items, nowMs, corte: true });
       continue;
     }
@@ -2656,6 +2707,7 @@ async function runDigest(
     if (pushN === 2 && outcome === 'sent') await preguntarConfirmacion(d, { phone, name, email, items, nowMs });
   }
   if (saltadas) console.log(`[Calendly] Digest push${pushN}: ${saltadas} cita(s) omitidas, su Push 1 ya salió adelantado`);
+  if (bienvenidas) console.log(`[Calendly] ${label}: ${bienvenidas} cita(s) de mañana sin toque 1 recibieron su bienvenida (red §18.CX)`);
 
   // Se loguea el total REAL enviado y, aparte, cuántas vinieron del CRM: el log viejo decía
   // `events.length` (solo Calendly) y por eso el hueco de las citas de HubSpot era invisible
@@ -2727,8 +2779,35 @@ export const runPlaybook48h = ({ excluirKeys = null } = {}) =>
     runDigest(48, 2, { soloConexion: conexion, recienteMs: PLAYBOOK_48H_RECIENTE_HORAS * 3600000, excluirKeys })
   );
 // Toque 3: el corte de la víspera, sobre TODAS las llamadas de mañana (también las que recibieron
-// su toque 1 al agendar).
-export const runPlaybookCorte = () => porConexionDelPlaybook((conexion) => runDigest(1, 1, { soloConexion: conexion, corte: true }));
+// su toque 1 al agendar). Con `red` (§18.CX), antes de la pregunta, la bienvenida de las que no lo
+// recibieron. El catcher la apaga el día de la activación: esas citas ya tuvieron el Push 1 de las
+// 8am del régimen viejo, sin marca de prefired.
+export const runPlaybookCorte = ({ red = true } = {}) =>
+  porConexionDelPlaybook((conexion) => runDigest(1, 1, { soloConexion: conexion, corte: true, red }));
+
+// §18.CX: a las 2pm, a cada closer que no contestó el corte de la mañana, la misma lista con los
+// mismos números. Una vez por lote (`recordada_at`), y solo si le queda alguna llamada por delante.
+export async function runPlaybookRecordatorioCorte() {
+  if (!PLAYBOOK_CONEXIONES().size) return 0;
+  const d = await deps();
+  if (!d.getCortesSinRespuesta) return 0;
+  const porLote = new Map();
+  for (const f of d.getCortesSinRespuesta(fechaLocal(d.now()))) {
+    if (!playbookActivoPara(accountOfCloser(f.closer_email))) continue;
+    if (!porLote.has(f.lote)) porLote.set(f.lote, []);
+    porLote.get(f.lote).push(f);
+  }
+  let enviados = 0;
+  for (const [lote, filas] of porLote) {
+    const { closer_phone: phone, closer_email: email } = filas[0];
+    const outcome = await deliver(d, phone, buildCorteRecordatorio({ filas, tz: TZ() }), 'corte-recordatorio', email);
+    if (outcome !== 'sent') continue; // sin opt-in, pausa, dry-run: sin marca, un reintento a mano lo vuelve a intentar
+    d.markCorteRecordado?.(lote);
+    enviados++;
+  }
+  if (porLote.size) console.log(`[Calendly] recordatorio del corte: ${porLote.size} closer(s) sin respuesta, ${enviados} recordado(s)`);
+  return enviados;
+}
 
 // ─── Catcher de la transición al playbook (§18.CV, 2026-10-16) ────────────────────────────────
 // Prender el playbook deja sin red a las citas que ya estaban reservadas. Antes, toda cita que no
@@ -2747,7 +2826,6 @@ export const runPlaybookCorte = () => porConexionDelPlaybook((conexion) => runDi
 const RESCATE_DESDE = () => (process.env.CALENDLY_PLAYBOOK_RESCATE_DESDE || '').trim(); // ISO
 const RESCATE_CRON = () => process.env.CALENDLY_PLAYBOOK_RESCATE_CRON || '20 * * * *';
 const RESCATE_DIAS = 21;
-const RESCATE_POR_MENSAJE = 8; // un wa.me con materiales pesa ~2-3 mil caracteres
 const RESCATE_FIN_KEY = 'playbook_rescate:fin';
 const RESCATE_CATCHUP_KEY = 'playbook_rescate:catchup';
 let _rescatando = false;
@@ -2774,7 +2852,6 @@ export async function runPlaybookRescate({ preview = false } = {}) {
     // 1. Toque 1 de las citas que la víspera ya no va a cubrir.
     const porCloser = new Map(); // phone -> { name, email, items[] }
     const yaAvisadas = d.getPush0EnviadosPorMinuto ? d.getPush0EnviadosPorMinuto() : new Set();
-    const minuto = (iso) => new Date(iso).toISOString().slice(0, 16).replace('T', ' ');
     for (const conexion of PLAYBOOK_CONEXIONES()) {
       for (let off = 2; off <= RESCATE_DIAS; off++) {
         await runDigest('bienvenida', off, {
@@ -2782,7 +2859,7 @@ export async function runPlaybookRescate({ preview = false } = {}) {
           excluirPrefired: true,
           creadasAntesMs: desdeMs,
           recolectar: (phone, c) => {
-            const nuevas = c.items.filter((it) => !yaAvisadas.has(`${String(c.email).toLowerCase()}|${minuto(it.startIso)}`));
+            const nuevas = c.items.filter((it) => !avisadaPorPush0(yaAvisadas, c.email, it.startIso));
             if (!nuevas.length) return;
             if (!porCloser.has(phone)) porCloser.set(phone, { name: c.name, email: c.email, items: [] });
             porCloser.get(phone).items.push(...nuevas);
@@ -2797,7 +2874,7 @@ export async function runPlaybookRescate({ preview = false } = {}) {
       const orden = [...items].sort((a, b) => new Date(a.startIso) - new Date(b.startIso));
       encontradas += orden.length;
       const tandas = [];
-      for (let i = 0; i < orden.length; i += RESCATE_POR_MENSAJE) tandas.push(orden.slice(i, i + RESCATE_POR_MENSAJE));
+      for (let i = 0; i < orden.length; i += BIENVENIDAS_POR_MENSAJE) tandas.push(orden.slice(i, i + BIENVENIDAS_POR_MENSAJE));
       for (const [i, tanda] of tandas.entries()) {
         const msg = buildDigestMessage({
           pushLabel: `Rescate del playbook${tandas.length > 1 ? ` (${i + 1}/${tandas.length})` : ''}`,
@@ -2831,7 +2908,7 @@ export async function runPlaybookRescate({ preview = false } = {}) {
     if (!preview && fechaLocal(nowMs) === fechaLocal(desdeMs) && d.getSetting && !d.getSetting(RESCATE_CATCHUP_KEY)) {
       const tz = TZ();
       if (dailyCronHasRunToday(PLAYBOOK_48H_CRON(), tz, new Date(nowMs))) await runPlaybook48h({ excluirKeys: rescatadas });
-      if (dailyCronHasRunToday(PLAYBOOK_CORTE_CRON(), tz, new Date(nowMs))) await runPlaybookCorte();
+      if (dailyCronHasRunToday(PLAYBOOK_CORTE_CRON(), tz, new Date(nowMs))) await runPlaybookCorte({ red: false });
       d.setSetting(RESCATE_CATCHUP_KEY, new Date(nowMs).toISOString());
       catchup = true;
     }
@@ -3249,6 +3326,7 @@ export function startCalendlyJobs() {
   if (PLAYBOOK_CONEXIONES().size) {
     job(PLAYBOOK_48H_CRON(), runPlaybook48h, 'playbook-48h');
     job(PLAYBOOK_CORTE_CRON(), runPlaybookCorte, 'playbook-corte');
+    if (PLAYBOOK_RECORDATORIO_CRON()) job(PLAYBOOK_RECORDATORIO_CRON(), runPlaybookRecordatorioCorte, 'playbook-recordatorio');
     // §18.CV: el catcher corre al arrancar (un minuto después, con WhatsApp ya conectado) y cada
     // hora hasta que se apaga solo.
     if (RESCATE_DESDE()) {
@@ -3279,7 +3357,7 @@ export function startCalendlyJobs() {
       `, push1: ${PUSH1_CRON()} — salvo ${PUSH1_EARLY_PROGRAMS().size ? `${[...PUSH1_EARLY_PROGRAMS()].join('/')} a las ${PUSH1_EARLY_CRON()}` : 'nadie (turno único)'}` +
       `, push viernes: ${PUSH_VIERNES_ENABLED() ? PUSH_VIERNES_CRON() : 'off'}` +
       `, tandas push1: ${PUSH1_TANDAS_DIAS().size ? `${PUSH1_TANDAS_CONEXION()} los días ${[...PUSH1_TANDAS_DIAS()].join(',')} (0=dom) a las ${PUSH1_EARLY_CRON()}` : 'off'}` +
-      `, playbook: ${PLAYBOOK_CONEXIONES().size ? `${[...PLAYBOOK_CONEXIONES()].join('/')} (48h ${PLAYBOOK_48H_CRON()}, corte ${PLAYBOOK_CORTE_CRON()}, push3 −${PLAYBOOK_LEAD_MIN()}m, push7 +${PLAYBOOK_NO_CONECTA_MIN()}m, catcher ${RESCATE_DESDE() ? `desde ${RESCATE_DESDE()}` : 'off'})` : 'off'}` +
+      `, playbook: ${PLAYBOOK_CONEXIONES().size ? `${[...PLAYBOOK_CONEXIONES()].join('/')} (48h ${PLAYBOOK_48H_CRON()}, corte ${PLAYBOOK_CORTE_CRON()}, recordatorio ${PLAYBOOK_RECORDATORIO_CRON() || 'off'}, push3 −${PLAYBOOK_LEAD_MIN()}m, push7 +${PLAYBOOK_NO_CONECTA_MIN()}m, catcher ${RESCATE_DESDE() ? `desde ${RESCATE_DESDE()}` : 'off'})` : 'off'}` +
       `, push1 al agendar: ${PUSH1_AL_AGENDAR().size ? `${[...PUSH1_AL_AGENDAR()].join('/')} hasta ${PUSH1_AL_AGENDAR_HASTA() || 'sin fecha'} (${PUSH1_AL_AGENDAR_DIAS()}d)` : 'off'}) — cuentas: ` +
       accounts.map((a) => `${a.key}[dry-run:${a.dryRun()}, push4:${a.push4()}]`).join(' · ')
   );
