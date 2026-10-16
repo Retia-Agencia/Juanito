@@ -16,7 +16,7 @@ process.env.TZ = 'America/Bogota';
 import * as scheduler from '../src/scheduler/calendly.js';
 import { __resetHealth } from '../src/calendly/health.js';
 import { buildPrecallText, buildPush0Message, buildPush7Message } from '../src/calendly/index.js';
-import { buildConfirmacionPregunta, buildCorteAcciones } from '../src/calendly/confirmacion-logic.js';
+import { buildConfirmacionPregunta, buildCorteAcciones, buildCorteRecordatorio } from '../src/calendly/confirmacion-logic.js';
 import { installHarness, makeEvent } from './helpers/calendly-harness.js';
 
 // Closer de fixture de la conexión '30x', igual que el event type por default del harness (AI
@@ -578,4 +578,66 @@ test('red del corte: el corte que recupera el catcher el día de la activación 
   assert.equal(h.wa.sent.filter((m) => PREGUNTA.test(m.text)).length, 1);
   assert.equal(lotes.length, 1);
   delete process.env.HUBSPOT_FUENTE_CONEXIONES;
+});
+
+// ─── Recordatorio del corte a las 2pm (§18.CW) ────────────────────────────────
+
+test('recordatorio del corte: copy con los mismos números de la mañana', () => {
+  const msg = buildCorteRecordatorio({
+    filas: [
+      { posicion: 1, lead_name: 'Ana Gómez', call_start: '2026-06-16 15:00:00' },
+      { posicion: 2, lead_name: null, call_start: '2026-06-16 20:00:00' },
+    ],
+    tz: 'America/Bogota',
+  });
+  assert.match(msg, /Te falta el corte de mañana/);
+  assert.match(msg, /1\. 10:00\sa\.\sm\. — Ana Gómez/);
+  assert.match(msg, /2\. 03:00\sp\.\sm\. — el prospecto/);
+  assert.match(msg, /\*todos\*/);
+});
+
+function montarRecordatorio({ cortes, optins = [LUCAS_PHONE] }) {
+  const h = installHarness(scheduler, { events: [], optins, nowMs: Date.parse('2026-06-15T19:00:00.000Z') });
+  const recordados = [];
+  const fechas = [];
+  scheduler.__setDeps({
+    ...h.deps,
+    getCortesSinRespuesta: (fecha) => {
+      fechas.push(fecha);
+      return cortes;
+    },
+    markCorteRecordado: (lote) => recordados.push(lote),
+  });
+  return { h, recordados, fechas };
+}
+const filaCorte = (over) => ({
+  lote: `${LUCAS_PHONE}:2026-06-15:corte`,
+  closer_email: LUCAS,
+  closer_phone: LUCAS_PHONE,
+  lead_name: 'Ana Gómez',
+  call_start: '2026-06-16 15:00:00',
+  posicion: 1,
+  ...over,
+});
+
+test('recordatorio del corte: un mensaje por lote sin respuesta, con la fecha de hoy, y lo marca', async () => {
+  process.env.CALENDLY_PLAYBOOK = PLAYBOOK;
+  const cortes = [filaCorte({}), filaCorte({ posicion: 2, lead_name: 'Laura Ríos', call_start: '2026-06-16 20:00:00' })];
+  const { h, recordados, fechas } = montarRecordatorio({ cortes });
+  assert.equal(await scheduler.runPlaybookRecordatorioCorte(), 1);
+  assert.deepEqual(fechas, ['2026-06-15']);
+  assert.equal(h.wa.sent.length, 1);
+  assert.match(h.wa.sent[0].text, /1\. 10:00\sa\.\sm\. — Ana Gómez\n2\. 03:00\sp\.\sm\. — Laura Ríos/);
+  assert.deepEqual(recordados, [`${LUCAS_PHONE}:2026-06-15:corte`]);
+});
+
+test('recordatorio del corte: sin opt-in no se marca; sin la bandera no hace nada', async () => {
+  process.env.CALENDLY_PLAYBOOK = PLAYBOOK;
+  const { h, recordados } = montarRecordatorio({ cortes: [filaCorte({})], optins: [] });
+  assert.equal(await scheduler.runPlaybookRecordatorioCorte(), 0);
+  assert.equal(recordados.length, 0);
+
+  delete process.env.CALENDLY_PLAYBOOK;
+  assert.equal(await scheduler.runPlaybookRecordatorioCorte(), 0);
+  assert.equal(h.wa.sent.length, 0);
 });

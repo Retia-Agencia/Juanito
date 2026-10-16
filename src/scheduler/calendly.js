@@ -68,7 +68,7 @@ import {
   sqliteUtcToMs,
 } from '../calendly/push-logic.js';
 import { push5DueUtc, buildPush5Message } from '../calendly/sheet-push.js';
-import { buildConfirmacionPregunta, ordenarPorHora } from '../calendly/confirmacion-logic.js';
+import { buildConfirmacionPregunta, buildCorteRecordatorio, ordenarPorHora } from '../calendly/confirmacion-logic.js';
 import { makeFormIndexCache, formPhonesFor, altPhonesFor } from '../calendly/lead-form.js';
 import { pickSupersededPushes, isManualUuid, planRescheduledPushes } from '../calendly/reschedule-logic.js';
 import { isCoveredProgram, decideFromAgenda } from '../hubspot/deals.js';
@@ -223,6 +223,8 @@ const PUSH2_CRON = () => process.env.CALENDLY_PUSH2_CRON || '30 6 * * *'; // 6:3
 // Playbook (§18.CU): toque 2 (dos días antes) y corte (la víspera), a la hora del Push 1 de 30X.
 const PLAYBOOK_48H_CRON = () => process.env.CALENDLY_PLAYBOOK_48H_CRON || '0 8 * * *';
 const PLAYBOOK_CORTE_CRON = () => process.env.CALENDLY_PLAYBOOK_CORTE_CRON || '0 8 * * *';
+// §18.CW: recordatorio del corte a quien no lo contestó. Vacío = sin recordatorio.
+const PLAYBOOK_RECORDATORIO_CRON = () => (process.env.CALENDLY_PLAYBOOK_RECORDATORIO_CRON ?? '0 14 * * *').trim();
 
 // ─── Push 1 más temprano para ALGUNOS programas (2026-09-08; ampliado 2026-09-16) ────────────
 // Instagram & TikTok (2026-09-08) y Operaciones Escalables con IA (2026-09-16) mandan su digest
@@ -548,6 +550,8 @@ async function deps() {
     getConfirmacionDeCita: db.getConfirmacionDeCita,
     getPush3SinPush7: db.getPush3SinPush7,
     getPush0EnviadosPorMinuto: db.getPush0EnviadosPorMinuto,
+    getCortesSinRespuesta: db.getCortesSinRespuesta,
+    markCorteRecordado: db.markCorteRecordado,
     getSetting: db.getSetting,
     setSetting: db.setSetting,
     // Anti-ban: la agenda a la admin es un DM a un tercero, no a un closer con opt-in.
@@ -2781,6 +2785,30 @@ export const runPlaybook48h = ({ excluirKeys = null } = {}) =>
 export const runPlaybookCorte = ({ red = true } = {}) =>
   porConexionDelPlaybook((conexion) => runDigest(1, 1, { soloConexion: conexion, corte: true, red }));
 
+// §18.CW: a las 2pm, a cada closer que no contestó el corte de la mañana, la misma lista con los
+// mismos números. Una vez por lote (`recordada_at`), y solo si le queda alguna llamada por delante.
+export async function runPlaybookRecordatorioCorte() {
+  if (!PLAYBOOK_CONEXIONES().size) return 0;
+  const d = await deps();
+  if (!d.getCortesSinRespuesta) return 0;
+  const porLote = new Map();
+  for (const f of d.getCortesSinRespuesta(fechaLocal(d.now()))) {
+    if (!playbookActivoPara(accountOfCloser(f.closer_email))) continue;
+    if (!porLote.has(f.lote)) porLote.set(f.lote, []);
+    porLote.get(f.lote).push(f);
+  }
+  let enviados = 0;
+  for (const [lote, filas] of porLote) {
+    const { closer_phone: phone, closer_email: email } = filas[0];
+    const outcome = await deliver(d, phone, buildCorteRecordatorio({ filas, tz: TZ() }), 'corte-recordatorio', email);
+    if (outcome !== 'sent') continue; // sin opt-in, pausa, dry-run: sin marca, un reintento a mano lo vuelve a intentar
+    d.markCorteRecordado?.(lote);
+    enviados++;
+  }
+  if (porLote.size) console.log(`[Calendly] recordatorio del corte: ${porLote.size} closer(s) sin respuesta, ${enviados} recordado(s)`);
+  return enviados;
+}
+
 // ─── Catcher de la transición al playbook (§18.CV, 2026-10-16) ────────────────────────────────
 // Prender el playbook deja sin red a las citas que ya estaban reservadas. Antes, toda cita que no
 // recibió su Push 1 al agendar lo recibía en el digest de la víspera; con el playbook la víspera
@@ -3298,6 +3326,7 @@ export function startCalendlyJobs() {
   if (PLAYBOOK_CONEXIONES().size) {
     job(PLAYBOOK_48H_CRON(), runPlaybook48h, 'playbook-48h');
     job(PLAYBOOK_CORTE_CRON(), runPlaybookCorte, 'playbook-corte');
+    if (PLAYBOOK_RECORDATORIO_CRON()) job(PLAYBOOK_RECORDATORIO_CRON(), runPlaybookRecordatorioCorte, 'playbook-recordatorio');
     // §18.CV: el catcher corre al arrancar (un minuto después, con WhatsApp ya conectado) y cada
     // hora hasta que se apaga solo.
     if (RESCATE_DESDE()) {
@@ -3328,7 +3357,7 @@ export function startCalendlyJobs() {
       `, push1: ${PUSH1_CRON()} — salvo ${PUSH1_EARLY_PROGRAMS().size ? `${[...PUSH1_EARLY_PROGRAMS()].join('/')} a las ${PUSH1_EARLY_CRON()}` : 'nadie (turno único)'}` +
       `, push viernes: ${PUSH_VIERNES_ENABLED() ? PUSH_VIERNES_CRON() : 'off'}` +
       `, tandas push1: ${PUSH1_TANDAS_DIAS().size ? `${PUSH1_TANDAS_CONEXION()} los días ${[...PUSH1_TANDAS_DIAS()].join(',')} (0=dom) a las ${PUSH1_EARLY_CRON()}` : 'off'}` +
-      `, playbook: ${PLAYBOOK_CONEXIONES().size ? `${[...PLAYBOOK_CONEXIONES()].join('/')} (48h ${PLAYBOOK_48H_CRON()}, corte ${PLAYBOOK_CORTE_CRON()}, push3 −${PLAYBOOK_LEAD_MIN()}m, push7 +${PLAYBOOK_NO_CONECTA_MIN()}m, catcher ${RESCATE_DESDE() ? `desde ${RESCATE_DESDE()}` : 'off'})` : 'off'}` +
+      `, playbook: ${PLAYBOOK_CONEXIONES().size ? `${[...PLAYBOOK_CONEXIONES()].join('/')} (48h ${PLAYBOOK_48H_CRON()}, corte ${PLAYBOOK_CORTE_CRON()}, recordatorio ${PLAYBOOK_RECORDATORIO_CRON() || 'off'}, push3 −${PLAYBOOK_LEAD_MIN()}m, push7 +${PLAYBOOK_NO_CONECTA_MIN()}m, catcher ${RESCATE_DESDE() ? `desde ${RESCATE_DESDE()}` : 'off'})` : 'off'}` +
       `, push1 al agendar: ${PUSH1_AL_AGENDAR().size ? `${[...PUSH1_AL_AGENDAR()].join('/')} hasta ${PUSH1_AL_AGENDAR_HASTA() || 'sin fecha'} (${PUSH1_AL_AGENDAR_DIAS()}d)` : 'off'}) — cuentas: ` +
       accounts.map((a) => `${a.key}[dry-run:${a.dryRun()}, push4:${a.push4()}]`).join(' · ')
   );

@@ -746,6 +746,7 @@ export function guardarLoteConfirmacion(filas) {
       lead_phone    = excluded.lead_phone,
       estado        = CASE WHEN call_confirmaciones.lote = excluded.lote THEN call_confirmaciones.estado ELSE 'pendiente' END,
       answered_at   = CASE WHEN call_confirmaciones.lote = excluded.lote THEN call_confirmaciones.answered_at ELSE NULL END,
+      recordada_at  = CASE WHEN call_confirmaciones.lote = excluded.lote THEN call_confirmaciones.recordada_at ELSE NULL END,
       lote          = excluded.lote,
       posicion      = excluded.posicion,
       program       = excluded.program,
@@ -843,6 +844,24 @@ export function getPush3SinPush7() {
           AND NOT EXISTS (SELECT 1 FROM calendly_pushes p7 WHERE p7.event_uuid = p3.event_uuid AND p7.push_n = 7)`
     )
     .all();
+}
+
+// §18.CW: los cortes de `fecha` (YYYY-MM-DD local, la del lote) que el closer no contestó, no se
+// le recordaron y todavía tienen una llamada por delante. Una fila por cita, por lote y posición.
+export function getCortesSinRespuesta(fecha) {
+  return db
+    .prepare(
+      `SELECT c.* FROM call_confirmaciones c
+        WHERE c.tipo = 'corte' AND c.lote LIKE ? AND c.recordada_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM call_confirmaciones x WHERE x.lote = c.lote AND x.answered_at IS NOT NULL)
+          AND EXISTS (SELECT 1 FROM call_confirmaciones y WHERE y.lote = c.lote AND y.call_start > datetime('now'))
+        ORDER BY c.lote, c.posicion`
+    )
+    .all(`%:${fecha}:corte`);
+}
+
+export function markCorteRecordado(lote) {
+  return db.prepare(`UPDATE call_confirmaciones SET recordada_at = datetime('now') WHERE lote = ?`).run(lote);
 }
 
 export function markConfirmacionReprompt(lote) {

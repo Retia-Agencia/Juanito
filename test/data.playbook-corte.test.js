@@ -96,3 +96,36 @@ test('una corrección reactiva el Push 3 y el 7 frenados por el corte, y nada m�
   assert.equal(raw.prepare(`SELECT status FROM calendly_pushes WHERE id = ?`).get(id('c-2', 4)).status, 'skipped');
   assert.equal(raw.prepare(`SELECT status FROM calendly_pushes WHERE id = ?`).get(id('otra', 3)).status, 'skipped');
 });
+
+test('recordatorio (§18.CW): solo el corte de hoy, sin respuesta, sin recordar y con llamadas por delante', () => {
+  const lote = (p, fecha = '2026-07-01') => `${p}:${fecha}:corte`;
+  const corte = (p, uuid, over = {}) => ({
+    ...fila({ event_uuid: uuid, posicion: 1, lead_name: 'X', call_start: enHoras(20), tipo: 'corte', lead_phone: '+573000000000' }),
+    lote: lote(p),
+    closer_phone: p,
+    ...over,
+  });
+  const A = '+573001000001'; // sin respuesta → entra
+  const B = '+573001000002'; // contestó una → no
+  const C = '+573001000003'; // llamadas ya pasadas → no
+  const D = '+573001000004'; // corte de otro día → no
+  db.guardarLoteConfirmacion([corte(A, 'r-a1'), corte(A, 'r-a2', { posicion: 2 })]);
+  db.guardarLoteConfirmacion([corte(B, 'r-b1'), corte(B, 'r-b2', { posicion: 2 })]);
+  db.setConfirmacionEstados(lote(B), { 2: 'confirmada' }, '2');
+  db.guardarLoteConfirmacion([corte(C, 'r-c1', { call_start: enHoras(-2) })]);
+  db.guardarLoteConfirmacion([corte(D, 'r-d1', { lote: lote(D, '2026-06-30') })]);
+
+  const filas = db.getCortesSinRespuesta('2026-07-01');
+  assert.deepEqual(filas.map((f) => [f.event_uuid, f.posicion]), [['r-a1', 1], ['r-a2', 2]]);
+
+  db.markCorteRecordado(lote(A));
+  assert.equal(db.getCortesSinRespuesta('2026-07-01').length, 0, 'una sola vez por lote');
+  // El lote recordado sigue abierto y trae recordada_at: la captura lo usa como hora de la pregunta.
+  assert.ok(db.getLoteConfirmacionAbierto(A)[0].recordada_at);
+
+  // Re-preguntar el MISMO lote conserva la marca; mudar la cita a otro lote la limpia.
+  db.guardarLoteConfirmacion([corte(A, 'r-a1')]);
+  assert.ok(raw.prepare(`SELECT recordada_at FROM call_confirmaciones WHERE event_uuid = 'r-a1'`).get().recordada_at);
+  db.guardarLoteConfirmacion([corte(A, 'r-a1', { lote: lote(A, '2026-07-02') })]);
+  assert.equal(raw.prepare(`SELECT recordada_at FROM call_confirmaciones WHERE event_uuid = 'r-a1'`).get().recordada_at, null);
+});
