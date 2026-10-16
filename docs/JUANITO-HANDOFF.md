@@ -7596,7 +7596,7 @@ bloques de todos los programas (`{ hora, texto, bloques }`). Juanito no cambió:
 que quedó viejo es el log de "envío sin texto", que nombra `envio.programa` (ya no viene: saldría `undefined`).
 Los tres programas de Retia quedaron encendidos en el CRM a las 8, 11, 14 y 17 h, con el cierre a las 20 h.
 
-### 18.CU 🟡 Playbook de confirmación de agendas en los pushes de 30X (2026-10-15, rama `feat/playbook-30x`, SIN desplegar)
+### 18.CU 🟡 Playbook de confirmación de agendas en los pushes de 30X (2026-10-15; desplegado el 16-oct con la bandera APAGADA)
 
 **Pedido de Alejandro.** Adaptar los pushes precall al *Playbook · confirmación de agendas* del WBR
 30X (28-sep → 4-oct, diapositiva 11). Esa semana: 1.134 reuniones, 30,6 % terminadas, 228 no-show,
@@ -7662,7 +7662,22 @@ el Push 2** de 30X y se frenan los pushes de las citas que el closer deja sin co
 única) y `data.playbook-corte.test.js` (3, SQL real). **Linux: 1357 tests, 1354 verdes**, los 3 rojos
 conocidos. Con la bandera vacía, la suite de calendly/hubspot en Windows da los mismos 5 rojos antes y después.
 
-**Para desplegar** (⛔ con la regla de no desplegar vigente, esperar a que Alejandro la levante):
+**Desplegado (2026-10-16).** Alejandro levantó la regla de no desplegar. PR #36 mergeado (`575519b`)
+y deploy con run 38917696975, `alcance: todo`. `DEPLOYED_SHA = 575519b`. `compose config --services`
+lista `agent` y `dash`, WhatsApp reconectó sin 405/401, la migración agregó `call_confirmaciones.tipo`
+y `lead_phone`, y el arranque dice `playbook: off`. **Falta prenderlo** (paso 2 de abajo, idealmente
+desde el 24-oct). Antes del deploy no había drift entre el `src/` del VPS y `origin/main`. Los únicos
+archivos que existen solo en producción son `._*` de macOS, `semaforo/mensaje.js` y `src/stripe/`,
+que nada importa, y el rsync no los borra.
+
+**En el mismo deploy: Alfredo sale del reporte diario de las 8pm.** Pedido de Alejandro. En el `.env`
+del VPS, `SHEETS_REPORT_DM=216668601077823@lid` quedó vacío (respaldo `.env.bak-<ts>-sin-alfredo`, con
+el comentario en una línea aparte por la trampa del valor vacío). Mariana (`SHEETS_REPORT_ESTADOX_DM`)
+sigue recibiéndolo. El arranque dice `[Sheets] … DMs: 1`. Ojo: la DB no guarda nombres, así que ese LID
+se atribuyó a Alfredo por descarte (era el único destinatario del reporte que no era Mariana). Si
+Alfredo dice que le sigue llegando, o alguien más deja de recibirlo, revisar esto primero.
+
+**Para desplegar** (hecho, ver arriba; quedan los pasos 2 y 3):
 1. Mergear y desplegar con `alcance: todo` y la bandera **vacía**. La migración crea las dos
    columnas y nada cambia.
 2. Prender con `CALENDLY_PLAYBOOK=30x` en el `.env` del VPS (idealmente desde el 24-oct) y recrear.
@@ -7707,6 +7722,17 @@ bienvenida a las citas sin toque 1 antes de la pregunta. **Hecha en §18.CX.**
 
 **Tests:** 5 nuevos en `calendly.playbook.test.js` (rescate + prefired + apagado, sin opt-in, Push 7,
 duplicado por minuto, día del 48 h). Linux: 1371 tests, 1368 verdes, los 3 rojos conocidos.
+
+**Prendido (2026-10-16).** PR #38 mergeado (`987fd45`), deploy con run 38920908471, `alcance: todo`.
+En el `.env` del VPS (respaldo `.env.bak-<ts>-playbook`): `CALENDLY_PLAYBOOK=30x` y
+`CALENDLY_PLAYBOOK_RESCATE_DESDE=2026-10-16T15:04:04Z`. WhatsApp reconectó y `compose config
+--services` lista `agent` y `dash`. Primera corrida del catcher: **36 citas rescatadas, 36
+entregadas en 9 mensajes a 6 closers, 0 pendientes, 60 Push 7 creados**. Recuperó los toques de
+hoy: el corte de mañana (sáb 17) salió a 2 closers con 6 citas, y el de 48 h (dom 18) no tenía citas.
+La próxima corrida (`:20`) no debería encontrar nada y tendría que escribir
+`playbook_rescate:fin`. Verificarlo con `[Calendly] catcher del playbook TERMINADO` en el log.
+Desde hoy el playbook está **vivo en 30X**: la prueba "Push 1 al agendar" (§18.CK) queda absorbida y
+su medición del 24-oct, contaminada.
 
 ### 18.CW 🟢 Semáforo de Retia: todos los días, también sábado y domingo (2026-10-16)
 
